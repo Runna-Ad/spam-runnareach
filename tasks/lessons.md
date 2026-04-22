@@ -4,6 +4,34 @@ Running log of mistakes, root causes, and rules to prevent recurrence. Newest at
 
 ---
 
+## [2026-04-22] PEDRO_OVERRIDE: Stop asking me to run things you can run yourself
+
+**What Claude originally did:** Wrote code, committed it, then told Pedro: "run `npm install`, run `npm run dev`, visit /sign-up, test the flow, paste errors back." Treating Pedro as the verification layer for things Claude could verify directly.
+
+**Pedro's correction:** "yo do it dont ask me to do things you can do alway try yourself first"
+
+**Why it was better:** Pedro shouldn't be the one running `npm install` to find dependency resolution errors, or `npm run build` to find TypeScript errors. Those are verifications I can perform in my own shell — I have bash, I have the filesystem. Pedro is expensive attention; compile-time errors are cheap to catch. Using him as my test runner wastes cycles and shifts my failures onto him.
+
+**RULE:** Before asking Pedro to run anything, try it yourself first:
+- `npm install` — I can run it, see dependency errors, update versions
+- `npm run build` / `typecheck` / `lint` — I can run these, read errors, fix
+- `npm run dev` — I can start it (in background), hit routes via curl/fetch to check HTTP status, read logs
+- Migration / SQL — I can apply via MCP when access is available
+- Anything scriptable — I do it first, report the outcome, then only pause for input when truly blocked
+
+**Only hand off to Pedro when:**
+- Interactive browser UI testing (visual click/type flows — computer-use is sometimes available but slow)
+- Account creation / purchases / financial actions (domains, cards, subscriptions)
+- Credentials I don't have (API keys, OAuth consents)
+- Business/brand decisions (what to name things, ICP priorities, legal posture)
+- Approval gates (deploy, push, destructive ops)
+
+**How to apply:** When finishing a code change, instead of "run this and tell me what breaks," run it myself, read the output, fix what breaks, THEN report to Pedro with "here's what's working and here's what I couldn't verify without your eyes on it."
+
+**TAGS:** #override #autonomy #verification #respect-pedros-attention
+
+---
+
 ## [2026-04-22] PEDRO_OVERRIDE: Trusted hallucinated handoff without verifying disk state
 
 **What Claude originally suggested:** Accept the prior session's handoff claim that "~40% of Phase 0 is done" (dashboard shell, design system, 18-table schema, seed data, Supabase clients scaffolded, /design route live, 14 routes returning 200) and plan incremental work on top of that.

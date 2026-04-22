@@ -9,7 +9,10 @@ interface PhasePlaceholderProps {
   description: string;
 }
 
-const PHASE_LABELS: Record<number, { tone: "neutral" | "accent" | "info"; label: string }> = {
+const PHASE_LABELS: Record<
+  0 | 1 | 2 | 3 | 4 | 5 | 6,
+  { tone: "neutral" | "accent" | "info"; label: string }
+> = {
   0: { tone: "accent", label: "Phase 0 · Foundation" },
   1: { tone: "info", label: "Phase 1 · Discovery" },
   2: { tone: "info", label: "Phase 2 · Research & Scoring" },
