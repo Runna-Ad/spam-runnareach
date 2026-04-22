@@ -1,0 +1,130 @@
+@import "tailwindcss";
+
+/* ============================================================
+   S.P.A.M. Design System — Dark-first, Linear/Attio-inspired
+   ============================================================ */
+
+@theme {
+  /* Surfaces — dark-only MVP */
+  --color-bg-900: #0a0a0b;           /* app background */
+  --color-bg-800: #111113;           /* elevated surface */
+  --color-bg-700: #17171a;           /* hover surface */
+  --color-bg-600: #1d1d21;           /* border tint */
+
+  /* Text */
+  --color-fg-50: #fafafa;            /* primary text */
+  --color-fg-300: #c7c7cc;           /* secondary text */
+  --color-fg-500: #8e8e93;           /* tertiary text, captions */
+  --color-fg-700: #48484a;           /* quaternary, disabled */
+
+  /* Hero accent — electric lime */
+  --color-accent-100: #f3fcd4;
+  --color-accent-200: #d8f7a0;
+  --color-accent-300: #bef264;       /* ⭐ primary accent */
+  --color-accent-400: #a3e635;
+  --color-accent-500: #84cc16;
+
+  /* Status — emerald, amber, red, cyan */
+  --color-success-300: #34d399;
+  --color-success-500: #10b981;
+
+  --color-warning-300: #fbbf24;
+  --color-warning-500: #f59e0b;
+
+  --color-danger-300: #f87171;
+  --color-danger-500: #ef4444;
+
+  --color-info-300: #67e8f9;
+  --color-info-500: #06b6d4;
+
+  /* Borders — inset rings, no drop shadows */
+  --color-border-subtle: rgb(255 255 255 / 0.06);
+  --color-border-default: rgb(255 255 255 / 0.09);
+  --color-border-strong: rgb(255 255 255 / 0.14);
+
+  /* Typography */
+  --font-sans: "Geist", ui-sans-serif, system-ui, -apple-system, sans-serif;
+  --font-mono: "Geist Mono", ui-monospace, "SF Mono", Menlo, monospace;
+
+  /* Motion — 150ms cubic-bezier */
+  --ease-standard: cubic-bezier(0.2, 0, 0, 1);
+  --duration-fast: 120ms;
+  --duration-standard: 150ms;
+  --duration-slow: 240ms;
+
+  /* Radii */
+  --radius-sm: 4px;
+  --radius-md: 6px;
+  --radius-lg: 8px;
+  --radius-xl: 12px;
+
+  /* Elevation — minimal, prefer inset rings */
+  --shadow-floating: 0 12px 40px rgb(0 0 0 / 0.45);
+}
+
+/* ============================================================
+   Base — force dark, reset scrollbars, focus style
+   ============================================================ */
+
+html {
+  color-scheme: dark;
+  background: var(--color-bg-900);
+}
+
+body {
+  background: var(--color-bg-900);
+  color: var(--color-fg-50);
+  font-family: var(--font-sans);
+  font-feature-settings: "ss01", "cv11";
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+/* Selection */
+::selection {
+  background: var(--color-accent-300);
+  color: var(--color-bg-900);
+}
+
+/* Scrollbars — dark, thin */
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--color-bg-700);
+  border-radius: 999px;
+  border: 2px solid transparent;
+  background-clip: padding-box;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--color-bg-600);
+  background-clip: padding-box;
+  border: 2px solid transparent;
+}
+
+/* Focus ring — accent outline, respect reduced motion */
+:focus-visible {
+  outline: 2px solid var(--color-accent-300);
+  outline-offset: 2px;
+  border-radius: var(--radius-sm);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
