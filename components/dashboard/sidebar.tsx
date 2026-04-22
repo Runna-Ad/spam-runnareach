@@ -1,12 +1,18 @@
 "use client";
 
+import type { ReactNode } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { Kbd } from "@/components/ui/kbd";
 import { cn } from "@/lib/utils";
 import { NAV_SECTIONS } from "./sidebar-nav";
 
-export function Sidebar() {
+interface SidebarProps {
+  /** Rendered in the sidebar footer. Typically <UserMenu user={...} />. */
+  footerSlot?: ReactNode;
+}
+
+export function Sidebar({ footerSlot }: SidebarProps) {
   const pathname = usePathname();
 
   return (
@@ -69,17 +75,7 @@ export function Sidebar() {
       </nav>
 
       {/* Footer */}
-      <div className="border-t border-[var(--color-border-subtle)] p-3">
-        <div className="flex items-center gap-2 rounded-[var(--radius-md)] bg-[var(--color-bg-800)] px-2 py-1.5 ring-1 ring-inset ring-[var(--color-border-subtle)]">
-          <div className="h-6 w-6 rounded-full bg-[var(--color-bg-700)]" aria-hidden />
-          <div className="min-w-0 flex-1">
-            <div className="truncate text-xs text-[var(--color-fg-50)]">Setup pending</div>
-            <div className="truncate font-mono text-[10px] text-[var(--color-fg-500)]">
-              connect supabase
-            </div>
-          </div>
-        </div>
-      </div>
+      <div className="border-t border-[var(--color-border-subtle)] p-3">{footerSlot}</div>
     </aside>
   );
 }
