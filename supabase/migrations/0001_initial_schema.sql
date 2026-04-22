@@ -1,10 +1,10 @@
 -- ============================================================================
--- S.P.A.M. — SAGA Opportunity Engine
+-- S.P.A.M. — Runna CA Opportunity Engine
 -- Migration 0001 — Initial schema
 --
--- Tables: ~30. Every table has tenant_id + RLS.
+-- Tables: 30. Every table has tenant_id + RLS.
 -- Extensions: pgvector, pgcrypto, uuid-ossp.
--- Tenancy: multi-tenant-capable, launch single-tenant (SAGA-CA).
+-- Tenancy: multi-tenant-capable, launch single-tenant (RUNNA_CA).
 -- ============================================================================
 
 -- ============================================================================
@@ -21,7 +21,7 @@ create extension if not exists "vector";
 
 create type market as enum ('CA', 'MX', 'US', 'LATAM');
 create type language as enum ('en', 'es');
-create type brand_code as enum ('SAGA', 'RUNNA');
+create type brand_code as enum ('RUNNA_CA', 'RUNNA');
 
 create type user_role as enum ('admin', 'reviewer', 'viewer');
 
@@ -150,7 +150,7 @@ create type pitch_event_type as enum (
 
 create table tenants (
   id             uuid primary key default gen_random_uuid(),
-  code           text not null unique,                         -- 'SAGA_CA', 'SAGA_MX', 'RUNNA_MX'
+  code           text not null unique,                         -- 'RUNNA_CA', 'RUNNA_MX'
   display_name   text not null,
   default_market market not null,
   default_language language not null,
@@ -165,7 +165,7 @@ create table brand_instances (
   id             uuid primary key default gen_random_uuid(),
   tenant_id      uuid not null references tenants(id) on delete restrict,
   code           brand_code not null,
-  display_name   text not null,                                -- 'SAGA', 'Rünna'
+  display_name   text not null,                                -- 'Runna CA', 'Rünna'
   website_url    text,
   primary_market market not null,
   languages      language[] not null default array['en']::language[],

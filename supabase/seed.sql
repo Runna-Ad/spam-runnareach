@@ -3,9 +3,9 @@
 -- Run after 0001_initial_schema.sql
 --
 -- Seeds:
---   - 1 tenant (SAGA-CA)
---   - 2 brand instances (SAGA + RUNNA)
---   - 5 SAGA services with CAD/MXN/USD pricing
+--   - 1 tenant (RUNNA_CA)
+--   - 2 brand instances (Runna CA + Rünna)
+--   - 5 Runna CA services with CAD/MXN/USD pricing
 --   - 15 pain taxonomy entries
 --   - 10 Rünna case studies (Ford, DiDi, Aeromexico, Bayer/Aspirina,
 --     Golden Hills, ANA Seguros, Pet's Club, SnapPad, Niki, DevFest YYC)
@@ -20,15 +20,15 @@
 
 insert into tenants (id, code, display_name, default_market, default_language, timezone, monthly_budget_usd, hard_budget_cap_usd)
 values
-  ('11111111-1111-1111-1111-111111111111', 'SAGA_CA', 'SAGA Canada', 'CA', 'en', 'America/Edmonton', 75.00, 150.00);
+  ('11111111-1111-1111-1111-111111111111', 'RUNNA_CA', 'Runna CA', 'CA', 'en', 'America/Edmonton', 75.00, 150.00);
 
 insert into brand_instances (id, tenant_id, code, display_name, website_url, primary_market, languages)
 values
-  ('22222222-2222-2222-2222-222222222221', '11111111-1111-1111-1111-111111111111', 'SAGA', 'SAGA', 'https://sagareach.com', 'CA', array['en']::language[]),
+  ('22222222-2222-2222-2222-222222222221', '11111111-1111-1111-1111-111111111111', 'RUNNA_CA', 'Runna CA', 'https://runna.agency', 'CA', array['en']::language[]),
   ('22222222-2222-2222-2222-222222222222', '11111111-1111-1111-1111-111111111111', 'RUNNA', 'Rünna', 'https://runna.mx', 'MX', array['es', 'en']::language[]);
 
 -- ----------------------------------------------------------------------------
--- Services (5 SAGA services)
+-- Services (5 Runna CA services)
 -- ----------------------------------------------------------------------------
 
 insert into services (id, tenant_id, code, display_name_en, display_name_es, description_en, price_cad, price_mxn, price_usd, pricing_model, sort_order) values
@@ -288,7 +288,7 @@ insert into icps (id, tenant_id, name, market, language, industry_tags, geo_regi
 
 insert into prompts (id, tenant_id, purpose, language, description) values
   ('77777777-7777-7777-7777-777777777771', '11111111-1111-1111-1111-111111111111', 'research', 'en', 'Extract what the company does, tech stack, and 3 pain points from scraped site content.'),
-  ('77777777-7777-7777-7777-777777777772', '11111111-1111-1111-1111-111111111111', 'scoring', 'en', 'Score a prospect 0-100 against the 5 SAGA services composite rubric.'),
+  ('77777777-7777-7777-7777-777777777772', '11111111-1111-1111-1111-111111111111', 'scoring', 'en', 'Score a prospect 0-100 against the 5 Runna CA services composite rubric.'),
   ('77777777-7777-7777-7777-777777777773', '11111111-1111-1111-1111-111111111111', 'pain_classification', 'en', 'Classify the extracted pain points into the canonical pain taxonomy.'),
   ('77777777-7777-7777-7777-777777777774', '11111111-1111-1111-1111-111111111111', 'contact_selection', 'en', 'Pick the best decision-maker contact for the outreach.'),
   ('77777777-7777-7777-7777-777777777775', '11111111-1111-1111-1111-111111111111', 'pitch_en', 'en', 'Generate a 90-word pitch body + <7-word subject citing a specific case study by name with measurable result.'),
@@ -307,15 +307,15 @@ insert into prompt_variants (id, prompt_id, version, status, system_prompt, user
   (
     '88888888-8888-8888-8888-888888888881',
     '77777777-7777-7777-7777-777777777771', '1.0.0', 'champion',
-    'You are a research analyst for SAGA, a Canadian creative agency. Extract structured intelligence from raw website content. Be specific, cite URL evidence, never hallucinate. If a pain point has no URL evidence, omit it. Never invent tech stack items you cannot verify from visible HTML, script src, or common platform signals.',
+    'You are a research analyst for Runna CA, a Canadian creative agency (the Canadian arm of Rünna). Extract structured intelligence from raw website content. Be specific, cite URL evidence, never hallucinate. If a pain point has no URL evidence, omit it. Never invent tech stack items you cannot verify from visible HTML, script src, or common platform signals.',
     E'Analyze the following scraped content from {{domain}}.\n\nReturn strict JSON:\n{\n  "what_they_do": "<one sentence, concrete>",\n  "tech_stack": ["<verified platforms/tools>"],\n  "pain_points": [\n    {"pain_code": "<from taxonomy>", "evidence_url": "<exact URL>", "quote": "<direct quote or observation>"}\n  ]\n}\n\nContent:\n{{scraped_content}}\n\nPain taxonomy options: {{taxonomy_codes}}',
     'claude-sonnet-4-7', 0.3, 2048
   ),
   (
     '88888888-8888-8888-8888-888888888882',
     '77777777-7777-7777-7777-777777777772', '1.0.0', 'champion',
-    'You are a sales qualifier for SAGA. Score prospects 0-100 using the composite rubric. Be rigorous about red flags — any single red flag means the prospect is a hard no, regardless of other points.',
-    E'Score this prospect:\n\n{{research_brief}}\n\nRubric (max 100):\n- Industry fit (0-25): matches ICP industry tags\n- Size fit (0-10): 5-50 employees is ideal\n- Digital maturity (0-10): active site, social, last updated <90d\n- Pain signal strength (0-20): URL-level evidence of pains we solve\n- Service match (0-15): fit to at least 1 of 5 SAGA services\n- Contact discoverability (0-10): decision-maker email or LinkedIn found\n\nRed flags (hard -100): agency, competitor, existing R\u00fcnna client, wrong country, dead site, MLM, adult, DNC list.\n\nReturn JSON: {composite_score, points_breakdown, red_flags, best_service_code, best_pain_code, best_case_study_client, confidence, reasoning}',
+    'You are a sales qualifier for Runna CA. Score prospects 0-100 using the composite rubric. Be rigorous about red flags — any single red flag means the prospect is a hard no, regardless of other points.',
+    E'Score this prospect:\n\n{{research_brief}}\n\nRubric (max 100):\n- Industry fit (0-25): matches ICP industry tags\n- Size fit (0-10): 5-50 employees is ideal\n- Digital maturity (0-10): active site, social, last updated <90d\n- Pain signal strength (0-20): URL-level evidence of pains we solve\n- Service match (0-15): fit to at least 1 of 5 Runna CA services\n- Contact discoverability (0-10): decision-maker email or LinkedIn found\n\nRed flags (hard -100): agency, competitor, existing R\u00fcnna client, wrong country, dead site, MLM, adult, DNC list.\n\nReturn JSON: {composite_score, points_breakdown, red_flags, best_service_code, best_pain_code, best_case_study_client, confidence, reasoning}',
     'claude-haiku-4-5-20251001', 0.2, 1024
   ),
   (
@@ -335,7 +335,7 @@ insert into prompt_variants (id, prompt_id, version, status, system_prompt, user
   (
     '88888888-8888-8888-8888-888888888885',
     '77777777-7777-7777-7777-777777777775', '1.0.0', 'champion',
-    E'You write cold pitches for SAGA (Canadian arm of R\u00fcnna). Every pitch MUST cite a specific R\u00fcnna case study by client name with a measurable result from the provided case study data.\n\nHard rules:\n- Subject line <7 words, observational not promotional\n- Body 70-110 words\n- Open with a specific observation about their site or business (cite URL)\n- Pivot to a parallel R\u00fcnna win using the exact client name and measurable number\n- Single soft CTA at end (15-min call, quick question, worth a look)\n- No superlatives, no "transform your business," no "leverage synergies"\n- Write like a human, not a template\n\nIf you cannot ground the pitch in a real case study with a real metric, REFUSE and return {"refused": true, "reason": "..."}.',
+    E'You write cold pitches for Runna CA (Canadian arm of R\u00fcnna). Every pitch MUST cite a specific R\u00fcnna case study by client name with a measurable result from the provided case study data.\n\nHard rules:\n- Subject line <7 words, observational not promotional\n- Body 70-110 words\n- Open with a specific observation about their site or business (cite URL)\n- Pivot to a parallel R\u00fcnna win using the exact client name and measurable number\n- Single soft CTA at end (15-min call, quick question, worth a look)\n- No superlatives, no "transform your business," no "leverage synergies"\n- Write like a human, not a template\n\nIf you cannot ground the pitch in a real case study with a real metric, REFUSE and return {"refused": true, "reason": "..."}.',
     E'Prospect: {{company_name}} ({{domain}})\nObservation: {{primary_pain_observation}}\nPain code: {{pain_code}}\n\nCase study to ground:\nClient: {{case_study_client_name}}\nResult: {{case_study_hero_metric}}\nDetail: {{case_study_result_description}}\nMeasurable: {{case_study_measurable_result}}\n\nSender: {{sender_name}}\nService being pitched: {{service_display_name}}\n\nReturn JSON: {subject, body, case_study_client_cited, measurable_number_cited, self_quality_score}',
     'claude-sonnet-4-7', 0.7, 1024
   ),
@@ -371,7 +371,7 @@ insert into prompt_variants (id, prompt_id, version, status, system_prompt, user
     '88888888-8888-8888-8888-88888888888a',
     '77777777-7777-7777-7777-77777777777a', '1.0.0', 'champion',
     'You generate CASL-compliant email footers in English for Canadian recipients. Must include: full physical mailing address, working unsubscribe link, clear identification of the sender.',
-    E'{{sender_full_name}}\n{{sender_title}} \u2022 {{brand_display_name}}\n{{mailing_address}}\n\nYou\u2019re receiving this because your email was conspicuously published in a business context. If this isn\u2019t relevant, reply with "unsubscribe" or click here: {{unsubscribe_url}}\n\nSAGA is part of R\u00fcnna. More about us: {{website_url}}',
+    E'{{sender_full_name}}\n{{sender_title}} \u2022 {{brand_display_name}}\n{{mailing_address}}\n\nYou\u2019re receiving this because your email was conspicuously published in a business context. If this isn\u2019t relevant, reply with "unsubscribe" or click here: {{unsubscribe_url}}\n\nRunna CA is the Canadian arm of R\u00fcnna. More about us: {{website_url}}',
     'claude-haiku-4-5-20251001', 0.0, 256
   ),
   (

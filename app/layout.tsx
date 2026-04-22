@@ -5,9 +5,9 @@ import { Toaster } from "sonner";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "S.P.A.M. — SAGA Opportunity Engine",
+  title: "S.P.A.M. — Runna CA Opportunity Engine",
   description:
-    "Smart Prospecting & Acquisition Machine. Human-in-the-loop AI sales system for SAGA.",
+    "Smart Prospecting & Acquisition Machine. Human-in-the-loop AI sales system for Runna CA.",
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {

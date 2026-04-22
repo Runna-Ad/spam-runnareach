@@ -6,7 +6,7 @@ export default function SettingsBrandInstancesPage() {
       route="/settings/brand-instances"
       phase={0}
       title="Brand instances"
-      description="SAGA (Canada) + RUNNA (Mexico). Per-brand signature, compliance footer, sending domain, case-study subset visibility."
+      description="Runna CA (Canada) + Rünna (Mexico). Per-brand signature, compliance footer, sending domain, case-study subset visibility."
     />
   );
 }

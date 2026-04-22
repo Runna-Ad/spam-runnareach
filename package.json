@@ -1,8 +1,8 @@
 {
-  "name": "saga-engine",
+  "name": "runna-ca-engine",
   "version": "0.1.0",
   "private": true,
-  "description": "S.P.A.M. — SAGA Opportunity Engine. Human-in-the-loop AI sales system for SAGA (Rünna Canada).",
+  "description": "S.P.A.M. — Runna CA Opportunity Engine. Human-in-the-loop AI sales system for Runna CA (Canadian arm of Rünna).",
   "scripts": {
     "dev": "next dev --turbopack",
     "build": "next build",

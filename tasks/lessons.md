@@ -1,4 +1,4 @@
-# Lessons — S.P.A.M. / SAGA Opportunity Engine
+# Lessons — S.P.A.M. / Runna CA Opportunity Engine
 
 Running log of mistakes, root causes, and rules to prevent recurrence. Newest at top.
 

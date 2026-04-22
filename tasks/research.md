@@ -1,4 +1,4 @@
-# Research — S.P.A.M. / SAGA Opportunity Engine
+# Research — S.P.A.M. / Runna CA Opportunity Engine
 
 Discoveries, patterns, libraries, and techniques learned during build. Newest at top.
 

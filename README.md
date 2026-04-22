@@ -1,6 +1,8 @@
-# S.P.A.M. — SAGA Opportunity Engine
+# S.P.A.M. — Runna CA Opportunity Engine
 
-**Smart Prospecting & Acquisition Machine.** A single-tenant-launch, multi-tenant-capable, human-in-the-loop AI sales system for SAGA (the Canadian arm of Rünna).
+**Smart Prospecting & Acquisition Machine.** A single-tenant-launch, multi-tenant-capable, human-in-the-loop AI sales system for Runna CA (the Canadian arm of Rünna).
+
+**Domains:** `runna.agency` (primary brand) · `runnareach.com` (cold outreach, kept isolated).
 
 > Grounded pitches. Real replies. 12 years of Rünna receipts, one browser tab.
 
@@ -139,7 +141,7 @@ npm run format       # Prettier write
 
 ---
 
-## Contributing (SAGA team)
+## Contributing (Runna CA team)
 
 This is an invite-only, single-tenant product. Admin issues invitations from `/settings/users`. Every action is audit-logged.
 
@@ -147,4 +149,4 @@ This is an invite-only, single-tenant product. Admin issues invitations from `/s
 
 ## License
 
-Proprietary. © Rünna / SAGA 2026.
+Proprietary. © Rünna / Runna CA 2026.

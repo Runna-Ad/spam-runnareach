@@ -39,7 +39,8 @@ Per plan file, External Dependencies section. Minimum unlock = Supabase:
 - [ ] Supabase project (URL + anon key + service-role key + project ref + vector extension enabled)
 - [ ] Anthropic API key + $100/mo limit
 - [ ] Google Cloud (Places API + Gmail API + OAuth consent + OAuth client + restricted Places key)
-- [ ] Name sender #1 SAGA principal + buy domain + Google Workspace inbox + DNS (SPF/DKIM/DMARC) → START TODAY for warming
+- [x] Domains locked: runna.agency (primary) + runnareach.com (outreach secondary). Public name: Runna CA.
+- [ ] Name sender #1 Runna CA principal + buy both domains + add runnareach.com to Rünna Workspace + DNS (SPF/DKIM/DMARC) → START TODAY for warming (see tasks/warming-setup-guide.md)
 - [ ] Postmark or SES account
 - [ ] Cal.com account
 - [ ] Slack hot-lead webhook URL
