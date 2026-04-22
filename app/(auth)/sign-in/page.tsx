@@ -1,27 +1,43 @@
+import Image from "next/image";
 import Link from "next/link";
 import { AuthForm } from "@/components/auth/auth-form";
 import { signInAction } from "@/lib/supabase/actions";
 
 export default function SignInPage() {
   return (
-    <div className="flex min-h-screen items-center justify-center p-6">
+    <div
+      className="flex min-h-screen items-center justify-center p-6"
+      style={{
+        backgroundImage:
+          "radial-gradient(ellipse at 30% 30%, rgb(119 92 191 / 0.12) 0%, transparent 50%), radial-gradient(ellipse at 70% 70%, rgb(222 90 95 / 0.08) 0%, transparent 50%), radial-gradient(ellipse at 50% 50%, rgb(251 174 66 / 0.05) 0%, transparent 60%)",
+      }}
+    >
       <div className="w-full max-w-sm">
-        <div className="mb-6 flex items-center gap-2">
-          <div
-            aria-hidden
-            className="h-6 w-6 rounded-[var(--radius-sm)] bg-[var(--color-accent-300)]"
+        <div className="mb-6 flex flex-col items-center gap-3 text-center">
+          <Image
+            src="/logo.png"
+            alt="Runna"
+            width={56}
+            height={56}
+            className="h-14 w-14 object-contain drop-shadow-[0_0_40px_rgb(119_92_191_/_0.25)]"
+            priority
           />
-          <span className="font-mono text-sm tracking-tight text-[var(--color-fg-50)]">
-            S.P.A.M.
-          </span>
+          <div className="flex flex-col items-center">
+            <span className="font-[family-name:var(--font-display)] text-xl font-semibold tracking-tight text-[var(--color-fg-50)]">
+              Runna CA
+            </span>
+            <span className="mt-0.5 font-mono text-[10px] uppercase tracking-[0.22em] text-[var(--color-fg-500)]">
+              S.P.A.M.
+            </span>
+          </div>
         </div>
 
         <div className="rounded-[var(--radius-xl)] bg-[var(--color-bg-800)] p-6 ring-1 ring-inset ring-[var(--color-border-default)]">
-          <h1 className="mb-1 text-lg font-semibold tracking-tight text-[var(--color-fg-50)]">
+          <h1 className="mb-1 font-[family-name:var(--font-display)] text-lg font-semibold tracking-tight text-[var(--color-fg-50)]">
             Sign in
           </h1>
           <p className="mb-5 text-xs text-[var(--color-fg-500)]">
-            Runna CA operators only.
+            Runna team members only.
           </p>
 
           <AuthForm mode="sign-in" action={signInAction} />

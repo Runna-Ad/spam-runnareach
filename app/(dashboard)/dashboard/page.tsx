@@ -35,7 +35,7 @@ export default async function DashboardHome() {
         <p className="font-mono text-xs tracking-wider text-[var(--color-fg-500)]">
           TODAY · {new Date().toLocaleDateString("en-CA", { weekday: "long", month: "short", day: "numeric" })}
         </p>
-        <h1 className="mt-1 text-2xl font-semibold tracking-tight text-[var(--color-fg-50)]">
+        <h1 className="mt-1 font-[family-name:var(--font-display)] text-3xl font-semibold tracking-tight text-[var(--color-fg-50)]">
           {greeting()}, {user.fullName?.split(" ")[0] ?? "there"}.
         </h1>
         <p className="mt-1 text-sm text-[var(--color-fg-500)]">

@@ -1,50 +1,60 @@
 @import "tailwindcss";
 
 /* ============================================================
-   S.P.A.M. Design System — Dark-first, Linear/Attio-inspired
+   S.P.A.M. Design System — Dark-first, Rünna-branded
+   Palette + typography pulled from Runna_Manual_de_Marca_2026
    ============================================================ */
 
 @theme {
-  /* Surfaces — dark-only MVP */
-  --color-bg-900: #0a0a0b;           /* app background */
-  --color-bg-800: #111113;           /* elevated surface */
-  --color-bg-700: #17171a;           /* hover surface */
-  --color-bg-600: #1d1d21;           /* border tint */
+  /* Surfaces — dark-only MVP, navy-based (not pure black) */
+  --color-bg-900: #1e1c3f;           /* app background (navy-deep) */
+  --color-bg-800: #2d2b55;           /* elevated surface (navy) */
+  --color-bg-700: #3a3868;           /* hover surface */
+  --color-bg-600: #47457b;           /* border tint, raised surfaces */
 
   /* Text */
-  --color-fg-50: #fafafa;            /* primary text */
-  --color-fg-300: #c7c7cc;           /* secondary text */
-  --color-fg-500: #8e8e93;           /* tertiary text, captions */
-  --color-fg-700: #48484a;           /* quaternary, disabled */
+  --color-fg-50: #f5f3fa;            /* primary text (runna-white) */
+  --color-fg-300: #e8e4f0;           /* secondary text (runna-light) */
+  --color-fg-500: rgb(245 243 250 / 0.5);   /* tertiary text, captions */
+  --color-fg-700: rgb(245 243 250 / 0.28);  /* quaternary, disabled */
 
-  /* Hero accent — electric lime */
-  --color-accent-100: #f3fcd4;
-  --color-accent-200: #d8f7a0;
-  --color-accent-300: #bef264;       /* ⭐ primary accent */
-  --color-accent-400: #a3e635;
-  --color-accent-500: #84cc16;
+  /* Hero accent — Rünna purple */
+  --color-accent-100: #ede7fa;
+  --color-accent-200: #c7b8ea;
+  --color-accent-300: #775cbf;       /* ⭐ primary accent (runna-purple) */
+  --color-accent-400: #5a3fa0;       /* runna-purple-dark */
+  --color-accent-500: #432d7c;
 
-  /* Status — emerald, amber, red, cyan */
-  --color-success-300: #34d399;
-  --color-success-500: #10b981;
+  /* Brand secondary — coral/pink */
+  --color-brand-pink: #de5a5f;
+  --color-brand-pink-soft: rgb(222 90 95 / 0.15);
 
-  --color-warning-300: #fbbf24;
+  /* Brand tertiary — gold */
+  --color-brand-gold: #fbae42;
+  --color-brand-gold-soft: rgb(251 174 66 / 0.15);
+
+  /* Status — reuse brand palette where it maps cleanly */
+  --color-success-300: #4ade80;
+  --color-success-500: #22c55e;
+
+  --color-warning-300: #fbae42;       /* runna-gold */
   --color-warning-500: #f59e0b;
 
-  --color-danger-300: #f87171;
-  --color-danger-500: #ef4444;
+  --color-danger-300: #de5a5f;        /* runna-pink */
+  --color-danger-500: #c2464a;
 
-  --color-info-300: #67e8f9;
-  --color-info-500: #06b6d4;
+  --color-info-300: #8b5cf6;
+  --color-info-500: #7c3aed;
 
-  /* Borders — inset rings, no drop shadows */
-  --color-border-subtle: rgb(255 255 255 / 0.06);
-  --color-border-default: rgb(255 255 255 / 0.09);
-  --color-border-strong: rgb(255 255 255 / 0.14);
+  /* Borders — inset rings at low alpha of the purple, no drop shadows */
+  --color-border-subtle: rgb(119 92 191 / 0.12);
+  --color-border-default: rgb(119 92 191 / 0.22);
+  --color-border-strong: rgb(119 92 191 / 0.4);
 
-  /* Typography */
-  --font-sans: "Geist", ui-sans-serif, system-ui, -apple-system, sans-serif;
-  --font-mono: "Geist Mono", ui-monospace, "SF Mono", Menlo, monospace;
+  /* Typography — Rünna-specified */
+  --font-sans: var(--font-inter), ui-sans-serif, system-ui, -apple-system, sans-serif;
+  --font-display: var(--font-poppins), ui-sans-serif, system-ui, sans-serif;
+  --font-mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
 
   /* Motion — 150ms cubic-bezier */
   --ease-standard: cubic-bezier(0.2, 0, 0, 1);
@@ -56,14 +66,20 @@
   --radius-sm: 4px;
   --radius-md: 6px;
   --radius-lg: 8px;
-  --radius-xl: 12px;
+  --radius-xl: 14px;
 
   /* Elevation — minimal, prefer inset rings */
   --shadow-floating: 0 12px 40px rgb(0 0 0 / 0.45);
+  --shadow-purple-glow: 0 0 40px rgb(119 92 191 / 0.25);
+
+  /* Brand gradients — straight from the manual */
+  --gradient-runna-main: linear-gradient(135deg, #775cbf, #de5a5f, #fbae42);
+  --gradient-runna-purple-pink: linear-gradient(135deg, #775cbf, #de5a5f);
+  --gradient-runna-subtle: linear-gradient(135deg, rgb(119 92 191 / 0.15), rgb(222 90 95 / 0.08));
 }
 
 /* ============================================================
-   Base — force dark, reset scrollbars, focus style
+   Base
    ============================================================ */
 
 html {
@@ -75,7 +91,6 @@ body {
   background: var(--color-bg-900);
   color: var(--color-fg-50);
   font-family: var(--font-sans);
-  font-feature-settings: "ss01", "cv11";
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
 }
@@ -86,13 +101,13 @@ body {
   box-sizing: border-box;
 }
 
-/* Selection */
+/* Selection — tinted purple */
 ::selection {
   background: var(--color-accent-300);
-  color: var(--color-bg-900);
+  color: var(--color-fg-50);
 }
 
-/* Scrollbars — dark, thin */
+/* Scrollbars — dark, thin, with a subtle purple hover */
 ::-webkit-scrollbar {
   width: 10px;
   height: 10px;
@@ -112,7 +127,7 @@ body {
   border: 2px solid transparent;
 }
 
-/* Focus ring — accent outline, respect reduced motion */
+/* Focus ring — purple, respects reduced motion */
 :focus-visible {
   outline: 2px solid var(--color-accent-300);
   outline-offset: 2px;
@@ -127,4 +142,12 @@ body {
     animation-iteration-count: 1 !important;
     transition-duration: 0.01ms !important;
   }
+}
+
+/* Utility: subtle brand-gradient text for headlines */
+.text-gradient-runna {
+  background-image: var(--gradient-runna-main);
+  background-clip: text;
+  -webkit-background-clip: text;
+  color: transparent;
 }

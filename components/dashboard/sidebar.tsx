@@ -1,6 +1,7 @@
 "use client";
 
 import type { ReactNode } from "react";
+import Image from "next/image";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { Kbd } from "@/components/ui/kbd";
@@ -26,14 +27,23 @@ export function Sidebar({ footerSlot }: SidebarProps) {
       aria-label="Primary navigation"
     >
       {/* Brand */}
-      <div className="flex h-12 items-center gap-2 px-3.5">
-        <div
-          aria-hidden
-          className="h-5 w-5 rounded-[var(--radius-sm)] bg-[var(--color-accent-300)]"
+      <div className="flex h-14 items-center gap-2 px-3.5">
+        <Image
+          src="/logo.png"
+          alt="Runna"
+          width={28}
+          height={28}
+          className="h-7 w-7 object-contain"
+          priority
         />
-        <span className="font-mono text-xs tracking-tight text-[var(--color-fg-50)]">
-          S.P.A.M.
-        </span>
+        <div className="flex min-w-0 flex-col leading-tight">
+          <span className="font-[family-name:var(--font-display)] text-[13px] font-semibold tracking-tight text-[var(--color-fg-50)]">
+            Runna CA
+          </span>
+          <span className="font-mono text-[9px] uppercase tracking-[0.18em] text-[var(--color-fg-500)]">
+            S.P.A.M.
+          </span>
+        </div>
         <span className="ml-auto">
           <Kbd>⌘</Kbd>
           <Kbd className="ml-0.5">\</Kbd>

@@ -7,6 +7,22 @@ import { createServiceRoleClient } from "./service-role";
 /** Bootstrap tenant ID for single-tenant launch. Hard-coded from seed.sql. */
 const RUNNA_CA_TENANT_ID = "11111111-1111-1111-1111-111111111111";
 
+/**
+ * Email domain allowlist for auth. Accounts must belong to one of these
+ * Runna-owned domains. Extend here when new domains come online.
+ */
+const ALLOWED_EMAIL_DOMAINS = [
+  "runna.com.mx", // Rünna Mexico (parent)
+  "runna.agency", // Runna CA primary brand domain
+  "runnareach.com", // Runna CA outreach / engine-sender domain
+] as const;
+
+function isAllowedEmail(email: string): boolean {
+  const domain = email.trim().toLowerCase().split("@")[1];
+  if (!domain) return false;
+  return ALLOWED_EMAIL_DOMAINS.includes(domain as (typeof ALLOWED_EMAIL_DOMAINS)[number]);
+}
+
 export type AuthActionResult = { error: string } | { success: true } | null;
 
 /**
@@ -21,6 +37,12 @@ export async function signInAction(
 
   if (!email || !password) {
     return { error: "Email and password are required." };
+  }
+
+  if (!isAllowedEmail(email)) {
+    return {
+      error: `Access restricted to Runna emails (${ALLOWED_EMAIL_DOMAINS.join(", ")}).`,
+    };
   }
 
   const supabase = await createClient();
@@ -48,6 +70,12 @@ export async function signUpAction(
 
   if (!email || !password || !fullName) {
     return { error: "Name, email, and password are required." };
+  }
+
+  if (!isAllowedEmail(email)) {
+    return {
+      error: `Sign-up restricted to Runna emails (${ALLOWED_EMAIL_DOMAINS.join(", ")}).`,
+    };
   }
 
   if (password.length < 8) {

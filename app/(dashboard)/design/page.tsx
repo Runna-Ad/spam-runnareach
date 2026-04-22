@@ -4,17 +4,20 @@ import { Chip } from "@/components/ui/chip";
 import { Kbd } from "@/components/ui/kbd";
 
 const COLOR_TOKENS = [
-  { label: "bg-900", token: "--color-bg-900" },
-  { label: "bg-800", token: "--color-bg-800" },
-  { label: "bg-700", token: "--color-bg-700" },
-  { label: "bg-600", token: "--color-bg-600" },
-  { label: "fg-50", token: "--color-fg-50" },
-  { label: "fg-300", token: "--color-fg-300" },
-  { label: "fg-500", token: "--color-fg-500" },
-  { label: "accent-300", token: "--color-accent-300" },
+  { label: "bg-900 · navy deep", token: "--color-bg-900" },
+  { label: "bg-800 · navy", token: "--color-bg-800" },
+  { label: "bg-700 · hover", token: "--color-bg-700" },
+  { label: "bg-600 · raised", token: "--color-bg-600" },
+  { label: "fg-50 · runna white", token: "--color-fg-50" },
+  { label: "fg-300 · runna light", token: "--color-fg-300" },
+  { label: "fg-500 · muted", token: "--color-fg-500" },
+  { label: "accent-300 · runna purple", token: "--color-accent-300" },
+  { label: "accent-400 · purple dark", token: "--color-accent-400" },
+  { label: "brand-pink", token: "--color-brand-pink" },
+  { label: "brand-gold", token: "--color-brand-gold" },
   { label: "success-500", token: "--color-success-500" },
   { label: "warning-500", token: "--color-warning-500" },
-  { label: "danger-500", token: "--color-danger-500" },
+  { label: "danger-500 · pink", token: "--color-danger-500" },
   { label: "info-500", token: "--color-info-500" },
 ];
 
@@ -25,13 +28,41 @@ export default function DesignShowcase() {
         <h1 className="font-mono text-xs tracking-wider text-[var(--color-fg-500)]">
           /design
         </h1>
-        <p className="mt-1 text-2xl font-semibold tracking-tight text-[var(--color-fg-50)]">
-          Design system
+        <p className="mt-1 font-[family-name:var(--font-display)] text-3xl font-semibold tracking-tight text-gradient-runna">
+          Runna design system
         </p>
         <p className="mt-1 text-sm text-[var(--color-fg-500)]">
-          Token + component showcase. Expanded in the next build turn (Drawer, Dialog, Command, ScoreRing, etc.).
+          Tokens + components aligned to the Rünna 2026 brand manual. Poppins for display, Inter for UI, purple hero, pink + gold accents.
         </p>
       </div>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>Brand gradients</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
+            <div
+              className="flex h-16 items-end justify-start rounded-[var(--radius-md)] p-2 text-[11px] text-white/90"
+              style={{ background: "var(--gradient-runna-main)" }}
+            >
+              --gradient-runna-main
+            </div>
+            <div
+              className="flex h-16 items-end justify-start rounded-[var(--radius-md)] p-2 text-[11px] text-white/90"
+              style={{ background: "var(--gradient-runna-purple-pink)" }}
+            >
+              --gradient-runna-purple-pink
+            </div>
+            <div
+              className="flex h-16 items-end justify-start rounded-[var(--radius-md)] p-2 text-[11px] text-[var(--color-fg-300)] ring-1 ring-inset ring-[var(--color-border-default)]"
+              style={{ background: "var(--gradient-runna-subtle)" }}
+            >
+              --gradient-runna-subtle
+            </div>
+          </div>
+        </CardContent>
+      </Card>
 
       <Card>
         <CardHeader>
@@ -127,15 +158,18 @@ export default function DesignShowcase() {
           <CardTitle>Typography</CardTitle>
         </CardHeader>
         <CardContent>
-          <div className="space-y-2">
-            <p className="text-3xl font-semibold tracking-tight text-[var(--color-fg-50)]">
+          <div className="space-y-3">
+            <p className="font-[family-name:var(--font-display)] text-4xl font-bold tracking-tight text-gradient-runna">
               Grounded pitches. Real replies.
             </p>
+            <p className="font-[family-name:var(--font-display)] text-2xl font-light tracking-tight text-[var(--color-fg-50)]">
+              Poppins · display · 24 / 36 / 48
+            </p>
             <p className="text-base text-[var(--color-fg-300)]">
-              12 years of Rünna receipts, one browser tab.
+              Inter · body · 16 · 12 years of Rünna receipts, one browser tab.
             </p>
             <p className="font-mono text-xs tracking-tight text-[var(--color-fg-500)]">
-              MATCH_94 · UNLIMITED_DESIGN · SHOPIFY_CANDLE_CO
+              MONO · MATCH_94 · UNLIMITED_DESIGN · SHOPIFY_CANDLE_CO
             </p>
           </div>
         </CardContent>
