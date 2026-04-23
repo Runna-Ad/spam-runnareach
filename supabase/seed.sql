@@ -123,137 +123,272 @@ insert into pain_taxonomy (id, tenant_id, code, display_name_en, description_en,
    array['English only', 'Spanish coming soon', 'LATAM expansion', 'bilingual planned']);
 
 -- ----------------------------------------------------------------------------
--- Case studies (10 Rünna wins)
+-- Case studies (20 Rünna wins, sourced from the 2026 ESP deck)
+-- Every row has either a verified numeric result or a specific, honestly
+-- scoped deliverable from the deck. No fabricated metrics.
 -- ----------------------------------------------------------------------------
 
-insert into case_studies (id, tenant_id, brand_instance_id, client_name, industry, hero_metric_en, result_description_en, measurable_results, featured_services_id, sort_order, is_active) values
-  ('55555555-5555-5555-5555-555555555551', '11111111-1111-1111-1111-111111111111', '22222222-2222-2222-2222-222222222222',
-   'Ford', 'Automotive',
-   'Onboarding: 3 months → 1 week',
-   'Rebuilt Ford''s partner onboarding experience end-to-end. What took 3 months of back-and-forth now closes in a week. Won the Ford Global Innovation Award.',
-   '[{"metric": "3 months → 1 week", "label": "onboarding reduction"}, {"metric": "Global Innovation Award", "label": "Ford recognition"}]'::jsonb,
-   array['33333333-3333-3333-3333-333333333331', '33333333-3333-3333-3333-333333333333']::uuid[], 1, true),
+insert into case_studies (id, tenant_id, brand_instance_id, client_name, industry, hero_metric_en, result_description_en, measurable_results, featured_services_id, sort_order, is_active,
+  testimonial_quote_en, testimonial_quote_es, testimonial_author, testimonial_title) values
 
+  -- 1. Ford (training platform) — includes Melissa López testimonial
+  ('55555555-5555-5555-5555-555555555551', '11111111-1111-1111-1111-111111111111', '22222222-2222-2222-2222-222222222222',
+   'Ford', 'Automotive / enterprise training',
+   'Sales-force training: 3 months → 1 week',
+   E'Built an interactive gamified training platform that cut Ford México''s sales-force onboarding from a 3-month average to 1 week. Ford México received a national innovation award for the platform.',
+   '[{"metric": "3 months → 1 week", "label": "training cycle"}, {"metric": "Innovation Award", "label": "Ford México recognition"}]'::jsonb,
+   array['33333333-3333-3333-3333-333333333334', '33333333-3333-3333-3333-333333333333']::uuid[], 1, true,
+   E'When we need a partner with innovative ideas, we always find the best creative team at Rünna. Across all the years we''ve worked together, their professionalism, sincerity, and transformative spirit have stood out as one of our best providers.',
+   E'Cuando necesitamos un proveedor con ideas innovadoras, siempre encontramos en Rünna el mejor equipo creativo. Durante todos los años que hemos trabajado con ellos, su profesionalismo, sinceridad y espíritu transformador los ha destacado como uno de nuestros mejores proveedores.',
+   'Melissa López', 'CX & Distributor Training, Ford Motor Company México'),
+
+  -- 2. DiDi (main, LATAM) — includes Evelena Zamorano testimonial
   ('55555555-5555-5555-5555-555555555552', '11111111-1111-1111-1111-111111111111', '22222222-2222-2222-2222-222222222222',
    'DiDi', 'Mobility / ride-share',
-   '100K+ TikTok followers in 7 months',
-   'Built DiDi''s TikTok presence from zero. 100K+ followers in 7 months with a 1,400% positive sentiment lift. Asset pipeline overhauled for compressed-but-gorgeous output.',
-   '[{"metric": "100K+", "label": "TikTok followers in 7 months"}, {"metric": "+1,400%", "label": "positive sentiment"}]'::jsonb,
-   array['33333333-3333-3333-3333-333333333335']::uuid[], 2, true),
+   '5 years across 10 LATAM countries',
+   E'Ran DiDi México''s FB / IG / TikTok / X social for 5 years with an entertainment-led strategy focused on engagement, community, and leads-to-app. In the last 2 years scaled to 10 LATAM countries, doubling DiDi''s total digital community. Produced original content + trend filmings for the brand and its Key Accounts.',
+   '[{"metric": "10 LATAM countries", "label": "regional expansion"}, {"metric": "Doubled", "label": "total digital community"}, {"metric": "5 years", "label": "continuous social management"}]'::jsonb,
+   array['33333333-3333-3333-3333-333333333335']::uuid[], 2, true,
+   E'In 2020 we needed a partner to help us build a better presence in digital media. Rünna''s support gave us the chance to keep building our brand at a new level. They''re always open to finding solutions to our challenges, on time, matching the pace of our industry — an incredible team that enriches our strategy to this day.',
+   E'En 2020 necesitábamos un partner que nos ayudara a construir una mejor presencia en medios digitales. El apoyo de Rünna nos dio la oportunidad de seguir construyendo nuestra marca en un nuevo nivel. Rünna siempre está abierta a encontrar soluciones a nuestros desafíos, a tiempo y manteniendo el paso de nuestra industria; tienen un equipo increíble que enriquece nuestra estrategia hasta el día de hoy.',
+   'Evelena Zamorano', 'Sr. Brand Manager LATAM, DiDi Global Inc.'),
 
+  -- 3. Aeromexico VR
   ('55555555-5555-5555-5555-555555555553', '11111111-1111-1111-1111-111111111111', '22222222-2222-2222-2222-222222222222',
    'Aeromexico', 'Airlines',
    '35K downloads, 1M impressions',
-   'VR destination app built for Aeromexico. 35K downloads with zero paid media — purely word-of-mouth and earned reach driving 1M impressions.',
-   '[{"metric": "35K", "label": "downloads"}, {"metric": "1M", "label": "impressions"}, {"metric": "$0", "label": "paid media"}]'::jsonb,
-   array['33333333-3333-3333-3333-333333333333']::uuid[], 3, true),
+   E'360° VR destination app promoting Aeromexico''s new direct routes. Conceived as a short-term campaign; word-of-mouth alone drove 35,000+ downloads and 1M+ impressions without paid media.',
+   '[{"metric": "35,000+", "label": "downloads"}, {"metric": "1M+", "label": "impressions (organic)"}, {"metric": "$0", "label": "paid media"}]'::jsonb,
+   array['33333333-3333-3333-3333-333333333333']::uuid[], 3, true,
+   null, null, null, null),
 
+  -- 4. Bayer / Aspirina Protect (AR)
   ('55555555-5555-5555-5555-555555555554', '11111111-1111-1111-1111-111111111111', '22222222-2222-2222-2222-222222222222',
-   'Bayer / Aspirina', 'Pharmaceutical',
-   'Doctor engagement: <1 min → 5+ min',
-   'AR medical app launched at Bayer''s global convention. Doctor engagement went from under a minute to over five — a 5x increase in time-in-experience.',
-   '[{"metric": "<1 min → 5+ min", "label": "engagement duration"}, {"metric": "5x", "label": "time-in-experience lift"}]'::jsonb,
-   array['33333333-3333-3333-3333-333333333334']::uuid[], 4, true),
+   'Bayer / Aspirina Protect', 'Pharmaceutical',
+   'Doctor attention: <1 min → 5+ min',
+   E'Augmented Reality app built for Bayer to hold doctors'' attention on a box of Aspirina Protect. A 3D human body model appeared over the box and walked through the drug''s benefits. Doctors not only engaged longer, they called colleagues over. Bayer México presented the app at a global convention.',
+   '[{"metric": "<1 min → 5+ min", "label": "doctor engagement time"}, {"metric": "Global convention", "label": "Bayer international presentation"}]'::jsonb,
+   array['33333333-3333-3333-3333-333333333334']::uuid[], 4, true,
+   null, null, null, null),
 
+  -- 5. Golden Hills (rebrand)
   ('55555555-5555-5555-5555-555555555555', '11111111-1111-1111-1111-111111111111', '22222222-2222-2222-2222-222222222222',
-   'Golden Hills', 'CPG / pet food',
-   '400+ SKU packaging system',
-   'Full brand and packaging operation for Golden Hills. 400+ SKUs designed with a systemized approach — no one-off art, every package repeatable and on-brand.',
-   '[{"metric": "400+", "label": "SKUs"}, {"metric": "1", "label": "unified packaging system"}]'::jsonb,
-   array['33333333-3333-3333-3333-333333333331', '33333333-3333-3333-3333-333333333332']::uuid[], 5, true),
+   'Golden Hills', 'CPG / retail',
+   '400+ SKUs in a single packaging system',
+   E'Full rebrand + packaging operation for Golden Hills. 400+ products redesigned around a clean, minimalist system with strategic chromatics, plus internal banners, tech sheets, and product mock-ups / renders for web + print.',
+   '[{"metric": "400+", "label": "SKUs redesigned"}, {"metric": "1", "label": "unified packaging system"}]'::jsonb,
+   array['33333333-3333-3333-3333-333333333331', '33333333-3333-3333-3333-333333333332']::uuid[], 5, true,
+   null, null, null, null),
 
+  -- 6. ANA Seguros
   ('55555555-5555-5555-5555-555555555556', '11111111-1111-1111-1111-111111111111', '22222222-2222-2222-2222-222222222222',
    'ANA Seguros', 'Insurance',
    'Applications +1,000%',
-   'Recruitment campaign for ANA Seguros took the hiring cycle from 2 months to 2 weeks, with applications up 1,000%. Brand repositioning drove the entire funnel.',
-   '[{"metric": "+1,000%", "label": "applications"}, {"metric": "2 months → 2 weeks", "label": "hiring cycle"}]'::jsonb,
-   array['33333333-3333-3333-3333-333333333332', '33333333-3333-3333-3333-333333333335']::uuid[], 6, true),
+   E'Digitized and automated the agent recruitment process for ANA Seguros via a dedicated app. Recruitment applications rose more than 1,000% and the hiring cycle compressed from ~2 months to under 2 weeks.',
+   '[{"metric": "+1,000%", "label": "recruitment applications"}, {"metric": "2 months → <2 weeks", "label": "hiring cycle"}]'::jsonb,
+   array['33333333-3333-3333-3333-333333333334', '33333333-3333-3333-3333-333333333333']::uuid[], 6, true,
+   null, null, null, null),
 
+  -- 7. Pet's Club (rebrand + packaging)
   ('55555555-5555-5555-5555-555555555557', '11111111-1111-1111-1111-111111111111', '22222222-2222-2222-2222-222222222222',
-   'Pet''s Club', 'Retail / pet services',
-   'Loyalty system + brand overhaul',
-   'Rebuilt Pet''s Club as a system — brand, app, loyalty program, in-store experience. All pieces working as one.',
-   '[{"metric": "1", "label": "unified brand system"}, {"metric": "Full stack", "label": "brand to in-store"}]'::jsonb,
-   array['33333333-3333-3333-3333-333333333332', '33333333-3333-3333-3333-333333333334']::uuid[], 7, true),
+   'Pet''s Club', 'Retail / pet products',
+   '290+ packages across 3 product pillars',
+   E'Relaunched Pet''s Club''s visual identity and packaging. Segmented the line into 3 pillars (Dogs / Cats / Other pets), each with its own personality but a unified master system. Designed a premium subline for dogs and cats. 290+ unique packages and labels shipped across the catalog.',
+   '[{"metric": "290+", "label": "packages + labels designed"}, {"metric": "3 pillars", "label": "product-segment identity system"}]'::jsonb,
+   array['33333333-3333-3333-3333-333333333331', '33333333-3333-3333-3333-333333333332']::uuid[], 7, true,
+   null, null, null, null),
 
+  -- 8. SnapPad (Canadian retail packaging)
   ('55555555-5555-5555-5555-555555555558', '11111111-1111-1111-1111-111111111111', '22222222-2222-2222-2222-222222222222',
-   'RV SnapPad', 'DTC / RV accessories',
-   '+10% sales YoY, +50% email revenue',
-   'Calgary-based DTC brand. Scaled revenue +10% year-over-year and grew email-attributed revenue by 50% through a systemized content + email flow rebuild.',
-   '[{"metric": "+10%", "label": "sales YoY"}, {"metric": "+50%", "label": "email revenue"}]'::jsonb,
-   array['33333333-3333-3333-3333-333333333335', '33333333-3333-3333-3333-333333333333']::uuid[], 8, true),
+   'SnapPad', 'DTC / RV accessories',
+   'Canadian retail packaging system',
+   E'Designed the Canadian retail packaging for SnapPad''s RV-accessories line, engineered to stand out at point-of-sale with clearer information hierarchy and stronger shelf presence. A Rünna proof point of Canadian retail work, delivered from the same MX creative team.',
+   '[{"metric": "Canadian retail", "label": "shelf-ready packaging"}, {"metric": "RV-accessories line", "label": "category scope"}]'::jsonb,
+   array['33333333-3333-3333-3333-333333333331']::uuid[], 8, true,
+   null, null, null, null),
 
+  -- 9. Niki (Canadian study-abroad platform)
   ('55555555-5555-5555-5555-555555555559', '11111111-1111-1111-1111-111111111111', '22222222-2222-2222-2222-222222222222',
-   'Niki', 'Consumer tech / AI assistant',
-   'Brand + product launch',
-   'Full brand system and launch campaign for Niki, the AI assistant for Mexican Spanish speakers. Strategy, identity, product positioning, and go-to-market in one sprint.',
-   '[{"metric": "Full launch", "label": "brand + GTM"}, {"metric": "1", "label": "integrated program"}]'::jsonb,
-   array['33333333-3333-3333-3333-333333333332', '33333333-3333-3333-3333-333333333333']::uuid[], 9, true),
+   'Niki', 'Education / study-abroad platform',
+   '2,000 followers + 40K video views in 1 month',
+   E'Launched Niki''s brand and social presence from zero on a startup budget. Niki is a platform placing international students in Canadian institutions. In the first month the launch generated 2,000+ followers, 40,000+ video views, and 1,000+ unique visitors driven to the platform.',
+   '[{"metric": "2,000+", "label": "followers in month 1"}, {"metric": "40,000+", "label": "video views in month 1"}, {"metric": "1,000+", "label": "unique platform visitors"}]'::jsonb,
+   array['33333333-3333-3333-3333-333333333332', '33333333-3333-3333-3333-333333333335']::uuid[], 9, true,
+   null, null, null, null),
 
+  -- 10. DevFest Calgary 2024
   ('55555555-5555-5555-5555-55555555555a', '11111111-1111-1111-1111-111111111111', '22222222-2222-2222-2222-222222222222',
-   'DevFest YYC', 'Events / tech conference',
-   'Event brand + content system',
-   'DevFest Calgary. Built the event brand + full content system for the local Google Developers conference. Clean Calgary-based proof point for tech-audience SMBs.',
-   '[{"metric": "Calgary", "label": "local proof"}, {"metric": "Full event brand", "label": "scope"}]'::jsonb,
-   array['33333333-3333-3333-3333-333333333332', '33333333-3333-3333-3333-333333333335']::uuid[], 10, true);
+   'DevFest Calgary 2024', 'Events / tech conference',
+   'Canadian tech event ad campaign',
+   E'Meta + Instagram ad campaign for DevFest Calgary 2024, the local Google Developers conference. Promoted headline speakers, schedule, and event details; built anticipation and drove attendance within the Canadian developer community. Runna CA''s first public Canadian event-marketing work.',
+   '[{"metric": "DevFest Calgary 2024", "label": "local developer conference"}, {"metric": "Meta + Instagram", "label": "ad campaign platforms"}]'::jsonb,
+   array['33333333-3333-3333-3333-333333333335']::uuid[], 10, true,
+   null, null, null, null),
+
+  -- 11. DiDi Food
+  ('5555555b-5555-5555-5555-55555555555b', '11111111-1111-1111-1111-111111111111', '22222222-2222-2222-2222-222222222222',
+   'DiDi Food', 'Food delivery / mobility',
+   '100K TikTok followers in 7 months, +1,400% positive sentiment',
+   E'Managed DiDi Food''s social across FB / IG / TikTok / X in México + 6 LATAM countries for 4 years. An entertainment-led strategy doubled DiDi Food''s total community and lifted positive sentiment by 1,400%. Opened DiDi Food''s TikTok from scratch and reached 100,000+ followers in México in under 7 months.',
+   '[{"metric": "100,000+", "label": "TikTok followers in 7 months"}, {"metric": "+1,400%", "label": "positive sentiment"}, {"metric": "6 LATAM countries", "label": "regional reach"}, {"metric": "Doubled", "label": "community size"}]'::jsonb,
+   array['33333333-3333-3333-3333-333333333335']::uuid[], 11, true,
+   null, null, null, null),
+
+  -- 12. DiDi (TikTok paid)
+  ('5555555c-5555-5555-5555-55555555555c', '11111111-1111-1111-1111-111111111111', '22222222-2222-2222-2222-222222222222',
+   'DiDi (TikTok paid)', 'Performance marketing',
+   '120M+ impressions, 25K app downloads, $0.02 CPM',
+   E'"We don''t make ads, we make TikToks." Built DiDi''s TikTok paid-media strategy end-to-end: creative, production, and campaign management. Generated 120M+ impressions and 25,000+ app downloads at a $0.02 USD CPM using low-budget productions that read as native platform content.',
+   '[{"metric": "120M+", "label": "impressions"}, {"metric": "25,000+", "label": "app downloads"}, {"metric": "$0.02 USD", "label": "CPM"}]'::jsonb,
+   array['33333333-3333-3333-3333-333333333335']::uuid[], 12, true,
+   null, null, null, null),
+
+  -- 13. Blues Real
+  ('5555555d-5555-5555-5555-55555555555d', '11111111-1111-1111-1111-111111111111', '22222222-2222-2222-2222-222222222222',
+   'Blues Real', 'Real estate / DTC',
+   '$1,000/mo budget → 950 clicks, 40K reach',
+   E'Brand awareness + lead-gen campaign on Meta + Instagram for Blues Real, a Riviera Maya real-estate agency. Static + animated creative highlighting exclusive investment opportunities, driving qualified leads to the Blues Real website. On a $1,000 USD monthly budget we averaged 950 clicks and 40,000 accounts reached.',
+   '[{"metric": "$1,000/mo", "label": "ad budget"}, {"metric": "950 clicks/mo", "label": "site traffic"}, {"metric": "40,000 accounts/mo", "label": "reach"}]'::jsonb,
+   array['33333333-3333-3333-3333-333333333335']::uuid[], 13, true,
+   null, null, null, null),
+
+  -- 14. El Club
+  ('5555555e-5555-5555-5555-55555555555e', '11111111-1111-1111-1111-111111111111', '22222222-2222-2222-2222-222222222222',
+   'El Club', 'Fitness / wellness',
+   '2nd-location launch: 900 leads, 30 quality, 12+ enrollments',
+   E'Fitness studio in a saturated market. Built an organic posting grid and complemented it with Meta Ads. Month-over-month community growth to +3k followers. The launch campaign for the second location delivered 900+ leads, 30 quality leads, and 12+ first-day enrollments (vs 1 at the first location''s opening).',
+   '[{"metric": "900+", "label": "leads on 2nd-location launch"}, {"metric": "30", "label": "quality leads"}, {"metric": "12+ enrollments", "label": "2nd-location opening day"}, {"metric": "+3k", "label": "community growth"}]'::jsonb,
+   array['33333333-3333-3333-3333-333333333335']::uuid[], 14, true,
+   null, null, null, null),
+
+  -- 15. Lila
+  ('5555555f-5555-5555-5555-55555555555f', '11111111-1111-1111-1111-111111111111', '22222222-2222-2222-2222-222222222222',
+   'Lila', 'CPG / sustainability',
+   '1,300 leads in 3 weeks (Meta + LinkedIn Ads)',
+   E'Launched a new composting product priced above the market average. Rigorous industry research surfaced the real pain points and informed the creative for a Meta + LinkedIn Ads campaign. 1,300+ leads generated in the first 3 weeks, with sales ramping as the campaign matured.',
+   '[{"metric": "1,300+", "label": "leads in 3 weeks"}, {"metric": "Above-market pricing", "label": "premium positioning"}]'::jsonb,
+   array['33333333-3333-3333-3333-333333333335']::uuid[], 15, true,
+   null, null, null, null),
+
+  -- 16. Walt Disney Studios — includes Ana C Díaz Montes testimonial
+  ('55555560-5555-5555-5555-555555555560', '11111111-1111-1111-1111-111111111111', '22222222-2222-2222-2222-222222222222',
+   'Walt Disney Studios', 'Entertainment',
+   'Last-minute high-impact project, MX leadership',
+   E'When other agencies declined, Rünna accepted a last-minute project for Walt Disney Studios Motion Pictures México''s leadership with a clear scope and fast turnaround. Delivered a professional, interactive piece that — in the client''s words — "made us shine." Disney is a repeat testimonial client.',
+   '[{"metric": "Walt Disney Studios Motion Pictures México", "label": "enterprise client"}, {"metric": "Same-week delivery", "label": "rapid turnaround"}]'::jsonb,
+   array['33333333-3333-3333-3333-333333333333']::uuid[], 16, true,
+   E'We had a last-minute but high-impact project for The Walt Disney Company México''s leadership. Other agencies refused; Rünna responded immediately, made it very clear what they could do for us, and delivered a super-professional, interactive project that made us shine.',
+   E'Tuvimos un proyecto de último minuto pero de alto impacto para el liderazgo de The Walt Disney Company México. Otras agencias se negaron a hacerlo y Rünna respondió de manera inmediata, dejaron muy claro qué podían hacer para nosotros y entregaron un proyecto súper profesional, interactivo y que nos hizo brillar.',
+   'Ana C Díaz Montes', 'PR & Advertising, Walt Disney Studios Motion Pictures'),
+
+  -- 17. Ford Edge 360
+  ('55555561-5555-5555-5555-555555555561', '11111111-1111-1111-1111-111111111111', '22222222-2222-2222-2222-222222222222',
+   'Ford Edge 360', 'Automotive / immersive',
+   'First VR test drive ever for a Ford vehicle',
+   E'Ford Edge was delayed arriving to México and the sales force needed a way to demo the car before launch. Built the first VR test drive ever for a Ford vehicle: a 3D exterior model and a 360° interior tour, delivered in an app with Google Cardboard kits distributed in magazines. Customers took the test drive from home and Ford''s pre-launch interest climbed.',
+   '[{"metric": "First", "label": "VR test drive in Ford history"}, {"metric": "Google Cardboard", "label": "distributed in-magazine"}, {"metric": "Pre-launch demo", "label": "unblocked sales force"}]'::jsonb,
+   array['33333333-3333-3333-3333-333333333334', '33333333-3333-3333-3333-333333333333']::uuid[], 17, true,
+   null, null, null, null),
+
+  -- 18. Ford Pass Lincoln
+  ('55555562-5555-5555-5555-555555555562', '11111111-1111-1111-1111-111111111111', '22222222-2222-2222-2222-222222222222',
+   'Ford Pass Lincoln', 'Automotive / sales enablement',
+   'Sales-floor app simulation with guided tour',
+   E'Lincoln sales reps couldn''t use the Ford Pass companion app without a physical vehicle to pair. Built a full app simulation with a guided tour so reps, distributors, and floor staff could demo every feature without the car. Standard demo-gap problem, solved without changing the underlying app.',
+   '[{"metric": "App simulation", "label": "demo-gap solved"}, {"metric": "Guided tour", "label": "no-training onboarding"}]'::jsonb,
+   array['33333333-3333-3333-3333-333333333334', '33333333-3333-3333-3333-333333333333']::uuid[], 18, true,
+   null, null, null, null),
+
+  -- 19. Santander Universidades
+  ('55555563-5555-5555-5555-555555555563', '11111111-1111-1111-1111-111111111111', '22222222-2222-2222-2222-222222222222',
+   'Santander Universidades', 'Banking / education',
+   'Full student platform with geolocated coupons',
+   E'Integrated platform for Santander to reach university students: financial tips, a founder blog, interactive games, advisor contact, and a geolocated coupon book with partner brands. Generated a valuable student database for Santander and strengthened brand affinity with the next generation of clients.',
+   '[{"metric": "5 modules", "label": "tips + blog + games + advisor + coupons"}, {"metric": "Geolocated", "label": "partner-brand discount book"}]'::jsonb,
+   array['33333333-3333-3333-3333-333333333334', '33333333-3333-3333-3333-333333333333']::uuid[], 19, true,
+   null, null, null, null),
+
+  -- 20. Estadio Azteca
+  ('55555564-5555-5555-5555-555555555564', '11111111-1111-1111-1111-111111111111', '22222222-2222-2222-2222-222222222222',
+   'Estadio Azteca', 'Sports / live events',
+   'Real-time event social + brand identity reinforcement',
+   E'Ran a new social-media strategy for Estadio Azteca: real-time event coverage (photo, video, static), reinforcing brand identity and promoting new products + services. Social became a live extension of the stadium experience rather than a promotional afterthought.',
+   '[{"metric": "Real-time", "label": "event coverage"}, {"metric": "Estadio Azteca", "label": "iconic MX venue"}]'::jsonb,
+   array['33333333-3333-3333-3333-333333333335']::uuid[], 20, true,
+   null, null, null, null);
 
 -- ----------------------------------------------------------------------------
 -- Case study → pain taxonomy mapping (many-to-many)
+-- 46 mappings across 20 cases
 -- ----------------------------------------------------------------------------
 
--- Ford: slow cycles, unclear value prop
 insert into case_study_pain_tags (case_study_id, pain_id, strength) values
+  -- 1. Ford training — slow cycles, manual sales process
   ('55555555-5555-5555-5555-555555555551', '44444444-4444-4444-4444-444444444442', 1.0),
-  ('55555555-5555-5555-5555-555555555551', '44444444-4444-4444-4444-444444444446', 0.7);
-
--- DiDi: poor social engagement, no content velocity, brand inconsistency
-insert into case_study_pain_tags (case_study_id, pain_id, strength) values
+  ('55555555-5555-5555-5555-555555555551', '44444444-4444-4444-4444-44444444444b', 0.7),
+  -- 2. DiDi main — social engagement, content velocity, competitor pressure
   ('55555555-5555-5555-5555-555555555552', '44444444-4444-4444-4444-44444444444a', 1.0),
   ('55555555-5555-5555-5555-555555555552', '44444444-4444-4444-4444-444444444445', 1.0),
-  ('55555555-5555-5555-5555-555555555552', '44444444-4444-4444-4444-444444444441', 0.6);
-
--- Aeromexico: event/launch needs, competitor pressure
-insert into case_study_pain_tags (case_study_id, pain_id, strength) values
+  ('55555555-5555-5555-5555-555555555552', '44444444-4444-4444-4444-44444444444c', 0.6),
+  -- 3. Aeromexico VR — event activation, product launch support
   ('55555555-5555-5555-5555-555555555553', '44444444-4444-4444-4444-44444444444d', 1.0),
-  ('55555555-5555-5555-5555-555555555553', '44444444-4444-4444-4444-44444444444c', 0.7);
-
--- Bayer/Aspirina: event/launch needs, product launch support
-insert into case_study_pain_tags (case_study_id, pain_id, strength) values
-  ('55555555-5555-5555-5555-555555555554', '44444444-4444-4444-4444-44444444444d', 1.0),
-  ('55555555-5555-5555-5555-555555555554', '44444444-4444-4444-4444-44444444444e', 0.8);
-
--- Golden Hills: weak packaging, brand inconsistency
-insert into case_study_pain_tags (case_study_id, pain_id, strength) values
+  ('55555555-5555-5555-5555-555555555553', '44444444-4444-4444-4444-44444444444e', 0.8),
+  -- 4. Bayer Aspirina — product launch support, event activation
+  ('55555555-5555-5555-5555-555555555554', '44444444-4444-4444-4444-44444444444e', 1.0),
+  ('55555555-5555-5555-5555-555555555554', '44444444-4444-4444-4444-44444444444d', 0.8),
+  -- 5. Golden Hills — weak packaging, brand inconsistency
   ('55555555-5555-5555-5555-555555555555', '44444444-4444-4444-4444-444444444444', 1.0),
-  ('55555555-5555-5555-5555-555555555555', '44444444-4444-4444-4444-444444444441', 1.0);
-
--- ANA Seguros: manual sales process, unclear value prop, low email performance
-insert into case_study_pain_tags (case_study_id, pain_id, strength) values
-  ('55555555-5555-5555-5555-555555555556', '44444444-4444-4444-4444-44444444444b', 0.8),
-  ('55555555-5555-5555-5555-555555555556', '44444444-4444-4444-4444-444444444446', 0.9),
-  ('55555555-5555-5555-5555-555555555556', '44444444-4444-4444-4444-444444444447', 0.6);
-
--- Pet's Club: brand inconsistency, manual sales process, weak packaging
-insert into case_study_pain_tags (case_study_id, pain_id, strength) values
-  ('55555555-5555-5555-5555-555555555557', '44444444-4444-4444-4444-444444444441', 1.0),
-  ('55555555-5555-5555-5555-555555555557', '44444444-4444-4444-4444-44444444444b', 0.7);
-
--- SnapPad: low email performance, no content velocity, poor mobile conversion
-insert into case_study_pain_tags (case_study_id, pain_id, strength) values
-  ('55555555-5555-5555-5555-555555555558', '44444444-4444-4444-4444-444444444447', 1.0),
-  ('55555555-5555-5555-5555-555555555558', '44444444-4444-4444-4444-444444444445', 1.0),
-  ('55555555-5555-5555-5555-555555555558', '44444444-4444-4444-4444-444444444443', 0.7);
-
--- Niki: product launch support, unclear value prop, localization needs
-insert into case_study_pain_tags (case_study_id, pain_id, strength) values
+  ('55555555-5555-5555-5555-555555555555', '44444444-4444-4444-4444-444444444441', 1.0),
+  -- 6. ANA Seguros — manual sales, slow production cycles
+  ('55555555-5555-5555-5555-555555555556', '44444444-4444-4444-4444-44444444444b', 1.0),
+  ('55555555-5555-5555-5555-555555555556', '44444444-4444-4444-4444-444444444442', 0.9),
+  -- 7. Pet's Club — weak packaging, brand inconsistency
+  ('55555555-5555-5555-5555-555555555557', '44444444-4444-4444-4444-444444444444', 1.0),
+  ('55555555-5555-5555-5555-555555555557', '44444444-4444-4444-4444-444444444441', 0.9),
+  -- 8. SnapPad — weak packaging, competitor pressure
+  ('55555555-5555-5555-5555-555555555558', '44444444-4444-4444-4444-444444444444', 1.0),
+  ('55555555-5555-5555-5555-555555555558', '44444444-4444-4444-4444-44444444444c', 0.5),
+  -- 9. Niki — product launch, no proof, localization
   ('55555555-5555-5555-5555-555555555559', '44444444-4444-4444-4444-44444444444e', 1.0),
-  ('55555555-5555-5555-5555-555555555559', '44444444-4444-4444-4444-444444444446', 0.8),
-  ('55555555-5555-5555-5555-555555555559', '44444444-4444-4444-4444-44444444444f', 1.0);
-
--- DevFest YYC: event/launch needs, no content velocity
-insert into case_study_pain_tags (case_study_id, pain_id, strength) values
+  ('55555555-5555-5555-5555-555555555559', '44444444-4444-4444-4444-444444444449', 0.8),
+  ('55555555-5555-5555-5555-555555555559', '44444444-4444-4444-4444-44444444444f', 0.7),
+  -- 10. DevFest Calgary 2024 — event activation, no proof (for local proof angle)
   ('55555555-5555-5555-5555-55555555555a', '44444444-4444-4444-4444-44444444444d', 1.0),
-  ('55555555-5555-5555-5555-55555555555a', '44444444-4444-4444-4444-444444444445', 0.8);
+  ('55555555-5555-5555-5555-55555555555a', '44444444-4444-4444-4444-444444444449', 0.6),
+  -- 11. DiDi Food — social engagement, content velocity, competitor pressure
+  ('5555555b-5555-5555-5555-55555555555b', '44444444-4444-4444-4444-44444444444a', 1.0),
+  ('5555555b-5555-5555-5555-55555555555b', '44444444-4444-4444-4444-444444444445', 1.0),
+  ('5555555b-5555-5555-5555-55555555555b', '44444444-4444-4444-4444-44444444444c', 0.7),
+  -- 12. DiDi TikTok paid — social engagement, product launch
+  ('5555555c-5555-5555-5555-55555555555c', '44444444-4444-4444-4444-44444444444a', 0.9),
+  ('5555555c-5555-5555-5555-55555555555c', '44444444-4444-4444-4444-44444444444e', 0.7),
+  -- 13. Blues Real — manual sales process, unclear value prop
+  ('5555555d-5555-5555-5555-55555555555d', '44444444-4444-4444-4444-44444444444b', 1.0),
+  ('5555555d-5555-5555-5555-55555555555d', '44444444-4444-4444-4444-444444444446', 0.8),
+  -- 14. El Club — competitor pressure, product launch, no proof
+  ('5555555e-5555-5555-5555-55555555555e', '44444444-4444-4444-4444-44444444444c', 1.0),
+  ('5555555e-5555-5555-5555-55555555555e', '44444444-4444-4444-4444-44444444444e', 0.9),
+  ('5555555e-5555-5555-5555-55555555555e', '44444444-4444-4444-4444-444444444449', 0.6),
+  -- 15. Lila — product launch, unclear value prop, competitor pressure
+  ('5555555f-5555-5555-5555-55555555555f', '44444444-4444-4444-4444-44444444444e', 1.0),
+  ('5555555f-5555-5555-5555-55555555555f', '44444444-4444-4444-4444-444444444446', 0.9),
+  ('5555555f-5555-5555-5555-55555555555f', '44444444-4444-4444-4444-44444444444c', 0.7),
+  -- 16. Walt Disney Studios — event/launch, no proof (credibility anchor)
+  ('55555560-5555-5555-5555-555555555560', '44444444-4444-4444-4444-44444444444d', 0.9),
+  ('55555560-5555-5555-5555-555555555560', '44444444-4444-4444-4444-444444444449', 0.8),
+  -- 17. Ford Edge 360 — product launch, event activation
+  ('55555561-5555-5555-5555-555555555561', '44444444-4444-4444-4444-44444444444e', 1.0),
+  ('55555561-5555-5555-5555-555555555561', '44444444-4444-4444-4444-44444444444d', 0.8),
+  -- 18. Ford Pass Lincoln — manual sales, slow production cycles
+  ('55555562-5555-5555-5555-555555555562', '44444444-4444-4444-4444-44444444444b', 1.0),
+  ('55555562-5555-5555-5555-555555555562', '44444444-4444-4444-4444-444444444442', 0.6),
+  -- 19. Santander Universidades — no content velocity, unclear value prop, outdated website
+  ('55555563-5555-5555-5555-555555555563', '44444444-4444-4444-4444-444444444445', 0.9),
+  ('55555563-5555-5555-5555-555555555563', '44444444-4444-4444-4444-444444444446', 0.8),
+  ('55555563-5555-5555-5555-555555555563', '44444444-4444-4444-4444-444444444448', 0.7),
+  -- 20. Estadio Azteca — no content velocity, event activation
+  ('55555564-5555-5555-5555-555555555564', '44444444-4444-4444-4444-444444444445', 1.0),
+  ('55555564-5555-5555-5555-555555555564', '44444444-4444-4444-4444-44444444444d', 0.9);
 
 -- ----------------------------------------------------------------------------
 -- ICPs (2 Alberta initial)

@@ -4,6 +4,26 @@ Discoveries, patterns, libraries, and techniques learned during build. Newest at
 
 ---
 
+## [2026-04-23] DISCOVERY: `pdftotext -layout` is the reliable path for Keynote-exported PDFs >100MB
+
+**What:** Claude Code's built-in `Read` tool refuses PDFs over 100MB for text extraction (hard limit). Pedro's `MASTER- Runna Pres '26-ESP.pdf` is 211MB (60-page Keynote export, image-heavy). Poppler's `pdftotext -layout` extracts full readable text in under a second.
+
+**Use when:** Any Keynote, Figma, or design-tool PDF export exceeds the Read tool's PDF limit.
+
+**How:**
+```bash
+# Install once (macOS):  brew install poppler
+pdftotext -layout "/path/to/deck.pdf" /tmp/deck.txt
+# Then read /tmp/deck.txt in chunks via sed -n 'A,Bp' or Read with offset/limit.
+```
+The `-layout` flag preserves visual column order, which matters for slide decks where titles, metrics, and body copy are in different columns.
+
+**Also useful:** `pdfinfo file.pdf` for page count + metadata; `pdftoppm` for page-as-image extraction when text-only isn't enough (e.g. logo extraction from a brand manual).
+
+**Source:** S.P.A.M. Phase 0 case-study refresh (pulled the Rünna 2026 deck).
+
+---
+
 ## [2026-04-22] DISCOVERY: Next.js 16 async cookies/headers/params breaking changes
 
 **What:** Next 16.2 (current at time of build) made `cookies()`, `headers()`, and `params` async across the App Router. Middleware was renamed to proxy. `next lint` removed.

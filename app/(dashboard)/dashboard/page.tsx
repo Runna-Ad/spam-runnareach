@@ -89,9 +89,9 @@ export default async function DashboardHome() {
             />
             <ActionRow
               status="pending"
-              title="Curate 10 seeded case studies"
+              title="Curate 20 seeded case studies"
               meta="/case-studies"
-              detail="Review hero metrics + pain taxonomy tags before Phase 3."
+              detail="Review hero metrics + pain taxonomy tags before Phase 3. Three fabricated cases were corrected; 10 new cases added from the 2026 ESP deck."
             />
             <ActionRow
               status="blocked"
