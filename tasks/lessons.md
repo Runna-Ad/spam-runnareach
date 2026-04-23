@@ -4,6 +4,24 @@ Running log of mistakes, root causes, and rules to prevent recurrence. Newest at
 
 ---
 
+## [2026-04-23] PEDRO_OVERRIDE: Pedro's full name is Pedro De Velasco, not Pedro Torres
+
+**What Claude got wrong:** Every commit, every hardcoded string, every README reference used "Pedro Torres." Source is unclear — possibly I fabricated "Torres" from the very first session and it stuck because nothing ever corrected it, or picked it up from a stale handoff.
+
+**Pedro's correction:** "my names is not Pedro Torres is Pedro De Velasco"
+
+**RULE:** The user's full name is **Pedro De Velasco**. Use this in:
+- All git commits (`--author` / `user.name`)
+- Any hardcoded defaults in scripts or seed data
+- README / docs
+- User-facing copy where a real name is needed
+
+**How to apply:** When setting git config or signing commits, use `Pedro De Velasco`. Never invent or assume a last name — if I don't know it from an authoritative source (the user typing it, their email signature, a verified memory), I ask or use "Pedro" alone.
+
+**TAGS:** #override #naming #facts-not-assumptions
+
+---
+
 ## [2026-04-22] PEDRO_OVERRIDE: Stop asking me to run things you can run yourself
 
 **What Claude originally did:** Wrote code, committed it, then told Pedro: "run `npm install`, run `npm run dev`, visit /sign-up, test the flow, paste errors back." Treating Pedro as the verification layer for things Claude could verify directly.

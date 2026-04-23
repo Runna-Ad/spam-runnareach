@@ -18,7 +18,7 @@ const RUNNA_CA_TENANT_ID = "11111111-1111-1111-1111-111111111111";
 
 const TEST_EMAIL = process.env.TEST_EMAIL;
 const TEST_PASSWORD = process.env.TEST_PASSWORD;
-const TEST_NAME = process.env.TEST_NAME ?? "Pedro Torres";
+const TEST_NAME = process.env.TEST_NAME ?? "Pedro De Velasco";
 
 if (!url || !serviceKey || !TEST_EMAIL || !TEST_PASSWORD) {
   console.error(

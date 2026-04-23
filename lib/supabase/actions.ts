@@ -17,8 +17,18 @@ const ALLOWED_EMAIL_DOMAINS = [
   "runnareach.com", // Runna CA outreach / engine-sender domain
 ] as const;
 
+/**
+ * Individual email addresses allowed as a one-off exception to the domain
+ * list. Use sparingly — real teammates should get runna.com.mx / runna.agency
+ * mailboxes via Google Workspace. This is Pedro's personal email so he can
+ * exercise the app while the Workspace domains are still being set up.
+ */
+const ALLOWED_EMAIL_EXCEPTIONS = new Set<string>(["petedv31@gmail.com"]);
+
 function isAllowedEmail(email: string): boolean {
-  const domain = email.trim().toLowerCase().split("@")[1];
+  const normalized = email.trim().toLowerCase();
+  if (ALLOWED_EMAIL_EXCEPTIONS.has(normalized)) return true;
+  const domain = normalized.split("@")[1];
   if (!domain) return false;
   return ALLOWED_EMAIL_DOMAINS.includes(domain as (typeof ALLOWED_EMAIL_DOMAINS)[number]);
 }
@@ -82,23 +92,27 @@ export async function signUpAction(
     return { error: "Password must be at least 8 characters." };
   }
 
-  const supabase = await createClient();
-  const { data, error } = await supabase.auth.signUp({
+  // Create the auth user via service role with email auto-confirmed. This
+  // bypasses Supabase's default "confirm email" link flow — appropriate
+  // for this invite-only internal tool where the domain allowlist + admin
+  // approval already gate access. Re-enable the confirmation flow in
+  // Phase 6 if we ever open sign-up to a broader audience.
+  const admin = createServiceRoleClient();
+
+  const { data: created, error: createError } = await admin.auth.admin.createUser({
     email,
     password,
-    options: { data: { full_name: fullName } },
+    email_confirm: true,
+    user_metadata: { full_name: fullName },
   });
 
-  if (error) {
-    return { error: error.message };
+  if (createError) {
+    return { error: createError.message };
   }
 
-  if (!data.user) {
+  if (!created.user) {
     return { error: "Sign up did not return a user." };
   }
-
-  // Provision the public.users row via the service role (bypasses RLS).
-  const admin = createServiceRoleClient();
 
   const { count: existingUserCount, error: countError } = await admin
     .from("users")
@@ -112,7 +126,7 @@ export async function signUpAction(
   const role = (existingUserCount ?? 0) === 0 ? "admin" : "reviewer";
 
   const { error: insertError } = await admin.from("users").insert({
-    id: data.user.id,
+    id: created.user.id,
     tenant_id: RUNNA_CA_TENANT_ID,
     email,
     full_name: fullName,
@@ -121,6 +135,15 @@ export async function signUpAction(
 
   if (insertError) {
     return { error: `Could not create user profile: ${insertError.message}` };
+  }
+
+  // Sign the new user in so the browser gets a session cookie before
+  // middleware runs on the post-redirect /dashboard request.
+  const supabase = await createClient();
+  const { error: signInError } = await supabase.auth.signInWithPassword({ email, password });
+
+  if (signInError) {
+    return { error: `Account created but sign-in failed: ${signInError.message}` };
   }
 
   redirect("/dashboard");
