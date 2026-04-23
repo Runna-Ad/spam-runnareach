@@ -1,12 +1,29 @@
-import { PhasePlaceholder } from "@/components/dashboard/phase-placeholder";
+import { CaseStudyGrid } from "@/components/case-studies/case-study-grid";
+import { requireUser } from "@/lib/auth";
+import {
+  listCaseStudies,
+  listPainTaxonomy,
+  listServices,
+} from "@/lib/case-studies/queries";
 
-export default function CaseStudiesPage() {
+export const dynamic = "force-dynamic";
+
+export default async function CaseStudiesPage() {
+  const user = await requireUser();
+
+  const [caseStudies, painTaxonomy, services] = await Promise.all([
+    listCaseStudies(user.tenantId),
+    listPainTaxonomy(user.tenantId),
+    listServices(user.tenantId),
+  ]);
+
   return (
-    <PhasePlaceholder
-      route="/case-studies"
-      phase={0}
-      title="Case studies"
-      description="CRUD + pain-taxonomy tagging. Bilingual completeness chips (EN / ES). Logo, hero metric, testimonial quote, measurable results. Goes live once Supabase is wired."
-    />
+    <div className="flex h-full flex-col">
+      <CaseStudyGrid
+        caseStudies={caseStudies}
+        painTaxonomy={painTaxonomy}
+        services={services}
+      />
+    </div>
   );
 }

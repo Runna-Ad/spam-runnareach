@@ -4,6 +4,59 @@ Running log of mistakes, root causes, and rules to prevent recurrence. Newest at
 
 ---
 
+## [2026-04-23] LESSON: supabase-js 2.47 types `.update()` / `.insert()` payload as `never` when Database type is hand-written
+
+**What went wrong:** Wrote clean server actions for `case_studies` update + `case_study_pain_tags` insert. `npm run typecheck` failed with:
+```
+Argument of type '{ client_name: string; ... }' is not assignable to parameter of type 'never'.
+```
+Both calls ended up with `Row = never` in the `update<Row extends Relation['Update']>` generic even though `Relation['Update']` was a valid `Partial<Row>` type.
+
+**Root cause:** `@supabase/supabase-js@^2.47.0` tightened the way `Schema` gets resolved from `Database`:
+```ts
+Schema extends (Omit<Database, '__InternalSupabase'>[SchemaName] extends GenericSchema
+  ? Omit<Database, '__InternalSupabase'>[SchemaName]
+  : never)
+```
+Our hand-written `lib/supabase/types.ts` satisfies `GenericSchema` structurally for `.select()` and `.insert()` on tables it fully describes (users), but when a table uses `Update: Partial<Row>` with a `Row` containing `unknown`-typed columns (case_studies.measurable_results) the inference falls through to `never`. Further, tables the local `Database` type doesn't declare at all (case_study_pain_tags before I added it) fall through the `Views: Record<string, never>` overload and resolve to `never` too. Reading operations worked because SELECT doesn't depend on the Relation['Update'] path.
+
+Spent ~45 min trying to make the Database type satisfy GenericSchema — adding `__InternalSupabase`, rewriting `Insert`/`Update` as explicit non-Partial objects, changing `Views` to `Record<never, never>`. None of it cleared the error. The fix is known: generate types with `supabase gen types typescript`. We haven't run that yet because Phase 0 types.ts is hand-written and `types.ts` even says so.
+
+**RULE (until generated types land):**
+1. For any `.update()` / `.insert()` call that TS narrows to `never` with this pattern, cast the payload with `as never` at the call site, and keep a locally-typed variable above it so structural type safety isn't lost. Pattern:
+   ```ts
+   const payload = { ...fields... } satisfies SomeType;
+   await supabase.from("case_studies").update(payload as never).eq(...)
+   ```
+2. Always add new tables to `lib/supabase/types.ts` the moment you query them — don't rely on "any string key" fallback through Views. A missing table type makes every `.from("unknown_table")` return `never` at runtime-silent typecheck cost.
+3. When the Anthropic/Google creds land and we're about to use tables beyond case_studies/pain_tags, run `supabase gen types typescript --project-id ybbrpqzbedaxsmotgtkh > lib/supabase/types.ts` to replace the hand-written stub. That removes every `as never` cast in one stroke.
+
+**How to apply:** If a supabase mutation typecheck fails with "not assignable to parameter of type 'never'", do NOT spend time restructuring the Database type. Cast with `as never`, leave a short comment naming this lesson, add a TODO referencing the generated-types migration, and move on. Document the table you touched in the TODO so the migration knows what to cover.
+
+**TAGS:** #bug #supabase #typescript #lesson #typing-quirks
+
+---
+
+## [2026-04-23] LESSON: Next.js dev server in a git worktree needs its own `.env.local`
+
+**What went wrong:** Started `npm run dev` inside `/Users/work/Projects/S.P.A.M/.claude/worktrees/pensive-wilson-3cc368` to smoke-test /case-studies. Server started but every request 500'd with "Your project's URL and Key are required to create a Supabase client!". Only the parent `/Users/work/Projects/S.P.A.M/` has `.env.local`.
+
+**Root cause:** `next dev` reads `.env.local` from the current working directory, not from anywhere upward. Git worktrees are sibling directories — they don't inherit env from the main checkout. The `.env.local.example` was committed but the real `.env.local` is gitignored (correctly), so a fresh worktree starts dry.
+
+**RULE:** When working in a worktree, copy the parent's `.env.local` into the worktree root before running dev/tests. One-liner:
+```
+cp ../../../.env.local .env.local
+```
+(Path depends on worktree depth — ours is `.claude/worktrees/<name>/`.)
+
+Alternative: a `scripts/bootstrap-worktree.sh` that does this + any other worktree-local prep. Skipped for now — low friction to copy manually.
+
+**How to apply:** First action in any worktree session that needs to run the app (not just typecheck / lint): `ls .env.local` — if missing, copy it from the main checkout. Typecheck and lint don't need env, so they work immediately.
+
+**TAGS:** #lesson #dev-workflow #worktrees #env
+
+---
+
 ## [2026-04-23] LESSON: Never fabricate metrics in seed data
 
 **What went wrong:** Three of the ten case studies I seeded in the original `seed.sql` contained details I invented when I didn't have the real Rünna portfolio.

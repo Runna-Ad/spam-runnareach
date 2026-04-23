@@ -106,6 +106,57 @@ export type Database = {
         Update: Partial<Database["public"]["Tables"]["case_studies"]["Row"]>;
         Relationships: NoRels;
       };
+      pain_taxonomy: {
+        Row: {
+          id: UUID;
+          tenant_id: UUID;
+          code: string;
+          display_name_en: string;
+          display_name_es: string | null;
+          description_en: string | null;
+          evidence_phrases_en: string[];
+          evidence_phrases_es: string[];
+          is_active: boolean;
+          created_at: Timestamptz;
+          updated_at: Timestamptz;
+        };
+        Insert: {
+          id?: UUID;
+          tenant_id: UUID;
+          code: string;
+          display_name_en: string;
+          display_name_es?: string | null;
+          description_en?: string | null;
+          evidence_phrases_en?: string[];
+          evidence_phrases_es?: string[];
+          is_active?: boolean;
+        };
+        Update: {
+          display_name_en?: string;
+          display_name_es?: string | null;
+          description_en?: string | null;
+          evidence_phrases_en?: string[];
+          evidence_phrases_es?: string[];
+          is_active?: boolean;
+        };
+        Relationships: NoRels;
+      };
+      case_study_pain_tags: {
+        Row: {
+          case_study_id: UUID;
+          pain_id: UUID;
+          strength: number;
+        };
+        Insert: {
+          case_study_id: UUID;
+          pain_id: UUID;
+          strength?: number;
+        };
+        Update: {
+          strength?: number;
+        };
+        Relationships: NoRels;
+      };
       services: {
         Row: {
           id: UUID;

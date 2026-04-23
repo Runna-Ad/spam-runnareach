@@ -151,3 +151,37 @@ body {
   -webkit-background-clip: text;
   color: transparent;
 }
+
+/* ============================================================
+   Drawer (Radix Dialog) — right-side slide
+   ============================================================ */
+
+@keyframes runna-slide-in-right {
+  from { transform: translateX(100%); }
+  to   { transform: translateX(0); }
+}
+@keyframes runna-slide-out-right {
+  from { transform: translateX(0); }
+  to   { transform: translateX(100%); }
+}
+@keyframes runna-fade-in {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+@keyframes runna-fade-out {
+  from { opacity: 1; }
+  to   { opacity: 0; }
+}
+
+.runna-drawer-content[data-state="open"] {
+  animation: runna-slide-in-right var(--duration-standard) var(--ease-standard);
+}
+.runna-drawer-content[data-state="closed"] {
+  animation: runna-slide-out-right var(--duration-standard) var(--ease-standard);
+}
+.runna-drawer-overlay[data-state="open"] {
+  animation: runna-fade-in var(--duration-standard) ease-out;
+}
+.runna-drawer-overlay[data-state="closed"] {
+  animation: runna-fade-out var(--duration-standard) ease-out;
+}
