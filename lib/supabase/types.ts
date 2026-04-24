@@ -183,6 +183,113 @@ export type Database = {
         Update: Partial<Database["public"]["Tables"]["services"]["Row"]>;
         Relationships: NoRels;
       };
+      invitations: {
+        Row: {
+          id: UUID;
+          tenant_id: UUID;
+          email: string;
+          role: UserRole;
+          token: string;
+          invited_by: UUID;
+          expires_at: Timestamptz;
+          accepted_at: Timestamptz | null;
+          created_at: Timestamptz;
+        };
+        Insert: {
+          id?: UUID;
+          tenant_id: UUID;
+          email: string;
+          role?: UserRole;
+          token: string;
+          invited_by: UUID;
+          expires_at?: Timestamptz;
+        };
+        Update: {
+          role?: UserRole;
+          accepted_at?: Timestamptz | null;
+          expires_at?: Timestamptz;
+        };
+        Relationships: NoRels;
+      };
+      sender_inboxes: {
+        Row: {
+          id: UUID;
+          tenant_id: UUID;
+          brand_instance_id: UUID;
+          user_id: UUID | null;
+          email: string;
+          display_name: string;
+          linkedin_url: string | null;
+          warming_stage: string;
+          daily_cap: number;
+          sends_today: number;
+          last_send_at: Timestamptz | null;
+          last_reset_date: string;
+          bounce_rate_7d: number;
+          spam_rate_7d: number;
+          paused: boolean;
+          paused_reason: string | null;
+          gmail_access_token_encrypted: string | null;
+          gmail_refresh_token_encrypted: string | null;
+          gmail_token_expires_at: Timestamptz | null;
+          created_at: Timestamptz;
+          updated_at: Timestamptz;
+        };
+        Insert: {
+          id?: UUID;
+          tenant_id: UUID;
+          brand_instance_id: UUID;
+          user_id?: UUID | null;
+          email: string;
+          display_name: string;
+          linkedin_url?: string | null;
+          warming_stage?: string;
+          daily_cap?: number;
+          paused?: boolean;
+        };
+        Update: {
+          display_name?: string;
+          linkedin_url?: string | null;
+          daily_cap?: number;
+          paused?: boolean;
+          paused_reason?: string | null;
+          user_id?: UUID | null;
+          updated_at?: Timestamptz;
+        };
+        Relationships: NoRels;
+      };
+      brand_instances: {
+        Row: {
+          id: UUID;
+          tenant_id: UUID;
+          code: "RUNNA_CA" | "RUNNA";
+          display_name: string;
+          website_url: string | null;
+          primary_market: "CA" | "MX" | "US" | "LATAM";
+          languages: ("en" | "es")[];
+          signature_html: string | null;
+          logo_url: string | null;
+          created_at: Timestamptz;
+          updated_at: Timestamptz;
+        };
+        Insert: {
+          id?: UUID;
+          tenant_id: UUID;
+          code: "RUNNA_CA" | "RUNNA";
+          display_name: string;
+          website_url?: string | null;
+          primary_market: "CA" | "MX" | "US" | "LATAM";
+          languages?: ("en" | "es")[];
+        };
+        Update: {
+          display_name?: string;
+          website_url?: string | null;
+          signature_html?: string | null;
+          logo_url?: string | null;
+          updated_at?: Timestamptz;
+        };
+        Relationships: NoRels;
+      };
       icps: {
         Row: {
           id: UUID;

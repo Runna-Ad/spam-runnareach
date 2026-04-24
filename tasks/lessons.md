@@ -4,6 +4,24 @@ Running log of mistakes, root causes, and rules to prevent recurrence. Newest at
 
 ---
 
+## [2026-04-24] LESSON: Don't pass Lucide icon components across the Server→Client component boundary
+
+**What went wrong:** `/settings/layout.tsx` (server component) passed a TABS array with `icon: User` / `icon: Send` / `icon: Users` — the LucideIcon function references — down to `<SettingsTabs tabs={TABS} />` (client component). React 19 threw "Functions cannot be passed directly to Client Components", returning 500s on every /settings subroute. Sign-in kept re-rendering because the unsigned-in fallback was the only code path that didn't try to hydrate the crashing layout.
+
+**Root cause:** Lucide icons are forward-ref React components — i.e. functions with `$$typeof: Symbol(react.forward_ref)`. React 19 + RSC serialization only passes plain JSON-compatible props across the boundary; functions get rejected unless annotated with `"use server"`.
+
+**RULE:** When a client component needs React components as props, either:
+1. Inline the list inside the client component (the fix here — moved TABS into `SettingsTabs`), or
+2. Pass a string/enum id and resolve to a component inside the client component's own registry.
+
+Do NOT pass React element types (including lucide-react icons) across the RSC boundary.
+
+**How to apply:** Before writing a server component that forwards `children` / a config array to a client component, check every prop field — if any value is a function reference, either move the whole structure inside the client component or map by string id. The 500 error message is clear ("Only plain objects can be passed to Client Components"), but the symptom was a downstream redirect to /sign-in which obscured the root cause — always check dev logs first, not just screenshots.
+
+**TAGS:** #bug #react-19 #rsc #server-components #lesson
+
+---
+
 ## [2026-04-23] LESSON: supabase-js 2.47 types `.update()` / `.insert()` payload as `never` when Database type is hand-written
 
 **What went wrong:** Wrote clean server actions for `case_studies` update + `case_study_pain_tags` insert. `npm run typecheck` failed with:

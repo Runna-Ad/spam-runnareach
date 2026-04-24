@@ -134,10 +134,63 @@ Build grid + drawer for managing Ideal Customer Profiles. 2 Alberta ICPs seeded.
 
 ---
 
+## Active slice — /settings (Profile, Sending, Users + invite accept)
+
+Three Phase-0 settings pages under a shared sub-nav, plus a public invite
+accept route. Scope approved 2026-04-24.
+
+### Scope
+- `/settings/layout.tsx` — sub-nav tabs: Profile · Sending · Users
+- `/settings/profile` — edit full_name, timezone (common-list Select + "Other…"), avatar_url
+- `/settings/sending` — list sender_inboxes, +Add drawer (email/display_name/linkedin/daily_cap/paused), Gmail OAuth connect button **stubbed** until Google creds land
+- `/settings/users` — members list + pending invitations + invite form + role change + remove (hard delete w/ confirm dialog). Email delivery **not wired** — Pedro copies the invite link manually
+- Public `/invite/[token]/page.tsx` accept flow
+- New `<ConfirmDialog>` primitive for destructive actions
+- Self-protection: current admin can't demote themselves (prevents zero-admin lockout)
+
+### Tasks
+- [x] Update tasks/todo.md
+- [x] Build /settings/layout.tsx with sub-nav
+- [x] Build ConfirmDialog primitive
+- [x] Build /settings/profile (full_name, timezone with common-list Select + Other, avatar_url)
+- [x] Build /settings/sending (list + drawer + Gmail OAuth stub)
+- [x] Build /settings/users (members + invitations + invite form + role change + remove w/ confirm)
+- [x] Build public /invite/[token] accept-invite route (new account + signed-in paths)
+- [x] Server actions for all pages + types extension (invitations, sender_inboxes, brand_instances)
+- [x] Typecheck + lint + Playwright smoke across all 3 pages + invite accept form
+- [x] Log review + commit
+
+### Verification (done)
+- /settings sub-nav active-tab state works ✓
+- Profile renders with avatar fallback, role/tenant chips, editable fields ✓
+- Sending shows empty state + "+ New sender inbox" + disabled "Connect Gmail" ✓
+- Users: 2 members, invite form works, copy-link banner appears after invite ✓
+- /invite/[token] renders full accept-invite form (email locked, name + password) ✓
+- Typecheck + lint clean; Lucide-icon RSC crash caught + logged as a lesson ✓
+
+### Slice Review
+
+**What worked:**
+- ConfirmDialog primitive is tight (80 LOC) and already reused from two delete paths (sender inbox + member remove).
+- Splitting invite accept into "new user" (password form) vs "current user" (single button) keeps each branch simple.
+- `listPendingInvitations` filters accepted + expired at query time so the UI never has to worry about stale rows.
+- Last-admin protection lives in the server action (not the UI) so it's uncheatable.
+
+**What didn't:**
+- Lost ~10 min on the Lucide-icon RSC crash — the dev-log "Functions cannot be passed to Client Components" error made it obvious, but the visible symptom was a redirect to sign-in and I screenshot-debugged first. Log dev output before screenshots next time.
+
+**What I'd do differently:**
+- Start with the client-component RSC boundary check as an explicit step before writing any layout.tsx that forwards non-primitive props.
+
+**Tech debt introduced:**
+- Invite email is not actually sent — Pedro copies the link manually. Ticket: wire Postmark (or SES) transactional send when the account lands, plus accept-notification to the inviter.
+- `removeMember` leaves a one-line window where the profile is deleted but the auth user might linger if `admin.auth.admin.deleteUser` fails. Logged error surfaces to the admin; a nightly cleanup job would close the gap properly.
+
+---
+
 ## Next slices (unchanged)
 
-1. /settings/profile, /settings/sending, /settings/users — the three settings pages Phase 0 needs
-2. ⌘K Command Palette — fuzzy search across nav + case studies + ICPs once they're live
+1. ⌘K Command Palette — fuzzy search across nav + case studies + ICPs once they're live
 
 ### Credentials still blocked (waiting on Pedro)
 - [ ] Supabase: ANON + SERVICE_ROLE keys live (connection works — Phase 0 unblocked)

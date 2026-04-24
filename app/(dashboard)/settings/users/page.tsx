@@ -1,12 +1,30 @@
-import { PhasePlaceholder } from "@/components/dashboard/phase-placeholder";
+import { headers } from "next/headers";
+import { UsersPage } from "@/components/settings/users-page";
+import { requireUser } from "@/lib/auth";
+import { listMembers, listPendingInvitations } from "@/lib/settings/users-queries";
 
-export default function SettingsUsersPage() {
+export const dynamic = "force-dynamic";
+
+export default async function SettingsUsersPage() {
+  const user = await requireUser();
+
+  const [members, invitations, h] = await Promise.all([
+    listMembers(user.tenantId),
+    listPendingInvitations(user.tenantId),
+    headers(),
+  ]);
+
+  const host = h.get("x-forwarded-host") ?? h.get("host") ?? "localhost:3000";
+  const proto = h.get("x-forwarded-proto") ?? "http";
+  const baseUrl = `${proto}://${host}`;
+
   return (
-    <PhasePlaceholder
-      route="/settings/users"
-      phase={0}
-      title="Users"
-      description="Invite and manage Runna CA team access. Roles: Admin / Reviewer / Viewer. Per-user sending inbox binding. Audit log."
+    <UsersPage
+      currentUserId={user.id}
+      currentUserRole={user.role}
+      members={members}
+      invitations={invitations}
+      baseUrl={baseUrl}
     />
   );
 }

@@ -1,12 +1,15 @@
-import { PhasePlaceholder } from "@/components/dashboard/phase-placeholder";
+import { SendingList } from "@/components/settings/sending-list";
+import { requireUser } from "@/lib/auth";
+import { listBrands, listSenderInboxes } from "@/lib/settings/sending-queries";
 
-export default function SettingsSendingPage() {
-  return (
-    <PhasePlaceholder
-      route="/settings/sending"
-      phase={4}
-      title="Sending"
-      description="Per-user sending inbox, warming stage, current daily cap, bounce rate, compliance footer preview per market."
-    />
-  );
+export const dynamic = "force-dynamic";
+
+export default async function SettingsSendingPage() {
+  const user = await requireUser();
+  const [inboxes, brands] = await Promise.all([
+    listSenderInboxes(user.tenantId),
+    listBrands(user.tenantId),
+  ]);
+
+  return <SendingList inboxes={inboxes} brands={brands} canManage={user.role === "admin"} />;
 }

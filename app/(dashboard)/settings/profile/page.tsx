@@ -1,12 +1,30 @@
-import { PhasePlaceholder } from "@/components/dashboard/phase-placeholder";
+import { ProfileForm } from "@/components/settings/profile-form";
+import { requireUser } from "@/lib/auth";
+import { createClient } from "@/lib/supabase/server";
 
-export default function SettingsProfilePage() {
+export const dynamic = "force-dynamic";
+
+export default async function SettingsProfilePage() {
+  const user = await requireUser();
+  const supabase = await createClient();
+
+  const { data: profileRow } = await supabase
+    .from("users")
+    .select("timezone")
+    .eq("id", user.id)
+    .single<{ timezone: string }>();
+
   return (
-    <PhasePlaceholder
-      route="/settings/profile"
-      phase={0}
-      title="Profile"
-      description="Per-user: name, avatar, signature, timezone. Role badge (Admin / Reviewer / Viewer)."
+    <ProfileForm
+      user={{
+        id: user.id,
+        email: user.email,
+        role: user.role,
+        fullName: user.fullName,
+        avatarUrl: user.avatarUrl,
+        tenantDisplayName: user.tenantDisplayName,
+        timezone: profileRow?.timezone ?? "America/Edmonton",
+      }}
     />
   );
 }
