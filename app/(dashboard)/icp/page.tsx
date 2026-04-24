@@ -1,12 +1,16 @@
-import { PhasePlaceholder } from "@/components/dashboard/phase-placeholder";
+import { IcpGrid } from "@/components/icp/icp-grid";
+import { requireUser } from "@/lib/auth";
+import { listIcps } from "@/lib/icp/queries";
 
-export default function IcpPage() {
+export const dynamic = "force-dynamic";
+
+export default async function IcpPage() {
+  const user = await requireUser();
+  const icps = await listIcps(user.tenantId);
+
   return (
-    <PhasePlaceholder
-      route="/icp"
-      phase={0}
-      title="Ideal customer profiles"
-      description="Market-aware form (CA / MX / US / LATAM). Industry, geo, size, business type, language. Places reachable-pool preview before committing an ICP."
-    />
+    <div className="flex h-full flex-col">
+      <IcpGrid icps={icps} />
+    </div>
   );
 }

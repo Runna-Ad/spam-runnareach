@@ -81,11 +81,63 @@ Build grid of all 20 seeded cases with click-to-edit drawer, using data already 
 
 ---
 
-## Next slices (handoff list, unchanged)
+## Active slice — /icp CRUD
 
-1. /icp CRUD — edit the 2 Alberta ICPs, add new ones, preview reachable-pool size via Places (after Google Cloud creds)
-2. /settings/profile, /settings/sending, /settings/users — the three settings pages Phase 0 needs
-3. ⌘K Command Palette — fuzzy search across nav + case studies + ICPs once they're live
+Build grid + drawer for managing Ideal Customer Profiles. 2 Alberta ICPs seeded. Unlike case studies, ICPs grow over time → full CRUD (create + update + soft-delete).
+
+### Scope (agreed with Pedro, 2026-04-24)
+- Grid of all ICPs with active-filter toggle (show inactive off by default)
+- Click card → edit in drawer (same pattern as case-studies)
+- "+ New ICP" button → drawer in create mode
+- Soft delete only (`is_active = false`) — past pitches/opportunities may reference an inactive ICP
+- Reusable `<TagInput>` primitive for 6 array fields (industry_tags, geo_regions, business_types, google_places_types, search_keywords, excluded_keywords)
+- Places reachable-pool preview stubbed in this slice → shows "Google Places API key required" state until Google Cloud creds land
+
+### Tasks
+- [x] Add types for icps to lib/supabase/types.ts (existing Partial<Row> was fine for reads; writes use `as never` cast per 2026-04-23 lesson)
+- [x] Build TagInput primitive (pill editor with Enter/comma/backspace)
+- [x] Build Select primitive (market + language enum dropdowns)
+- [x] Server actions + queries: list, create, update, softDelete ICP
+- [x] IcpGrid + IcpCard (name, market flag, geo/industry chips, size range, active toggle)
+- [x] IcpEditDrawer (Identity / Targeting / Geo / Size & Revenue / Keywords / Places sections)
+- [x] Places reachable-pool preview stub (disabled w/ "Google Places API key required")
+- [x] Wire app/(dashboard)/icp/page.tsx to real data + active filter
+- [x] Typecheck + lint + Playwright smoke (2 cards, edit drawer, create drawer all verified)
+- [x] Log lessons + commit
+
+### Verification (done)
+- /icp renders the 2 seeded Alberta ICPs ✓
+- "+ New ICP" opens drawer in create mode with sensible defaults (market=CA, language=en, is_active=true) ✓
+- Editing a tag-pill field: type + Enter adds pill, × button removes, comma-paste splits ✓
+- Archive button in edit drawer footer (hidden in create mode) ✓
+- Places preview button disabled with "Google Places API key required" state ✓
+- Typecheck passes, lint clean on new code, dev server renders without errors ✓
+
+### Slice Review
+
+**What worked:**
+- Reusing the case-studies drawer pattern made this slice fast — same Drawer, same Section/Field helpers, same save/error flow.
+- Applied the supabase-js typing lesson immediately — `as never` casts on insert/update from the start, no rabbit hole this time.
+- `TagInput` is genuinely reusable — clean API (`value` + `onChange`), Enter/comma/backspace/paste all work, × per pill. Already eyeing it for /settings/users (invite by email list) and the Phase 1 Discovery keyword tuning.
+- Soft delete via `is_active=false` + UI filter toggle scales — ICPs never disappear from history.
+
+**What didn't:**
+- First draft of `lib/icp/actions.ts` had a stray `RUNNA_CA_BRAND_ID_PLACEHOLDER: never = null as never` line from a thought mid-write. Caught and removed before commit. Low impact but sloppy — should write actions start-to-finish in one pass.
+- Places-preview stub is UX-only — no state handling for "preview in progress" or "preview failed". Acceptable since the button is disabled, but worth flagging.
+
+**What I'd do differently:**
+- Before writing a drawer with 6 TagInput fields, draft the FormState shape on paper first. Had to reshuffle `updateField` generic twice to satisfy the 4 different value types (string / string[] / boolean / enum).
+
+**Tech debt introduced:**
+- 3 `as never` casts in `lib/icp/actions.ts` (insert, update, soft-delete). Same rationale as case-studies — removable when generated types land.
+- Places preview button is a no-op. Ticket to wire: add Places API integration in Phase 1 Discovery slice, then flip `placesKeyConfigured` flag in `icp-edit-drawer.tsx`.
+
+---
+
+## Next slices (unchanged)
+
+1. /settings/profile, /settings/sending, /settings/users — the three settings pages Phase 0 needs
+2. ⌘K Command Palette — fuzzy search across nav + case studies + ICPs once they're live
 
 ### Credentials still blocked (waiting on Pedro)
 - [ ] Supabase: ANON + SERVICE_ROLE keys live (connection works — Phase 0 unblocked)
