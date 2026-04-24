@@ -1,9 +1,12 @@
 "use client";
 
 import { Command, Search } from "lucide-react";
+import { useCommandPalette } from "@/components/command-palette/command-palette-provider";
 import { Kbd } from "@/components/ui/kbd";
 
 export function Topbar() {
+  const { setOpen } = useCommandPalette();
+
   return (
     <header
       className="flex h-12 items-center gap-3 border-b border-[var(--color-border-subtle)] bg-[var(--color-bg-900)] px-4"
@@ -11,6 +14,7 @@ export function Topbar() {
     >
       <button
         type="button"
+        onClick={() => setOpen(true)}
         className={[
           "flex h-8 items-center gap-2 rounded-[var(--radius-md)] px-2.5",
           "bg-[var(--color-bg-800)]",

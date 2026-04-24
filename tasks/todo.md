@@ -188,9 +188,55 @@ accept route. Scope approved 2026-04-24.
 
 ---
 
+## Active slice — ⌘K Command Palette
+
+Topbar button already exists (text "Search or run command" with ⌘ K kbd) —
+wire it. Use cmdk library (already installed).
+
+### Scope
+- `<CommandPalette>` client component using cmdk
+- Global ⌘K (Cmd/Ctrl) listener to toggle open
+- Topbar button click → opens the palette
+- Sources: nav items (static), case studies (client_name), ICPs (name), members
+- Navigation-only — selecting a case study or ICP lands on its page (no
+  drawer-deep-link in v1; defer to a separate slice if needed)
+
+### Tasks
+- [x] Server action: fetch searchable items once per palette open
+- [x] CommandPalette component (cmdk + Dialog wrapper + keyboard shortcut)
+- [x] Wire Topbar button + global ⌘K listener
+- [x] Typecheck + lint + Playwright smoke
+- [x] Log review + commit
+
+### Verification (done)
+- ⌘K opens palette; Topbar button opens palette; ESC closes ✓
+- "ford" surfaces all 3 Ford case studies ranked first ✓
+- Enter navigates to /case-studies ✓
+- "alberta" surfaces the Alberta DTC ICP + team members ✓
+- Lazy-loads DB items on first open, cached for the session ✓
+
+### Slice Review
+
+**What worked:**
+- `cmdk` is exactly the right primitive — 150 LOC to render the whole palette with fuzzy match, keyboard nav, groups, and ARIA.
+- Single-source `loadPaletteItems` server action keeps all the joins in one place; cached via `loadedRef` on the client so re-opens are instant.
+- `CommandPaletteProvider` context lets the Topbar button + global keyboard listener share state without a heavier store.
+- Nav items are built client-side from the same `NAV_SECTIONS` registry the sidebar uses — no duplication.
+
+**What didn't:**
+- Cmdk's default fuzzy scoring is loose — "alberta" surfaces "Blues Real" as the first case-study hit because it includes "a"/"l"/"b". Functionally fine but surprising. Could tighten with a custom `filter` prop later; for now the right result is still in the list.
+
+**What I'd do differently:**
+- Pre-seed nav results and load DB items async in the background so first keystroke is instant even before `loadPaletteItems` returns. Current "Loading…" placeholder flashes for ~300ms on first open.
+
+**Tech debt introduced:**
+- No deep-link to open a case-study / ICP drawer directly from the palette — selecting a case study lands on /case-studies and the user has to click the card. Small follow-up: add `?edit=<id>` support to case-studies + icp grids.
+
+---
+
 ## Next slices (unchanged)
 
-1. ⌘K Command Palette — fuzzy search across nav + case studies + ICPs once they're live
+_Handoff list cleared — Phase 0 foundation slices all shipped._
 
 ### Credentials still blocked (waiting on Pedro)
 - [ ] Supabase: ANON + SERVICE_ROLE keys live (connection works — Phase 0 unblocked)
