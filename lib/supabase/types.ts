@@ -258,6 +258,50 @@ export type Database = {
         };
         Relationships: NoRels;
       };
+      prospect_research: {
+        Row: {
+          id: UUID;
+          tenant_id: UUID;
+          prospect_id: UUID;
+          what_they_do: string | null;
+          tech_stack: string[];
+          pain_points: unknown;
+          notes: string | null;
+          research_method: string;
+          evidence_urls: string[];
+          raw_html_snapshot_url: string | null;
+          last_scraped_at: Timestamptz | null;
+          last_edited_by_user_id: UUID | null;
+          created_at: Timestamptz;
+          updated_at: Timestamptz;
+        };
+        Insert: {
+          id?: UUID;
+          tenant_id: UUID;
+          prospect_id: UUID;
+          what_they_do?: string | null;
+          tech_stack?: string[];
+          pain_points?: unknown;
+          notes?: string | null;
+          research_method?: string;
+          evidence_urls?: string[];
+          raw_html_snapshot_url?: string | null;
+          last_scraped_at?: Timestamptz | null;
+          last_edited_by_user_id?: UUID | null;
+        };
+        Update: {
+          what_they_do?: string | null;
+          tech_stack?: string[];
+          pain_points?: unknown;
+          notes?: string | null;
+          research_method?: string;
+          evidence_urls?: string[];
+          raw_html_snapshot_url?: string | null;
+          last_scraped_at?: Timestamptz | null;
+          last_edited_by_user_id?: UUID | null;
+        };
+        Relationships: NoRels;
+      };
       prospects: {
         Row: {
           id: UUID;

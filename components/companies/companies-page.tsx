@@ -1,6 +1,7 @@
 "use client";
 
 import { ExternalLink, Filter, Search } from "lucide-react";
+import { useRouter } from "next/navigation";
 import * as React from "react";
 import { Chip } from "@/components/ui/chip";
 import { EmptyState } from "@/components/ui/empty-state";
@@ -44,6 +45,7 @@ const MARKET_FLAG: Record<"CA" | "MX" | "US" | "LATAM", string> = {
 };
 
 export function CompaniesPage({ prospects, icps }: CompaniesPageProps) {
+  const router = useRouter();
   const [search, setSearch] = React.useState("");
   const [status, setStatus] = React.useState<string>("ALL");
   const [market, setMarket] = React.useState<string>("ALL");
@@ -199,7 +201,21 @@ export function CompaniesPage({ prospects, icps }: CompaniesPageProps) {
               {filtered.map((p) => (
                 <tr
                   key={p.id}
-                  className="border-b border-[var(--color-border-subtle)] hover:bg-[var(--color-bg-800)] last:border-b-0"
+                  onClick={() => router.push(`/companies/${p.id}` as never)}
+                  className={cn(
+                    "border-b border-[var(--color-border-subtle)] cursor-pointer last:border-b-0",
+                    "hover:bg-[var(--color-bg-800)]",
+                    "focus-within:bg-[var(--color-bg-800)]",
+                  )}
+                  tabIndex={0}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" || e.key === " ") {
+                      e.preventDefault();
+                      router.push(`/companies/${p.id}` as never);
+                    }
+                  }}
+                  aria-label={`Open prospect ${p.company_name}`}
+                  role="link"
                 >
                   <td className="px-4 py-2">
                     <div className="flex flex-col">
@@ -212,6 +228,7 @@ export function CompaniesPage({ prospects, icps }: CompaniesPageProps) {
                           href={p.website_url ?? `https://${p.domain}`}
                           target="_blank"
                           rel="noreferrer"
+                          onClick={(e) => e.stopPropagation()}
                           className={cn(
                             "inline-flex w-fit items-center gap-1 font-mono text-[11px]",
                             "text-[var(--color-fg-500)] hover:text-[var(--color-accent-300)]",

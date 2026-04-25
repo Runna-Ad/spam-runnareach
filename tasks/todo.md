@@ -302,11 +302,89 @@ when creds land.
 
 ---
 
-## Next slice
+## Active slice — Prospect detail page (/companies/[id])
+
+Click on any /companies row → opens a detail page with editable Overview,
+Research notes, and Activity log. Also adds a "Scrape website" stub
+button (real scraper lands as the next slice). Uses a separate
+`prospect_research` table (not JSONB on prospects).
+
+### Scope
+- New migration: `0004_prospect_research.sql` creating `prospect_research`
+  table (1:1 with prospects, FK + RLS)
+- Server queries + actions for read/write of research + status transitions
+- /companies/[id] page with tabs: Overview · Research · Activity
+- Click-through from /companies list rows
+- ConfirmDialog for status transitions to terminal states (won / lost / suppressed)
+- "Scrape website" button stub that reads "scraper lands in next slice"
+
+### Tasks
+- [x] Update tasks/todo.md
+- [x] Migration: prospect_research table (file written, awaiting Pedro to apply via SQL editor)
+- [x] Apply migration (auto-apply via REST not possible — Pedro pastes SQL once)
+- [x] Types extension
+- [x] Queries (getProspect, getProspectResearch, listProspectActivity)
+- [x] Actions (updateProspect, upsertResearch, transitionStatus, scrapeWebsiteStub)
+- [x] Build /companies/[id] page + ProspectDetail client (3 tabs)
+- [x] Wire click-through from /companies
+- [x] Status transitions w/ ConfirmDialog (terminal states only — won/lost/suppressed)
+- [x] Typecheck + lint clean; Playwright smoke captures all 3 tabs
+- [x] Log review + commit
+
+### Verification (done)
+- Click /companies row → lands on /companies/[id] ✓
+- Overview: editable form with company info, location, scoring; saves ✓
+- Research: gracefully shows "table not yet created" empty state w/ migration link until Pedro applies 0004 ✓
+- Activity: shows "Added to pipeline" entry ✓
+- Status select w/ confirm dialog when going to won/lost/suppressed ✓
+- Schema-cache error gracefully detected (PGRST205) — page never crashes ✓
+
+### Slice Review
+
+**What worked:**
+- The 3-tab layout (Overview / Research / Activity) maps cleanly to how
+  the data gets used at different stages of the pipeline.
+- "Research table missing" empty state with a direct link to the SQL
+  editor is way better UX than an opaque 500. Pedro can self-serve.
+- Reused the entire `<ConfirmDialog>` + tag-pill + drawer-form pattern —
+  zero new primitives needed.
+- Status transitions are gated server-side; the UI just calls the action
+  and the server enforces who can do what.
+
+**What didn't:**
+- Tried to auto-apply migrations via REST — Supabase doesn't expose a
+  generic SQL endpoint. `apply-0004.mjs` is left as a stub that prints
+  the SQL editor URL. Should just commit the script as a no-op until we
+  add a `pg` dependency for direct connections.
+
+**What I'd do differently:**
+- Add `pg` as a dep next time we need to apply DDL — it's worth one tiny
+  dependency to remove Pedro's "paste SQL" step.
+
+**Tech debt introduced:**
+- `apply-0004.mjs` doesn't actually apply anything. Could replace with a
+  `pg`-based applier in a follow-up.
+- Activity feed is hand-rolled from prospects + research timestamps. Real
+  audit_log integration lands when we wire write-side hooks (probably
+  Phase 4 or a dedicated slice).
+- Pain points editor stores `pain_label` (free text) — eventually we want
+  it to pick from `pain_taxonomy.id`. Add a combobox in the next iteration.
+
+---
+
+## Next slice (after this)
+
+**Site scraper (Cheerio)** — wires the "Scrape website" button. Pure code,
+no external creds. Foundation for Phase 2 research generation when
+Anthropic key lands.
+
+## Future (creds-blocked)
 
 Slice 1b — Plug real discovery engines into the scaffolding once Google
 Cloud / SerpAPI / BuiltWith / Unipile creds arrive. Each source ≈ 2–4 hrs
 of plumbing onto the existing `discovery_runs` + `prospects` pipeline.
+
+Phase 2 — Claude-powered research + scoring once Anthropic key is set.
 
 ### Credentials still blocked (waiting on Pedro)
 - [ ] Supabase: ANON + SERVICE_ROLE keys live (connection works — Phase 0 unblocked)

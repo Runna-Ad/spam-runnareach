@@ -1,13 +1,55 @@
-import { PhasePlaceholder } from "@/components/dashboard/phase-placeholder";
+import { notFound } from "next/navigation";
+import { ProspectDetail } from "@/components/prospects/prospect-detail";
+import { requireUser } from "@/lib/auth";
+import {
+  getProspect,
+  getProspectResearch,
+  listProspectActivity,
+  type ActivityEntry,
+  type ProspectResearch,
+} from "@/lib/prospects/detail-queries";
 
-export default async function CompanyDetailPage({ params }: { params: Promise<{ id: string }> }) {
+export const dynamic = "force-dynamic";
+
+export default async function ProspectDetailPage({
+  params,
+}: {
+  params: Promise<{ id: string }>;
+}) {
   const { id } = await params;
+  const user = await requireUser();
+
+  const prospect = await getProspect(user.tenantId, id);
+  if (!prospect) notFound();
+
+  // Research + activity may fail if the migration hasn't been applied — surface
+  // that to the UI instead of crashing the page.
+  let research: ProspectResearch | null = null;
+  let researchTableMissing = false;
+  try {
+    research = await getProspectResearch(user.tenantId, id);
+  } catch (err) {
+    if (err instanceof Error && err.message === "PROSPECT_RESEARCH_TABLE_MISSING") {
+      researchTableMissing = true;
+    } else {
+      throw err;
+    }
+  }
+
+  let activity: ActivityEntry[] = [];
+  try {
+    activity = await listProspectActivity(user.tenantId, id);
+  } catch {
+    activity = [];
+  }
+
   return (
-    <PhasePlaceholder
-      route={`/companies/${id}`}
-      phase={2}
-      title="Prospect detail"
-      description="Research brief, pain taxonomy, pitches, activity. Research Correction Loop lets reviewers edit research and resubmit for re-scoring and re-pitching."
+    <ProspectDetail
+      prospect={prospect}
+      research={research}
+      activity={activity}
+      researchTableMissing={researchTableMissing}
+      canEdit={user.role !== "viewer"}
     />
   );
 }

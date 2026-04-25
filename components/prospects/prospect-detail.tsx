@@ -1,0 +1,799 @@
+"use client";
+
+import {
+  Activity,
+  ArrowLeft,
+  ChevronDown,
+  ExternalLink,
+  Globe,
+  Loader2,
+  MessageSquareWarning,
+  Plus,
+  Save,
+  ScanSearch,
+  Search,
+  Trash2,
+} from "lucide-react";
+import Link from "next/link";
+import * as React from "react";
+import { Button } from "@/components/ui/button";
+import { Chip } from "@/components/ui/chip";
+import { ConfirmDialog } from "@/components/ui/confirm-dialog";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Select } from "@/components/ui/select";
+import { TagInput } from "@/components/ui/tag-input";
+import { Textarea } from "@/components/ui/textarea";
+import {
+  scrapeWebsiteStub,
+  transitionStatus,
+  updateProspect,
+  upsertResearch,
+} from "@/lib/prospects/detail-actions";
+import type {
+  ActivityEntry,
+  PainPoint,
+  ProspectFull,
+  ProspectResearch,
+} from "@/lib/prospects/detail-queries";
+import { cn, relativeTime } from "@/lib/utils";
+
+interface ProspectDetailProps {
+  prospect: ProspectFull;
+  research: ProspectResearch | null;
+  activity: ActivityEntry[];
+  researchTableMissing: boolean;
+  canEdit: boolean;
+}
+
+type Tab = "overview" | "research" | "activity";
+
+const STATUS_OPTIONS = [
+  "raw",
+  "researched",
+  "pitched",
+  "replied",
+  "meeting_booked",
+  "won",
+  "lost",
+  "suppressed",
+] as const;
+type StatusValue = (typeof STATUS_OPTIONS)[number];
+
+const STATUS_TONE: Record<string, "info" | "neutral" | "success" | "danger" | "warning"> = {
+  raw: "neutral",
+  researched: "info",
+  pitched: "info",
+  replied: "info",
+  meeting_booked: "success",
+  won: "success",
+  lost: "danger",
+  suppressed: "warning",
+};
+
+const TERMINAL_STATUSES = new Set<StatusValue>(["won", "lost", "suppressed"]);
+
+const MARKET_FLAG: Record<"CA" | "MX" | "US" | "LATAM", string> = {
+  CA: "🇨🇦",
+  MX: "🇲🇽",
+  US: "🇺🇸",
+  LATAM: "🌎",
+};
+
+export function ProspectDetail({
+  prospect,
+  research,
+  activity,
+  researchTableMissing,
+  canEdit,
+}: ProspectDetailProps) {
+  const [tab, setTab] = React.useState<Tab>("overview");
+
+  return (
+    <div className="flex h-full flex-col">
+      <DetailHeader prospect={prospect} canEdit={canEdit} />
+
+      <nav className="flex shrink-0 items-center gap-4 border-b border-[var(--color-border-subtle)] bg-[var(--color-bg-900)] px-4">
+        <TabButton
+          active={tab === "overview"}
+          onClick={() => setTab("overview")}
+          label="Overview"
+        />
+        <TabButton
+          active={tab === "research"}
+          onClick={() => setTab("research")}
+          label="Research"
+          badge={research ? "•" : null}
+        />
+        <TabButton
+          active={tab === "activity"}
+          onClick={() => setTab("activity")}
+          label="Activity"
+          badge={activity.length > 0 ? String(activity.length) : null}
+        />
+      </nav>
+
+      <div className="flex-1 overflow-y-auto">
+        {tab === "overview" ? (
+          <OverviewTab prospect={prospect} canEdit={canEdit} />
+        ) : null}
+        {tab === "research" ? (
+          <ResearchTab
+            prospect={prospect}
+            research={research}
+            researchTableMissing={researchTableMissing}
+            canEdit={canEdit}
+          />
+        ) : null}
+        {tab === "activity" ? <ActivityTab activity={activity} /> : null}
+      </div>
+    </div>
+  );
+}
+
+function TabButton({
+  active,
+  onClick,
+  label,
+  badge,
+}: {
+  active: boolean;
+  onClick: () => void;
+  label: string;
+  badge?: string | null;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={cn(
+        "inline-flex h-11 items-center gap-1.5 border-b-2 px-0.5 text-[11px] font-medium tracking-tight",
+        "-mb-px transition-[color,border-color]",
+        "duration-[var(--duration-fast)] ease-[var(--ease-standard)]",
+        active
+          ? "border-[var(--color-accent-300)] text-[var(--color-fg-50)]"
+          : "border-transparent text-[var(--color-fg-500)] hover:text-[var(--color-fg-50)]",
+      )}
+    >
+      {label}
+      {badge ? (
+        <span className="rounded-[var(--radius-sm)] bg-[var(--color-bg-700)] px-1 text-[10px] text-[var(--color-fg-500)]">
+          {badge}
+        </span>
+      ) : null}
+    </button>
+  );
+}
+
+function DetailHeader({ prospect, canEdit }: { prospect: ProspectFull; canEdit: boolean }) {
+  const [pendingStatus, setPendingStatus] = React.useState<StatusValue | null>(null);
+  const [confirmOpen, setConfirmOpen] = React.useState(false);
+  const [error, setError] = React.useState<string | null>(null);
+  const [pending, startTransition] = React.useTransition();
+
+  const handleStatusChange = (next: StatusValue) => {
+    setError(null);
+    if (next === prospect.status) return;
+    if (TERMINAL_STATUSES.has(next)) {
+      setPendingStatus(next);
+      setConfirmOpen(true);
+      return;
+    }
+    applyStatus(next);
+  };
+
+  const applyStatus = (next: StatusValue, reason?: string) => {
+    startTransition(async () => {
+      const result = await transitionStatus({
+        id: prospect.id,
+        next_status: next,
+        suppressed_reason: reason ?? null,
+      });
+      if (!result.ok) setError(result.error);
+      setConfirmOpen(false);
+      setPendingStatus(null);
+    });
+  };
+
+  return (
+    <header className="flex shrink-0 flex-col gap-2 border-b border-[var(--color-border-subtle)] px-4 pt-3 pb-3">
+      <div className="flex items-center gap-2 text-[11px] text-[var(--color-fg-500)]">
+        <Link
+          href="/companies"
+          className="inline-flex items-center gap-1 hover:text-[var(--color-fg-50)]"
+        >
+          <ArrowLeft className="h-3 w-3" aria-hidden /> Companies
+        </Link>
+        <span className="text-[var(--color-fg-700)]">/</span>
+        <span className="font-mono text-xs">{prospect.id.slice(0, 8)}</span>
+      </div>
+      <div className="flex items-start justify-between gap-3">
+        <div className="flex min-w-0 flex-1 flex-col gap-0.5">
+          <h1 className="flex items-center gap-2 text-base font-semibold tracking-tight text-[var(--color-fg-50)]">
+            <span aria-hidden>{MARKET_FLAG[prospect.market]}</span>
+            <span className="truncate">{prospect.company_name}</span>
+          </h1>
+          {prospect.domain ? (
+            <a
+              href={prospect.website_url ?? `https://${prospect.domain}`}
+              target="_blank"
+              rel="noreferrer"
+              className="inline-flex w-fit items-center gap-1 font-mono text-[11px] text-[var(--color-fg-500)] hover:text-[var(--color-accent-300)]"
+            >
+              <Globe className="h-3 w-3" aria-hidden /> {prospect.domain}
+              <ExternalLink className="h-2.5 w-2.5" aria-hidden />
+            </a>
+          ) : null}
+          <div className="mt-1 flex flex-wrap items-center gap-1.5">
+            <Chip tone={STATUS_TONE[prospect.status] ?? "neutral"}>{prospect.status}</Chip>
+            {prospect.icp_name ? <Chip tone="accent">ICP: {prospect.icp_name}</Chip> : null}
+            <Chip tone="neutral">
+              {prospect.discovery_source.replace(/_/g, " ")}
+            </Chip>
+            {prospect.match_score !== null ? (
+              <Chip tone={prospect.match_score >= 70 ? "success" : "neutral"}>
+                Score {prospect.match_score}
+              </Chip>
+            ) : null}
+            {prospect.red_flags.map((f) => (
+              <Chip key={f} tone="warning" className="gap-1">
+                <MessageSquareWarning className="h-3 w-3" aria-hidden />
+                {f.replace(/_/g, " ")}
+              </Chip>
+            ))}
+          </div>
+        </div>
+        {canEdit ? (
+          <div className="flex shrink-0 flex-col items-end gap-1">
+            <Label className="text-[10px] text-[var(--color-fg-700)]">Status</Label>
+            <div className="relative inline-flex items-center">
+              <Select
+                value={prospect.status}
+                onChange={(e) => handleStatusChange(e.target.value as StatusValue)}
+                disabled={pending}
+                className="h-8 max-w-[180px] py-0 pr-7 text-xs"
+              >
+                {STATUS_OPTIONS.map((s) => (
+                  <option key={s} value={s}>
+                    {s}
+                  </option>
+                ))}
+              </Select>
+              {pending ? (
+                <Loader2 className="pointer-events-none absolute right-7 h-3 w-3 animate-spin text-[var(--color-fg-500)]" aria-hidden />
+              ) : null}
+            </div>
+            {error ? (
+              <p className="text-[10px] text-[var(--color-danger-300)]">{error}</p>
+            ) : null}
+          </div>
+        ) : null}
+      </div>
+
+      {pendingStatus ? (
+        <ConfirmDialog
+          open={confirmOpen}
+          onOpenChange={(open) => {
+            if (!open) {
+              setConfirmOpen(false);
+              setPendingStatus(null);
+            }
+          }}
+          title={`Move ${prospect.company_name} to "${pendingStatus}"?`}
+          description={
+            pendingStatus === "suppressed"
+              ? "Suppressed prospects are excluded from all future discovery, scoring, and pitching for this tenant."
+              : pendingStatus === "won"
+                ? "Marks the deal as closed-won. They drop out of the active outreach pipeline."
+                : "Marks the deal as closed-lost. They drop out of the active outreach pipeline."
+          }
+          confirmLabel={`Move to ${pendingStatus}`}
+          variant={pendingStatus === "won" ? "primary" : "danger"}
+          onConfirm={() => applyStatus(pendingStatus)}
+          pending={pending}
+        />
+      ) : null}
+    </header>
+  );
+}
+
+function OverviewTab({ prospect, canEdit }: { prospect: ProspectFull; canEdit: boolean }) {
+  const [companyName, setCompanyName] = React.useState(prospect.company_name);
+  const [domain, setDomain] = React.useState(prospect.domain ?? "");
+  const [websiteUrl, setWebsiteUrl] = React.useState(prospect.website_url ?? "");
+  const [industry, setIndustry] = React.useState(prospect.industry ?? "");
+  const [employees, setEmployees] = React.useState(
+    prospect.employee_size_estimate?.toString() ?? "",
+  );
+  const [city, setCity] = React.useState(prospect.city ?? "");
+  const [region, setRegion] = React.useState(prospect.region ?? "");
+  const [matchScore, setMatchScore] = React.useState(
+    prospect.match_score?.toString() ?? "",
+  );
+  const [status, setStatus] = React.useState<"idle" | "saved" | { error: string }>("idle");
+  const [saving, startSave] = React.useTransition();
+
+  const handleSave = () => {
+    setStatus("idle");
+    startSave(async () => {
+      const score = matchScore.trim() === "" ? null : Number.parseInt(matchScore, 10);
+      const employeeNum = employees.trim() === "" ? null : Number.parseInt(employees, 10);
+      const result = await updateProspect({
+        id: prospect.id,
+        company_name: companyName,
+        domain: domain.trim() || null,
+        website_url: websiteUrl.trim() || null,
+        industry: industry.trim() || null,
+        employee_size_estimate: employeeNum,
+        city: city.trim() || null,
+        region: region.trim() || null,
+        match_score: score,
+      });
+      if (result.ok) {
+        setStatus("saved");
+        setTimeout(() => setStatus("idle"), 2000);
+      } else {
+        setStatus({ error: result.error });
+      }
+    });
+  };
+
+  return (
+    <div className="flex max-w-3xl flex-col gap-6 p-4">
+      <Section title="Company info">
+        <Field label="Company name">
+          <Input
+            value={companyName}
+            onChange={(e) => setCompanyName(e.target.value)}
+            disabled={!canEdit}
+          />
+        </Field>
+        <div className="grid grid-cols-2 gap-3">
+          <Field label="Domain">
+            <Input
+              value={domain}
+              onChange={(e) => setDomain(e.target.value)}
+              placeholder="example.com"
+              disabled={!canEdit}
+            />
+          </Field>
+          <Field label="Website URL">
+            <Input
+              value={websiteUrl}
+              onChange={(e) => setWebsiteUrl(e.target.value)}
+              placeholder="https://example.com"
+              disabled={!canEdit}
+            />
+          </Field>
+        </div>
+        <div className="grid grid-cols-2 gap-3">
+          <Field label="Industry">
+            <Input
+              value={industry}
+              onChange={(e) => setIndustry(e.target.value)}
+              placeholder="Coffee roaster"
+              disabled={!canEdit}
+            />
+          </Field>
+          <Field label="Employees (estimate)">
+            <Input
+              type="number"
+              inputMode="numeric"
+              min={0}
+              value={employees}
+              onChange={(e) => setEmployees(e.target.value)}
+              placeholder="25"
+              disabled={!canEdit}
+            />
+          </Field>
+        </div>
+      </Section>
+
+      <Section title="Location">
+        <div className="grid grid-cols-2 gap-3">
+          <Field label="City">
+            <Input value={city} onChange={(e) => setCity(e.target.value)} disabled={!canEdit} />
+          </Field>
+          <Field label="Region / Province">
+            <Input value={region} onChange={(e) => setRegion(e.target.value)} disabled={!canEdit} />
+          </Field>
+        </div>
+        <p className="text-[11px] text-[var(--color-fg-700)]">
+          Market is set at discovery time and not editable here. Currently:{" "}
+          <span className="font-medium text-[var(--color-fg-300)]">{prospect.market}</span>
+        </p>
+      </Section>
+
+      <Section
+        title="Scoring"
+        description="0–100. Set manually now; Phase 2 will auto-score with Claude using the rubric in tasks/."
+      >
+        <Field label="Match score">
+          <Input
+            type="number"
+            inputMode="numeric"
+            min={0}
+            max={100}
+            value={matchScore}
+            onChange={(e) => setMatchScore(e.target.value)}
+            placeholder="—"
+            disabled={!canEdit}
+            className="max-w-[140px]"
+          />
+        </Field>
+      </Section>
+
+      <div className="flex items-center gap-2 border-t border-[var(--color-border-subtle)] pt-4">
+        {status === "saved" ? (
+          <Chip tone="success" className="mr-auto">
+            Saved
+          </Chip>
+        ) : typeof status === "object" ? (
+          <p className="mr-auto text-xs text-[var(--color-danger-300)]">{status.error}</p>
+        ) : (
+          <span className="mr-auto text-[11px] text-[var(--color-fg-700)]">
+            Last updated {relativeTime(prospect.updated_at)}
+          </span>
+        )}
+        {canEdit ? (
+          <Button type="button" variant="primary" onClick={handleSave} disabled={saving}>
+            {saving ? <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden /> : <Save className="h-3.5 w-3.5" aria-hidden />}
+            {saving ? "Saving…" : "Save changes"}
+          </Button>
+        ) : null}
+      </div>
+    </div>
+  );
+}
+
+function ResearchTab({
+  prospect,
+  research,
+  researchTableMissing,
+  canEdit,
+}: {
+  prospect: ProspectFull;
+  research: ProspectResearch | null;
+  researchTableMissing: boolean;
+  canEdit: boolean;
+}) {
+  const [whatTheyDo, setWhatTheyDo] = React.useState(research?.what_they_do ?? "");
+  const [techStack, setTechStack] = React.useState<string[]>(research?.tech_stack ?? []);
+  const [painPoints, setPainPoints] = React.useState<PainPoint[]>(research?.pain_points ?? []);
+  const [notes, setNotes] = React.useState(research?.notes ?? "");
+  const [evidenceUrls, setEvidenceUrls] = React.useState<string[]>(
+    research?.evidence_urls ?? [],
+  );
+  const [saveStatus, setSaveStatus] = React.useState<"idle" | "saved" | { error: string }>(
+    "idle",
+  );
+  const [saving, startSave] = React.useTransition();
+  const [scrapeMessage, setScrapeMessage] = React.useState<string | null>(null);
+  const [scraping, startScrape] = React.useTransition();
+
+  if (researchTableMissing) {
+    return (
+      <div className="m-4 rounded-[var(--radius-lg)] border border-dashed border-[var(--color-border-default)] bg-[var(--color-bg-900)] p-6">
+        <h3 className="text-sm font-medium text-[var(--color-fg-50)]">
+          Research table not yet created
+        </h3>
+        <p className="mt-2 text-xs text-[var(--color-fg-500)]">
+          Apply migration{" "}
+          <code className="font-mono text-[var(--color-accent-300)]">
+            supabase/migrations/0004_prospect_research.sql
+          </code>{" "}
+          via the Supabase SQL editor:
+        </p>
+        <ol className="mt-3 list-inside list-decimal space-y-1 text-xs text-[var(--color-fg-500)]">
+          <li>
+            Open{" "}
+            <a
+              href="https://supabase.com/dashboard/project/ybbrpqzbedaxsmotgtkh/sql/new"
+              target="_blank"
+              rel="noreferrer"
+              className="text-[var(--color-accent-300)] underline-offset-4 hover:underline"
+            >
+              the SQL editor
+            </a>
+          </li>
+          <li>
+            Paste the SQL from{" "}
+            <code className="font-mono">supabase/migrations/0004_prospect_research.sql</code>
+          </li>
+          <li>Click <strong>Run</strong> and refresh this page</li>
+        </ol>
+      </div>
+    );
+  }
+
+  const handleSave = () => {
+    setSaveStatus("idle");
+    startSave(async () => {
+      const result = await upsertResearch({
+        prospect_id: prospect.id,
+        what_they_do: whatTheyDo.trim() || null,
+        tech_stack: techStack,
+        pain_points: painPoints,
+        notes: notes.trim() || null,
+        evidence_urls: evidenceUrls,
+      });
+      if (result.ok) {
+        setSaveStatus("saved");
+        setTimeout(() => setSaveStatus("idle"), 2000);
+      } else {
+        setSaveStatus({ error: result.error });
+      }
+    });
+  };
+
+  const handleScrape = () => {
+    setScrapeMessage(null);
+    startScrape(async () => {
+      const result = await scrapeWebsiteStub(prospect.id);
+      setScrapeMessage(result.ok ? "Scraped." : result.error);
+    });
+  };
+
+  return (
+    <div className="flex max-w-3xl flex-col gap-6 p-4">
+      <div className="flex items-start justify-between gap-3 rounded-[var(--radius-lg)] bg-[var(--color-bg-800)] p-4 ring-1 ring-inset ring-[var(--color-border-default)]">
+        <div className="flex min-w-0 flex-col">
+          <span className="text-[11px] font-semibold uppercase tracking-wider text-[var(--color-fg-500)]">
+            Auto research
+          </span>
+          <p className="mt-1 text-xs text-[var(--color-fg-300)]">
+            Pull what_they_do, tech indicators, and contact links straight from
+            the prospect's site. Output gets written into the fields below.
+          </p>
+          {scrapeMessage ? (
+            <p className="mt-2 text-[11px] italic text-[var(--color-warning-300)]">
+              {scrapeMessage}
+            </p>
+          ) : null}
+        </div>
+        <Button
+          type="button"
+          variant="secondary"
+          onClick={handleScrape}
+          disabled={scraping || !canEdit || !prospect.domain}
+          className="shrink-0"
+        >
+          {scraping ? (
+            <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden />
+          ) : (
+            <ScanSearch className="h-3.5 w-3.5" aria-hidden />
+          )}
+          {scraping ? "Scraping…" : "Scrape website"}
+        </Button>
+      </div>
+
+      <Section
+        title="What they do"
+        description="One paragraph describing the company's product, service, and audience. Cite the source URL in evidence."
+      >
+        <Textarea
+          value={whatTheyDo}
+          onChange={(e) => setWhatTheyDo(e.target.value)}
+          rows={4}
+          disabled={!canEdit}
+          placeholder="Calgary-based DTC coffee roaster selling subscription beans nationally. Shopify storefront, sells through their site + a small wholesale arm…"
+        />
+      </Section>
+
+      <Section
+        title="Tech stack"
+        description="Detected platforms, marketing tools, frameworks. Tag pills."
+      >
+        <TagInput
+          value={techStack}
+          onChange={canEdit ? setTechStack : () => {}}
+          placeholder="Shopify, Klaviyo, Recharge…"
+        />
+      </Section>
+
+      <Section
+        title="Pain points"
+        description="Add the pains this prospect probably has + an evidence quote or URL where you saw it."
+      >
+        <PainPointEditor
+          value={painPoints}
+          onChange={setPainPoints}
+          disabled={!canEdit}
+        />
+      </Section>
+
+      <Section title="Free-form notes">
+        <Textarea
+          value={notes}
+          onChange={(e) => setNotes(e.target.value)}
+          rows={5}
+          disabled={!canEdit}
+          placeholder="Anything else worth remembering. Links, recent news, founder background…"
+        />
+      </Section>
+
+      <Section title="Evidence URLs">
+        <TagInput
+          value={evidenceUrls}
+          onChange={canEdit ? setEvidenceUrls : () => {}}
+          placeholder="https://example.com/about"
+        />
+      </Section>
+
+      <div className="flex items-center gap-2 border-t border-[var(--color-border-subtle)] pt-4">
+        {saveStatus === "saved" ? (
+          <Chip tone="success" className="mr-auto">
+            Saved
+          </Chip>
+        ) : typeof saveStatus === "object" ? (
+          <p className="mr-auto text-xs text-[var(--color-danger-300)]">{saveStatus.error}</p>
+        ) : research ? (
+          <span className="mr-auto text-[11px] text-[var(--color-fg-700)]">
+            Last edited {relativeTime(research.updated_at)}
+            {research.last_edited_by_name ? ` by ${research.last_edited_by_name}` : ""}
+          </span>
+        ) : (
+          <span className="mr-auto text-[11px] text-[var(--color-fg-700)]">
+            No research saved yet.
+          </span>
+        )}
+        {canEdit ? (
+          <Button type="button" variant="primary" onClick={handleSave} disabled={saving}>
+            {saving ? <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden /> : <Save className="h-3.5 w-3.5" aria-hidden />}
+            {saving ? "Saving…" : "Save research"}
+          </Button>
+        ) : null}
+      </div>
+    </div>
+  );
+}
+
+function PainPointEditor({
+  value,
+  onChange,
+  disabled,
+}: {
+  value: PainPoint[];
+  onChange: (next: PainPoint[]) => void;
+  disabled: boolean;
+}) {
+  const update = (i: number, patch: Partial<PainPoint>) => {
+    onChange(value.map((p, idx) => (idx === i ? { ...p, ...patch } : p)));
+  };
+  const remove = (i: number) => onChange(value.filter((_, idx) => idx !== i));
+  const add = () => onChange([...value, { pain_label: "", evidence_quote: "" }]);
+
+  return (
+    <div className="flex flex-col gap-3">
+      {value.length === 0 ? (
+        <p className="text-xs italic text-[var(--color-fg-700)]">No pain points yet.</p>
+      ) : (
+        value.map((p, i) => (
+          <div
+            key={i}
+            className="flex flex-col gap-2 rounded-[var(--radius-md)] bg-[var(--color-bg-900)] p-3 ring-1 ring-inset ring-[var(--color-border-default)]"
+          >
+            <div className="flex gap-2">
+              <Input
+                value={p.pain_label ?? ""}
+                onChange={(e) => update(i, { pain_label: e.target.value })}
+                placeholder="Pain label (e.g. brand inconsistency)"
+                disabled={disabled}
+              />
+              <button
+                type="button"
+                onClick={() => remove(i)}
+                disabled={disabled}
+                className={cn(
+                  "grid h-9 w-9 shrink-0 place-items-center rounded-[var(--radius-md)]",
+                  "text-[var(--color-fg-500)] hover:bg-[var(--color-bg-700)] hover:text-[var(--color-danger-300)]",
+                  "focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--color-accent-300)]",
+                  "disabled:opacity-40 disabled:pointer-events-none",
+                )}
+                aria-label="Remove pain point"
+              >
+                <Trash2 className="h-3.5 w-3.5" aria-hidden />
+              </button>
+            </div>
+            <Textarea
+              value={p.evidence_quote ?? ""}
+              onChange={(e) => update(i, { evidence_quote: e.target.value })}
+              placeholder="Evidence quote from the site / LinkedIn"
+              rows={2}
+              disabled={disabled}
+            />
+            <Input
+              value={p.evidence_url ?? ""}
+              onChange={(e) => update(i, { evidence_url: e.target.value })}
+              placeholder="Evidence URL"
+              disabled={disabled}
+            />
+          </div>
+        ))
+      )}
+      {!disabled ? (
+        <Button type="button" size="sm" variant="secondary" onClick={add}>
+          <Plus className="h-3.5 w-3.5" aria-hidden /> Add pain point
+        </Button>
+      ) : null}
+    </div>
+  );
+}
+
+function ActivityTab({ activity }: { activity: ActivityEntry[] }) {
+  if (activity.length === 0) {
+    return (
+      <div className="m-4 text-xs italic text-[var(--color-fg-700)]">
+        No activity recorded yet.
+      </div>
+    );
+  }
+  return (
+    <ol className="m-4 flex flex-col gap-3">
+      {activity.map((a) => (
+        <li
+          key={a.id}
+          className="flex gap-3 rounded-[var(--radius-md)] bg-[var(--color-bg-800)] p-3 ring-1 ring-inset ring-[var(--color-border-default)]"
+        >
+          <div className="grid h-7 w-7 shrink-0 place-items-center rounded-full bg-[var(--color-bg-900)] ring-1 ring-inset ring-[var(--color-border-default)]">
+            {a.kind === "discovery" ? (
+              <Search className="h-3.5 w-3.5 text-[var(--color-accent-300)]" aria-hidden />
+            ) : a.kind === "research_edit" ? (
+              <ScanSearch className="h-3.5 w-3.5 text-[var(--color-accent-300)]" aria-hidden />
+            ) : (
+              <Activity className="h-3.5 w-3.5 text-[var(--color-accent-300)]" aria-hidden />
+            )}
+          </div>
+          <div className="flex min-w-0 flex-1 flex-col">
+            <div className="flex items-center gap-2">
+              <span className="text-sm text-[var(--color-fg-50)]">{a.label}</span>
+              <span className="text-[11px] text-[var(--color-fg-500)]">{relativeTime(a.at)}</span>
+            </div>
+            {a.detail ? (
+              <span className="text-[11px] text-[var(--color-fg-500)]">{a.detail}</span>
+            ) : null}
+            {a.actor_name ? (
+              <span className="text-[11px] text-[var(--color-fg-700)]">by {a.actor_name}</span>
+            ) : null}
+          </div>
+        </li>
+      ))}
+    </ol>
+  );
+}
+
+function Section({
+  title,
+  description,
+  children,
+}: {
+  title: string;
+  description?: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <section className="flex flex-col gap-3">
+      <div>
+        <h4 className="text-[11px] font-semibold uppercase tracking-wider text-[var(--color-fg-500)]">
+          {title}
+        </h4>
+        {description ? (
+          <p className="mt-0.5 text-[11px] text-[var(--color-fg-700)]">{description}</p>
+        ) : null}
+      </div>
+      {children}
+    </section>
+  );
+}
+
+function Field({ label, children }: { label: string; children: React.ReactNode }) {
+  return (
+    <div className="flex flex-col gap-1.5">
+      <Label>{label}</Label>
+      {children}
+    </div>
+  );
+}
+
+// Suppress unused import warning for ChevronDown (used by Select internally)
+void ChevronDown;
