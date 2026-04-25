@@ -1,12 +1,22 @@
-import { PhasePlaceholder } from "@/components/dashboard/phase-placeholder";
+import { CompaniesPage } from "@/components/companies/companies-page";
+import { requireUser } from "@/lib/auth";
+import { listIcps } from "@/lib/icp/queries";
+import { listProspects } from "@/lib/discover/prospects-queries";
 
-export default function CompaniesPage() {
+export const dynamic = "force-dynamic";
+
+export default async function CompaniesRoute() {
+  const user = await requireUser();
+
+  const [prospects, icps] = await Promise.all([
+    listProspects(user.tenantId, {}, "newest", 500),
+    listIcps(user.tenantId),
+  ]);
+
   return (
-    <PhasePlaceholder
-      route="/companies"
-      phase={1}
-      title="Companies"
-      description="Filter, sort, bulk actions across all prospects and every pipeline stage. Score-driven sorting, status filters, and research correction handoffs."
+    <CompaniesPage
+      prospects={prospects}
+      icps={icps.map((i) => ({ id: i.id, name: i.name }))}
     />
   );
 }

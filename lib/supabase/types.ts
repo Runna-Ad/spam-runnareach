@@ -258,6 +258,193 @@ export type Database = {
         };
         Relationships: NoRels;
       };
+      prospects: {
+        Row: {
+          id: UUID;
+          tenant_id: UUID;
+          icp_id: UUID | null;
+          discovery_run_id: UUID | null;
+          discovery_source:
+            | "google_places"
+            | "industry_directory"
+            | "google_operator"
+            | "competitor_mining"
+            | "linkedin"
+            | "manual_upload";
+          company_name: string;
+          domain: string | null;
+          website_url: string | null;
+          place_id: string | null;
+          industry: string | null;
+          employee_size_estimate: number | null;
+          address_line: string | null;
+          city: string | null;
+          region: string | null;
+          country_code: string | null;
+          postal_code: string | null;
+          timezone: string | null;
+          market: "CA" | "MX" | "US" | "LATAM";
+          language: "en" | "es";
+          status: string;
+          research_quality_score: number | null;
+          match_score: number | null;
+          red_flags: string[];
+          pitch_gate_passed: boolean;
+          consent_basis: string;
+          consent_evidence_url: string | null;
+          suppressed_at: Timestamptz | null;
+          suppressed_reason: string | null;
+          cooldown_until: Timestamptz | null;
+          cooldown_reason: string | null;
+          corrected_by_user_id: UUID | null;
+          corrected_at: Timestamptz | null;
+          created_at: Timestamptz;
+          updated_at: Timestamptz;
+        };
+        Insert: {
+          id?: UUID;
+          tenant_id: UUID;
+          icp_id?: UUID | null;
+          discovery_run_id?: UUID | null;
+          discovery_source:
+            | "google_places"
+            | "industry_directory"
+            | "google_operator"
+            | "competitor_mining"
+            | "linkedin"
+            | "manual_upload";
+          company_name: string;
+          domain?: string | null;
+          website_url?: string | null;
+          industry?: string | null;
+          employee_size_estimate?: number | null;
+          address_line?: string | null;
+          city?: string | null;
+          region?: string | null;
+          country_code?: string | null;
+          postal_code?: string | null;
+          market: "CA" | "MX" | "US" | "LATAM";
+          language?: "en" | "es";
+          status?: string;
+          red_flags?: string[];
+        };
+        Update: {
+          status?: string;
+          match_score?: number | null;
+          red_flags?: string[];
+          suppressed_at?: Timestamptz | null;
+          suppressed_reason?: string | null;
+          updated_at?: Timestamptz;
+        };
+        Relationships: NoRels;
+      };
+      discovery_runs: {
+        Row: {
+          id: UUID;
+          tenant_id: UUID;
+          icp_id: UUID | null;
+          source:
+            | "google_places"
+            | "industry_directory"
+            | "google_operator"
+            | "competitor_mining"
+            | "linkedin"
+            | "manual_upload";
+          triggered_by: UUID | null;
+          status: string;
+          candidates_found: number;
+          candidates_new: number;
+          candidates_duplicate: number;
+          cost_usd: number;
+          error_message: string | null;
+          started_at: Timestamptz | null;
+          completed_at: Timestamptz | null;
+          created_at: Timestamptz;
+        };
+        Insert: {
+          id?: UUID;
+          tenant_id: UUID;
+          icp_id?: UUID | null;
+          source:
+            | "google_places"
+            | "industry_directory"
+            | "google_operator"
+            | "competitor_mining"
+            | "linkedin"
+            | "manual_upload";
+          triggered_by?: UUID | null;
+          status?: string;
+          candidates_found?: number;
+          candidates_new?: number;
+          candidates_duplicate?: number;
+          started_at?: Timestamptz | null;
+          completed_at?: Timestamptz | null;
+        };
+        Update: {
+          status?: string;
+          candidates_found?: number;
+          candidates_new?: number;
+          candidates_duplicate?: number;
+          cost_usd?: number;
+          error_message?: string | null;
+          started_at?: Timestamptz | null;
+          completed_at?: Timestamptz | null;
+        };
+        Relationships: NoRels;
+      };
+      do_not_contact_list: {
+        Row: {
+          id: UUID;
+          tenant_id: UUID;
+          entry_type: string;
+          email: string | null;
+          domain: string | null;
+          company_name: string | null;
+          notes: string | null;
+          added_by: UUID | null;
+          created_at: Timestamptz;
+        };
+        Insert: {
+          id?: UUID;
+          tenant_id: UUID;
+          entry_type: string;
+          email?: string | null;
+          domain?: string | null;
+          company_name?: string | null;
+          notes?: string | null;
+          added_by?: UUID | null;
+        };
+        Update: {
+          entry_type?: string;
+          email?: string | null;
+          domain?: string | null;
+          company_name?: string | null;
+          notes?: string | null;
+        };
+        Relationships: NoRels;
+      };
+      blackout_dates: {
+        Row: {
+          id: UUID;
+          tenant_id: UUID;
+          market: "CA" | "MX" | "US" | "LATAM";
+          blackout_date: string;
+          label: string;
+          created_at: Timestamptz;
+        };
+        Insert: {
+          id?: UUID;
+          tenant_id: UUID;
+          market: "CA" | "MX" | "US" | "LATAM";
+          blackout_date: string;
+          label: string;
+        };
+        Update: {
+          label?: string;
+          blackout_date?: string;
+        };
+        Relationships: NoRels;
+      };
       brand_instances: {
         Row: {
           id: UUID;

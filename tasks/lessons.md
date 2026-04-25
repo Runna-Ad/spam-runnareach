@@ -4,6 +4,26 @@ Running log of mistakes, root causes, and rules to prevent recurrence. Newest at
 
 ---
 
+## [2026-04-24] LESSON: Splitting server-only queries from client-safe constants in the same module poisons the client bundle
+
+**What went wrong:** `lib/discover/runs-queries.ts` exported both `listDiscoveryRuns` (server-only — imports `next/headers` via `createClient`) and `SOURCE_META` (a plain constant). The client `<DiscoverPage>` imported just `SOURCE_META` from that file. Next dragged the *whole module* into the client bundle, and Turbopack crashed because `next/headers` can't run in the browser.
+
+The visible symptom: clicking the "Upload CSV" button in the smoke test timed out because the page never finished rendering — the topbar button never mounted.
+
+**Root cause:** ESM module barrels are bundle-level, not symbol-level. A client component that imports `{ SOURCE_META }` from a file that also exports server code still pulls the server code into the bundle. Tree-shaking doesn't help — `createClient`'s top-level `import { cookies } from "next/headers"` runs at module-eval time.
+
+**RULE:** Any `lib/<domain>/` module needs ONE of:
+1. Server-only (uses `next/headers`, service role, etc.) — only server components or `"use server"` actions may import.
+2. Client-safe (pure types + constants + helpers) — both server and client components may import.
+
+Never mix in the same file. When in doubt, split into `queries.ts` (server) + `source-meta.ts` / `types.ts` / `helpers.ts` (client-safe).
+
+**How to apply:** Before exporting a constant from a server module, ask: "will any client component want this?" If yes, move it to a sibling client-safe file. The split is cheap; the bundle bleed is annoying to diagnose.
+
+**TAGS:** #bug #rsc #bundling #lesson
+
+---
+
 ## [2026-04-24] LESSON: Don't pass Lucide icon components across the Server→Client component boundary
 
 **What went wrong:** `/settings/layout.tsx` (server component) passed a TABS array with `icon: User` / `icon: Send` / `icon: Users` — the LucideIcon function references — down to `<SettingsTabs tabs={TABS} />` (client component). React 19 threw "Functions cannot be passed directly to Client Components", returning 500s on every /settings subroute. Sign-in kept re-rendering because the unsigned-in fallback was the only code path that didn't try to hydrate the crashing layout.

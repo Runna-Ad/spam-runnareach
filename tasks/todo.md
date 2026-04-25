@@ -234,9 +234,79 @@ wire it. Use cmdk library (already installed).
 
 ---
 
-## Next slices (unchanged)
+## Active slice — Phase 1a (Discovery scaffolding, no-creds path)
 
-_Handoff list cleared — Phase 0 foundation slices all shipped._
+Phase 1 total is ~20 hrs in the plan but 90% blocked on Google Cloud /
+SerpAPI / BuiltWith / Unipile / Postmark / Slack creds. This slice (1a)
+ships everything that doesn't need creds so Pedro can hand-curate
+prospects today and Slice 1b plugs real engines into the scaffolding
+when creds land.
+
+### Scope
+- `/compliance` page: Do-not-contact CRUD + blackout calendar viewer (both tables already seeded/ready)
+- `/discover` page: run-history list, source-availability indicators, CSV
+  upload path (the only discovery source that works without creds is
+  `manual_upload`)
+- `/companies` page: prospects list with filters (status, market, ICP),
+  sort (score, created_at), empty state
+- Pure utilities in `lib/discover/`:
+  - `fuzzy-dedupe.ts` — name + domain normalization + similarity score
+  - `role-email.ts` — detect info@ / sales@ / hello@ / support@ patterns
+  - `mx-verify.ts` — `dns.resolveMx` wrapper for email-domain validation
+  - `blackout.ts` — is-blackout-date check backed by `blackout_dates`
+- Manual CSV upload → `prospects` rows with `discovery_source='manual_upload'`, dedupe on domain, role-email auto-flag
+
+### Out of scope (defer to 1b when creds land)
+- Google Places API integration
+- Industry directory crawler (needs designing per-directory selectors)
+- SerpAPI / Google search operator harvester
+- BuiltWith / competitor mining
+- Unipile / LinkedIn scraper
+- Nightly cron runs
+- Slack hot-lead webhook
+
+### Tasks
+- [x] Update tasks/todo.md
+- [x] Types extension (prospects + discovery_runs + do_not_contact_list + blackout_dates + brand_instances)
+- [x] Pure utilities (fuzzy-dedupe, role-email, mx-verify, blackout, csv parser)
+- [x] Server queries + actions (DNC, prospects, runs, manual upload)
+- [x] /compliance page (DNC CRUD + blackout calendar grouped by month)
+- [x] /discover page (6 source cards w/ availability state + run history + CSV upload drawer)
+- [x] /companies page (prospects table + search + status/market/ICP filters + 5 sort modes)
+- [x] Typecheck + lint clean; Playwright smoke green (4 prospects upload + 1 MX filter)
+- [x] Log review + commit
+
+### Verification (done)
+- /compliance: 14 seeded blackouts render grouped by month; DNC add → table updates ✓
+- /discover: sources show ready/blocked w/ blockers stated; CSV upload inserts 4 rows; run shows complete in history ✓
+- /companies: 4 uploaded prospects render with flags + missing-domain red flag chip; market=MX filter narrows to Smoke Four ✓
+
+### Slice Review
+
+**What worked:**
+- Pure utilities are tiny and standalone — `fuzzy-dedupe`, `role-email`, `mx-verify`, `blackout`, `csv` total ~250 LOC and have zero external deps. Easy to unit-test later.
+- Source-availability metadata in a separate `source-meta.ts` file lets the client palette + future cron + this UI all share one source of truth.
+- CSV upload UX with file-drop + preview table + per-row errors + dedupe count keeps the trust loop tight — Pedro can see what'll happen before clicking Import.
+- Reusing existing primitives (Drawer, ConfirmDialog, Chip, Select, Input) made all three pages fast to assemble.
+
+**What didn't:**
+- Lost ~5 min on a server-only-import-bleeding-into-client-bundle issue. `lib/discover/runs-queries.ts` exported both server queries AND the client-safe `SOURCE_META` constant — importing from `<DiscoverPage>` (client) dragged `next/headers` into the client bundle and crashed with "You're importing a component that needs `next/headers`". Fixed by splitting into `runs-queries.ts` (server) + `source-meta.ts` (client-safe).
+
+**What I'd do differently:**
+- Default rule: any `lib/<domain>/` module that contains BOTH server-only queries and shared types/constants gets split into two files (`queries.ts` server, `types.ts` or `meta.ts` client-safe) up front.
+
+**Tech debt introduced:**
+- Manual CSV upload doesn't yet run MX-verify per row — `mx-verify.ts` is written but not wired. Easy add when Pedro wants email-domain validation; today the only red-flag is `missing_domain`.
+- DNC matching is set up at the table level but not yet enforced at send-time — that gate lives in Phase 4 (send queue). The data is captured correctly in the meantime.
+- /discover "Run discovery" buttons for blocked sources are present-but-disabled stubs. Slice 1b will replace them with real source runners (Google Places, SerpAPI, BuiltWith, Unipile) when creds land.
+
+---
+
+## Next slice
+
+Slice 1b — Plug real discovery engines into the scaffolding once Google
+Cloud / SerpAPI / BuiltWith / Unipile creds arrive. Each source ≈ 2–4 hrs
+of plumbing onto the existing `discovery_runs` + `prospects` pipeline.
 
 ### Credentials still blocked (waiting on Pedro)
 - [ ] Supabase: ANON + SERVICE_ROLE keys live (connection works — Phase 0 unblocked)
