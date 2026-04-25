@@ -4,6 +4,18 @@ Running log of mistakes, root causes, and rules to prevent recurrence. Newest at
 
 ---
 
+## [2026-04-25] LESSON: TypeScript status arrays drifted from the prospect_status enum
+
+**What went wrong:** Six files (`STATUS_OPTIONS` arrays in detail-actions schema, prospect-detail, companies-page; `ColStatus` union + `COLUMNS` config + grouped `Record` keys in funnel-board; pipeline strip in dashboard) all referenced `"meeting_booked"`. The `prospect_status` enum in `0001_initial_schema.sql` actually has `"booked"` — `meeting_booked` is the value of a *different* enum (`opportunity_stage`). Anyone trying to mark a prospect as that stage would hit `invalid input value for enum prospect_status: meeting_booked` at runtime. Caught only when seeding screenshot fixtures.
+
+**Root cause:** Two enums with overlapping but different value sets, and no single source of truth from DB → TS. The TS arrays were hand-typed from memory of the spec doc.
+
+**RULE:** When TypeScript code references DB enum values, generate the union from `supabase gen types` (or at minimum, copy from the migration file with the path noted in a code comment). Add a Zod enum validator at the action boundary that lists every allowed value — typecheck won't help with strings, but Zod throws at request time so we hear about it before users do. For multi-enum domains (status vs opportunity_stage), name the TS unions explicitly to match: `ProspectStatus` and `OpportunityStage`, never share.
+
+**TAGS:** #bug #schema #enum #drift
+
+---
+
 ## [2026-04-24] LESSON: Splitting server-only queries from client-safe constants in the same module poisons the client bundle
 
 **What went wrong:** `lib/discover/runs-queries.ts` exported both `listDiscoveryRuns` (server-only — imports `next/headers` via `createClient`) and `SOURCE_META` (a plain constant). The client `<DiscoverPage>` imported just `SOURCE_META` from that file. Next dragged the *whole module* into the client bundle, and Turbopack crashed because `next/headers` can't run in the browser.
