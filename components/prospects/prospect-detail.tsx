@@ -15,6 +15,7 @@ import {
   Trash2,
 } from "lucide-react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import * as React from "react";
 import { Button } from "@/components/ui/button";
 import { Chip } from "@/components/ui/chip";
@@ -25,7 +26,6 @@ import { Select } from "@/components/ui/select";
 import { TagInput } from "@/components/ui/tag-input";
 import { Textarea } from "@/components/ui/textarea";
 import {
-  scrapeWebsiteStub,
   transitionStatus,
   updateProspect,
   upsertResearch,
@@ -36,6 +36,7 @@ import type {
   ProspectFull,
   ProspectResearch,
 } from "@/lib/prospects/detail-queries";
+import { scrapeWebsite } from "@/lib/research/scrape-action";
 import { cn, relativeTime } from "@/lib/utils";
 
 interface ProspectDetailProps {
@@ -119,6 +120,10 @@ export function ProspectDetail({
         ) : null}
         {tab === "research" ? (
           <ResearchTab
+            // Remount when research.updated_at changes (e.g. after a scrape
+            // triggers router.refresh()) so the form re-initializes from the
+            // latest server values instead of holding stale local state.
+            key={research?.updated_at ?? "no-research"}
             prospect={prospect}
             research={research}
             researchTableMissing={researchTableMissing}
@@ -468,7 +473,8 @@ function ResearchTab({
     "idle",
   );
   const [saving, startSave] = React.useTransition();
-  const [scrapeMessage, setScrapeMessage] = React.useState<string | null>(null);
+  const router = useRouter();
+  const [scrapeMessage, setScrapeMessage] = React.useState<{ tone: "ok" | "warn"; text: string } | null>(null);
   const [scraping, startScrape] = React.useTransition();
 
   if (researchTableMissing) {
@@ -529,8 +535,23 @@ function ResearchTab({
   const handleScrape = () => {
     setScrapeMessage(null);
     startScrape(async () => {
-      const result = await scrapeWebsiteStub(prospect.id);
-      setScrapeMessage(result.ok ? "Scraped." : result.error);
+      const result = await scrapeWebsite(prospect.id);
+      if (result.ok) {
+        const parts = [
+          result.what_they_do_set ? "what_they_do filled" : null,
+          result.tech_count > 0 ? `${result.tech_count} tech detected` : null,
+          result.emails_count > 0
+            ? `${result.emails_count} email${result.emails_count === 1 ? "" : "s"} found`
+            : null,
+        ].filter(Boolean);
+        setScrapeMessage({
+          tone: "ok",
+          text: parts.length > 0 ? `Scraped: ${parts.join(", ")}.` : "Scraped (no new fields).",
+        });
+        router.refresh();
+      } else {
+        setScrapeMessage({ tone: "warn", text: result.error });
+      }
     });
   };
 
@@ -546,8 +567,15 @@ function ResearchTab({
             the prospect's site. Output gets written into the fields below.
           </p>
           {scrapeMessage ? (
-            <p className="mt-2 text-[11px] italic text-[var(--color-warning-300)]">
-              {scrapeMessage}
+            <p
+              className={cn(
+                "mt-2 text-[11px] italic",
+                scrapeMessage.tone === "ok"
+                  ? "text-[var(--color-success-300)]"
+                  : "text-[var(--color-warning-300)]",
+              )}
+            >
+              {scrapeMessage.text}
             </p>
           ) : null}
         </div>

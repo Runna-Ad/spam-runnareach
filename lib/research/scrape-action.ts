@@ -1,0 +1,216 @@
+"use server";
+
+import { revalidatePath } from "next/cache";
+import { z } from "zod";
+import { requireUser } from "@/lib/auth";
+import { createClient } from "@/lib/supabase/server";
+import { scrapeSite } from "./scraper";
+
+const inputSchema = z.object({
+  prospect_id: z.string().uuid(),
+});
+
+export type ScrapeWebsiteResult =
+  | {
+      ok: true;
+      tech_count: number;
+      emails_count: number;
+      what_they_do_set: boolean;
+    }
+  | { ok: false; error: string };
+
+/**
+ * Server action wired to the "Scrape website" button on the prospect
+ * detail page. Steps:
+ *   1. Load prospect, validate it has a domain
+ *   2. Run the Cheerio scraper
+ *   3. Merge into prospect_research:
+ *      - what_they_do is set ONLY if currently null (don't clobber human edits)
+ *      - tech_stack is unioned (preserve human additions)
+ *      - evidence_urls gets the scraped URL + key-page URLs appended
+ *      - notes get a one-liner about contact emails / socials so they're visible
+ *      - research_method = 'scraped' if it was 'manual' before; otherwise unchanged
+ *      - last_scraped_at updated
+ *   4. If status is 'raw', bump to 'researched'
+ */
+export async function scrapeWebsite(prospectId: string): Promise<ScrapeWebsiteResult> {
+  const user = await requireUser();
+  if (user.role === "viewer") return { ok: false, error: "Viewers cannot scrape." };
+
+  const parsed = inputSchema.safeParse({ prospect_id: prospectId });
+  if (!parsed.success) return { ok: false, error: "Invalid prospect id." };
+
+  const supabase = await createClient();
+
+  type ProspectRow = {
+    id: string;
+    domain: string | null;
+    website_url: string | null;
+    status: string;
+  };
+  const { data: prospect, error: prospectErr } = await supabase
+    .from("prospects")
+    .select("id, domain, website_url, status")
+    .eq("id", parsed.data.prospect_id)
+    .eq("tenant_id", user.tenantId)
+    .maybeSingle<ProspectRow>();
+
+  if (prospectErr) return { ok: false, error: `Lookup failed: ${prospectErr.message}` };
+  if (!prospect) return { ok: false, error: "Prospect not found." };
+
+  const target = prospect.website_url ?? (prospect.domain ? `https://${prospect.domain}` : null);
+  if (!target) {
+    return {
+      ok: false,
+      error: "Prospect has no domain or website URL — add one in Overview first.",
+    };
+  }
+
+  const result = await scrapeSite(target);
+  if (!result.ok) {
+    const e = result.error;
+    const msg =
+      e.kind === "timeout"
+        ? "Site took too long to respond (15s timeout)."
+        : e.kind === "http"
+          ? `Site returned HTTP ${e.status}.`
+          : e.kind === "too_large"
+            ? `Page too large (${(e.bytes / 1_048_576).toFixed(1)} MB cap).`
+            : e.kind === "not_html"
+              ? `Not an HTML page (got ${e.content_type || "unknown content-type"}).`
+              : e.kind === "parse"
+                ? `Parser failed: ${e.detail}`
+                : `Network error: ${e.detail}`;
+    return { ok: false, error: msg };
+  }
+
+  // Load existing research (if any) to merge.
+  type ResearchRow = {
+    id: string;
+    what_they_do: string | null;
+    tech_stack: string[];
+    notes: string | null;
+    evidence_urls: string[];
+    research_method: string;
+  };
+  const { data: existing, error: existingErr } = await supabase
+    .from("prospect_research")
+    .select("id, what_they_do, tech_stack, notes, evidence_urls, research_method")
+    .eq("tenant_id", user.tenantId)
+    .eq("prospect_id", parsed.data.prospect_id)
+    .maybeSingle<ResearchRow>();
+
+  if (existingErr) {
+    return { ok: false, error: `Lookup failed: ${existingErr.message}` };
+  }
+
+  const site = result.site;
+  const mergedTechStack = unionUnique(existing?.tech_stack ?? [], site.tech_stack);
+  const mergedEvidence = unionUnique(existing?.evidence_urls ?? [], [
+    site.final_url,
+    ...site.key_pages.map((p) => p.url),
+  ]);
+
+  const scrapedNotes = buildScrapedNotesAddendum(site);
+  const mergedNotes = mergeNotes(existing?.notes ?? null, scrapedNotes);
+
+  const whatTheyDo = existing?.what_they_do?.trim()
+    ? existing.what_they_do
+    : site.what_they_do;
+
+  // If the existing row was already manually authored, keep that label.
+  const nextMethod =
+    existing?.research_method === "manual" || existing?.research_method === "claude_assisted"
+      ? existing.research_method
+      : "scraped";
+
+  if (existing) {
+    const { error } = await supabase
+      .from("prospect_research")
+      .update({
+        what_they_do: whatTheyDo,
+        tech_stack: mergedTechStack,
+        notes: mergedNotes,
+        evidence_urls: mergedEvidence,
+        research_method: nextMethod,
+        last_scraped_at: site.scraped_at,
+        last_edited_by_user_id: user.id,
+      } as never)
+      .eq("id", existing.id);
+    if (error) return { ok: false, error: `Could not save: ${error.message}` };
+  } else {
+    const { error } = await supabase.from("prospect_research").insert({
+      tenant_id: user.tenantId,
+      prospect_id: parsed.data.prospect_id,
+      what_they_do: whatTheyDo,
+      tech_stack: mergedTechStack,
+      notes: mergedNotes,
+      evidence_urls: mergedEvidence,
+      research_method: nextMethod,
+      last_scraped_at: site.scraped_at,
+      last_edited_by_user_id: user.id,
+    } as never);
+    if (error) return { ok: false, error: `Could not create: ${error.message}` };
+  }
+
+  // Auto-bump status raw → researched.
+  if (prospect.status === "raw") {
+    await supabase
+      .from("prospects")
+      .update({ status: "researched", updated_at: new Date().toISOString() } as never)
+      .eq("id", parsed.data.prospect_id)
+      .eq("tenant_id", user.tenantId);
+  }
+
+  revalidatePath(`/companies/${parsed.data.prospect_id}`);
+
+  return {
+    ok: true,
+    tech_count: mergedTechStack.length,
+    emails_count: site.contact_emails.length,
+    what_they_do_set: Boolean(whatTheyDo),
+  };
+}
+
+function unionUnique<T>(a: T[], b: T[]): T[] {
+  const out: T[] = [];
+  const seen = new Set<T>();
+  for (const v of [...a, ...b]) {
+    if (seen.has(v)) continue;
+    seen.add(v);
+    out.push(v);
+  }
+  return out;
+}
+
+function buildScrapedNotesAddendum(site: {
+  contact_emails: string[];
+  social_links: { platform: string; url: string }[];
+  key_pages: { label: string; url: string }[];
+}): string | null {
+  const lines: string[] = [];
+  if (site.contact_emails.length > 0) {
+    lines.push(`Contact emails: ${site.contact_emails.slice(0, 5).join(", ")}`);
+  }
+  if (site.social_links.length > 0) {
+    lines.push(
+      `Social: ${site.social_links.map((s) => `${s.platform}: ${s.url}`).join(" · ")}`,
+    );
+  }
+  if (site.key_pages.length > 0) {
+    lines.push(
+      `Key pages: ${site.key_pages.map((p) => `${p.label} (${p.url})`).join(" · ")}`,
+    );
+  }
+  if (lines.length === 0) return null;
+  return `[Scraped ${new Date().toISOString().slice(0, 10)}]\n${lines.join("\n")}`;
+}
+
+function mergeNotes(existing: string | null, scraped: string | null): string | null {
+  if (!scraped) return existing;
+  if (!existing) return scraped;
+  // Strip any prior scraped block before appending the new one so we don't
+  // accumulate stale findings.
+  const stripped = existing.replace(/\[Scraped \d{4}-\d{2}-\d{2}\][\s\S]*?(?=\n\n|$)/g, "").trim();
+  return stripped ? `${stripped}\n\n${scraped}` : scraped;
+}

@@ -372,11 +372,90 @@ button (real scraper lands as the next slice). Uses a separate
 
 ---
 
-## Next slice (after this)
+## Active slice — Site scraper (Cheerio)
 
-**Site scraper (Cheerio)** — wires the "Scrape website" button. Pure code,
-no external creds. Foundation for Phase 2 research generation when
-Anthropic key lands.
+Wires the "Scrape website" button on the prospect detail page. Fetches
+the prospect's homepage + key pages, extracts what_they_do / tech stack /
+contact links / social, writes into `prospect_research`. Pure code, no
+external creds. When Anthropic credits land, Claude consumes this scraped
+output as input for higher-quality research.
+
+### Scope
+- `lib/research/scraper.ts` — pure scraping logic
+  - `fetchHtml(url)` — Node fetch, polite UA, 15s timeout, follows redirects
+  - `parseSite(html, baseUrl)` — cheerio extraction
+  - `detectTechStack(html)` — fingerprint matching against ~15 known platforms
+    (Shopify, Klaviyo, Webflow, WordPress, HubSpot, Stripe, GA, Meta Pixel, etc.)
+  - `extractWhatTheyDo($)` — og:description / meta description / h1+first paragraph
+  - `extractContacts($)` — mailto: links + plaintext email scan
+  - `extractSocials($)` — known social-domain hrefs
+- `lib/research/scrape-action.ts` — replaces `scrapeWebsiteStub`. Calls scraper,
+  upserts `prospect_research` with method='scraped', sets last_scraped_at.
+- Prospect detail UI: refresh research display after successful scrape.
+
+### Out of scope (future)
+- Multi-page crawl (about, pricing, contact) — homepage only for v1
+- Robots.txt respect — add when scaling to nightly cron
+- Storage of raw HTML (saved as text in DB column for now; move to Storage later)
+- JS-rendered SPAs (no headless browser this slice — Cheerio sees only server-rendered HTML)
+
+### Tasks
+- [x] Update tasks/todo.md
+- [x] Build scraper.ts (fetch + cheerio + 19 tech fingerprints + extractors)
+- [x] Build scrape-action.ts replacing stub
+- [x] Wire detail page to real action with `router.refresh()` + key remount
+- [x] Test against real domain (shopify.com — clean detection, no false positives)
+- [x] Typecheck + lint clean on app code; Playwright E2E smoke green
+- [x] Log review + commit
+
+### Verification (done)
+- shopify.com end-to-end smoke: Shopify detected, what_they_do filled,
+  6 socials + 2 key pages + 1 email found, 3 evidence URLs, status auto-bump
+  raw → researched ✓
+- Form fields re-mount after scrape (key={research?.updated_at}) so Pedro
+  sees the scraped values ready to edit ✓
+- Tightened fingerprints — no false positives (Shopify scrape returns
+  ['Shopify'] alone, not also WooCommerce/WordPress)
+- Network failures (parked domain, timeout, 404) surface friendly errors
+
+### Slice Review
+
+**What worked:**
+- 19 fingerprints cover the real platforms we'll hit in DTC + agency
+  prospecting. Asset-URL + meta-generator matching is way more accurate
+  than substring-on-html.
+- Merge logic preserves human edits — only fills empty fields, unions
+  tech_stack arrays, strips prior `[Scraped …]` blocks before appending.
+- Polite UA + 15s timeout + 2 MB cap = sane defaults for cron use later.
+- The `key={research?.updated_at}` remount trick was the right fix for
+  the prop-vs-state-after-server-action issue.
+
+**What didn't:**
+- First fingerprint pass had false positives — Shopify's marketing copy
+  mentioned "WooCommerce" and "WordPress" and matched my too-loose regex.
+  Fixed with tighter asset-URL + meta-generator patterns.
+- runna.agency timed out — the domain is parked at Namecheap with no site
+  deployed yet. Scraper handled it correctly (network error surfaced).
+
+**What I'd do differently:**
+- For v2: respect robots.txt (parse + cache per-host).
+- Add 2-3 internal-page crawl (about, pricing) to enrich `what_they_do`.
+- Save raw HTML to Storage (currently truncated/discarded after parse).
+
+**Tech debt introduced:**
+- No retry on transient errors (single attempt). Phase 1b cron should
+  add exponential backoff.
+- Tech fingerprints are statically defined — eventually we'd want a
+  config table so non-engineers can extend them.
+
+### Verification
+- Click "Scrape website" on a prospect with a real domain → research fields
+  populate (what_they_do, tech_stack, contact emails, evidence URLs)
+- Tech fingerprints work on a known case (e.g. shopify.com → ["Shopify"])
+- Existing manual research isn't clobbered if user already had notes
+  (merge: scraper fills empty fields only, doesn't overwrite)
+- Failure cases (404, timeout, NXDOMAIN) surface friendly error to UI
+- Typecheck + lint clean
 
 ## Future (creds-blocked)
 
