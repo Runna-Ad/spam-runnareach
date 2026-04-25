@@ -9,7 +9,8 @@
     "start": "next start",
     "typecheck": "tsc --noEmit",
     "lint": "eslint .",
-    "format": "prettier --write ."
+    "format": "prettier --write .",
+    "test": "node --test --test-reporter=spec 'tests/**/*.test.ts'"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.40.0",
