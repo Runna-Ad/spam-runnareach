@@ -144,6 +144,43 @@ export async function getProspectResearch(
   };
 }
 
+export type PainOption = {
+  id: string;
+  code: string;
+  display_name: string;
+  description: string | null;
+};
+
+/**
+ * Active pain taxonomy entries for the tenant, sorted by display name.
+ * Powers the pain-tag picker in the research editor (replaces free-text)
+ * and will be the canonical label set Claude classifies into in Phase 2.
+ */
+export async function listPainTaxonomy(tenantId: string): Promise<PainOption[]> {
+  const supabase = await createClient();
+  type Row = {
+    id: string;
+    code: string;
+    display_name_en: string;
+    description_en: string | null;
+  };
+  const { data, error } = await supabase
+    .from("pain_taxonomy")
+    .select("id, code, display_name_en, description_en")
+    .eq("tenant_id", tenantId)
+    .eq("is_active", true)
+    .order("display_name_en")
+    .returns<Row[]>();
+
+  if (error) throw new Error(`Failed to load pain taxonomy: ${error.message}`);
+  return (data ?? []).map((r) => ({
+    id: r.id,
+    code: r.code,
+    display_name: r.display_name_en,
+    description: r.description_en,
+  }));
+}
+
 export type ActivityEntry = {
   id: string;
   kind: "discovery" | "research_edit" | "status_change";

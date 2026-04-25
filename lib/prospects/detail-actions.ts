@@ -129,8 +129,11 @@ export async function upsertResearch(input: UpsertResearchInput): Promise<Detail
     return { ok: false, error: `Lookup failed: ${existingErr.message}` };
   }
 
+  // Drop empty rows. New entries must have either a canonical pain_id (from
+  // the picker) OR a legacy pain_label; rows with only evidence and no pain
+  // selected are dropped to avoid orphan evidence in the jsonb.
   const cleanedPainPoints = parsed.data.pain_points.filter(
-    (p) => p.pain_label || p.evidence_quote || p.evidence_url,
+    (p) => p.pain_id || p.pain_label,
   );
 
   if (existing) {

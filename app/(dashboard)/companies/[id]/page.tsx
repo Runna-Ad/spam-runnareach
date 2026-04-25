@@ -4,8 +4,10 @@ import { requireUser } from "@/lib/auth";
 import {
   getProspect,
   getProspectResearch,
+  listPainTaxonomy,
   listProspectActivity,
   type ActivityEntry,
+  type PainOption,
   type ProspectResearch,
 } from "@/lib/prospects/detail-queries";
 
@@ -43,11 +45,20 @@ export default async function ProspectDetailPage({
     activity = [];
   }
 
+  let painOptions: PainOption[] = [];
+  try {
+    painOptions = await listPainTaxonomy(user.tenantId);
+  } catch {
+    // taxonomy seed missing — picker will fall back to free-text in UI.
+    painOptions = [];
+  }
+
   return (
     <ProspectDetail
       prospect={prospect}
       research={research}
       activity={activity}
+      painOptions={painOptions}
       researchTableMissing={researchTableMissing}
       canEdit={user.role !== "viewer"}
     />

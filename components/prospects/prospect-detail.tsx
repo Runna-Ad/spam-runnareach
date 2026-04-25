@@ -32,6 +32,7 @@ import {
 } from "@/lib/prospects/detail-actions";
 import type {
   ActivityEntry,
+  PainOption,
   PainPoint,
   ProspectFull,
   ProspectResearch,
@@ -43,6 +44,7 @@ interface ProspectDetailProps {
   prospect: ProspectFull;
   research: ProspectResearch | null;
   activity: ActivityEntry[];
+  painOptions: PainOption[];
   researchTableMissing: boolean;
   canEdit: boolean;
 }
@@ -85,6 +87,7 @@ export function ProspectDetail({
   prospect,
   research,
   activity,
+  painOptions,
   researchTableMissing,
   canEdit,
 }: ProspectDetailProps) {
@@ -126,6 +129,7 @@ export function ProspectDetail({
             key={research?.updated_at ?? "no-research"}
             prospect={prospect}
             research={research}
+            painOptions={painOptions}
             researchTableMissing={researchTableMissing}
             canEdit={canEdit}
           />
@@ -454,11 +458,13 @@ function OverviewTab({ prospect, canEdit }: { prospect: ProspectFull; canEdit: b
 function ResearchTab({
   prospect,
   research,
+  painOptions,
   researchTableMissing,
   canEdit,
 }: {
   prospect: ProspectFull;
   research: ProspectResearch | null;
+  painOptions: PainOption[];
   researchTableMissing: boolean;
   canEdit: boolean;
 }) {
@@ -626,6 +632,7 @@ function ResearchTab({
         <PainPointEditor
           value={painPoints}
           onChange={setPainPoints}
+          options={painOptions}
           disabled={!canEdit}
         />
       </Section>
@@ -679,65 +686,123 @@ function ResearchTab({
 function PainPointEditor({
   value,
   onChange,
+  options,
   disabled,
 }: {
   value: PainPoint[];
   onChange: (next: PainPoint[]) => void;
+  options: PainOption[];
   disabled: boolean;
 }) {
+  const optionById = React.useMemo(
+    () => new Map(options.map((o) => [o.id, o])),
+    [options],
+  );
+  // Pain ids already used in this editor — disable in dropdowns to prevent
+  // duplicates (Phase 2 aggregator will assume one entry per pain code).
+  const usedIds = React.useMemo(
+    () => new Set(value.map((p) => p.pain_id).filter(Boolean) as string[]),
+    [value],
+  );
+
   const update = (i: number, patch: Partial<PainPoint>) => {
     onChange(value.map((p, idx) => (idx === i ? { ...p, ...patch } : p)));
   };
   const remove = (i: number) => onChange(value.filter((_, idx) => idx !== i));
-  const add = () => onChange([...value, { pain_label: "", evidence_quote: "" }]);
+  const add = () => onChange([...value, { evidence_quote: "" }]);
+
+  const pickPain = (i: number, painId: string) => {
+    if (!painId) {
+      // Reset to empty selection
+      update(i, { pain_id: undefined, pain_label: undefined });
+      return;
+    }
+    const opt = optionById.get(painId);
+    if (!opt) return;
+    update(i, { pain_id: opt.id, pain_label: opt.display_name });
+  };
+
+  if (options.length === 0) {
+    return (
+      <p className="text-xs italic text-[var(--color-fg-700)]">
+        Pain taxonomy is empty. Run <code>supabase/seed.sql</code> to seed canonical pains.
+      </p>
+    );
+  }
 
   return (
     <div className="flex flex-col gap-3">
       {value.length === 0 ? (
         <p className="text-xs italic text-[var(--color-fg-700)]">No pain points yet.</p>
       ) : (
-        value.map((p, i) => (
-          <div
-            key={i}
-            className="flex flex-col gap-2 rounded-[var(--radius-md)] bg-[var(--color-bg-900)] p-3 ring-1 ring-inset ring-[var(--color-border-default)]"
-          >
-            <div className="flex gap-2">
-              <Input
-                value={p.pain_label ?? ""}
-                onChange={(e) => update(i, { pain_label: e.target.value })}
-                placeholder="Pain label (e.g. brand inconsistency)"
+        value.map((p, i) => {
+          const selectedOpt = p.pain_id ? optionById.get(p.pain_id) : undefined;
+          // Legacy entries may have a pain_label without a pain_id (pre–slice 2).
+          const isLegacy = !p.pain_id && Boolean(p.pain_label);
+          return (
+            <div
+              key={i}
+              className="flex flex-col gap-2 rounded-[var(--radius-md)] bg-[var(--color-bg-900)] p-3 ring-1 ring-inset ring-[var(--color-border-default)]"
+            >
+              <div className="flex gap-2">
+                <Select
+                  value={p.pain_id ?? ""}
+                  onChange={(e) => pickPain(i, e.target.value)}
+                  disabled={disabled}
+                  aria-label="Pain"
+                >
+                  <option value="">Select a pain…</option>
+                  {options.map((opt) => {
+                    const isUsedByOther = usedIds.has(opt.id) && opt.id !== p.pain_id;
+                    return (
+                      <option key={opt.id} value={opt.id} disabled={isUsedByOther}>
+                        {opt.display_name}
+                        {isUsedByOther ? " (already added)" : ""}
+                      </option>
+                    );
+                  })}
+                </Select>
+                <button
+                  type="button"
+                  onClick={() => remove(i)}
+                  disabled={disabled}
+                  className={cn(
+                    "grid h-9 w-9 shrink-0 place-items-center rounded-[var(--radius-md)]",
+                    "text-[var(--color-fg-500)] hover:bg-[var(--color-bg-700)] hover:text-[var(--color-danger-300)]",
+                    "focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--color-accent-300)]",
+                    "disabled:opacity-40 disabled:pointer-events-none",
+                  )}
+                  aria-label="Remove pain point"
+                >
+                  <Trash2 className="h-3.5 w-3.5" aria-hidden />
+                </button>
+              </div>
+              {selectedOpt?.description ? (
+                <p className="text-[11px] text-[var(--color-fg-500)]">
+                  {selectedOpt.description}
+                </p>
+              ) : null}
+              {isLegacy ? (
+                <p className="text-[11px] text-[var(--color-warning-300)]">
+                  Legacy free-text label “{p.pain_label}” — pick a canonical pain to upgrade.
+                </p>
+              ) : null}
+              <Textarea
+                value={p.evidence_quote ?? ""}
+                onChange={(e) => update(i, { evidence_quote: e.target.value })}
+                placeholder="Evidence quote from the site / LinkedIn"
+                rows={2}
                 disabled={disabled}
               />
-              <button
-                type="button"
-                onClick={() => remove(i)}
+              <Input
+                value={p.evidence_url ?? ""}
+                onChange={(e) => update(i, { evidence_url: e.target.value })}
+                placeholder="Evidence URL"
                 disabled={disabled}
-                className={cn(
-                  "grid h-9 w-9 shrink-0 place-items-center rounded-[var(--radius-md)]",
-                  "text-[var(--color-fg-500)] hover:bg-[var(--color-bg-700)] hover:text-[var(--color-danger-300)]",
-                  "focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--color-accent-300)]",
-                  "disabled:opacity-40 disabled:pointer-events-none",
-                )}
-                aria-label="Remove pain point"
-              >
-                <Trash2 className="h-3.5 w-3.5" aria-hidden />
-              </button>
+              />
             </div>
-            <Textarea
-              value={p.evidence_quote ?? ""}
-              onChange={(e) => update(i, { evidence_quote: e.target.value })}
-              placeholder="Evidence quote from the site / LinkedIn"
-              rows={2}
-              disabled={disabled}
-            />
-            <Input
-              value={p.evidence_url ?? ""}
-              onChange={(e) => update(i, { evidence_url: e.target.value })}
-              placeholder="Evidence URL"
-              disabled={disabled}
-            />
-          </div>
-        ))
+          );
+        })
       )}
       {!disabled ? (
         <Button type="button" size="sm" variant="secondary" onClick={add}>
