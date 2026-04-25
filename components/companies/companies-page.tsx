@@ -1,7 +1,7 @@
 "use client";
 
 import { ExternalLink, Filter, Search } from "lucide-react";
-import { useRouter } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import * as React from "react";
 import { Chip } from "@/components/ui/chip";
 import { EmptyState } from "@/components/ui/empty-state";
@@ -10,9 +10,20 @@ import { Select } from "@/components/ui/select";
 import type { Prospect } from "@/lib/discover/prospects-queries";
 import { cn, relativeTime } from "@/lib/utils";
 
+type SortOption = "newest" | "oldest" | "score_desc" | "score_asc" | "name";
+
+interface InitialFilters {
+  status: string;
+  market: string;
+  icpId: string;
+  sort: string;
+  search: string;
+}
+
 interface CompaniesPageProps {
   prospects: Prospect[];
   icps: { id: string; name: string }[];
+  initialFilters?: InitialFilters;
 }
 
 const STATUS_OPTIONS: string[] = [
@@ -44,15 +55,34 @@ const MARKET_FLAG: Record<"CA" | "MX" | "US" | "LATAM", string> = {
   LATAM: "🌎",
 };
 
-export function CompaniesPage({ prospects, icps }: CompaniesPageProps) {
+export function CompaniesPage({ prospects, icps, initialFilters }: CompaniesPageProps) {
   const router = useRouter();
-  const [search, setSearch] = React.useState("");
-  const [status, setStatus] = React.useState<string>("ALL");
-  const [market, setMarket] = React.useState<string>("ALL");
-  const [icpId, setIcpId] = React.useState<string>("ALL");
-  const [sort, setSort] = React.useState<
-    "newest" | "oldest" | "score_desc" | "score_asc" | "name"
-  >("newest");
+  const pathname = usePathname();
+  const [search, setSearch] = React.useState(initialFilters?.search ?? "");
+  const [status, setStatus] = React.useState<string>(initialFilters?.status ?? "ALL");
+  const [market, setMarket] = React.useState<string>(initialFilters?.market ?? "ALL");
+  const [icpId, setIcpId] = React.useState<string>(initialFilters?.icpId ?? "ALL");
+  const [sort, setSort] = React.useState<SortOption>(
+    (initialFilters?.sort as SortOption | undefined) ?? "newest",
+  );
+
+  // Sync filter state → URL (shallow replace, no scroll). Deeplinks like
+  // /companies?status=raw work both ways: the page hydrates from URL on
+  // mount, and changing a filter updates the URL so it can be copied.
+  React.useEffect(() => {
+    const params = new URLSearchParams();
+    if (status !== "ALL") params.set("status", status);
+    if (market !== "ALL") params.set("market", market);
+    if (icpId !== "ALL") params.set("icp", icpId);
+    if (sort !== "newest") params.set("sort", sort);
+    if (search.trim().length > 0) params.set("q", search.trim());
+    const qs = params.toString();
+    const next = qs ? `${pathname}?${qs}` : pathname;
+    // Avoid pointless replaces — they cancel in-flight scrolls.
+    if (typeof window !== "undefined" && window.location.pathname + window.location.search !== next) {
+      router.replace(next as never, { scroll: false });
+    }
+  }, [status, market, icpId, sort, search, pathname, router]);
 
   const filtered = React.useMemo(() => {
     const term = search.trim().toLowerCase();
@@ -160,7 +190,7 @@ export function CompaniesPage({ prospects, icps }: CompaniesPageProps) {
         <div className="ml-auto">
           <Select
             value={sort}
-            onChange={(e) => setSort(e.target.value as typeof sort)}
+            onChange={(e) => setSort(e.target.value as SortOption)}
             className="h-8 max-w-[160px] py-0 text-xs"
           >
             <option value="newest">Newest first</option>
