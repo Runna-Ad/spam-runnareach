@@ -5,6 +5,7 @@ import {
   ArrowLeft,
   ChevronDown,
   ExternalLink,
+  Gauge,
   Globe,
   Loader2,
   MessageSquareWarning,
@@ -38,6 +39,7 @@ import type {
   ProspectResearch,
 } from "@/lib/prospects/detail-queries";
 import { scrapeWebsite } from "@/lib/research/scrape-action";
+import { scoreProspect } from "@/lib/research/score-action";
 import { cn, relativeTime } from "@/lib/utils";
 
 interface ProspectDetailProps {
@@ -482,6 +484,8 @@ function ResearchTab({
   const router = useRouter();
   const [scrapeMessage, setScrapeMessage] = React.useState<{ tone: "ok" | "warn"; text: string } | null>(null);
   const [scraping, startScrape] = React.useTransition();
+  const [scoreMessage, setScoreMessage] = React.useState<{ tone: "ok" | "warn"; text: string } | null>(null);
+  const [scoring, startScore] = React.useTransition();
 
   if (researchTableMissing) {
     return (
@@ -538,6 +542,22 @@ function ResearchTab({
     });
   };
 
+  const handleScore = () => {
+    setScoreMessage(null);
+    startScore(async () => {
+      const result = await scoreProspect(prospect.id);
+      if (result.ok) {
+        setScoreMessage({
+          tone: "ok",
+          text: `Scored ${result.composite_score}/100 (${(result.confidence * 100).toFixed(0)}% confidence, ${result.method}). ${result.reasoning}`,
+        });
+        router.refresh();
+      } else {
+        setScoreMessage({ tone: "warn", text: result.error });
+      }
+    });
+  };
+
   const handleScrape = () => {
     setScrapeMessage(null);
     startScrape(async () => {
@@ -585,21 +605,48 @@ function ResearchTab({
             </p>
           ) : null}
         </div>
-        <Button
-          type="button"
-          variant="secondary"
-          onClick={handleScrape}
-          disabled={scraping || !canEdit || !prospect.domain}
-          className="shrink-0"
-        >
-          {scraping ? (
-            <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden />
-          ) : (
-            <ScanSearch className="h-3.5 w-3.5" aria-hidden />
-          )}
-          {scraping ? "Scraping…" : "Scrape website"}
-        </Button>
+        <div className="flex shrink-0 flex-col items-stretch gap-2">
+          <Button
+            type="button"
+            variant="secondary"
+            onClick={handleScrape}
+            disabled={scraping || !canEdit || !prospect.domain}
+          >
+            {scraping ? (
+              <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden />
+            ) : (
+              <ScanSearch className="h-3.5 w-3.5" aria-hidden />
+            )}
+            {scraping ? "Scraping…" : "Scrape website"}
+          </Button>
+          <Button
+            type="button"
+            variant="secondary"
+            onClick={handleScore}
+            disabled={scoring || !canEdit}
+            title="Score this prospect against its ICP rubric"
+          >
+            {scoring ? (
+              <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden />
+            ) : (
+              <Gauge className="h-3.5 w-3.5" aria-hidden />
+            )}
+            {scoring ? "Scoring…" : "Score prospect"}
+          </Button>
+        </div>
       </div>
+      {scoreMessage ? (
+        <p
+          className={cn(
+            "-mt-3 text-[11px] italic",
+            scoreMessage.tone === "ok"
+              ? "text-[var(--color-success-300)]"
+              : "text-[var(--color-warning-300)]",
+          )}
+        >
+          {scoreMessage.text}
+        </p>
+      ) : null}
 
       <Section
         title="What they do"
