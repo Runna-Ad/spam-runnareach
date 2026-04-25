@@ -2,6 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
+import { writeAuditLog } from "@/lib/audit/log";
 import { requireUser } from "@/lib/auth";
 import { createClient } from "@/lib/supabase/server";
 import { scrapeSite } from "./scraper";
@@ -161,6 +162,21 @@ export async function scrapeWebsite(prospectId: string): Promise<ScrapeWebsiteRe
       .eq("id", parsed.data.prospect_id)
       .eq("tenant_id", user.tenantId);
   }
+
+  await writeAuditLog({
+    tenantId: user.tenantId,
+    actorId: user.id,
+    action: "prospect.scraped",
+    entityType: "prospect",
+    entityId: parsed.data.prospect_id,
+    metadata: {
+      target,
+      final_url: site.final_url,
+      tech_count: mergedTechStack.length,
+      emails_count: site.contact_emails.length,
+      key_pages: site.key_pages.length,
+    },
+  });
 
   revalidatePath(`/companies/${parsed.data.prospect_id}`);
 

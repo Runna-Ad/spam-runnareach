@@ -860,6 +860,26 @@ function PainPointEditor({
   );
 }
 
+function ActivityIcon({ kind }: { kind: ActivityEntry["kind"] }) {
+  const cls = "h-3.5 w-3.5 text-[var(--color-accent-300)]";
+  switch (kind) {
+    case "discovery":
+      return <Search className={cls} aria-hidden />;
+    case "research_edit":
+    case "research_create":
+      return <ScanSearch className={cls} aria-hidden />;
+    case "scrape":
+      return <Globe className={cls} aria-hidden />;
+    case "score":
+      return <Gauge className={cls} aria-hidden />;
+    case "status_change":
+      return <ChevronDown className={cls} aria-hidden />;
+    case "update":
+    default:
+      return <Activity className={cls} aria-hidden />;
+  }
+}
+
 function ActivityTab({ activity }: { activity: ActivityEntry[] }) {
   if (activity.length === 0) {
     return (
@@ -876,13 +896,7 @@ function ActivityTab({ activity }: { activity: ActivityEntry[] }) {
           className="flex gap-3 rounded-[var(--radius-md)] bg-[var(--color-bg-800)] p-3 ring-1 ring-inset ring-[var(--color-border-default)]"
         >
           <div className="grid h-7 w-7 shrink-0 place-items-center rounded-full bg-[var(--color-bg-900)] ring-1 ring-inset ring-[var(--color-border-default)]">
-            {a.kind === "discovery" ? (
-              <Search className="h-3.5 w-3.5 text-[var(--color-accent-300)]" aria-hidden />
-            ) : a.kind === "research_edit" ? (
-              <ScanSearch className="h-3.5 w-3.5 text-[var(--color-accent-300)]" aria-hidden />
-            ) : (
-              <Activity className="h-3.5 w-3.5 text-[var(--color-accent-300)]" aria-hidden />
-            )}
+            <ActivityIcon kind={a.kind} />
           </div>
           <div className="flex min-w-0 flex-1 flex-col">
             <div className="flex items-center gap-2">

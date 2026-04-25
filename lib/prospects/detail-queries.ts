@@ -183,7 +183,14 @@ export async function listPainTaxonomy(tenantId: string): Promise<PainOption[]> 
 
 export type ActivityEntry = {
   id: string;
-  kind: "discovery" | "research_edit" | "status_change";
+  kind:
+    | "discovery"
+    | "research_edit"
+    | "research_create"
+    | "status_change"
+    | "scrape"
+    | "score"
+    | "update";
   label: string;
   detail: string | null;
   actor_name: string | null;
@@ -191,10 +198,14 @@ export type ActivityEntry = {
 };
 
 /**
- * Lightweight activity feed pulled from existing tables — no audit_log
- * dependency for this slice. Sources:
- *   - prospects.created_at + discovery_run (creation event)
- *   - prospect_research.updated_at (research edits)
+ * Activity feed for a prospect. Sources:
+ *   - "Added to pipeline" comes from prospects.created_at + discovery_runs
+ *     (no audit row needed — bulk CSV uploads would otherwise flood the log)
+ *   - All subsequent events come from audit_log filtered to this prospect's
+ *     entity_id (status changes, scrapes, scores, research edits, manual
+ *     field updates)
+ *
+ * Newest first. Capped at 50 events — that covers months of activity.
  */
 export async function listProspectActivity(
   tenantId: string,
@@ -203,19 +214,17 @@ export async function listProspectActivity(
   const supabase = await createClient();
   const out: ActivityEntry[] = [];
 
+  // ── Creation event (free — read from prospect + its discovery_run) ──
   type ProspectActivityRow = {
     id: string;
     created_at: string;
-    updated_at: string;
-    status: string;
     discovery_runs: { source: string; users: { full_name: string | null } | null } | null;
   };
-
   const { data: p, error: pErr } = await supabase
     .from("prospects")
     .select(
       `
-      id, created_at, updated_at, status,
+      id, created_at,
       discovery_runs(source, users(full_name))
     `,
     )
@@ -238,38 +247,111 @@ export async function listProspectActivity(
     });
   }
 
-  // Research edits (only if migration applied)
-  try {
-    type ResRow = {
-      id: string;
-      created_at: string;
-      updated_at: string;
-      research_method: string;
-      users: { full_name: string | null } | null;
-    };
-    const { data: research } = await supabase
-      .from("prospect_research")
-      .select("id, created_at, updated_at, research_method, users(full_name)")
+  // ── Audit log events ─────────────────────────────────────────────────
+  // We pull both prospect-targeted entries AND research-targeted entries
+  // for THIS prospect (research entries store prospect_id in metadata).
+  type AuditRow = {
+    id: string;
+    action: string;
+    entity_type: string | null;
+    entity_id: string | null;
+    metadata: Record<string, unknown> | null;
+    created_at: string;
+    users: { full_name: string | null } | null;
+  };
+
+  // Two queries: one for prospect-entity events, one for research-entity
+  // events whose metadata.prospect_id matches. We can't do an OR across
+  // entity_type and metadata->>prospect_id in a single .or() without
+  // ambiguity, so we split.
+  const [prospectAudit, researchAudit] = await Promise.all([
+    supabase
+      .from("audit_log")
+      .select("id, action, entity_type, entity_id, metadata, created_at, users(full_name)")
       .eq("tenant_id", tenantId)
-      .eq("prospect_id", prospectId)
-      .maybeSingle<ResRow>();
-    if (research) {
-      out.push({
-        id: `research:${research.id}`,
-        kind: "research_edit",
-        label: research.created_at === research.updated_at ? "Research created" : "Research edited",
-        detail: research.research_method.replace(/_/g, " "),
-        actor_name: research.users?.full_name ?? null,
-        at: research.updated_at,
-      });
-    }
-  } catch {
-    // table missing — skip
+      .eq("entity_type", "prospect")
+      .eq("entity_id", prospectId)
+      .order("created_at", { ascending: false })
+      .limit(50)
+      .returns<AuditRow[]>(),
+    supabase
+      .from("audit_log")
+      .select("id, action, entity_type, entity_id, metadata, created_at, users(full_name)")
+      .eq("tenant_id", tenantId)
+      .eq("entity_type", "research")
+      // metadata->>prospect_id is the JSON string accessor in PostgREST.
+      .eq("metadata->>prospect_id", prospectId)
+      .order("created_at", { ascending: false })
+      .limit(50)
+      .returns<AuditRow[]>(),
+  ]);
+
+  for (const row of [...(prospectAudit.data ?? []), ...(researchAudit.data ?? [])]) {
+    const { kind, label, detail } = describeAuditAction(row.action, row.metadata);
+    out.push({
+      id: `audit:${row.id}`,
+      kind,
+      label,
+      detail,
+      actor_name: row.users?.full_name ?? null,
+      at: row.created_at,
+    });
   }
 
-  // Sort newest first
+  // Sort newest first, cap at 50.
   out.sort((a, b) => b.at.localeCompare(a.at));
-  return out;
+  return out.slice(0, 50);
+}
+
+function describeAuditAction(
+  action: string,
+  metadata: Record<string, unknown> | null,
+): { kind: ActivityEntry["kind"]; label: string; detail: string | null } {
+  const m = metadata ?? {};
+  switch (action) {
+    case "prospect.status_changed": {
+      const from = typeof m.from === "string" ? m.from : null;
+      const to = typeof m.to === "string" ? m.to : null;
+      const reason = typeof m.suppressed_reason === "string" ? m.suppressed_reason : null;
+      return {
+        kind: "status_change",
+        label: from ? `Status: ${from} → ${to}` : `Status: ${to}`,
+        detail: reason ? `reason: ${reason}` : null,
+      };
+    }
+    case "prospect.scraped": {
+      const tech = typeof m.tech_count === "number" ? m.tech_count : 0;
+      const emails = typeof m.emails_count === "number" ? m.emails_count : 0;
+      return {
+        kind: "scrape",
+        label: "Website scraped",
+        detail: `${tech} tech · ${emails} email${emails === 1 ? "" : "s"}`,
+      };
+    }
+    case "prospect.scored": {
+      const score = typeof m.composite_score === "number" ? m.composite_score : null;
+      const method = typeof m.method === "string" ? m.method : null;
+      return {
+        kind: "score",
+        label: score !== null ? `Scored ${score}/100` : "Scored",
+        detail: method ? `via ${method}` : null,
+      };
+    }
+    case "prospect.updated": {
+      const fields = Array.isArray(m.fields) ? (m.fields as string[]) : [];
+      return {
+        kind: "update",
+        label: "Prospect updated",
+        detail: fields.length > 0 ? fields.join(", ") : null,
+      };
+    }
+    case "research.edited":
+      return { kind: "research_edit", label: "Research edited", detail: null };
+    case "research.created":
+      return { kind: "research_create", label: "Research created", detail: null };
+    default:
+      return { kind: "update", label: action, detail: null };
+  }
 }
 
 function normalizePainPoints(raw: unknown): PainPoint[] {

@@ -2,6 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
+import { writeAuditLog } from "@/lib/audit/log";
 import { requireUser } from "@/lib/auth";
 import { createClient } from "@/lib/supabase/server";
 import {
@@ -192,6 +193,20 @@ export async function scoreProspect(
     .eq("tenant_id", user.tenantId);
 
   if (updErr) return { ok: false, error: `Score saved, but prospect update failed: ${updErr.message}` };
+
+  await writeAuditLog({
+    tenantId: user.tenantId,
+    actorId: user.id,
+    action: "prospect.scored",
+    entityType: "prospect",
+    entityId: parsed.data.prospect_id,
+    metadata: {
+      composite_score: result.composite_score,
+      confidence: result.confidence,
+      method,
+      breakdown: result.breakdown,
+    },
+  });
 
   revalidatePath(`/companies/${parsed.data.prospect_id}`);
   revalidatePath("/companies");

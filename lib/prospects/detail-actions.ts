@@ -2,6 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
+import { writeAuditLog } from "@/lib/audit/log";
 import { requireUser } from "@/lib/auth";
 import { createClient } from "@/lib/supabase/server";
 
@@ -90,6 +91,17 @@ export async function updateProspect(input: UpdateProspectInput): Promise<Detail
 
   if (error) return { ok: false, error: `Could not save: ${error.message}` };
 
+  await writeAuditLog({
+    tenantId: user.tenantId,
+    actorId: user.id,
+    action: "prospect.updated",
+    entityType: "prospect",
+    entityId: parsed.data.id,
+    metadata: {
+      fields: Object.keys(payload).filter((k) => k !== "updated_at"),
+    },
+  });
+
   revalidatePath(`/companies/${parsed.data.id}`);
   revalidatePath("/companies");
   return { ok: true };
@@ -136,6 +148,13 @@ export async function upsertResearch(input: UpsertResearchInput): Promise<Detail
     (p) => p.pain_id || p.pain_label,
   );
 
+  const auditMetadata = {
+    pain_count: cleanedPainPoints.length,
+    tech_count: parsed.data.tech_stack.length,
+    evidence_count: parsed.data.evidence_urls.length,
+    has_what_they_do: Boolean(parsed.data.what_they_do?.trim()),
+  };
+
   if (existing) {
     const { error } = await supabase
       .from("prospect_research")
@@ -149,19 +168,41 @@ export async function upsertResearch(input: UpsertResearchInput): Promise<Detail
       } as never)
       .eq("id", existing.id);
     if (error) return { ok: false, error: `Could not save research: ${error.message}` };
+    await writeAuditLog({
+      tenantId: user.tenantId,
+      actorId: user.id,
+      action: "research.edited",
+      entityType: "research",
+      entityId: existing.id,
+      metadata: { ...auditMetadata, prospect_id: parsed.data.prospect_id },
+    });
   } else {
-    const { error } = await supabase.from("prospect_research").insert({
-      tenant_id: user.tenantId,
-      prospect_id: parsed.data.prospect_id,
-      what_they_do: parsed.data.what_they_do,
-      tech_stack: parsed.data.tech_stack,
-      pain_points: cleanedPainPoints as unknown,
-      notes: parsed.data.notes,
-      evidence_urls: parsed.data.evidence_urls,
-      research_method: "manual",
-      last_edited_by_user_id: user.id,
-    } as never);
+    const { data: created, error } = await supabase
+      .from("prospect_research")
+      .insert({
+        tenant_id: user.tenantId,
+        prospect_id: parsed.data.prospect_id,
+        what_they_do: parsed.data.what_they_do,
+        tech_stack: parsed.data.tech_stack,
+        pain_points: cleanedPainPoints as unknown,
+        notes: parsed.data.notes,
+        evidence_urls: parsed.data.evidence_urls,
+        research_method: "manual",
+        last_edited_by_user_id: user.id,
+      } as never)
+      .select("id")
+      .single<{ id: string }>();
     if (error) return { ok: false, error: `Could not create research: ${error.message}` };
+    if (created) {
+      await writeAuditLog({
+        tenantId: user.tenantId,
+        actorId: user.id,
+        action: "research.created",
+        entityType: "research",
+        entityId: created.id,
+        metadata: { ...auditMetadata, prospect_id: parsed.data.prospect_id },
+      });
+    }
   }
 
   // Bump prospect status raw → researched if currently raw.
@@ -210,6 +251,16 @@ export async function transitionStatus(
     payload.suppressed_reason = null;
   }
 
+  // Capture the prior status so the audit metadata reads "raw → researched"
+  // rather than just "→ researched".
+  const { data: priorRow } = await supabase
+    .from("prospects")
+    .select("status")
+    .eq("id", parsed.data.id)
+    .eq("tenant_id", user.tenantId)
+    .maybeSingle<{ status: string }>();
+  const priorStatus = priorRow?.status ?? null;
+
   const { error } = await supabase
     .from("prospects")
     .update(payload as never)
@@ -217,6 +268,19 @@ export async function transitionStatus(
     .eq("tenant_id", user.tenantId);
 
   if (error) return { ok: false, error: `Could not change status: ${error.message}` };
+
+  await writeAuditLog({
+    tenantId: user.tenantId,
+    actorId: user.id,
+    action: "prospect.status_changed",
+    entityType: "prospect",
+    entityId: parsed.data.id,
+    metadata: {
+      from: priorStatus,
+      to: parsed.data.next_status,
+      suppressed_reason: parsed.data.suppressed_reason ?? null,
+    },
+  });
 
   revalidatePath(`/companies/${parsed.data.id}`);
   revalidatePath("/companies");
