@@ -5,14 +5,16 @@ import * as React from "react";
 import { Button } from "@/components/ui/button";
 import { EmptyState } from "@/components/ui/empty-state";
 import type { Icp } from "@/lib/icp/queries";
+import type { IcpSuggestionLists } from "@/lib/icp/suggestions";
 import { IcpCard } from "./icp-card";
 import { IcpEditDrawer, type IcpDrawerMode } from "./icp-edit-drawer";
 
 interface IcpGridProps {
   icps: Icp[];
+  tenantSuggestions: IcpSuggestionLists;
 }
 
-export function IcpGrid({ icps }: IcpGridProps) {
+export function IcpGrid({ icps, tenantSuggestions }: IcpGridProps) {
   const [showInactive, setShowInactive] = React.useState(false);
   const [drawerMode, setDrawerMode] = React.useState<IcpDrawerMode | null>(null);
 
@@ -92,6 +94,7 @@ export function IcpGrid({ icps }: IcpGridProps) {
 
       <IcpEditDrawer
         mode={drawerMode}
+        tenantSuggestions={tenantSuggestions}
         open={drawerMode !== null}
         onOpenChange={(open) => {
           if (!open) setDrawerMode(null);

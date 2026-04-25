@@ -1,6 +1,6 @@
 "use client";
 
-import { Archive, ArchiveRestore, Loader2, MapPin, Users } from "lucide-react";
+import { Archive, ArchiveRestore, Loader2, MapPin, Sparkles, Users } from "lucide-react";
 import * as React from "react";
 import { Button } from "@/components/ui/button";
 import { Chip } from "@/components/ui/chip";
@@ -16,9 +16,19 @@ import {
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select } from "@/components/ui/select";
-import { TagInput } from "@/components/ui/tag-input";
+import { TagInput, type TagSuggestionGroup } from "@/components/ui/tag-input";
 import { createIcp, softDeleteIcp, updateIcp } from "@/lib/icp/actions";
+import {
+  BUSINESS_TYPES,
+  EXCLUDED_KEYWORDS,
+  GEO_REGIONS,
+  GOOGLE_PLACES_TYPES,
+  INDUSTRY_TAGS,
+  SEARCH_KEYWORDS,
+} from "@/lib/icp/option-sources";
 import type { Icp, IcpLanguage, IcpMarket } from "@/lib/icp/queries";
+import type { IcpSuggestionLists } from "@/lib/icp/suggestions";
+import { suggestIcpFields } from "@/lib/icp/suggest-fields";
 import { cn } from "@/lib/utils";
 
 export type IcpDrawerMode =
@@ -27,6 +37,7 @@ export type IcpDrawerMode =
 
 interface IcpEditDrawerProps {
   mode: IcpDrawerMode | null;
+  tenantSuggestions: IcpSuggestionLists;
   open: boolean;
   onOpenChange: (open: boolean) => void;
 }
@@ -84,6 +95,18 @@ function fromIcp(icp: Icp): FormState {
   };
 }
 
+function dedupe(values: string[]): string[] {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const v of values) {
+    const key = v.trim().toLowerCase();
+    if (!key || seen.has(key)) continue;
+    seen.add(key);
+    out.push(v.trim());
+  }
+  return out;
+}
+
 function parseNullableInt(s: string): number | null {
   const trimmed = s.trim();
   if (trimmed === "") return null;
@@ -98,11 +121,44 @@ function parseNullableFloat(s: string): number | null {
   return Number.isFinite(n) && n >= 0 ? n : null;
 }
 
-export function IcpEditDrawer({ mode, open, onOpenChange }: IcpEditDrawerProps) {
+/**
+ * Build a two-group suggestion list for a TagInput field. Group 1 is
+ * values already used elsewhere in this tenant (drives consistency);
+ * group 2 is the canonical curated list (Google Places official set,
+ * etc.). Values that appear in both are deduped — tenant wins so the
+ * "Used by your team" label is accurate.
+ */
+function buildSuggestions(
+  tenantValues: string[],
+  canonical: readonly string[],
+): TagSuggestionGroup[] {
+  const tenantLower = new Set(tenantValues.map((v) => v.toLowerCase()));
+  const canonicalFiltered = canonical.filter((v) => !tenantLower.has(v.toLowerCase()));
+  const groups: TagSuggestionGroup[] = [];
+  if (tenantValues.length > 0) {
+    groups.push({ label: "Used by your team", values: tenantValues });
+  }
+  if (canonicalFiltered.length > 0) {
+    groups.push({
+      label: tenantValues.length > 0 ? "Standard" : null,
+      values: canonicalFiltered,
+    });
+  }
+  return groups;
+}
+
+export function IcpEditDrawer({
+  mode,
+  tenantSuggestions,
+  open,
+  onOpenChange,
+}: IcpEditDrawerProps) {
   const [state, setState] = React.useState<FormState>(BLANK);
   const [error, setError] = React.useState<string | null>(null);
   const [saving, startSaving] = React.useTransition();
   const [archiving, startArchiving] = React.useTransition();
+  const [suggesting, setSuggesting] = React.useState(false);
+  const [suggestNote, setSuggestNote] = React.useState<string | null>(null);
 
   React.useEffect(() => {
     if (mode?.kind === "edit") {
@@ -151,6 +207,36 @@ export function IcpEditDrawer({ mode, open, onOpenChange }: IcpEditDrawerProps) 
     });
   };
 
+  const handleSuggest = () => {
+    setSuggestNote(null);
+    setSuggesting(true);
+    try {
+      const out = suggestIcpFields({
+        name: state.name,
+        market: state.market,
+        language: state.language,
+        existing: {
+          industry_tags: state.industry_tags,
+          business_types: state.business_types,
+          geo_regions: state.geo_regions,
+          google_places_types: state.google_places_types,
+          search_keywords: state.search_keywords,
+        },
+      });
+      setState((s) => ({
+        ...s,
+        industry_tags: dedupe([...s.industry_tags, ...out.industry_tags]),
+        business_types: dedupe([...s.business_types, ...out.business_types]),
+        geo_regions: dedupe([...s.geo_regions, ...out.geo_regions]),
+        google_places_types: dedupe([...s.google_places_types, ...out.google_places_types]),
+        search_keywords: dedupe([...s.search_keywords, ...out.search_keywords]),
+      }));
+      setSuggestNote(out.reasoning);
+    } finally {
+      setSuggesting(false);
+    }
+  };
+
   const handleArchive = () => {
     if (!isEdit) return;
     setError(null);
@@ -177,6 +263,35 @@ export function IcpEditDrawer({ mode, open, onOpenChange }: IcpEditDrawerProps) 
               ? `Edit targeting for this ICP. Used by Discovery to size the reachable pool and by the pitch generator to match case studies.`
               : "Define targeting for a new ideal customer profile. All fields except name are optional; empty arrays mean no constraint on that dimension."}
           </DrawerDescription>
+          <div className="mt-2 flex items-center gap-2">
+            <Button
+              type="button"
+              size="sm"
+              variant="secondary"
+              onClick={handleSuggest}
+              disabled={suggesting || !state.name.trim()}
+              title={
+                state.name.trim()
+                  ? "Auto-fill industry, business types, geo, places types, and keywords from the ICP name"
+                  : "Type a name first, then click Suggest"
+              }
+            >
+              {suggesting ? (
+                <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden />
+              ) : (
+                <Sparkles className="h-3.5 w-3.5" aria-hidden />
+              )}
+              Suggest from name
+            </Button>
+            <span className="text-[10px] text-[var(--color-fg-700)]">
+              Heuristic today · Claude when credits land
+            </span>
+          </div>
+          {suggestNote ? (
+            <p className="mt-1 text-[11px] italic text-[var(--color-fg-500)]">
+              {suggestNote}
+            </p>
+          ) : null}
         </DrawerHeader>
 
         <DrawerBody>
@@ -233,6 +348,7 @@ export function IcpEditDrawer({ mode, open, onOpenChange }: IcpEditDrawerProps) 
                   value={state.industry_tags}
                   onChange={updateField("industry_tags")}
                   placeholder="dtc, ecommerce, consumer goods…"
+                  suggestions={buildSuggestions(tenantSuggestions.industry_tags, INDUSTRY_TAGS)}
                 />
               </Field>
               <Field label="Business types">
@@ -240,6 +356,7 @@ export function IcpEditDrawer({ mode, open, onOpenChange }: IcpEditDrawerProps) 
                   value={state.business_types}
                   onChange={updateField("business_types")}
                   placeholder="dtc_ecommerce, professional_services…"
+                  suggestions={buildSuggestions(tenantSuggestions.business_types, BUSINESS_TYPES)}
                 />
               </Field>
             </Section>
@@ -253,6 +370,7 @@ export function IcpEditDrawer({ mode, open, onOpenChange }: IcpEditDrawerProps) 
                   value={state.geo_regions}
                   onChange={updateField("geo_regions")}
                   placeholder="Alberta, Calgary, Edmonton…"
+                  suggestions={buildSuggestions(tenantSuggestions.geo_regions, GEO_REGIONS)}
                 />
               </Field>
               <Field label="Google Places types">
@@ -260,6 +378,10 @@ export function IcpEditDrawer({ mode, open, onOpenChange }: IcpEditDrawerProps) 
                   value={state.google_places_types}
                   onChange={updateField("google_places_types")}
                   placeholder="store, lawyer, accounting…"
+                  suggestions={buildSuggestions(
+                    tenantSuggestions.google_places_types,
+                    GOOGLE_PLACES_TYPES,
+                  )}
                 />
               </Field>
             </Section>
@@ -296,6 +418,10 @@ export function IcpEditDrawer({ mode, open, onOpenChange }: IcpEditDrawerProps) 
                   value={state.search_keywords}
                   onChange={updateField("search_keywords")}
                   placeholder="shopify, dtc brand, online shop…"
+                  suggestions={buildSuggestions(
+                    tenantSuggestions.search_keywords,
+                    SEARCH_KEYWORDS,
+                  )}
                 />
               </Field>
               <Field label="Excluded keywords">
@@ -303,6 +429,10 @@ export function IcpEditDrawer({ mode, open, onOpenChange }: IcpEditDrawerProps) 
                   value={state.excluded_keywords}
                   onChange={updateField("excluded_keywords")}
                   placeholder="dropshipping, MLM, cannabis retail…"
+                  suggestions={buildSuggestions(
+                    tenantSuggestions.excluded_keywords,
+                    EXCLUDED_KEYWORDS,
+                  )}
                 />
               </Field>
             </Section>
