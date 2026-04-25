@@ -1,113 +1,229 @@
-import { ScrollText, Target, Users2, Wrench } from "lucide-react";
+import {
+  ArrowRight,
+  CheckCircle2,
+  Clock,
+  Search,
+  Send,
+  Sparkles,
+} from "lucide-react";
+import Link from "next/link";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Chip } from "@/components/ui/chip";
 import { requireUser } from "@/lib/auth";
 import { createClient } from "@/lib/supabase/server";
+import {
+  countAddedThisWeek,
+  countScrapedThisWeek,
+  getAttentionQueue,
+  getRecentProspects,
+  getStatusCounts,
+  type AttentionRow,
+  type RecentProspect,
+} from "@/lib/today/queries";
+import { cn, relativeTime } from "@/lib/utils";
 
-export default async function DashboardHome() {
+export const dynamic = "force-dynamic";
+
+const MARKET_FLAG: Record<"CA" | "MX" | "US" | "LATAM", string> = {
+  CA: "🇨🇦",
+  MX: "🇲🇽",
+  US: "🇺🇸",
+  LATAM: "🌎",
+};
+
+// Pipeline strip — every status, in flow order. Counts default to 0 if the
+// tenant has no prospects in that bucket yet.
+const PIPELINE_STAGES: { key: string; label: string }[] = [
+  { key: "raw", label: "Raw" },
+  { key: "researched", label: "Researched" },
+  { key: "pitched", label: "Pitched" },
+  { key: "replied", label: "Replied" },
+  { key: "meeting_booked", label: "Meeting" },
+  { key: "won", label: "Won" },
+  { key: "lost", label: "Lost" },
+];
+
+export default async function TodayPage() {
   const user = await requireUser();
   const supabase = await createClient();
 
-  // Parallel fetch of Phase 0 seed counts. RLS ensures we only see our tenant's rows.
-  const [caseStudies, services, icps, teamUsers] = await Promise.all([
-    supabase.from("case_studies").select("id", { count: "exact", head: true }).eq("is_active", true),
-    supabase.from("services").select("id", { count: "exact", head: true }).eq("is_active", true),
-    supabase.from("icps").select("id", { count: "exact", head: true }).eq("is_active", true),
-    supabase.from("users").select("id", { count: "exact", head: true }),
+  // Run everything in parallel — RLS handles tenant scoping.
+  const [
+    statusCounts,
+    attentionQueue,
+    recentProspects,
+    addedThisWeek,
+    scrapedThisWeek,
+    icpCount,
+  ] = await Promise.all([
+    getStatusCounts(user.tenantId),
+    getAttentionQueue(user.tenantId),
+    getRecentProspects(user.tenantId),
+    countAddedThisWeek(user.tenantId),
+    countScrapedThisWeek(user.tenantId),
+    supabase
+      .from("icps")
+      .select("id", { count: "exact", head: true })
+      .eq("tenant_id", user.tenantId)
+      .eq("is_active", true),
   ]);
 
-  const stats = [
-    {
-      label: "Case studies",
-      value: caseStudies.count ?? 0,
-      icon: ScrollText,
-      route: "/case-studies",
-    },
-    { label: "Services", value: services.count ?? 0, icon: Wrench, route: "/settings" },
-    { label: "Active ICPs", value: icps.count ?? 0, icon: Target, route: "/icp" },
-    { label: "Team", value: teamUsers.count ?? 0, icon: Users2, route: "/settings/users" },
-  ];
+  const totalProspects = Object.values(statusCounts).reduce((a, b) => a + b, 0);
+  const rawCount = statusCounts.raw ?? 0;
+  const researchedCount = statusCounts.researched ?? 0;
+  const activeIcps = icpCount.count ?? 0;
 
   return (
-    <div className="mx-auto max-w-5xl space-y-6 p-6">
+    <div className="mx-auto max-w-6xl space-y-6 p-6">
       {/* Greeting */}
       <div>
         <p className="font-mono text-xs tracking-wider text-[var(--color-fg-500)]">
-          TODAY · {new Date().toLocaleDateString("en-CA", { weekday: "long", month: "short", day: "numeric" })}
+          TODAY ·{" "}
+          {new Date().toLocaleDateString("en-CA", {
+            weekday: "long",
+            month: "short",
+            day: "numeric",
+          })}
         </p>
         <h1 className="mt-1 font-[family-name:var(--font-display)] text-3xl font-semibold tracking-tight text-[var(--color-fg-50)]">
           {greeting()}, {user.fullName?.split(" ")[0] ?? "there"}.
         </h1>
         <p className="mt-1 text-sm text-[var(--color-fg-500)]">
-          {user.tenantDisplayName} · Phase 0 foundation is live.
+          {totalProspects === 0
+            ? `${user.tenantDisplayName} · No prospects yet — start at /discover.`
+            : `${totalProspects} prospects in pipeline · ${activeIcps} active ICP${activeIcps === 1 ? "" : "s"}.`}
         </p>
       </div>
 
-      {/* Quick stats */}
+      {/* Stat tiles */}
       <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
-        {stats.map((s) => {
-          const Icon = s.icon;
-          return (
-            <Card key={s.label}>
-              <CardContent className="flex items-center gap-3 p-4">
-                <div className="flex h-8 w-8 items-center justify-center rounded-[var(--radius-md)] bg-[var(--color-bg-700)] text-[var(--color-fg-300)]">
-                  <Icon className="h-4 w-4" aria-hidden />
-                </div>
-                <div className="min-w-0">
-                  <div className="font-mono text-2xl font-semibold tracking-tight text-[var(--color-fg-50)]">
-                    {s.value}
-                  </div>
-                  <div className="text-[10px] uppercase tracking-wider text-[var(--color-fg-500)]">
-                    {s.label}
-                  </div>
-                </div>
-              </CardContent>
-            </Card>
-          );
-        })}
+        <StatTile
+          label="In pipeline"
+          value={totalProspects}
+          icon={Sparkles}
+          accent={false}
+        />
+        <StatTile
+          label="Raw · need research"
+          value={rawCount}
+          icon={Search}
+          accent={rawCount > 0}
+          href="/companies?status=raw"
+        />
+        <StatTile
+          label="Ready to pitch"
+          value={researchedCount}
+          icon={Send}
+          accent={researchedCount > 0}
+          href="/companies?status=researched"
+        />
+        <StatTile
+          label="Added this week"
+          value={addedThisWeek}
+          icon={Clock}
+          accent={false}
+          subtitle={
+            scrapedThisWeek > 0 ? `${scrapedThisWeek} scraped` : undefined
+          }
+        />
       </div>
 
-      {/* Today queue placeholder */}
+      {/* Pipeline strip */}
       <Card>
         <CardHeader className="flex flex-row items-center justify-between">
-          <CardTitle>Today</CardTitle>
-          <Chip tone="accent">Phase 0</Chip>
+          <CardTitle>Pipeline at a glance</CardTitle>
+          <Link
+            href="/funnel"
+            className="inline-flex items-center gap-1 text-[11px] text-[var(--color-fg-500)] hover:text-[var(--color-accent-300)]"
+          >
+            Open funnel
+            <ArrowRight className="h-3 w-3" aria-hidden />
+          </Link>
         </CardHeader>
         <CardContent>
-          <ul className="divide-y divide-[var(--color-border-subtle)]">
-            <ActionRow
-              status="pending"
-              title="Finish warming setup"
-              meta="tasks/warming-setup-guide.md"
-              detail="Buy runna.agency + runnareach.com. Start 2-week warming clock."
-            />
-            <ActionRow
-              status="pending"
-              title="Invite Runna CA teammates"
-              meta="/settings/users"
-              detail="Admin can invite once auth is live. You're here."
-            />
-            <ActionRow
-              status="pending"
-              title="Curate 20 seeded case studies"
-              meta="/case-studies"
-              detail="Review hero metrics + pain taxonomy tags before Phase 3. Three fabricated cases were corrected; 10 new cases added from the 2026 ESP deck."
-            />
-            <ActionRow
-              status="blocked"
-              title="Connect Anthropic API key"
-              meta=".env.local → ANTHROPIC_API_KEY"
-              detail="Blocks Phase 2 research + scoring + pitch generation."
-            />
-            <ActionRow
-              status="blocked"
-              title="Connect Google Cloud (Places + Gmail OAuth)"
-              meta=".env.local → GOOGLE_*"
-              detail="Blocks Phase 1 discovery + Phase 4 sending."
-            />
-          </ul>
+          <div className="grid grid-cols-7 gap-2">
+            {PIPELINE_STAGES.map((s) => {
+              const n = statusCounts[s.key] ?? 0;
+              const empty = n === 0;
+              return (
+                <Link
+                  key={s.key}
+                  href={`/companies?status=${s.key}` as never}
+                  className={cn(
+                    "flex flex-col gap-0.5 rounded-[var(--radius-md)] px-2 py-2.5 transition-[background,box-shadow]",
+                    "ring-1 ring-inset",
+                    empty
+                      ? "bg-[var(--color-bg-900)] ring-[var(--color-border-subtle)] hover:ring-[var(--color-border-default)]"
+                      : "bg-[var(--color-bg-900)] ring-[var(--color-border-default)] hover:ring-[var(--color-accent-300)]",
+                  )}
+                >
+                  <span
+                    className={cn(
+                      "font-mono text-xl font-semibold tracking-tight",
+                      empty
+                        ? "text-[var(--color-fg-700)]"
+                        : "text-[var(--color-fg-50)]",
+                    )}
+                  >
+                    {n}
+                  </span>
+                  <span className="text-[10px] uppercase tracking-wider text-[var(--color-fg-500)]">
+                    {s.label}
+                  </span>
+                </Link>
+              );
+            })}
+          </div>
         </CardContent>
       </Card>
+
+      {/* Attention + Recent — two columns on desktop, stacked on mobile */}
+      <div className="grid gap-4 md:grid-cols-3">
+        <Card className="md:col-span-2">
+          <CardHeader className="flex flex-row items-center justify-between">
+            <CardTitle>Needs your attention</CardTitle>
+            <Chip tone={attentionQueue.length > 0 ? "warning" : "neutral"}>
+              {attentionQueue.length}
+            </Chip>
+          </CardHeader>
+          <CardContent>
+            {attentionQueue.length === 0 ? (
+              <div className="flex items-center gap-2 py-4 text-xs text-[var(--color-fg-500)]">
+                <CheckCircle2
+                  className="h-4 w-4 text-[var(--color-success-300)]"
+                  aria-hidden
+                />
+                Inbox zero. {totalProspects === 0 ? "Seed prospects at /discover." : "Nothing rotting."}
+              </div>
+            ) : (
+              <ul className="divide-y divide-[var(--color-border-subtle)]">
+                {attentionQueue.map((row) => (
+                  <AttentionRowItem key={row.id} row={row} />
+                ))}
+              </ul>
+            )}
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader>
+            <CardTitle>Recently added</CardTitle>
+          </CardHeader>
+          <CardContent>
+            {recentProspects.length === 0 ? (
+              <p className="py-4 text-xs italic text-[var(--color-fg-700)]">
+                Nothing yet. Upload a CSV at <Link className="underline" href="/discover">/discover</Link>.
+              </p>
+            ) : (
+              <ul className="space-y-2">
+                {recentProspects.map((p) => (
+                  <RecentRow key={p.id} prospect={p} />
+                ))}
+              </ul>
+            )}
+          </CardContent>
+        </Card>
+      </div>
     </div>
   );
 }
@@ -119,28 +235,121 @@ function greeting() {
   return "Good evening";
 }
 
-interface ActionRowProps {
-  status: "pending" | "blocked" | "done";
-  title: string;
-  meta: string;
-  detail: string;
+interface StatTileProps {
+  label: string;
+  value: number;
+  icon: React.ComponentType<{ className?: string; "aria-hidden"?: boolean }>;
+  accent: boolean;
+  href?: string;
+  subtitle?: string;
 }
 
-function ActionRow({ status, title, meta, detail }: ActionRowProps) {
-  const tone = status === "blocked" ? "danger" : status === "done" ? "success" : "warning";
-  const label = status === "blocked" ? "Blocked" : status === "done" ? "Done" : "Pending";
-  return (
-    <li className="flex items-start gap-3 py-3">
-      <Chip tone={tone} className="mt-0.5 shrink-0">
-        {label}
-      </Chip>
-      <div className="min-w-0 flex-1">
-        <div className="flex flex-wrap items-baseline gap-x-2">
-          <span className="text-sm font-medium text-[var(--color-fg-50)]">{title}</span>
-          <span className="font-mono text-[10px] text-[var(--color-fg-500)]">{meta}</span>
-        </div>
-        <p className="mt-0.5 text-xs text-[var(--color-fg-500)]">{detail}</p>
+function StatTile({ label, value, icon: Icon, accent, href, subtitle }: StatTileProps) {
+  const inner = (
+    <CardContent className="flex items-center gap-3 p-4">
+      <div
+        className={cn(
+          "flex h-8 w-8 items-center justify-center rounded-[var(--radius-md)]",
+          accent
+            ? "bg-[color-mix(in_oklab,var(--color-accent-300),transparent_80%)] text-[var(--color-accent-300)]"
+            : "bg-[var(--color-bg-700)] text-[var(--color-fg-300)]",
+        )}
+      >
+        <Icon className="h-4 w-4" aria-hidden />
       </div>
+      <div className="min-w-0">
+        <div className="font-mono text-2xl font-semibold tracking-tight text-[var(--color-fg-50)]">
+          {value}
+        </div>
+        <div className="text-[10px] uppercase tracking-wider text-[var(--color-fg-500)]">
+          {label}
+        </div>
+        {subtitle ? (
+          <div className="mt-0.5 text-[10px] text-[var(--color-fg-700)]">{subtitle}</div>
+        ) : null}
+      </div>
+    </CardContent>
+  );
+  if (href) {
+    return (
+      // Typed-routes can't statically prove dynamic ?status=… params, so we
+      // cast. Link still validates at runtime.
+      <Link href={href as never} className="group">
+        <Card className="transition-[box-shadow] group-hover:ring-[var(--color-accent-300)]">
+          {inner}
+        </Card>
+      </Link>
+    );
+  }
+  return <Card>{inner}</Card>;
+}
+
+const REASON_LABEL: Record<AttentionRow["reason"], string> = {
+  ready_to_pitch: "Ready to pitch",
+  needs_research: "Needs research",
+  stale_research: "Stale research",
+};
+
+const REASON_TONE: Record<AttentionRow["reason"], "success" | "warning" | "info"> = {
+  ready_to_pitch: "success",
+  needs_research: "warning",
+  stale_research: "info",
+};
+
+function AttentionRowItem({ row }: { row: AttentionRow }) {
+  return (
+    <li>
+      <Link
+        href={`/companies/${row.id}` as never}
+        className={cn(
+          "flex items-center gap-3 px-1 py-2.5 transition-colors",
+          "hover:bg-[var(--color-bg-700)] rounded-[var(--radius-sm)]",
+        )}
+      >
+        <Chip tone={REASON_TONE[row.reason]} className="shrink-0">
+          {REASON_LABEL[row.reason]}
+        </Chip>
+        <div className="min-w-0 flex-1">
+          <div className="flex items-center gap-1.5">
+            <span aria-hidden>{MARKET_FLAG[row.market]}</span>
+            <span className="truncate text-sm text-[var(--color-fg-50)]">
+              {row.company_name}
+            </span>
+            {row.match_score !== null ? (
+              <span className="font-mono text-[10px] text-[var(--color-fg-500)]">
+                · {row.match_score}
+              </span>
+            ) : null}
+          </div>
+          {row.domain ? (
+            <div className="font-mono text-[11px] text-[var(--color-fg-500)]">
+              {row.domain}
+            </div>
+          ) : null}
+        </div>
+        <span className="shrink-0 text-[11px] text-[var(--color-fg-700)]">
+          {row.age_days === 0 ? "today" : `${row.age_days}d`}
+        </span>
+      </Link>
+    </li>
+  );
+}
+
+function RecentRow({ prospect }: { prospect: RecentProspect }) {
+  return (
+    <li>
+      <Link
+        href={`/companies/${prospect.id}` as never}
+        className="flex flex-col rounded-[var(--radius-sm)] px-1 py-1.5 hover:bg-[var(--color-bg-700)]"
+      >
+        <span className="flex items-center gap-1.5 text-sm text-[var(--color-fg-50)]">
+          <span aria-hidden>{MARKET_FLAG[prospect.market]}</span>
+          <span className="truncate">{prospect.company_name}</span>
+        </span>
+        <span className="text-[11px] text-[var(--color-fg-500)]">
+          {prospect.discovery_source.replace(/_/g, " ")} · {relativeTime(prospect.created_at)}
+        </span>
+      </Link>
     </li>
   );
 }
