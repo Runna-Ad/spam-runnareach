@@ -1,12 +1,12 @@
-import { PhasePlaceholder } from "@/components/dashboard/phase-placeholder";
+import { FunnelBoard } from "@/components/funnel/funnel-board";
+import { requireUser } from "@/lib/auth";
+import { listFunnelCards } from "@/lib/funnel/queries";
 
-export default function FunnelPage() {
-  return (
-    <PhasePlaceholder
-      route="/funnel"
-      phase={4}
-      title="Funnel kanban"
-      description="Drag-drop pipeline stages. WIP limits per stage. Conversion rates between every pair of stages."
-    />
-  );
+export const dynamic = "force-dynamic";
+
+export default async function FunnelPage() {
+  const user = await requireUser();
+  const cards = await listFunnelCards(user.tenantId);
+
+  return <FunnelBoard cards={cards} canEdit={user.role !== "viewer"} />;
 }
