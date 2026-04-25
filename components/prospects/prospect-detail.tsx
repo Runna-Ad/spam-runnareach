@@ -58,7 +58,7 @@ const STATUS_OPTIONS = [
   "researched",
   "pitched",
   "replied",
-  "meeting_booked",
+  "booked",
   "won",
   "lost",
   "suppressed",

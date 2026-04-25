@@ -10,7 +10,7 @@ const VALID_STATUSES = new Set([
   "researched",
   "pitched",
   "replied",
-  "meeting_booked",
+  "booked",
   "won",
   "lost",
   "suppressed",

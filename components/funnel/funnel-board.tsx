@@ -14,7 +14,7 @@ const COLUMNS: { key: ColStatus; label: string; tone: "neutral" | "info" | "succ
   { key: "researched", label: "Researched", tone: "info" },
   { key: "pitched", label: "Pitched", tone: "info" },
   { key: "replied", label: "Replied", tone: "info" },
-  { key: "meeting_booked", label: "Meeting", tone: "success" },
+  { key: "booked", label: "Meeting", tone: "success" },
   { key: "won", label: "Won", tone: "success" },
   { key: "lost", label: "Lost", tone: "danger" },
 ];
@@ -24,7 +24,7 @@ type ColStatus =
   | "researched"
   | "pitched"
   | "replied"
-  | "meeting_booked"
+  | "booked"
   | "won"
   | "lost";
 
@@ -64,7 +64,7 @@ export function FunnelBoard({ cards, canEdit }: FunnelBoardProps) {
       researched: [],
       pitched: [],
       replied: [],
-      meeting_booked: [],
+      booked: [],
       won: [],
       lost: [],
     };

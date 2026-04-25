@@ -46,7 +46,7 @@ const transitionSchema = z.object({
     "researched",
     "pitched",
     "replied",
-    "meeting_booked",
+    "booked",
     "won",
     "lost",
     "suppressed",

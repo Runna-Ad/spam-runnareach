@@ -31,7 +31,7 @@ const STATUS_OPTIONS: string[] = [
   "researched",
   "pitched",
   "replied",
-  "meeting_booked",
+  "booked",
   "won",
   "lost",
   "suppressed",
