@@ -1,12 +1,14 @@
 "use client";
 
-import { ExternalLink, Filter, Search } from "lucide-react";
+import { ExternalLink, Filter, Gauge, Loader2, Search, X } from "lucide-react";
 import { usePathname, useRouter } from "next/navigation";
 import * as React from "react";
+import { Button } from "@/components/ui/button";
 import { Chip } from "@/components/ui/chip";
 import { EmptyState } from "@/components/ui/empty-state";
 import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
+import { bulkScoreProspects, bulkTransitionStatus } from "@/lib/discover/bulk-actions";
 import type { Prospect } from "@/lib/discover/prospects-queries";
 import { cn, relativeTime } from "@/lib/utils";
 
@@ -66,6 +68,16 @@ export function CompaniesPage({ prospects, icps, initialFilters }: CompaniesPage
     (initialFilters?.sort as SortOption | undefined) ?? "newest",
   );
 
+  // Selection state for bulk actions. Set of prospect ids. Cleared on
+  // any filter change so we don't bulk-act on rows the user can't see.
+  const [selected, setSelected] = React.useState<Set<string>>(new Set());
+  const [bulkPending, startBulk] = React.useTransition();
+  const [bulkToast, setBulkToast] = React.useState<{ tone: "ok" | "warn"; text: string } | null>(null);
+
+  React.useEffect(() => {
+    setSelected(new Set());
+  }, [status, market, icpId, search]);
+
   // Sync filter state → URL (shallow replace, no scroll). Deeplinks like
   // /companies?status=raw work both ways: the page hydrates from URL on
   // mount, and changing a filter updates the URL so it can be copied.
@@ -123,6 +135,83 @@ export function CompaniesPage({ prospects, icps, initialFilters }: CompaniesPage
     for (const p of prospects) c[p.status] = (c[p.status] ?? 0) + 1;
     return c;
   }, [prospects]);
+
+  // ── Bulk action helpers ───────────────────────────────────────────────
+  const visibleIds = React.useMemo(() => filtered.map((p) => p.id), [filtered]);
+  const allVisibleSelected =
+    visibleIds.length > 0 && visibleIds.every((id) => selected.has(id));
+  const someVisibleSelected =
+    !allVisibleSelected && visibleIds.some((id) => selected.has(id));
+
+  const toggleAllVisible = () => {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (allVisibleSelected) {
+        for (const id of visibleIds) next.delete(id);
+      } else {
+        for (const id of visibleIds) next.add(id);
+      }
+      return next;
+    });
+  };
+
+  const toggleOne = (id: string) => {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+
+  const bulkSetStatus = (next_status: "raw" | "researched" | "pitched" | "suppressed") => {
+    if (selected.size === 0) return;
+    setBulkToast(null);
+    const ids = Array.from(selected);
+    startBulk(async () => {
+      const res = await bulkTransitionStatus({
+        prospect_ids: ids,
+        next_status,
+        suppressed_reason: next_status === "suppressed" ? "manual bulk suppression" : null,
+      });
+      if (res.ok) {
+        setBulkToast({
+          tone: "ok",
+          text: `${res.affected} prospect${res.affected === 1 ? "" : "s"} → ${next_status}`,
+        });
+        setSelected(new Set());
+        router.refresh();
+      } else {
+        setBulkToast({ tone: "warn", text: res.error });
+      }
+      window.setTimeout(() => setBulkToast(null), 4000);
+    });
+  };
+
+  const bulkScore = () => {
+    if (selected.size === 0) return;
+    if (selected.size > 100) {
+      setBulkToast({ tone: "warn", text: "Score caps at 100 prospects per batch." });
+      return;
+    }
+    setBulkToast(null);
+    const ids = Array.from(selected);
+    startBulk(async () => {
+      const res = await bulkScoreProspects({ prospect_ids: ids });
+      if (res.ok) {
+        const detail = res.failed > 0 ? ` (${res.failed} failed${res.details ? ` — ${res.details}` : ""})` : "";
+        setBulkToast({
+          tone: res.failed > 0 ? "warn" : "ok",
+          text: `Scored ${res.affected} prospect${res.affected === 1 ? "" : "s"}${detail}`,
+        });
+        setSelected(new Set());
+        router.refresh();
+      } else {
+        setBulkToast({ tone: "warn", text: res.error });
+      }
+      window.setTimeout(() => setBulkToast(null), 5000);
+    });
+  };
 
   return (
     <div className="flex h-full flex-col">
@@ -217,6 +306,18 @@ export function CompaniesPage({ prospects, icps, initialFilters }: CompaniesPage
           <table className="w-full text-left text-sm">
             <thead className="sticky top-0 z-10 border-b border-[var(--color-border-subtle)] bg-[var(--color-bg-900)] text-[10px] uppercase tracking-wider text-[var(--color-fg-700)]">
               <tr>
+                <th className="px-3 py-2 font-medium w-9">
+                  <input
+                    type="checkbox"
+                    checked={allVisibleSelected}
+                    ref={(el) => {
+                      if (el) el.indeterminate = someVisibleSelected;
+                    }}
+                    onChange={toggleAllVisible}
+                    aria-label={allVisibleSelected ? "Clear visible selection" : "Select all visible"}
+                    className="h-3.5 w-3.5 cursor-pointer accent-[var(--color-accent-300)]"
+                  />
+                </th>
                 <th className="px-4 py-2 font-medium">Company</th>
                 <th className="px-4 py-2 font-medium">Industry</th>
                 <th className="px-4 py-2 font-medium">Region</th>
@@ -228,13 +329,15 @@ export function CompaniesPage({ prospects, icps, initialFilters }: CompaniesPage
               </tr>
             </thead>
             <tbody>
-              {filtered.map((p) => (
+              {filtered.map((p) => {
+                const isSelected = selected.has(p.id);
+                return (
                 <tr
                   key={p.id}
                   onClick={() => router.push(`/companies/${p.id}` as never)}
                   className={cn(
                     "border-b border-[var(--color-border-subtle)] cursor-pointer last:border-b-0",
-                    "hover:bg-[var(--color-bg-800)]",
+                    isSelected ? "bg-[color-mix(in_oklab,var(--color-accent-300),transparent_92%)]" : "hover:bg-[var(--color-bg-800)]",
                     "focus-within:bg-[var(--color-bg-800)]",
                   )}
                   tabIndex={0}
@@ -247,6 +350,15 @@ export function CompaniesPage({ prospects, icps, initialFilters }: CompaniesPage
                   aria-label={`Open prospect ${p.company_name}`}
                   role="link"
                 >
+                  <td className="px-3 py-2 w-9" onClick={(e) => e.stopPropagation()}>
+                    <input
+                      type="checkbox"
+                      checked={isSelected}
+                      onChange={() => toggleOne(p.id)}
+                      aria-label={isSelected ? `Deselect ${p.company_name}` : `Select ${p.company_name}`}
+                      className="h-3.5 w-3.5 cursor-pointer accent-[var(--color-accent-300)]"
+                    />
+                  </td>
                   <td className="px-4 py-2">
                     <div className="flex flex-col">
                       <span className="flex items-center gap-1.5 text-[var(--color-fg-50)]">
@@ -301,11 +413,94 @@ export function CompaniesPage({ prospects, icps, initialFilters }: CompaniesPage
                     {relativeTime(p.created_at)}
                   </td>
                 </tr>
-              ))}
+              );
+              })}
             </tbody>
           </table>
         )}
       </div>
+
+      {/* Floating bulk-action bar — appears when ≥1 row is selected */}
+      {selected.size > 0 ? (
+        <div
+          className={cn(
+            "fixed bottom-4 left-1/2 z-30 -translate-x-1/2",
+            "flex items-center gap-2 rounded-[var(--radius-lg)] px-3 py-2",
+            "bg-[var(--color-bg-800)] ring-1 ring-inset ring-[var(--color-accent-300)]",
+            "shadow-[0_12px_32px_-12px_rgba(0,0,0,0.5)]",
+          )}
+          role="region"
+          aria-label="Bulk actions"
+        >
+          <button
+            type="button"
+            onClick={() => setSelected(new Set())}
+            className="grid h-6 w-6 place-items-center rounded-[var(--radius-sm)] text-[var(--color-fg-500)] hover:bg-[var(--color-bg-700)] hover:text-[var(--color-fg-50)]"
+            aria-label="Clear selection"
+          >
+            <X className="h-3.5 w-3.5" aria-hidden />
+          </button>
+          <span className="text-xs text-[var(--color-fg-50)]">
+            <span className="font-medium">{selected.size}</span> selected
+          </span>
+          <span className="mx-1 h-4 w-px bg-[var(--color-border-default)]" aria-hidden />
+          <Button
+            type="button"
+            size="sm"
+            variant="secondary"
+            disabled={bulkPending}
+            onClick={() => bulkSetStatus("researched")}
+          >
+            Mark researched
+          </Button>
+          <Button
+            type="button"
+            size="sm"
+            variant="secondary"
+            disabled={bulkPending}
+            onClick={() => bulkSetStatus("pitched")}
+          >
+            Mark pitched
+          </Button>
+          <Button
+            type="button"
+            size="sm"
+            variant="secondary"
+            disabled={bulkPending}
+            onClick={() => bulkSetStatus("suppressed")}
+            title="Suppress with reason='manual bulk suppression'"
+          >
+            Suppress
+          </Button>
+          <Button
+            type="button"
+            size="sm"
+            variant="primary"
+            disabled={bulkPending || selected.size > 100}
+            onClick={bulkScore}
+            title={selected.size > 100 ? "Score caps at 100 per batch" : "Score selected against ICP rubric"}
+          >
+            {bulkPending ? (
+              <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden />
+            ) : (
+              <Gauge className="h-3.5 w-3.5" aria-hidden />
+            )}
+            Score selected
+          </Button>
+          {bulkToast ? (
+            <span
+              className={cn(
+                "ml-2 rounded-[var(--radius-sm)] px-2 py-1 text-[11px]",
+                bulkToast.tone === "ok"
+                  ? "bg-[color-mix(in_oklab,var(--color-success-500),transparent_85%)] text-[var(--color-success-300)]"
+                  : "bg-[color-mix(in_oklab,var(--color-warning-500),transparent_85%)] text-[var(--color-warning-300)]",
+              )}
+            >
+              {bulkToast.text}
+            </span>
+          ) : null}
+        </div>
+      ) : null}
     </div>
   );
 }
