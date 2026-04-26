@@ -45,7 +45,7 @@ export async function updateProfile(input: UpdateProfileInput): Promise<ProfileA
   // supabase-js 2.47 typing quirk — see tasks/lessons.md.
   const { error } = await supabase
     .from("users")
-    .update(payload as never)
+    .update(payload)
     .eq("id", user.id);
 
   if (error) return { ok: false, error: `Could not save profile: ${error.message}` };

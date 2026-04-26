@@ -457,13 +457,59 @@ output as input for higher-quality research.
 - Failure cases (404, timeout, NXDOMAIN) surface friendly error to UI
 - Typecheck + lint clean
 
-## Future (creds-blocked)
+## Active slice — F→A→C→E (no-creds quartet, 2026-04-25)
 
-Slice 1b — Plug real discovery engines into the scaffolding once Google
-Cloud / SerpAPI / BuiltWith / Unipile creds arrive. Each source ≈ 2–4 hrs
-of plumbing onto the existing `discovery_runs` + `prospects` pipeline.
+Pedro picked the recommended order: type generation → research stub → bulk
+actions → utility tests. Sequenced because each one builds on the previous
+and gets us closer to "credits land = 1 line swap per phase" cleanliness.
 
-Phase 2 — Claude-powered research + scoring once Anthropic key is set.
+### Scope (agreed with Pedro)
+
+**F — Generate Supabase types from DB (~30 min)**
+- DONE = `lib/supabase/database.types.ts` exists + reflects current schema
+- DONE = `createClient<Database>()` typed in both server + browser clients
+- DONE = at least the most-touched 5 tables (prospects, prospect_research,
+  scores, audit_log, icps) no longer need `as never` on update/insert
+- DONE = typecheck passes; nothing visually changes in the app
+
+**A — Stub `research-action.ts` (~1.5 hrs)**
+- DONE = `lib/research/structured-research-action.ts` exists with
+  `runStructuredResearch(prospectId)` server action
+- DONE = heuristic body extracts pain-point candidates from scraped notes +
+  cross-references `pain_taxonomy` evidence_phrases — populates
+  `prospect_research.pain_points` with `{pain_id, pain_label, evidence_quote}`
+- DONE = decision-maker stub: best email from `prospect_research.notes`
+  (already extracted by scraper) → row in `prospect_contacts`
+- DONE = clear "PHASE 2 SWAP POINT" comment marking the Claude line
+- DONE = button on prospect detail Research tab → "Run structured research"
+
+**C — Bulk actions on `/companies` (~1.5 hrs)**
+- DONE = checkbox column in companies table, header checkbox = select all visible
+- DONE = floating action bar appears when ≥1 selected, shows count
+- DONE = bulk actions: Set status (raw/researched/pitched/suppressed),
+  Score selected (calls scoreProspect on each in parallel),
+  Unscored selected → run scrape + score chain
+- DONE = optimistic updates with router.refresh on success
+- DONE = audit_log captures bulk operations as one entry per prospect
+
+**E — Tests for utilities (~1 hr)**
+- DONE = `tests/csv.test.ts` covers: header detection, comma/semicolon
+  delimiter, quoted fields, missing required cols, oversized rows
+- DONE = `tests/mx-verify.test.ts` covers: valid CDMX/state names,
+  RFC-style validation if present, edge case city names
+- DONE = `tests/fuzzy-dedupe.test.ts` covers: domain-normalized match
+  (www. prefix, http(s)://), name+city collision, false-positive guards
+- DONE = `tests/blackout.test.ts` covers: weekend skipping, public
+  holidays per market, blackout windows
+- DONE = `npm test` runs all suites, all green
+
+### Verification
+
+After each slice ships:
+- typecheck + lint clean
+- relevant smoke screenshot taken
+- single commit per slice with clear message
+- lessons.md updated if anything bit me
 
 ### Credentials still blocked (waiting on Pedro)
 - [ ] Supabase: ANON + SERVICE_ROLE keys live (connection works — Phase 0 unblocked)

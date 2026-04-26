@@ -70,6 +70,9 @@ export type Database = {
           avatar_url?: string | null;
           role?: UserRole;
           timezone?: string;
+          invited_by?: UUID | null;
+          invited_at?: Timestamptz | null;
+          last_seen_at?: Timestamptz | null;
         };
         Update: Partial<Database["public"]["Tables"]["users"]["Row"]>;
         Relationships: NoRels;
@@ -373,11 +376,33 @@ export type Database = {
           red_flags?: string[];
         };
         Update: {
+          icp_id?: UUID | null;
+          discovery_run_id?: UUID | null;
+          company_name?: string;
+          domain?: string | null;
+          website_url?: string | null;
+          industry?: string | null;
+          employee_size_estimate?: number | null;
+          address_line?: string | null;
+          city?: string | null;
+          region?: string | null;
+          country_code?: string | null;
+          postal_code?: string | null;
+          market?: "CA" | "MX" | "US" | "LATAM";
+          language?: "en" | "es";
           status?: string;
+          research_quality_score?: number | null;
           match_score?: number | null;
           red_flags?: string[];
+          pitch_gate_passed?: boolean;
+          consent_basis?: string;
+          consent_evidence_url?: string | null;
           suppressed_at?: Timestamptz | null;
           suppressed_reason?: string | null;
+          cooldown_until?: Timestamptz | null;
+          cooldown_reason?: string | null;
+          corrected_by_user_id?: UUID | null;
+          corrected_at?: Timestamptz | null;
           updated_at?: Timestamptz;
         };
         Relationships: NoRels;
@@ -521,6 +546,133 @@ export type Database = {
         };
         Relationships: NoRels;
       };
+      audit_log: {
+        Row: {
+          id: UUID;
+          tenant_id: UUID | null;
+          actor_id: UUID | null;
+          action: string;
+          entity_type: string | null;
+          entity_id: UUID | null;
+          metadata: Record<string, unknown>;
+          ip_address: string | null;
+          user_agent: string | null;
+          created_at: Timestamptz;
+        };
+        Insert: {
+          id?: UUID;
+          tenant_id?: UUID | null;
+          actor_id?: UUID | null;
+          action: string;
+          entity_type?: string | null;
+          entity_id?: UUID | null;
+          metadata?: Record<string, unknown>;
+          ip_address?: string | null;
+          user_agent?: string | null;
+          created_at?: Timestamptz;
+        };
+        Update: {
+          metadata?: Record<string, unknown>;
+        };
+        Relationships: NoRels;
+      };
+      scores: {
+        Row: {
+          id: UUID;
+          tenant_id: UUID;
+          prospect_id: UUID;
+          prompt_variant_id: UUID | null;
+          composite_score: number;
+          industry_fit_pts: number;
+          size_fit_pts: number;
+          digital_maturity_pts: number;
+          pain_signal_pts: number;
+          service_match_pts: number;
+          contact_discoverability_pts: number;
+          red_flag_penalty: number;
+          best_service_id: UUID | null;
+          best_pain_id: UUID | null;
+          best_case_study_id: UUID | null;
+          confidence: number | null;
+          reasoning: string | null;
+          cost_usd: number | null;
+          generated_at: Timestamptz;
+          superseded_at: Timestamptz | null;
+        };
+        Insert: {
+          id?: UUID;
+          tenant_id: UUID;
+          prospect_id: UUID;
+          prompt_variant_id?: UUID | null;
+          composite_score: number;
+          industry_fit_pts?: number;
+          size_fit_pts?: number;
+          digital_maturity_pts?: number;
+          pain_signal_pts?: number;
+          service_match_pts?: number;
+          contact_discoverability_pts?: number;
+          red_flag_penalty?: number;
+          best_service_id?: UUID | null;
+          best_pain_id?: UUID | null;
+          best_case_study_id?: UUID | null;
+          confidence?: number | null;
+          reasoning?: string | null;
+          cost_usd?: number | null;
+          generated_at?: Timestamptz;
+          superseded_at?: Timestamptz | null;
+        };
+        Update: {
+          superseded_at?: Timestamptz | null;
+        };
+        Relationships: NoRels;
+      };
+      prospect_contacts: {
+        Row: {
+          id: UUID;
+          tenant_id: UUID;
+          prospect_id: UUID;
+          full_name: string | null;
+          role_title: string | null;
+          email: string | null;
+          email_verified: boolean;
+          email_is_role_based: boolean;
+          linkedin_url: string | null;
+          phone: string | null;
+          priority_rank: number;
+          selected_at: Timestamptz | null;
+          selected_by: string | null;
+          created_at: Timestamptz;
+          updated_at: Timestamptz;
+        };
+        Insert: {
+          id?: UUID;
+          tenant_id: UUID;
+          prospect_id: UUID;
+          full_name?: string | null;
+          role_title?: string | null;
+          email?: string | null;
+          email_verified?: boolean;
+          email_is_role_based?: boolean;
+          linkedin_url?: string | null;
+          phone?: string | null;
+          priority_rank?: number;
+          selected_at?: Timestamptz | null;
+          selected_by?: string | null;
+        };
+        Update: {
+          full_name?: string | null;
+          role_title?: string | null;
+          email?: string | null;
+          email_verified?: boolean;
+          email_is_role_based?: boolean;
+          linkedin_url?: string | null;
+          phone?: string | null;
+          priority_rank?: number;
+          selected_at?: Timestamptz | null;
+          selected_by?: string | null;
+        };
+        Relationships: NoRels;
+      };
       icps: {
         Row: {
           id: UUID;
@@ -554,7 +706,13 @@ export type Database = {
         Relationships: NoRels;
       };
     };
-    Views: Record<string, never>;
-    Functions: Record<string, never>;
+    // Empty views/functions/enums need to be `{ [_ in never]: never }` —
+    // `Record<string, never>` doesn't extend `Record<string, GenericView>`
+    // and the whole Database falls back to `any`, which then collapses
+    // every insert/update payload to `never`.
+    Views: { [_ in never]: never };
+    Functions: { [_ in never]: never };
+    Enums: { [_ in never]: never };
+    CompositeTypes: { [_ in never]: never };
   };
 };

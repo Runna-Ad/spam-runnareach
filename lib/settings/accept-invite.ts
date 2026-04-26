@@ -72,7 +72,7 @@ export async function acceptInviteAsNewUser(
     role: invitation.role,
     invited_by: invitation.invited_by,
     invited_at: new Date().toISOString(),
-  } as never);
+  });
 
   if (profileErr) {
     // Roll back auth user so the invitation can be retried.
@@ -82,7 +82,7 @@ export async function acceptInviteAsNewUser(
 
   await admin
     .from("invitations")
-    .update({ accepted_at: new Date().toISOString() } as never)
+    .update({ accepted_at: new Date().toISOString() })
     .eq("id", invitation.id);
 
   const supabase = await createClient();
@@ -132,7 +132,7 @@ export async function acceptInviteAsCurrentUser(token: string): Promise<AcceptIn
     // Already a member — just mark accepted.
     await admin
       .from("invitations")
-      .update({ accepted_at: new Date().toISOString() } as never)
+      .update({ accepted_at: new Date().toISOString() })
       .eq("id", invitation.id);
     redirect("/dashboard");
   }
@@ -149,12 +149,12 @@ export async function acceptInviteAsCurrentUser(token: string): Promise<AcceptIn
     role: invitation.role,
     invited_by: invitation.invited_by,
     invited_at: new Date().toISOString(),
-  } as never);
+  });
   if (insertErr) return { error: `Could not create profile: ${insertErr.message}` };
 
   await admin
     .from("invitations")
-    .update({ accepted_at: new Date().toISOString() } as never)
+    .update({ accepted_at: new Date().toISOString() })
     .eq("id", invitation.id);
 
   redirect("/dashboard");

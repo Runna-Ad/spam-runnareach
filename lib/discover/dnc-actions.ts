@@ -46,7 +46,7 @@ export async function addDnc(input: AddDncInput): Promise<DncActionResult> {
 
   const { data, error } = await supabase
     .from("do_not_contact_list")
-    .insert(payload as never)
+    .insert(payload)
     .select("id")
     .single<{ id: string }>();
 

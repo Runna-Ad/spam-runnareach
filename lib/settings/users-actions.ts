@@ -77,7 +77,7 @@ export async function inviteTeammate(input: {
 
   const { data, error } = await admin
     .from("invitations")
-    .insert(payload as never)
+    .insert(payload)
     .select("id")
     .single<{ id: string }>();
 
@@ -145,7 +145,7 @@ export async function changeMemberRole(input: {
 
   const { error } = await supabase
     .from("users")
-    .update({ role: parsed.data.role, updated_at: new Date().toISOString() } as never)
+    .update({ role: parsed.data.role, updated_at: new Date().toISOString() })
     .eq("id", parsed.data.userId)
     .eq("tenant_id", user.tenantId);
 
