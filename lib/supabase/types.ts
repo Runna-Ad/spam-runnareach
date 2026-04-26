@@ -546,6 +546,120 @@ export type Database = {
         };
         Relationships: NoRels;
       };
+      pitches: {
+        Row: {
+          id: UUID;
+          tenant_id: UUID;
+          prospect_id: UUID;
+          contact_id: UUID | null;
+          sender_inbox_id: UUID | null;
+          prompt_variant_id: UUID | null;
+          case_study_id: UUID;
+          service_id: UUID | null;
+          pain_id: UUID | null;
+          measurable_result_included: boolean;
+          subject: string;
+          body_original: string;
+          body_edited: string | null;
+          body_sent: string | null;
+          compliance_footer: string | null;
+          variant_index: number;
+          quality_self_score: number | null;
+          quality_threshold: number;
+          auto_rejected: boolean;
+          auto_rejected_reason: string | null;
+          status:
+            | "draft"
+            | "queued_for_approval"
+            | "approved"
+            | "auto_rejected"
+            | "reviewer_rejected"
+            | "sending"
+            | "sent"
+            | "bounced"
+            | "failed";
+          approved_by: UUID | null;
+          approved_at: Timestamptz | null;
+          rejected_by: UUID | null;
+          rejected_at: Timestamptz | null;
+          rejection_reason: string | null;
+          queued_at: Timestamptz | null;
+          sent_at: Timestamptz | null;
+          scheduled_send_at: Timestamptz | null;
+          cost_usd: number | null;
+          token_count_in: number | null;
+          token_count_out: number | null;
+          gmail_thread_id: string | null;
+          gmail_message_id: string | null;
+          postmark_message_id: string | null;
+          parent_pitch_id: UUID | null;
+        };
+        Insert: {
+          id?: UUID;
+          tenant_id: UUID;
+          prospect_id: UUID;
+          contact_id?: UUID | null;
+          sender_inbox_id?: UUID | null;
+          prompt_variant_id?: UUID | null;
+          case_study_id: UUID;
+          service_id?: UUID | null;
+          pain_id?: UUID | null;
+          measurable_result_included?: boolean;
+          subject: string;
+          body_original: string;
+          body_edited?: string | null;
+          body_sent?: string | null;
+          compliance_footer?: string | null;
+          variant_index?: number;
+          quality_self_score?: number | null;
+          quality_threshold?: number;
+          auto_rejected?: boolean;
+          auto_rejected_reason?: string | null;
+          status?:
+            | "draft"
+            | "queued_for_approval"
+            | "approved"
+            | "auto_rejected"
+            | "reviewer_rejected"
+            | "sending"
+            | "sent"
+            | "bounced"
+            | "failed";
+          parent_pitch_id?: UUID | null;
+          cost_usd?: number | null;
+          token_count_in?: number | null;
+          token_count_out?: number | null;
+        };
+        Update: {
+          subject?: string;
+          body_original?: string;
+          body_edited?: string | null;
+          body_sent?: string | null;
+          compliance_footer?: string | null;
+          status?:
+            | "draft"
+            | "queued_for_approval"
+            | "approved"
+            | "auto_rejected"
+            | "reviewer_rejected"
+            | "sending"
+            | "sent"
+            | "bounced"
+            | "failed";
+          approved_by?: UUID | null;
+          approved_at?: Timestamptz | null;
+          rejected_by?: UUID | null;
+          rejected_at?: Timestamptz | null;
+          rejection_reason?: string | null;
+          queued_at?: Timestamptz | null;
+          sent_at?: Timestamptz | null;
+          scheduled_send_at?: Timestamptz | null;
+          quality_self_score?: number | null;
+          auto_rejected?: boolean;
+          auto_rejected_reason?: string | null;
+        };
+        Relationships: NoRels;
+      };
       replies: {
         Row: {
           id: UUID;

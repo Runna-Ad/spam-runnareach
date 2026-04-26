@@ -1,12 +1,20 @@
-import { PhasePlaceholder } from "@/components/dashboard/phase-placeholder";
+import { PitchesPage } from "@/components/pitches/pitches-page";
+import { requireUser } from "@/lib/auth";
+import { getPitchCounts, listPitches } from "@/lib/pitches/queries";
 
-export default function PitchesPage() {
+export const dynamic = "force-dynamic";
+
+export default async function PitchesRoute() {
+  const user = await requireUser();
+  const [pitches, counts] = await Promise.all([
+    listPitches(user.tenantId),
+    getPitchCounts(user.tenantId),
+  ]);
   return (
-    <PhasePlaceholder
-      route="/pitches"
-      phase={3}
-      title="Approval queue"
-      description="Keyboard-driven focus mode. A / E / R / S to approve, edit, reject, skip. Three tiers: quick-send, review, deep-edit. Three variants per prospect."
+    <PitchesPage
+      pitches={pitches}
+      counts={counts}
+      canEdit={user.role !== "viewer"}
     />
   );
 }

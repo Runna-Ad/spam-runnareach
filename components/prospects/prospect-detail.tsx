@@ -9,6 +9,7 @@ import {
   Gauge,
   Globe,
   Loader2,
+  Mail,
   MessageSquareWarning,
   Plus,
   Save,
@@ -42,6 +43,7 @@ import type {
 import { scrapeWebsite } from "@/lib/research/scrape-action";
 import { scoreProspect } from "@/lib/research/score-action";
 import { runStructuredResearch } from "@/lib/research/structured-research-action";
+import { generatePitch } from "@/lib/pitches/actions";
 import { cn, relativeTime } from "@/lib/utils";
 
 interface ProspectDetailProps {
@@ -490,6 +492,8 @@ function ResearchTab({
   const [scoring, startScore] = React.useTransition();
   const [researchMessage, setResearchMessage] = React.useState<{ tone: "ok" | "warn"; text: string } | null>(null);
   const [researching, startResearch] = React.useTransition();
+  const [pitchMessage, setPitchMessage] = React.useState<{ tone: "ok" | "warn"; text: string; pitchId?: string } | null>(null);
+  const [generatingPitch, startPitch] = React.useTransition();
 
   if (researchTableMissing) {
     return (
@@ -542,6 +546,22 @@ function ResearchTab({
         setTimeout(() => setSaveStatus("idle"), 2000);
       } else {
         setSaveStatus({ error: result.error });
+      }
+    });
+  };
+
+  const handleGeneratePitch = () => {
+    setPitchMessage(null);
+    startPitch(async () => {
+      const res = await generatePitch(prospect.id);
+      if (res.ok) {
+        setPitchMessage({
+          tone: "ok",
+          text: `Draft pitch ready (self-score ${Math.round(res.quality_self_score * 100)}%, ${res.method}). ${res.reasoning}`,
+          pitchId: res.pitch_id,
+        });
+      } else {
+        setPitchMessage({ tone: "warn", text: res.error });
       }
     });
   };
@@ -667,8 +687,45 @@ function ResearchTab({
             )}
             {scoring ? "Scoring…" : "Score prospect"}
           </Button>
+          <Button
+            type="button"
+            variant="primary"
+            onClick={handleGeneratePitch}
+            disabled={generatingPitch || !canEdit}
+            title="Compose a cold-outreach email pitch using research + ICP fit + a matched case study"
+          >
+            {generatingPitch ? (
+              <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden />
+            ) : (
+              <Mail className="h-3.5 w-3.5" aria-hidden />
+            )}
+            {generatingPitch ? "Composing…" : "Generate pitch"}
+          </Button>
         </div>
       </div>
+      {pitchMessage ? (
+        <p
+          className={cn(
+            "-mt-3 text-[11px] italic",
+            pitchMessage.tone === "ok"
+              ? "text-[var(--color-success-300)]"
+              : "text-[var(--color-warning-300)]",
+          )}
+        >
+          {pitchMessage.text}
+          {pitchMessage.pitchId ? (
+            <>
+              {" "}
+              <Link
+                href={"/pitches" as never}
+                className="font-medium text-[var(--color-accent-300)] hover:underline"
+              >
+                Open in /pitches →
+              </Link>
+            </>
+          ) : null}
+        </p>
+      ) : null}
       {scoreMessage ? (
         <p
           className={cn(
