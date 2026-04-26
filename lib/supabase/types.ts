@@ -546,6 +546,89 @@ export type Database = {
         };
         Relationships: NoRels;
       };
+      replies: {
+        Row: {
+          id: UUID;
+          tenant_id: UUID;
+          pitch_id: UUID | null;
+          prospect_id: UUID;
+          gmail_message_id: string | null;
+          from_email: string;
+          subject: string | null;
+          body_text: string | null;
+          body_html: string | null;
+          received_at: Timestamptz;
+          intent:
+            | "wants_meeting"
+            | "wants_info"
+            | "hard_no"
+            | "not_now"
+            | "wrong_person"
+            | "auto_reply"
+            | "unclassified";
+          urgency: "hot" | "warm" | "cold" | null;
+          sentiment: "positive" | "neutral" | "negative" | null;
+          classified_at: Timestamptz | null;
+          classifier_variant_id: UUID | null;
+          classification_cost_usd: number | null;
+          hot_alert_sent_at: Timestamptz | null;
+          handled_by: UUID | null;
+          handled_at: Timestamptz | null;
+          auto_draft_body: string | null;
+          auto_draft_generated_at: Timestamptz | null;
+        };
+        Insert: {
+          id?: UUID;
+          tenant_id: UUID;
+          pitch_id?: UUID | null;
+          // Pre-Phase 4 we make this nullable in the DB (migration 0005)
+          // but the production flow always populates one of these:
+          prospect_id?: UUID | null;
+          gmail_message_id?: string | null;
+          from_email: string;
+          subject?: string | null;
+          body_text?: string | null;
+          body_html?: string | null;
+          received_at?: Timestamptz;
+          intent?:
+            | "wants_meeting"
+            | "wants_info"
+            | "hard_no"
+            | "not_now"
+            | "wrong_person"
+            | "auto_reply"
+            | "unclassified";
+          urgency?: "hot" | "warm" | "cold" | null;
+          sentiment?: "positive" | "neutral" | "negative" | null;
+          classified_at?: Timestamptz | null;
+          classifier_variant_id?: UUID | null;
+          classification_cost_usd?: number | null;
+          hot_alert_sent_at?: Timestamptz | null;
+          handled_by?: UUID | null;
+          handled_at?: Timestamptz | null;
+          auto_draft_body?: string | null;
+          auto_draft_generated_at?: Timestamptz | null;
+        };
+        Update: {
+          intent?:
+            | "wants_meeting"
+            | "wants_info"
+            | "hard_no"
+            | "not_now"
+            | "wrong_person"
+            | "auto_reply"
+            | "unclassified";
+          urgency?: "hot" | "warm" | "cold" | null;
+          sentiment?: "positive" | "neutral" | "negative" | null;
+          classified_at?: Timestamptz | null;
+          handled_by?: UUID | null;
+          handled_at?: Timestamptz | null;
+          auto_draft_body?: string | null;
+          auto_draft_generated_at?: Timestamptz | null;
+          hot_alert_sent_at?: Timestamptz | null;
+        };
+        Relationships: NoRels;
+      };
       audit_log: {
         Row: {
           id: UUID;

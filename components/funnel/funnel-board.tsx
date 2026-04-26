@@ -14,7 +14,7 @@ const COLUMNS: { key: ColStatus; label: string; tone: "neutral" | "info" | "succ
   { key: "researched", label: "Researched", tone: "info" },
   { key: "pitched", label: "Pitched", tone: "info" },
   { key: "replied", label: "Replied", tone: "info" },
-  { key: "booked", label: "Meeting", tone: "success" },
+  { key: "booked", label: "Booked", tone: "success" },
   { key: "won", label: "Won", tone: "success" },
   { key: "lost", label: "Lost", tone: "danger" },
 ];

@@ -38,7 +38,7 @@ const PIPELINE_STAGES: { key: string; label: string }[] = [
   { key: "researched", label: "Researched" },
   { key: "pitched", label: "Pitched" },
   { key: "replied", label: "Replied" },
-  { key: "booked", label: "Meeting" },
+  { key: "booked", label: "Booked" },
   { key: "won", label: "Won" },
   { key: "lost", label: "Lost" },
 ];
