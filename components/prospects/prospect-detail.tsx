@@ -3,6 +3,7 @@
 import {
   Activity,
   ArrowLeft,
+  Brain,
   ChevronDown,
   ExternalLink,
   Gauge,
@@ -40,6 +41,7 @@ import type {
 } from "@/lib/prospects/detail-queries";
 import { scrapeWebsite } from "@/lib/research/scrape-action";
 import { scoreProspect } from "@/lib/research/score-action";
+import { runStructuredResearch } from "@/lib/research/structured-research-action";
 import { cn, relativeTime } from "@/lib/utils";
 
 interface ProspectDetailProps {
@@ -486,6 +488,8 @@ function ResearchTab({
   const [scraping, startScrape] = React.useTransition();
   const [scoreMessage, setScoreMessage] = React.useState<{ tone: "ok" | "warn"; text: string } | null>(null);
   const [scoring, startScore] = React.useTransition();
+  const [researchMessage, setResearchMessage] = React.useState<{ tone: "ok" | "warn"; text: string } | null>(null);
+  const [researching, startResearch] = React.useTransition();
 
   if (researchTableMissing) {
     return (
@@ -538,6 +542,22 @@ function ResearchTab({
         setTimeout(() => setSaveStatus("idle"), 2000);
       } else {
         setSaveStatus({ error: result.error });
+      }
+    });
+  };
+
+  const handleStructuredResearch = () => {
+    setResearchMessage(null);
+    startResearch(async () => {
+      const result = await runStructuredResearch(prospect.id);
+      if (result.ok) {
+        setResearchMessage({
+          tone: "ok",
+          text: `${result.method === "claude" ? "Claude" : "Heuristic"} research: +${result.pain_points_added} pain${result.pain_points_added === 1 ? "" : "s"}, +${result.contacts_added} contact${result.contacts_added === 1 ? "" : "s"}. ${result.reasoning}`,
+        });
+        router.refresh();
+      } else {
+        setResearchMessage({ tone: "warn", text: result.error });
       }
     });
   };
@@ -622,6 +642,20 @@ function ResearchTab({
           <Button
             type="button"
             variant="secondary"
+            onClick={handleStructuredResearch}
+            disabled={researching || !canEdit}
+            title="Classify pain points against the taxonomy + pick a decision-maker contact"
+          >
+            {researching ? (
+              <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden />
+            ) : (
+              <Brain className="h-3.5 w-3.5" aria-hidden />
+            )}
+            {researching ? "Researching…" : "Run structured research"}
+          </Button>
+          <Button
+            type="button"
+            variant="secondary"
             onClick={handleScore}
             disabled={scoring || !canEdit}
             title="Score this prospect against its ICP rubric"
@@ -645,6 +679,18 @@ function ResearchTab({
           )}
         >
           {scoreMessage.text}
+        </p>
+      ) : null}
+      {researchMessage ? (
+        <p
+          className={cn(
+            "-mt-3 text-[11px] italic",
+            researchMessage.tone === "ok"
+              ? "text-[var(--color-success-300)]"
+              : "text-[var(--color-warning-300)]",
+          )}
+        >
+          {researchMessage.text}
         </p>
       ) : null}
 
