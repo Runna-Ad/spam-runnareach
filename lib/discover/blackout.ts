@@ -1,13 +1,12 @@
 import { createClient } from "@/lib/supabase/server";
 
-export type Market = "CA" | "MX" | "US" | "LATAM";
+// Re-export pure helpers so existing import sites keep working. The pure
+// types/functions live in blackout-pure.ts so tests + non-server code can
+// import them without dragging next/headers into the bundle.
+export { blackoutLabel } from "./blackout-pure";
+export type { BlackoutDate, Market } from "./blackout-pure";
 
-export type BlackoutDate = {
-  id: string;
-  market: Market;
-  blackout_date: string; // YYYY-MM-DD
-  label: string;
-};
+import type { BlackoutDate, Market } from "./blackout-pure";
 
 /**
  * List blackout dates for a tenant + market (or all markets if omitted).
@@ -25,18 +24,4 @@ export async function listBlackouts(tenantId: string, market?: Market): Promise<
   const { data, error } = await query.returns<BlackoutDate[]>();
   if (error) throw new Error(`Failed to load blackouts: ${error.message}`);
   return data ?? [];
-}
-
-/**
- * Pure helper used by the send queue (Phase 4) and the discovery cron
- * (Phase 1b) — given a list of blackout dates and a target Date, returns
- * the matching label or null.
- */
-export function blackoutLabel(
-  date: Date,
-  blackouts: Pick<BlackoutDate, "blackout_date" | "label">[],
-): string | null {
-  const ymd = date.toISOString().slice(0, 10);
-  const hit = blackouts.find((b) => b.blackout_date === ymd);
-  return hit?.label ?? null;
 }
