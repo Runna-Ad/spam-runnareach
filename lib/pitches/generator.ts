@@ -49,6 +49,14 @@ export type GeneratorInputCaseStudy = {
   industry: string | null;
   hero_metric_en: string | null;
   hero_metric_es: string | null;
+  /** Full result paragraph — gives Claude context to judge fit beyond client_name. */
+  result_description_en: string | null;
+  result_description_es: string | null;
+  /** Optional testimonial — adds voice + credibility signal. */
+  testimonial_quote_en: string | null;
+  testimonial_quote_es: string | null;
+  /** Array of measurable_results [{ metric, label }] — surfaces numbers to cite. */
+  measurable_results: { metric?: string; label?: string }[];
   /** strength from case_study_pain_tags for the chosen pain (0..1), or null. */
   pain_strength: number | null;
 };
@@ -62,7 +70,13 @@ export type ComposedPitch = {
   subject: string;
   body: string;
   pain_id: string | null;
-  case_study_id: string;
+  /**
+   * Null when no case study clearly addressed the prospect's pain.
+   * Body must NOT reference any client name in that case — the
+   * pitch leans on a generic capability claim instead of a fake
+   * "we helped X" bridge.
+   */
+  case_study_id: string | null;
   contact_used: string | null;
   measurable_result_included: boolean;
   quality_self_score: number; // 0..1
@@ -98,27 +112,40 @@ export function composePitchHeuristic(input: GeneratorInputs): ComposedPitch | n
   }
 
   // 2) Case study selection
-  const candidates = chosenPain?.pain_id
-    ? input.case_studies.filter((cs) => cs.pain_strength !== null)
-    : input.case_studies;
-  if (candidates.length === 0 && input.case_studies.length === 0) {
-    return null; // hard requirement
-  }
-  const pool = candidates.length > 0 ? candidates : input.case_studies;
-  const sorted = [...pool].sort((a, b) => {
+  // Only consider case studies that have a non-null pain_strength for the
+  // chosen pain. If pain_strength is null, the case wasn't tagged for this
+  // pain — including it produces the "Pet's Club for a checkout pain" bug
+  // we caught on 2026-04-27.
+  const tagged = chosenPain?.pain_id
+    ? input.case_studies.filter((cs) => cs.pain_strength !== null && cs.pain_strength > 0)
+    : [];
+  const sorted = [...tagged].sort((a, b) => {
     const aIndustryMatch = industryMatch(a.industry, input.prospect.industry) ? 1 : 0;
     const bIndustryMatch = industryMatch(b.industry, input.prospect.industry) ? 1 : 0;
     if (aIndustryMatch !== bIndustryMatch) return bIndustryMatch - aIndustryMatch;
     return (b.pain_strength ?? 0) - (a.pain_strength ?? 0);
   });
-  const chosenCase = sorted[0]!;
-  reasoning.push(
-    `Case: ${chosenCase.client_name} (${
-      industryMatch(chosenCase.industry, input.prospect.industry)
-        ? "industry match"
-        : "no industry match"
-    }, strength=${chosenCase.pain_strength ?? "n/a"}).`,
-  );
+  // Hard floor: only pick a case if its pain_strength is at least 0.4
+  // (loosely — needs to be actually relevant). Below that, prefer null +
+  // a no-case body over a forced-fit bridge.
+  const chosenCase = sorted[0] && (sorted[0].pain_strength ?? 0) >= 0.4 ? sorted[0] : null;
+  if (chosenCase) {
+    reasoning.push(
+      `Case: ${chosenCase.client_name} (${
+        industryMatch(chosenCase.industry, input.prospect.industry)
+          ? "industry match"
+          : "no industry match"
+      }, strength=${chosenCase.pain_strength ?? "n/a"}).`,
+    );
+  } else if (input.case_studies.length === 0) {
+    reasoning.push("No case studies available.");
+  } else {
+    reasoning.push(
+      `No case study clearly addresses the chosen pain (best strength=${
+        sorted[0]?.pain_strength ?? "n/a"
+      }) — pitch will skip the case bridge.`,
+    );
+  }
 
   // 3) Contact selection
   const realContact =
@@ -134,10 +161,11 @@ export function composePitchHeuristic(input: GeneratorInputs): ComposedPitch | n
   }
 
   // 4) Template variables
-  const heroMetric =
-    input.prospect.language === "es"
+  const heroMetric = chosenCase
+    ? input.prospect.language === "es"
       ? chosenCase.hero_metric_es ?? chosenCase.hero_metric_en ?? "(metric pending)"
-      : chosenCase.hero_metric_en ?? chosenCase.hero_metric_es ?? "(metric pending)";
+      : chosenCase.hero_metric_en ?? chosenCase.hero_metric_es ?? "(metric pending)"
+    : "(no case)";
 
   const evidenceQuote = trimQuote(chosenPain?.evidence_quote ?? null);
   const senderFirst = extractFirstName(input.sender.full_name) ?? "Pedro";
@@ -150,7 +178,7 @@ export function composePitchHeuristic(input: GeneratorInputs): ComposedPitch | n
     industry: input.prospect.industry ?? (input.prospect.language === "es" ? "DTC" : "DTC"),
     evidence_quote: evidenceQuote,
     pain_label: chosenPain?.pain_label ?? (input.prospect.language === "es" ? "esto" : "this"),
-    case_client: chosenCase.client_name,
+    case_client: chosenCase?.client_name ?? "",
     case_metric: heroMetric,
     sender_first_name: senderFirst,
     sender_signature: senderSignature,
@@ -160,23 +188,28 @@ export function composePitchHeuristic(input: GeneratorInputs): ComposedPitch | n
   };
 
   const subject = tpl.subject(vars);
-  const body = tpl.body(vars);
+  // When there's no case, render the no-case template variant which
+  // skips the "We helped X" bridge and uses an agency-level claim.
+  const body = chosenCase ? tpl.body(vars) : tpl.bodyNoCase(vars);
 
   // 5) Quality self-score
   const score = computeSelfScore({
     hasEvidence: Boolean(evidenceQuote),
     hasNamedContact: firstName !== "there",
-    hasIndustryMatch: industryMatch(chosenCase.industry, input.prospect.industry),
-    hasMetric: heroMetric !== "(metric pending)",
+    hasIndustryMatch: chosenCase
+      ? industryMatch(chosenCase.industry, input.prospect.industry)
+      : false,
+    hasMetric: heroMetric !== "(metric pending)" && heroMetric !== "(no case)",
   });
 
   return {
     subject,
     body,
     pain_id: chosenPain?.pain_id ?? null,
-    case_study_id: chosenCase.id,
+    case_study_id: chosenCase?.id ?? null,
     contact_used: realContact?.email ?? null,
-    measurable_result_included: heroMetric !== "(metric pending)",
+    measurable_result_included:
+      heroMetric !== "(metric pending)" && heroMetric !== "(no case)",
     quality_self_score: score,
     reasoning: reasoning.join(" "),
   };

@@ -554,7 +554,7 @@ export type Database = {
           contact_id: UUID | null;
           sender_inbox_id: UUID | null;
           prompt_variant_id: UUID | null;
-          case_study_id: UUID;
+          case_study_id: UUID | null;
           service_id: UUID | null;
           pain_id: UUID | null;
           measurable_result_included: boolean;
@@ -601,7 +601,7 @@ export type Database = {
           contact_id?: UUID | null;
           sender_inbox_id?: UUID | null;
           prompt_variant_id?: UUID | null;
-          case_study_id: UUID;
+          case_study_id?: UUID | null;
           service_id?: UUID | null;
           pain_id?: UUID | null;
           measurable_result_included?: boolean;

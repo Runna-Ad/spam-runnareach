@@ -17,7 +17,7 @@ export type PitchListRow = {
   prospect_name: string | null;
   prospect_market: "CA" | "MX" | "US" | "LATAM" | null;
   prospect_language: "en" | "es" | null;
-  case_study_id: string;
+  case_study_id: string | null;
   case_study_client: string | null;
   status: PitchStatus;
   subject: string;
@@ -42,7 +42,7 @@ export async function listPitches(tenantId: string): Promise<PitchListRow[]> {
   type Row = {
     id: string;
     prospect_id: string;
-    case_study_id: string;
+    case_study_id: string | null;
     status: PitchStatus;
     subject: string;
     variant_index: number;

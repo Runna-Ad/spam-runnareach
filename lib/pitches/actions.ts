@@ -26,6 +26,17 @@ const editSchema = z.object({
   subject: z.string().trim().min(1).max(300),
   body_edited: z.string().trim().min(1).max(20_000),
 });
+// Reason "kinds" for rejecting a pitch. These feed back into the
+// generator: counts per (case_study_id, pain_id) downrank that pair so
+// the next pitch picks differently.
+export const REJECTION_REASON_KINDS = [
+  "wrong_case",     // case study doesn't address this pain (Pet's Club for checkout = wrong_case)
+  "wrong_pain",     // we picked the wrong pain to focus on
+  "tone_off",       // copy doesn't match brand voice / too salesy / too cold
+  "wrong_contact",  // wrong person / role / department
+  "other",
+] as const;
+
 const transitionSchema = z.object({
   pitch_id: z.string().uuid(),
   next_status: z.enum([
@@ -35,6 +46,7 @@ const transitionSchema = z.object({
     "reviewer_rejected",
   ]),
   rejection_reason: z.string().trim().max(500).nullable().optional(),
+  rejection_reason_kind: z.enum(REJECTION_REASON_KINDS).optional(),
 });
 
 export type GeneratePitchResult =
@@ -118,12 +130,19 @@ export async function generatePitch(
 
   // Load case studies + their pain_tags. We pull all active case studies
   // and their tags, then attach the strength for the pain we'll choose.
+  // Pull rich context (result paragraph + testimonial + measurable_results)
+  // so Claude can reason about semantic fit, not just client_name.
   type CaseRow = {
     id: string;
     client_name: string;
     industry: string | null;
     hero_metric_en: string | null;
     hero_metric_es: string | null;
+    result_description_en: string | null;
+    result_description_es: string | null;
+    testimonial_quote_en: string | null;
+    testimonial_quote_es: string | null;
+    measurable_results: unknown;
     case_study_pain_tags: { pain_id: string; strength: number }[];
   };
   const { data: caseRows, error: caseErr } = await supabase
@@ -131,6 +150,9 @@ export async function generatePitch(
     .select(
       `
       id, client_name, industry, hero_metric_en, hero_metric_es,
+      result_description_en, result_description_es,
+      testimonial_quote_en, testimonial_quote_es,
+      measurable_results,
       case_study_pain_tags(pain_id, strength)
     `,
     )
@@ -152,15 +174,35 @@ export async function generatePitch(
     !evidencedPain ? pains.find((p) => p.pain_label && p.pain_id) ?? null : null;
   const chosenPainId = (evidencedPain ?? labelOnlyPain)?.pain_id ?? null;
 
+  // Layer 4: read recent rejection counts per (case_study_id, pain_id) so
+  // we can downrank case studies that the team already rejected for this
+  // pain. Penalty: -0.1 per rejection in the last 30 days, applied to
+  // pain_strength. Capped so a 5-rejection case still has 0 strength
+  // (won't be picked over an untagged one), but a 1-rejection case at
+  // strength 0.8 stays usable at 0.7.
+  const rejectionCounts = await loadRejectionCountsByCasePain(
+    supabase,
+    user.tenantId,
+    chosenPainId,
+  );
+
   const case_studies: GeneratorInputCaseStudy[] = caseRows.map((cs) => ({
     id: cs.id,
     client_name: cs.client_name,
     industry: cs.industry,
     hero_metric_en: cs.hero_metric_en,
     hero_metric_es: cs.hero_metric_es,
-    pain_strength: chosenPainId
-      ? cs.case_study_pain_tags.find((t) => t.pain_id === chosenPainId)?.strength ?? null
-      : null,
+    result_description_en: cs.result_description_en,
+    result_description_es: cs.result_description_es,
+    testimonial_quote_en: cs.testimonial_quote_en,
+    testimonial_quote_es: cs.testimonial_quote_es,
+    measurable_results: normalizeMeasurableResults(cs.measurable_results),
+    pain_strength: applyRejectionDownrank(
+      chosenPainId
+        ? cs.case_study_pain_tags.find((t) => t.pain_id === chosenPainId)?.strength ?? null
+        : null,
+      rejectionCounts.get(`${cs.id}:${chosenPainId ?? ""}`) ?? 0,
+    ),
   }));
 
   const generatorInputs: GeneratorInputs = {
@@ -373,6 +415,23 @@ export async function transitionPitchStatus(
     payload.rejection_reason = parsed.data.rejection_reason ?? "no reason given";
   }
 
+  // Look up case_study_id + pain_id BEFORE updating so the audit can
+  // record the (case, pain) pair that got rejected. The downrank query
+  // reads from audit_log metadata, not pitches (deletes won't lose data).
+  let pitchContext: { case_study_id: string | null; pain_id: string | null } = {
+    case_study_id: null,
+    pain_id: null,
+  };
+  if (parsed.data.next_status === "reviewer_rejected") {
+    const { data: pitchRow } = await supabase
+      .from("pitches")
+      .select("case_study_id, pain_id")
+      .eq("id", parsed.data.pitch_id)
+      .eq("tenant_id", user.tenantId)
+      .maybeSingle<{ case_study_id: string | null; pain_id: string | null }>();
+    if (pitchRow) pitchContext = pitchRow;
+  }
+
   const { error } = await supabase
     .from("pitches")
     .update(payload)
@@ -381,8 +440,96 @@ export async function transitionPitchStatus(
 
   if (error) return { ok: false, error: `Could not transition: ${error.message}` };
 
+  // Audit-log rejections so the generator's downrank query can see them.
+  if (parsed.data.next_status === "reviewer_rejected") {
+    await writeAuditLog({
+      tenantId: user.tenantId,
+      actorId: user.id,
+      action: "prospect.scored", // closest existing canonical; Phase 2 adds pitch.rejected
+      entityType: "prospect",
+      entityId: parsed.data.pitch_id,
+      metadata: {
+        kind: "pitch.rejected",
+        pitch_id: parsed.data.pitch_id,
+        case_study_id: pitchContext.case_study_id,
+        pain_id: pitchContext.pain_id,
+        reason_kind: parsed.data.rejection_reason_kind ?? "other",
+        reason_text: parsed.data.rejection_reason ?? null,
+      },
+    });
+  }
+
   revalidatePath("/pitches");
   return { ok: true };
+}
+
+/**
+ * Read recent rejected-pitch audit entries and return a Map keyed by
+ * "<case_study_id>:<pain_id>" → rejection count over last 30 days.
+ *
+ * Reads from audit_log where metadata.kind = 'pitch.rejected' (Layer 4,
+ * 2026-04-27). We use audit_log instead of pitches.rejected_at so the
+ * signal survives prospect or pitch deletion.
+ */
+async function loadRejectionCountsByCasePain(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+  tenantId: string,
+  painId: string | null,
+): Promise<Map<string, number>> {
+  const cutoff = new Date(Date.now() - 30 * 86_400_000).toISOString();
+  type Row = { metadata: Record<string, unknown> | null };
+  const { data, error } = await supabase
+    .from("audit_log")
+    .select("metadata")
+    .eq("tenant_id", tenantId)
+    .eq("entity_type", "prospect")
+    .eq("metadata->>kind", "pitch.rejected")
+    .gte("created_at", cutoff)
+    .returns<Row[]>();
+  if (error) {
+    console.warn(`[generatePitch] rejection-count query failed: ${error.message}`);
+    return new Map();
+  }
+  const counts = new Map<string, number>();
+  for (const row of data ?? []) {
+    const m = row.metadata ?? {};
+    const cs = typeof m.case_study_id === "string" ? m.case_study_id : null;
+    const p = typeof m.pain_id === "string" ? m.pain_id : null;
+    // Only count rejections that match the pain we're scoring against
+    // (or with no pain — those penalize the case for any pain).
+    if (!cs) continue;
+    if (painId && p && p !== painId) continue;
+    const key = `${cs}:${painId ?? ""}`;
+    counts.set(key, (counts.get(key) ?? 0) + 1);
+  }
+  return counts;
+}
+
+/**
+ * Apply rejection penalty to a case's pain_strength. -0.1 per rejection,
+ * floor at 0. Null strength stays null (not tagged for this pain).
+ */
+function applyRejectionDownrank(
+  strength: number | null,
+  rejections: number,
+): number | null {
+  if (strength === null) return null;
+  if (rejections === 0) return strength;
+  return Math.max(0, strength - 0.1 * rejections);
+}
+
+function normalizeMeasurableResults(
+  raw: unknown,
+): { metric?: string; label?: string }[] {
+  if (!Array.isArray(raw)) return [];
+  return raw.flatMap((entry) => {
+    if (!entry || typeof entry !== "object") return [];
+    const e = entry as Record<string, unknown>;
+    const out: { metric?: string; label?: string } = {};
+    if (typeof e.metric === "string") out.metric = e.metric;
+    if (typeof e.label === "string") out.label = e.label;
+    return out.metric || out.label ? [out] : [];
+  });
 }
 
 function normalizePains(raw: unknown): GeneratorInputResearchPain[] {

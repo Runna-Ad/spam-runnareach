@@ -586,6 +586,78 @@ DONE looks like:
 
 ---
 
+## Active slice — Pitch quality 4-layer fix (2026-04-27)
+
+Pedro caught a real quality bug after the first Claude pitch landed: the
+prospect's pain was "checkout breaks on iPhone Safari" but the chosen
+case study was Pet's Club (packaging design — wrong fit). Audit revealed
+case_study_pain_tags is mostly empty, so the generator silently fell
+back to "first available case study," and Claude only saw
+`client_name + industry + hero_metric` — not the result description, so
+it couldn't reason about semantic fit.
+
+Pedro: "hagamos los 4 niveles del fix"
+
+### Scope (all 4 layers, in order)
+
+**Layer 1 — Richer Claude context (~10 min)**
+- Add `result_description_en/es`, `testimonial_quote_en/es`, and
+  `measurable_results[]` to the candidates_cases payload.
+- Update system prompt: "if no case clearly addresses the prospect's
+  pain, prefer case_study_id=null over forcing a bad bridge."
+
+**Layer 2 — Allow `case_study_id: null` in response (~15 min)**
+- Migration 0006: drop NOT NULL from `pitches.case_study_id`.
+- Update zod response schema to allow null.
+- Update generator types to mirror.
+- Body template branches: if null, skip the "We helped X" line; lean on
+  prospect's pain framing + soft CTA only.
+- Heuristic generator gets a small NULL-friendly path too (it currently
+  always picks something — make it return null when no case has any
+  pain_strength).
+
+**Layer 3 — Auto-tag empty case_study_pain_tags (~30 min)**
+- One-time script `scripts/audit-case-pain-tags.mjs` that uses
+  claude-haiku to score each (case, pain) pair from 0.0–1.0.
+- Inserts pairs with strength ≥ 0.4 into `case_study_pain_tags`.
+- Skips pairs that already exist (idempotent).
+- Cost cap ~$0.10 total (20 cases × 15 pains × $0.0003 each at haiku
+  rates with caching). Reports to console + audit_log.
+
+**Layer 4 — Capture rejection reasons + downrank (~30 min)**
+- Extend pitches detail UI: when rejecting, dropdown with reason kinds
+  (`wrong_case`, `wrong_pain`, `tone_off`, `wrong_contact`, `other`)
+  in addition to the free-text reason.
+- transitionPitchStatus stores reason_kind in metadata.
+- Generator reads recent rejection counts per (case_study_id, pain_id)
+  and applies a downrank to that pair's effective strength
+  (e.g. -0.1 per rejection in last 30 days, capped at 0).
+- audit_log gets pitch.rejected with reason_kind so /today activity
+  feed sees the signal.
+
+### Verification
+
+After each layer:
+- typecheck + lint clean
+- npm test green (add tests as needed for layers 2 + 4)
+
+End-to-end after all 4:
+- Re-run pitch on Demo · Quebec Pet Food (mobile checkout pain)
+- Expected: Claude either picks a case that ACTUALLY addresses
+  checkout/conversion, OR returns null + writes a generic-but-honest
+  pitch
+- Reject the pitch with reason_kind=wrong_case, regenerate, and confirm
+  the previous case has a downrank applied next time
+
+### Out of scope (future)
+
+- Vector embeddings for semantic case matching — heuristic+LLM is
+  enough for now
+- Per-tenant tag strength learning — needs more rejection data first
+- A/B variants — Phase 3 separate slice
+
+---
+
 ## Phase 0 Review (to be filled when Phase 0 complete)
 
 ### What worked

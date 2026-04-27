@@ -71,7 +71,7 @@ function inputs(over: Partial<GeneratorInputs> = {}): GeneratorInputs {
         industry: "DTC marketplace",
         hero_metric_en: "+47% mobile checkout completion",
         hero_metric_es: null,
-        pain_strength: 0.9,
+        result_description_en: null, result_description_es: null, testimonial_quote_en: null, testimonial_quote_es: null, measurable_results: [], pain_strength: 0.9,
       },
     ],
     sender: { full_name: "Pedro De Velasco", tenant_display_name: "Runna CA" },

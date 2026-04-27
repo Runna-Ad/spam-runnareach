@@ -232,6 +232,9 @@ function PitchDetail({
   const [error, setError] = React.useState<string | null>(null);
   const [savedFlash, setSavedFlash] = React.useState(false);
   const [rejectReason, setRejectReason] = React.useState("");
+  const [rejectKind, setRejectKind] = React.useState<
+    "wrong_case" | "wrong_pain" | "tone_off" | "wrong_contact" | "other"
+  >("wrong_case");
   const [confirmingReject, setConfirmingReject] = React.useState(false);
 
   // Load body from server (we only loaded list rows in the parent).
@@ -291,6 +294,7 @@ function PitchDetail({
         pitch_id: pitch.id,
         next_status: next,
         rejection_reason: next === "reviewer_rejected" ? rejectReason || "no reason" : null,
+        rejection_reason_kind: next === "reviewer_rejected" ? rejectKind : undefined,
       });
       if (res.ok) {
         setConfirmingReject(false);
@@ -443,30 +447,59 @@ function PitchDetail({
         </div>
       ) : null}
 
-      {/* Reject reason inline form */}
+      {/* Reject reason inline form. The "kind" dropdown drives the
+          generator's downrank: rejected pairs get penalized so the next
+          pitch picks differently. */}
       {confirmingReject ? (
-        <div className="flex items-center gap-2 rounded-[var(--radius-md)] bg-[var(--color-bg-900)] p-3 ring-1 ring-inset ring-[var(--color-danger-300)]">
-          <Input
-            value={rejectReason}
-            onChange={(e) => setRejectReason(e.target.value)}
-            placeholder="Why? (e.g. tone is off, evidence quote misread)"
-            className="flex-1"
-          />
-          <Button
-            type="button"
-            variant="ghost"
-            onClick={() => setConfirmingReject(false)}
-          >
-            <X className="h-3.5 w-3.5" /> Cancel
-          </Button>
-          <Button
-            type="button"
-            variant="primary"
-            onClick={() => transition("reviewer_rejected")}
-            disabled={transitioning || !rejectReason.trim()}
-          >
-            Confirm reject
-          </Button>
+        <div className="flex flex-col gap-2 rounded-[var(--radius-md)] bg-[var(--color-bg-900)] p-3 ring-1 ring-inset ring-[var(--color-danger-300)]">
+          <div className="flex items-center gap-2">
+            <Select
+              value={rejectKind}
+              onChange={(e) =>
+                setRejectKind(
+                  e.target.value as
+                    | "wrong_case"
+                    | "wrong_pain"
+                    | "tone_off"
+                    | "wrong_contact"
+                    | "other",
+                )
+              }
+              className="max-w-[180px] py-0 text-xs"
+            >
+              <option value="wrong_case">Wrong case study</option>
+              <option value="wrong_pain">Wrong pain</option>
+              <option value="tone_off">Tone off</option>
+              <option value="wrong_contact">Wrong contact</option>
+              <option value="other">Other</option>
+            </Select>
+            <Input
+              value={rejectReason}
+              onChange={(e) => setRejectReason(e.target.value)}
+              placeholder="Why specifically? (free text)"
+              className="flex-1"
+            />
+            <Button
+              type="button"
+              variant="ghost"
+              onClick={() => setConfirmingReject(false)}
+            >
+              <X className="h-3.5 w-3.5" /> Cancel
+            </Button>
+            <Button
+              type="button"
+              variant="primary"
+              onClick={() => transition("reviewer_rejected")}
+              disabled={transitioning || !rejectReason.trim()}
+            >
+              Confirm reject
+            </Button>
+          </div>
+          <p className="text-[10px] text-[var(--color-fg-700)]">
+            "{rejectKind.replace(/_/g, " ")}" rejections downrank that
+            (case, pain) pair for 30 days so the next pitch picks
+            differently.
+          </p>
         </div>
       ) : null}
 

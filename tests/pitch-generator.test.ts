@@ -36,7 +36,7 @@ function fullInputs(over: Partial<GeneratorInputs> = {}): GeneratorInputs {
         industry: "DTC marketplace",
         hero_metric_en: "+47% mobile checkout completion in 30 days",
         hero_metric_es: "+47% checkout móvil completado en 30 días",
-        pain_strength: 0.9,
+        result_description_en: null, result_description_es: null, testimonial_quote_en: null, testimonial_quote_es: null, measurable_results: [], pain_strength: 0.9,
       },
       {
         id: "cs-aero",
@@ -44,7 +44,7 @@ function fullInputs(over: Partial<GeneratorInputs> = {}): GeneratorInputs {
         industry: "travel",
         hero_metric_en: "12pt NPS lift",
         hero_metric_es: "12pt aumento NPS",
-        pain_strength: 0.6,
+        result_description_en: null, result_description_es: null, testimonial_quote_en: null, testimonial_quote_es: null, measurable_results: [], pain_strength: 0.6,
       },
     ],
     sender: {
@@ -58,9 +58,63 @@ function fullInputs(over: Partial<GeneratorInputs> = {}): GeneratorInputs {
 
 // ── Returns null when no case studies ──────────────────────────────────────
 
-test("composePitchHeuristic: returns null when no case studies", () => {
+test("composePitchHeuristic: produces no-case pitch when no case studies exist", () => {
+  // Pre-2026-04-27 this returned null. Now we surface the no-case pitch
+  // because the schema allows case_study_id=null and a generic pitch is
+  // strictly better than nothing — caller can still decide to discard it.
   const r = composePitchHeuristic(fullInputs({ case_studies: [] }));
-  assert.equal(r, null);
+  assert.ok(r);
+  assert.equal(r!.case_study_id, null);
+  assert.match(r!.body, /This is the kind of work we do/);
+});
+
+test("composePitchHeuristic: case_study_id=null when no case fits (strength<0.4)", () => {
+  const r = composePitchHeuristic(
+    fullInputs({
+      case_studies: [
+        {
+          id: "cs-weak",
+          client_name: "Weak Match",
+          industry: "DTC marketplace",
+          hero_metric_en: "+10%",
+          hero_metric_es: null,
+          result_description_en: null,
+          result_description_es: null,
+          testimonial_quote_en: null,
+          testimonial_quote_es: null,
+          measurable_results: [],
+          pain_strength: 0.2,
+        },
+      ],
+    }),
+  )!;
+  assert.equal(r.case_study_id, null);
+  assert.doesNotMatch(r.body, /Weak Match/);
+  assert.match(r.body, /This is the kind of work we do/);
+});
+
+test("composePitchHeuristic: case_study_id=null when no case is tagged for the pain", () => {
+  const r = composePitchHeuristic(
+    fullInputs({
+      case_studies: [
+        {
+          id: "cs-untagged",
+          client_name: "Untagged",
+          industry: "DTC coffee",
+          hero_metric_en: "+50%",
+          hero_metric_es: null,
+          result_description_en: null,
+          result_description_es: null,
+          testimonial_quote_en: null,
+          testimonial_quote_es: null,
+          measurable_results: [],
+          pain_strength: null,
+        },
+      ],
+    }),
+  )!;
+  assert.equal(r.case_study_id, null);
+  assert.doesNotMatch(r.body, /Untagged/);
 });
 
 // ── Subject + body shape ────────────────────────────────────────────────────
@@ -108,7 +162,7 @@ test("composePitchHeuristic: prefers industry-match case study over higher-stren
           industry: "DTC coffee",
           hero_metric_en: "+30% subscription retention",
           hero_metric_es: null,
-          pain_strength: 0.5,
+          result_description_en: null, result_description_es: null, testimonial_quote_en: null, testimonial_quote_es: null, measurable_results: [], pain_strength: 0.5,
         },
         {
           id: "cs-misc",
@@ -116,7 +170,7 @@ test("composePitchHeuristic: prefers industry-match case study over higher-stren
           industry: "marketplace",
           hero_metric_en: "+47% checkout",
           hero_metric_es: null,
-          pain_strength: 0.95,
+          result_description_en: null, result_description_es: null, testimonial_quote_en: null, testimonial_quote_es: null, measurable_results: [], pain_strength: 0.95,
         },
       ],
     }),
@@ -141,7 +195,7 @@ test("composePitchHeuristic: falls back to highest-strength when no industry mat
           industry: "marketing",
           hero_metric_en: "+10%",
           hero_metric_es: null,
-          pain_strength: 0.3,
+          result_description_en: null, result_description_es: null, testimonial_quote_en: null, testimonial_quote_es: null, measurable_results: [], pain_strength: 0.3,
         },
         {
           id: "cs-high",
@@ -149,7 +203,7 @@ test("composePitchHeuristic: falls back to highest-strength when no industry mat
           industry: "tech",
           hero_metric_en: "+99%",
           hero_metric_es: null,
-          pain_strength: 0.85,
+          result_description_en: null, result_description_es: null, testimonial_quote_en: null, testimonial_quote_es: null, measurable_results: [], pain_strength: 0.85,
         },
       ],
     }),
