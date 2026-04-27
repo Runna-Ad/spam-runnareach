@@ -32,8 +32,10 @@ export function classifyReplyHeuristic(input: ClassifyInput): ClassifyResult {
   const reasonParts: string[] = [];
 
   // 1) Auto-reply / out-of-office detection (high confidence).
+  // Avoid bare "holiday" — "after the holidays" is not_now, not OOO.
+  // Match only "on holiday" / "taking holiday" patterns.
   if (
-    /out of (the )?office|automatic reply|auto-reply|on vacation|on leave|i am away|currently away|will be back|out of town|holiday|maternity leave|paternity leave/i.test(
+    /out of (the )?office|automatic reply|auto-reply|on vacation|on leave|on holiday|taking holiday|i am away|currently away|will be back|out of town|maternity leave|paternity leave/i.test(
       haystack,
     )
   ) {
@@ -46,8 +48,11 @@ export function classifyReplyHeuristic(input: ClassifyInput): ClassifyResult {
   }
 
   // 2) Wrong person / forwarded.
+  // Note: "please remove" is intentionally NOT in this set — it's almost
+  // always part of "please remove me from your list" which is hard_no
+  // signal. Keeping it here would mis-route unsubscribes.
   if (
-    /not the right person|wrong person|please remove|please contact|forwarded to|cc:?ing/i.test(
+    /not the right person|wrong person|please contact|forwarded to|cc:?ing/i.test(
       haystack,
     )
   ) {

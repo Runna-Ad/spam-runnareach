@@ -168,6 +168,189 @@ export async function countAddedThisWeek(tenantId: string): Promise<number> {
   return count ?? 0;
 }
 
+export type TenantActivityEntry = {
+  id: string;
+  kind:
+    | "scrape"
+    | "score"
+    | "status_change"
+    | "research_edit"
+    | "research_create"
+    | "structured_research"
+    | "pitch_generated"
+    | "reply_created"
+    | "prospect_update"
+    | "other";
+  label: string;
+  detail: string | null;
+  prospect_id: string | null;
+  prospect_name: string | null;
+  actor_name: string | null;
+  at: string;
+};
+
+/**
+ * Tenant-wide audit roll-up — last N events across all prospects, used
+ * by the /today activity feed. Filters out noise:
+ *   - prospect.updated (too chatty — every field tweak shows up)
+ * Includes:
+ *   - prospect.scraped, scored, status_changed
+ *   - research.created/edited
+ *   - "kind=structured_research" + "kind=pitch.generated" + "kind=reply.created"
+ *     (currently piggy-backed on prospect.scored action with a metadata.kind
+ *     marker — clean up when Phase 2 adds canonical action codes)
+ *
+ * Joins prospect name + actor full_name when available.
+ */
+export async function listTenantActivity(
+  tenantId: string,
+  limit = 20,
+): Promise<TenantActivityEntry[]> {
+  const supabase = await createClient();
+
+  type Row = {
+    id: string;
+    action: string;
+    entity_type: string | null;
+    entity_id: string | null;
+    metadata: Record<string, unknown> | null;
+    created_at: string;
+    users: { full_name: string | null } | null;
+  };
+
+  const { data, error } = await supabase
+    .from("audit_log")
+    .select(
+      "id, action, entity_type, entity_id, metadata, created_at, users(full_name)",
+    )
+    .eq("tenant_id", tenantId)
+    .neq("action", "prospect.updated")
+    .order("created_at", { ascending: false })
+    .limit(limit * 2) // pull extra so we can drop noise + still hit limit
+    .returns<Row[]>();
+
+  if (error) throw new Error(`Failed to load tenant activity: ${error.message}`);
+
+  // Collect prospect ids referenced (some rows have prospect_id in
+  // metadata for research-entity events; some have it as entity_id).
+  const prospectIds = new Set<string>();
+  for (const row of data ?? []) {
+    if (row.entity_type === "prospect" && row.entity_id) {
+      prospectIds.add(row.entity_id);
+    }
+    const meta = row.metadata ?? {};
+    if (typeof meta.prospect_id === "string") prospectIds.add(meta.prospect_id);
+  }
+
+  // Resolve names in a single query.
+  type ProspectRow = { id: string; company_name: string };
+  const nameById = new Map<string, string>();
+  if (prospectIds.size > 0) {
+    const { data: pData } = await supabase
+      .from("prospects")
+      .select("id, company_name")
+      .eq("tenant_id", tenantId)
+      .in("id", Array.from(prospectIds))
+      .returns<ProspectRow[]>();
+    for (const p of pData ?? []) nameById.set(p.id, p.company_name);
+  }
+
+  const out: TenantActivityEntry[] = [];
+  for (const row of data ?? []) {
+    if (out.length >= limit) break;
+    const meta = row.metadata ?? {};
+    const prospectId =
+      row.entity_type === "prospect" && row.entity_id
+        ? row.entity_id
+        : typeof meta.prospect_id === "string"
+          ? meta.prospect_id
+          : null;
+    const desc = describeTenantAction(row.action, meta);
+    if (!desc) continue; // unknown / noise — skip
+    out.push({
+      id: row.id,
+      kind: desc.kind,
+      label: desc.label,
+      detail: desc.detail,
+      prospect_id: prospectId,
+      prospect_name: prospectId ? nameById.get(prospectId) ?? null : null,
+      actor_name: row.users?.full_name ?? null,
+      at: row.created_at,
+    });
+  }
+  return out;
+}
+
+function describeTenantAction(
+  action: string,
+  meta: Record<string, unknown>,
+): { kind: TenantActivityEntry["kind"]; label: string; detail: string | null } | null {
+  // Sub-routed events (the "kind" piggy-back from Phase 1a).
+  const kindHint = typeof meta.kind === "string" ? meta.kind : null;
+  if (action === "prospect.scored" && kindHint === "structured_research") {
+    const pains = typeof meta.pain_points_added === "number" ? meta.pain_points_added : 0;
+    const contacts = typeof meta.contacts_added === "number" ? meta.contacts_added : 0;
+    return {
+      kind: "structured_research",
+      label: "Ran structured research",
+      detail: `+${pains} pain${pains === 1 ? "" : "s"} · +${contacts} contact${contacts === 1 ? "" : "s"}`,
+    };
+  }
+  if (action === "prospect.scored" && kindHint === "pitch.generated") {
+    const score = typeof meta.quality_self_score === "number"
+      ? Math.round(meta.quality_self_score * 100)
+      : null;
+    return {
+      kind: "pitch_generated",
+      label: "Generated pitch draft",
+      detail: score !== null ? `self-score ${score}%` : null,
+    };
+  }
+  if (action === "prospect.scored" && kindHint === "reply.created") {
+    const intent = typeof meta.intent === "string" ? meta.intent : null;
+    return {
+      kind: "reply_created",
+      label: "Logged reply",
+      detail: intent ? `intent: ${intent.replace(/_/g, " ")}` : null,
+    };
+  }
+
+  switch (action) {
+    case "prospect.scraped": {
+      const tech = typeof meta.tech_count === "number" ? meta.tech_count : 0;
+      return {
+        kind: "scrape",
+        label: "Scraped website",
+        detail: tech > 0 ? `${tech} tech detected` : null,
+      };
+    }
+    case "prospect.scored": {
+      const score = typeof meta.composite_score === "number" ? meta.composite_score : null;
+      return {
+        kind: "score",
+        label: score !== null ? `Scored ${score}/100` : "Scored",
+        detail: typeof meta.method === "string" ? `via ${meta.method}` : null,
+      };
+    }
+    case "prospect.status_changed": {
+      const from = typeof meta.from === "string" ? meta.from : null;
+      const to = typeof meta.to === "string" ? meta.to : null;
+      const via = typeof meta.via === "string" ? meta.via : null;
+      return {
+        kind: "status_change",
+        label: from ? `Status: ${from} → ${to}` : `Status: ${to}`,
+        detail: via === "bulk" ? "via bulk" : null,
+      };
+    }
+    case "research.created":
+      return { kind: "research_create", label: "Created research", detail: null };
+    case "research.edited":
+      return { kind: "research_edit", label: "Edited research", detail: null };
+    default:
+      return null;
+  }
+}
+
 /**
  * Count of distinct prospects with research scraped in the last 7 days.
  * If the prospect_research table isn't migrated yet, returns 0.
