@@ -29,7 +29,7 @@ const editSchema = z.object({
 // Reason "kinds" for rejecting a pitch. These feed back into the
 // generator: counts per (case_study_id, pain_id) downrank that pair so
 // the next pitch picks differently.
-export const REJECTION_REASON_KINDS = [
+const REJECTION_REASON_KINDS = [
   "wrong_case",     // case study doesn't address this pain (Pet's Club for checkout = wrong_case)
   "wrong_pain",     // we picked the wrong pain to focus on
   "tone_off",       // copy doesn't match brand voice / too salesy / too cold
@@ -186,7 +186,7 @@ export async function generatePitch(
     chosenPainId,
   );
 
-  const case_studies: GeneratorInputCaseStudy[] = caseRows.map((cs) => ({
+  const allCases: GeneratorInputCaseStudy[] = caseRows.map((cs) => ({
     id: cs.id,
     client_name: cs.client_name,
     industry: cs.industry,
@@ -204,6 +204,16 @@ export async function generatePitch(
       rejectionCounts.get(`${cs.id}:${chosenPainId ?? ""}`) ?? 0,
     ),
   }));
+
+  // HARD FILTER: only pass case studies that are tagged for the chosen
+  // pain at strength ≥ 0.4. This prevents Claude from picking a same-
+  // industry but wrong-problem case (e.g. Pet's Club packaging case for
+  // a Pet Food prospect with a checkout-flow pain). If chosenPainId is
+  // null (no pain identified) we keep all cases — Claude can pick on
+  // industry alone since there's no pain signal to violate.
+  const case_studies: GeneratorInputCaseStudy[] = chosenPainId
+    ? allCases.filter((cs) => (cs.pain_strength ?? 0) >= 0.4)
+    : allCases;
 
   const generatorInputs: GeneratorInputs = {
     prospect,

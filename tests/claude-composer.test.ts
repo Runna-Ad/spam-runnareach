@@ -223,16 +223,37 @@ test("composePitchWithClaude: accepts pain_id=null when no pains provided", asyn
   }
 });
 
-// ── No case studies → fail before calling Claude ────────────────────────────
+// ── No case studies → still call Claude (case_study_id=null path) ───────────
 
-test("composePitchWithClaude: returns error without calling Claude when no case studies", async () => {
+test("composePitchWithClaude: calls Claude even when no case studies — empty list is legal now", async () => {
+  // case_study_id is nullable: with no case studies but a known pain,
+  // Claude can still write a useful pitch using the no-case template.
+  const calls: MessagesCreateInput[] = [];
+  installMock({
+    reply: {
+      content: [{ type: "text", text: validResponse({ case_study_id: null }) }],
+      usage: { input_tokens: 400, output_tokens: 180 },
+    },
+    calls,
+  });
+  try {
+    const r = await composePitchWithClaude(inputs({ case_studies: [] }));
+    assert.equal(r.ok, true);
+    assert.equal(calls.length, 1); // we DO call the API
+    if (r.ok) assert.equal(r.result.composed.case_study_id, null);
+  } finally {
+    teardown();
+  }
+});
+
+test("composePitchWithClaude: bails before calling Claude when both case_studies AND pains are empty", async () => {
   const calls: MessagesCreateInput[] = [];
   installMock({
     reply: { content: [], usage: { input_tokens: 0, output_tokens: 0 } },
     calls,
   });
   try {
-    const r = await composePitchWithClaude(inputs({ case_studies: [] }));
+    const r = await composePitchWithClaude(inputs({ case_studies: [], pains: [] }));
     assert.equal(r.ok, false);
     if (!r.ok) assert.equal(r.reason, "no_case_studies");
     assert.equal(calls.length, 0); // didn't call the API

@@ -57,10 +57,15 @@ export async function composePitchWithClaude(
   | { ok: true; result: ClaudeComposeResult }
   | { ok: false; error: string; reason: string; usage: ClaudeUsage | null }
 > {
-  if (input.case_studies.length === 0) {
+  // Note: empty case_studies is now legal — case_study_id is nullable,
+  // so we let Claude produce a no-case pitch (the system prompt has a
+  // "Structure when case_study_id=null" branch). The bail-out only
+  // matters in tests that explicitly check the legacy behaviour; we keep
+  // the option but gate it on a zero-pain-zero-case payload (truly nothing to say).
+  if (input.case_studies.length === 0 && input.pains.length === 0) {
     return {
       ok: false,
-      error: "No case studies — pitches.case_study_id is required.",
+      error: "No case studies and no pains — nothing to compose.",
       reason: "no_case_studies",
       usage: null,
     };
