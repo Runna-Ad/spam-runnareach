@@ -524,6 +524,68 @@ After each slice ships:
 
 ---
 
+## Active slice — Phase 2 swap point #1: pitch generator (Claude) — 2026-04-27
+
+Pedro: "go pitch 1st". Anthropic credits live (verified with a test
+call to claude-sonnet-4-5-20250929 at 2.6s, ~21+13 tokens).
+
+### Scope (Pedro confirmed: pitch first, my defaults for the rest)
+
+Build shared Anthropic infrastructure THEN wire the pitch generator
+swap point end-to-end. Heuristic stays as fallback when API fails or
+spend cap is hit.
+
+DONE looks like:
+1. `lib/anthropic/client.ts` — single SDK instance + 15s timeout +
+   retry (3x with backoff) + cost-tracking + structured JSON output
+   helper that runs Zod-validated parsing on responses.
+2. `lib/anthropic/cost-tracking.ts` — write to `cost_tracking` table
+   per call (model, input_tokens, output_tokens, cost_usd, action,
+   prospect_id?). Daily-cap guard via `ANTHROPIC_DAILY_USD_CAP` env
+   (default $5).
+3. `lib/pitches/claude-composer.ts` — drop-in replacement for
+   `composePitchHeuristic`. Same `GeneratorInputs → ComposedPitch`
+   shape. System prompt + user prompt template + Zod schema for
+   response. Returns `method: "claude"` instead of `"heuristic"`.
+4. `lib/pitches/actions.ts::generatePitch` — flips method based on
+   `process.env.ANTHROPIC_API_KEY` presence + daily-cap state.
+   Falls back to heuristic if Claude errors or cap is hit.
+5. UI surface — pitch detail "How was this composed?" expander shows
+   the actual prompt + reasoning when method=claude (transparency).
+6. Browser verify — generate a real pitch on the Demo · Quebec Pet
+   Food prospect, screenshot, confirm copy quality > heuristic.
+7. Tests — mock the SDK and verify:
+   - Successful Claude response parses + persists correctly
+   - Malformed JSON falls back to heuristic
+   - Rate-limit error falls back to heuristic + logs warning
+   - Daily cap hit falls back to heuristic + emits hint
+
+### Defaults Pedro implicitly approved with "go"
+
+- Model: **claude-sonnet-4-5** (latest snapshot pinned in client config)
+- Streaming: **yes** for pitch — server action streams body so the UI
+  can show progressive reveal (Phase 4 follow-up if not in this slice)
+- Cost cap: **$5/day** default, configurable via env
+- Mock SDK in unit tests: **yes** (don't burn credits on test runs)
+
+### Out of scope this slice
+
+- Other 4 swap points (research, score, reply, ICP suggest) — separate
+  slices once pattern is proven on pitch.
+- Streaming UI — backend ready, but UI may render full-result first
+  if the streaming integration is messy. Plumbing must support it.
+- A/B variants — still single output. Phase 3 may add.
+
+### Verification
+
+- typecheck + lint clean
+- npm test 99/99 still green + new mocked tests
+- Browser screenshot of a Claude-generated pitch
+- cost_tracking row appears in DB after generation
+- Heuristic fallback tested by toggling ANTHROPIC_API_KEY off
+
+---
+
 ## Phase 0 Review (to be filled when Phase 0 complete)
 
 ### What worked

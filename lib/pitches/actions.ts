@@ -2,15 +2,20 @@
 
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
+import { claudeIsAvailable } from "@/lib/anthropic/client";
+import { isUnderDailyCap, recordClaudeCall } from "@/lib/anthropic/cost-tracking";
 import { writeAuditLog } from "@/lib/audit/log";
 import { requireUser } from "@/lib/auth";
 import { createClient } from "@/lib/supabase/server";
 import type { Database } from "@/lib/supabase/types";
+import { composePitchWithClaude } from "./claude-composer";
 import {
   composePitchHeuristic,
+  type ComposedPitch,
   type GeneratorInputContact,
   type GeneratorInputCaseStudy,
   type GeneratorInputResearchPain,
+  type GeneratorInputs,
 } from "./generator";
 
 const generateSchema = z.object({
@@ -158,7 +163,7 @@ export async function generatePitch(
       : null,
   }));
 
-  const composed = composePitchHeuristic({
+  const generatorInputs: GeneratorInputs = {
     prospect,
     pains,
     contacts,
@@ -168,7 +173,51 @@ export async function generatePitch(
       tenant_display_name: user.tenantDisplayName,
     },
     deep_pitch_url: null, // Plumbing-ready: when runna-website API exists, set here.
-  });
+  };
+
+  // ── PHASE 2: try Claude first, fall back to heuristic ─────────────────
+  // Claude path requires both an API key AND headroom under the daily
+  // spend cap. Any failure (network, parse, schema, cap) drops through
+  // to the deterministic heuristic so the user still gets a draft.
+  let composed: ComposedPitch | null = null;
+  let method: "heuristic" | "claude" = "heuristic";
+  let claudeUsage: { input_tokens: number; output_tokens: number; cost_usd: number } | null = null;
+  let claudeModel: string | null = null;
+  let claudeFallbackReason: string | null = null;
+
+  if (claudeIsAvailable()) {
+    const cap = await isUnderDailyCap(user.tenantId);
+    if (!cap.under) {
+      claudeFallbackReason = `daily cap hit (spent $${cap.spent_today_usd.toFixed(2)} of $${cap.cap_usd.toFixed(2)})`;
+    } else {
+      const claudeResult = await composePitchWithClaude(generatorInputs);
+      if (claudeResult.ok) {
+        composed = claudeResult.result.composed;
+        method = "claude";
+        claudeUsage = claudeResult.result.usage;
+        claudeModel = claudeResult.result.model;
+      } else {
+        claudeFallbackReason = `${claudeResult.reason}: ${claudeResult.error.slice(0, 200)}`;
+        // We still got a usage object (sometimes parse failures cost
+        // tokens) — record it so the daily cap stays honest.
+        if (claudeResult.usage) {
+          await recordClaudeCall({
+            tenantId: user.tenantId,
+            model: "claude-sonnet-4-5-20250929",
+            entity_type: "pitch",
+            entity_id: parsed.data.prospect_id,
+            usage: claudeResult.usage,
+            metadata: { fallback: true, reason: claudeResult.reason, error: claudeResult.error.slice(0, 500) },
+          });
+        }
+      }
+    }
+  }
+
+  if (!composed) {
+    composed = composePitchHeuristic(generatorInputs);
+    method = "heuristic";
+  }
 
   if (!composed) {
     return {
@@ -199,7 +248,9 @@ export async function generatePitch(
     measurable_result_included: composed.measurable_result_included,
     quality_self_score: composed.quality_self_score,
     status: "draft",
-    cost_usd: 0, // heuristic is free
+    cost_usd: claudeUsage?.cost_usd ?? 0,
+    token_count_in: claudeUsage?.input_tokens ?? null,
+    token_count_out: claudeUsage?.output_tokens ?? null,
     variant_index: 1,
   };
 
@@ -212,6 +263,19 @@ export async function generatePitch(
   if (insertErr) return { ok: false, error: `Could not save pitch: ${insertErr.message}` };
   if (!created) return { ok: false, error: "Insert returned no row." };
 
+  // Record successful Claude call cost (failures recorded earlier
+  // in the fallback branch).
+  if (method === "claude" && claudeUsage && claudeModel) {
+    await recordClaudeCall({
+      tenantId: user.tenantId,
+      model: claudeModel,
+      entity_type: "pitch",
+      entity_id: created.id,
+      usage: { ...claudeUsage, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 },
+      metadata: { pitch_id: created.id, prospect_id: parsed.data.prospect_id },
+    });
+  }
+
   await writeAuditLog({
     tenantId: user.tenantId,
     actorId: user.id,
@@ -221,10 +285,12 @@ export async function generatePitch(
     metadata: {
       kind: "pitch.generated",
       pitch_id: created.id,
-      method: "heuristic",
+      method,
       quality_self_score: composed.quality_self_score,
       case_study_id: composed.case_study_id,
       pain_id: composed.pain_id,
+      cost_usd: claudeUsage?.cost_usd ?? 0,
+      fallback_reason: claudeFallbackReason,
     },
   });
 
@@ -234,9 +300,12 @@ export async function generatePitch(
   return {
     ok: true,
     pitch_id: created.id,
-    method: "heuristic",
+    method,
     quality_self_score: composed.quality_self_score,
-    reasoning: composed.reasoning,
+    reasoning:
+      method === "heuristic" && claudeFallbackReason
+        ? `${composed.reasoning} (Claude fallback — ${claudeFallbackReason})`
+        : composed.reasoning,
   };
 }
 

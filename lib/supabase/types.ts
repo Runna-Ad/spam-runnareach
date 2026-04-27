@@ -660,6 +660,34 @@ export type Database = {
         };
         Relationships: NoRels;
       };
+      cost_tracking: {
+        Row: {
+          id: UUID;
+          tenant_id: UUID;
+          category: string;
+          sub_category: string | null;
+          entity_type: string | null;
+          entity_id: UUID | null;
+          cost_usd: number;
+          metadata: Record<string, unknown>;
+          incurred_at: Timestamptz;
+        };
+        Insert: {
+          id?: UUID;
+          tenant_id: UUID;
+          category: string;
+          sub_category?: string | null;
+          entity_type?: string | null;
+          entity_id?: UUID | null;
+          cost_usd: number;
+          metadata?: Record<string, unknown>;
+          incurred_at?: Timestamptz;
+        };
+        Update: {
+          metadata?: Record<string, unknown>;
+        };
+        Relationships: NoRels;
+      };
       replies: {
         Row: {
           id: UUID;
