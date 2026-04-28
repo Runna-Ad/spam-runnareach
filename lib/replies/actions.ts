@@ -2,11 +2,14 @@
 
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
+import { ANTHROPIC_HAIKU_MODEL, claudeIsAvailable } from "@/lib/anthropic/client";
+import { isUnderDailyCap, recordClaudeCall } from "@/lib/anthropic/cost-tracking";
 import { writeAuditLog } from "@/lib/audit/log";
 import { requireUser } from "@/lib/auth";
 import { createClient } from "@/lib/supabase/server";
 import type { Database } from "@/lib/supabase/types";
-import { classifyReplyHeuristic } from "./classify";
+import { classifyReplyWithClaude } from "./claude-classifier";
+import { classifyReplyHeuristic, type ClassifyResult } from "./classify";
 
 const REPLY_INTENTS = [
   "wants_meeting",
@@ -67,11 +70,69 @@ export async function createManualReply(
   }
 
   const supabase = await createClient();
-  const classification = classifyReplyHeuristic({
+
+  // ── PHASE 2: try Claude (Haiku) first, fall back to heuristic ───────
+  // Same fallback contract as the pitch composer: Claude path requires
+  // an API key AND headroom under the daily cap. Any failure (auth,
+  // rate-limit, parse, timeout, empty input) drops to the deterministic
+  // heuristic so the user always gets a classification.
+  const classifierInput = {
     subject: parsed.data.subject,
     body_text: parsed.data.body_text,
     from_email: parsed.data.from_email,
-  });
+  };
+
+  let classification: ClassifyResult = classifyReplyHeuristic(classifierInput);
+  let method: "heuristic" | "claude" = "heuristic";
+  let claudeFallbackReason: string | null = null;
+  let claudeCostUsd: number | null = null;
+
+  if (claudeIsAvailable()) {
+    const cap = await isUnderDailyCap(user.tenantId);
+    if (!cap.under) {
+      claudeFallbackReason = `daily cap hit (spent $${cap.spent_today_usd.toFixed(2)} of $${cap.cap_usd.toFixed(2)})`;
+    } else {
+      const claudeResult = await classifyReplyWithClaude(classifierInput);
+      if (claudeResult.ok) {
+        classification = claudeResult.result.classification;
+        method = "claude";
+        claudeCostUsd = claudeResult.result.usage.cost_usd;
+        // Record the spend. entity_id stays null until we have the row id.
+        await recordClaudeCall({
+          tenantId: user.tenantId,
+          model: ANTHROPIC_HAIKU_MODEL,
+          entity_type: "reply_classify",
+          entity_id: null,
+          usage: claudeResult.result.usage,
+          metadata: {
+            from: parsed.data.from_email,
+            intent: claudeResult.result.classification.intent,
+            urgency: claudeResult.result.classification.urgency,
+            sentiment: claudeResult.result.classification.sentiment,
+          },
+        });
+      } else {
+        claudeFallbackReason = `${claudeResult.reason}: ${claudeResult.error.slice(0, 200)}`;
+        // Parse failures sometimes still cost tokens — record them so
+        // the daily cap stays honest.
+        if (claudeResult.usage) {
+          await recordClaudeCall({
+            tenantId: user.tenantId,
+            model: ANTHROPIC_HAIKU_MODEL,
+            entity_type: "reply_classify",
+            entity_id: null,
+            usage: claudeResult.usage,
+            metadata: {
+              from: parsed.data.from_email,
+              fallback_reason: claudeResult.reason,
+            },
+          });
+        }
+      }
+    }
+  } else {
+    claudeFallbackReason = "ANTHROPIC_API_KEY not set";
+  }
 
   type ReplyInsert = Database["public"]["Tables"]["replies"]["Insert"];
   const payload: ReplyInsert = {
@@ -136,6 +197,10 @@ export async function createManualReply(
         intent: classification.intent,
         urgency: classification.urgency,
         method: "manual",
+        classifier: method, // "claude" | "heuristic"
+        classifier_fallback_reason: claudeFallbackReason,
+        classifier_cost_usd: claudeCostUsd,
+        classifier_reasoning: classification.reasoning?.slice(0, 200) ?? null,
       },
     });
   }

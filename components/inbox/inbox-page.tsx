@@ -451,9 +451,9 @@ function CreateReplyDrawer({
         <DrawerHeader>
           <DrawerTitle>Log a reply manually</DrawerTitle>
           <DrawerDescription>
-            Paste the email reply you received. We auto-classify intent (heuristic
-            today, Claude when credits land). Link a prospect so it shows up in
-            their activity feed.
+            Paste the email reply you received. Claude (Haiku) auto-classifies
+            intent — falls back to the deterministic heuristic if Claude is
+            unavailable. Link a prospect so it shows up in their activity feed.
           </DrawerDescription>
         </DrawerHeader>
         <DrawerBody>
