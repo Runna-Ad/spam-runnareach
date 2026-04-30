@@ -150,12 +150,27 @@ function cleanTitle(title: string, url: string): string {
 function isUsableUrl(url: string): boolean {
   try {
     const u = new URL(url);
+    // Directories, social media, aggregators, dev tools — not prospects
     const blocked = [
-      "google.com", "yelp.com", "facebook.com", "instagram.com",
-      "linkedin.com", "twitter.com", "youtube.com", "amazon.com",
-      "reddit.com", "yellowpages.ca", "yelp.ca", "canada411.ca",
+      // Social & search
+      "google.com", "yelp.com", "yelp.ca", "facebook.com", "instagram.com",
+      "linkedin.com", "twitter.com", "x.com", "youtube.com", "tiktok.com",
+      // E-commerce giants
+      "amazon.com", "amazon.ca", "ebay.com", "etsy.com",
+      // Directories / review sites
+      "reddit.com", "yellowpages.ca", "canada411.ca", "tripadvisor.com",
+      "bbb.org", "trustpilot.com", "g2.com", "capterra.com",
+      // E-commerce platform / tooling meta-sites
+      "shopify.com", "woocommerce.com", "bigcommerce.com",
+      "gempages.net", "pagefly.io", "zipify.com",
+      "analyzify.com", "storeleads.app", "aftership.com",
+      "sitebuilderreport.com", "omnithemes.com", "myip.ms",
+      "builtwith.com", "similarweb.com", "semrush.com", "ahrefs.com",
+      // News / content farms
+      "entrepreneur.com", "forbes.com", "inc.com", "medium.com",
+      "wordpress.com", "substack.com", "hubspot.com",
     ];
-    return !blocked.some((b) => u.hostname.endsWith(b));
+    return !blocked.some((b) => u.hostname === b || u.hostname.endsWith(`.${b}`));
   } catch {
     return false;
   }
