@@ -11,7 +11,13 @@ export type DiscoverySource =
   | "google_operator"
   | "competitor_mining"
   | "linkedin"
-  | "manual_upload";
+  | "manual_upload"
+  | "yellowpages_ca"
+  | "brave_search";
+
+/** Sources that support the keyword-based crawl drawer */
+export const CRAWLABLE_SOURCES = ["yellowpages_ca", "brave_search"] as const;
+export type CrawlableSource = (typeof CRAWLABLE_SOURCES)[number];
 
 export const SOURCE_META: Record<
   DiscoverySource,
@@ -23,6 +29,20 @@ export const SOURCE_META: Record<
     available: true,
     blockedOn: null,
   },
+  yellowpages_ca: {
+    label: "Yellow Pages CA",
+    description:
+      "Scrape yellowpages.ca by keyword + province — free, no API key needed.",
+    available: true,
+    blockedOn: null,
+  },
+  brave_search: {
+    label: "Brave Search",
+    description:
+      "Keyword + operator queries via Brave Search API. 2,000 free/month. Add BRAVE_SEARCH_API_KEY to activate.",
+    available: false, // toggled to true at runtime when key is present
+    blockedOn: "Add BRAVE_SEARCH_API_KEY to .env.local (free at brave.com/search/api).",
+  },
   google_places: {
     label: "Google Places",
     description: "ICP-driven Places search for local SMBs by industry + region.",
@@ -31,9 +51,9 @@ export const SOURCE_META: Record<
   },
   industry_directory: {
     label: "Industry directory",
-    description: "Crawl Shopify dir, Yellow Pages CA, Alberta Chamber, association rosters.",
+    description: "Crawl Alberta Chamber, association rosters, Shopify partner dir.",
     available: false,
-    blockedOn: "Per-directory selectors not yet implemented (slice 1b).",
+    blockedOn: "Per-directory selectors not yet implemented.",
   },
   google_operator: {
     label: "Google search operators",

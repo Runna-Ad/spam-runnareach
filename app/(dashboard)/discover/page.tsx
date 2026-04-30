@@ -2,6 +2,8 @@ import { DiscoverPage } from "@/components/discover/discover-page";
 import { requireUser } from "@/lib/auth";
 import { listIcps } from "@/lib/icp/queries";
 import { listDiscoveryRuns } from "@/lib/discover/runs-queries";
+import { braveIsAvailable } from "@/lib/discover/sources/brave-search";
+import type { CrawlableSource } from "@/lib/discover/source-meta";
 
 export const dynamic = "force-dynamic";
 
@@ -13,6 +15,12 @@ export default async function DiscoverRoute() {
     listIcps(user.tenantId),
   ]);
 
+  // Resolve which crawl sources have credentials at runtime
+  const availableCrawlSources: CrawlableSource[] = [
+    "yellowpages_ca", // always available — no key needed
+    ...(braveIsAvailable() ? (["brave_search"] as CrawlableSource[]) : []),
+  ];
+
   return (
     <DiscoverPage
       runs={runs}
@@ -20,6 +28,7 @@ export default async function DiscoverRoute() {
         .filter((i) => i.is_active)
         .map((i) => ({ id: i.id, name: i.name, market: i.market }))}
       canManage={user.role !== "viewer"}
+      availableCrawlSources={availableCrawlSources}
     />
   );
 }

@@ -13,15 +13,23 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Chip } from "@/components/ui/chip";
 import { EmptyState } from "@/components/ui/empty-state";
-import { SOURCE_META, type DiscoverySource } from "@/lib/discover/source-meta";
+import {
+  SOURCE_META,
+  CRAWLABLE_SOURCES,
+  type DiscoverySource,
+  type CrawlableSource,
+} from "@/lib/discover/source-meta";
 import type { DiscoveryRun } from "@/lib/discover/runs-queries";
 import { cn, relativeTime } from "@/lib/utils";
 import { CsvUploadDrawer } from "./csv-upload-drawer";
+import { CrawlDrawer } from "./crawl-drawer";
 
 interface DiscoverPageProps {
   runs: DiscoveryRun[];
   icps: { id: string; name: string; market: "CA" | "MX" | "US" | "LATAM" }[];
   canManage: boolean;
+  /** Server-resolved: which crawl sources have their API key set */
+  availableCrawlSources: CrawlableSource[];
 }
 
 const STATUS_TONE: Record<string, "success" | "info" | "danger" | "neutral"> = {
@@ -31,8 +39,14 @@ const STATUS_TONE: Record<string, "success" | "info" | "danger" | "neutral"> = {
   failed: "danger",
 };
 
-export function DiscoverPage({ runs, icps, canManage }: DiscoverPageProps) {
+export function DiscoverPage({
+  runs,
+  icps,
+  canManage,
+  availableCrawlSources,
+}: DiscoverPageProps) {
   const [uploadOpen, setUploadOpen] = React.useState(false);
+  const [crawlSource, setCrawlSource] = React.useState<CrawlableSource | null>(null);
 
   return (
     <div className="flex h-full flex-col">
@@ -49,7 +63,6 @@ export function DiscoverPage({ runs, icps, canManage }: DiscoverPageProps) {
               size="sm"
               variant="primary"
               onClick={() => setUploadOpen(true)}
-              disabled={icps.length === 0 ? false : false}
             >
               <Upload className="h-3.5 w-3.5" aria-hidden /> Upload CSV
             </Button>
@@ -60,27 +73,61 @@ export function DiscoverPage({ runs, icps, canManage }: DiscoverPageProps) {
       <div className="flex flex-1 flex-col gap-8 overflow-y-auto p-4">
         <SourcesSection
           onCsvClick={canManage ? () => setUploadOpen(true) : undefined}
+          onCrawlClick={canManage ? (src) => setCrawlSource(src) : undefined}
+          availableCrawlSources={availableCrawlSources}
           canManage={canManage}
         />
         <RunHistorySection runs={runs} />
       </div>
 
       <CsvUploadDrawer open={uploadOpen} onOpenChange={setUploadOpen} icps={icps} />
+
+      {crawlSource && (
+        <CrawlDrawer
+          open={crawlSource !== null}
+          onOpenChange={(o) => !o && setCrawlSource(null)}
+          source={crawlSource}
+          icps={icps}
+        />
+      )}
     </div>
   );
 }
 
 function SourcesSection({
   onCsvClick,
+  onCrawlClick,
+  availableCrawlSources,
   canManage,
 }: {
   onCsvClick: (() => void) | undefined;
+  onCrawlClick: ((src: CrawlableSource) => void) | undefined;
+  availableCrawlSources: CrawlableSource[];
   canManage: boolean;
 }) {
   const sources = (Object.keys(SOURCE_META) as DiscoverySource[]).map((s) => ({
     key: s,
     ...SOURCE_META[s],
   }));
+
+  // Mark crawl sources as available if their key is set at runtime
+  const effectiveAvailable = (key: DiscoverySource): boolean => {
+    if (key === "yellowpages_ca") return true; // no key needed
+    if ((CRAWLABLE_SOURCES as readonly string[]).includes(key)) {
+      return availableCrawlSources.includes(key as CrawlableSource);
+    }
+    return SOURCE_META[key].available;
+  };
+
+  const getAction = (key: DiscoverySource): (() => void) | undefined => {
+    if (key === "manual_upload") return onCsvClick;
+    if ((CRAWLABLE_SOURCES as readonly string[]).includes(key)) {
+      return effectiveAvailable(key) && onCrawlClick
+        ? () => onCrawlClick(key as CrawlableSource)
+        : undefined;
+    }
+    return undefined;
+  };
 
   return (
     <section className="flex flex-col gap-3">
@@ -89,23 +136,26 @@ function SourcesSection({
           Discovery sources
         </h2>
         <p className="text-xs text-[var(--color-fg-500)]">
-          Manual upload works today. The rest unlock as external credentials land.
+          Yellow Pages CA and manual upload work today. The rest unlock as credentials land.
         </p>
       </div>
       <div className="grid grid-cols-1 gap-3 lg:grid-cols-2 2xl:grid-cols-3">
-        {sources.map((s) => (
-          <SourceCard
-            key={s.key}
-            label={s.label}
-            description={s.description}
-            available={s.available}
-            blockedOn={s.blockedOn}
-            actionLabel={s.key === "manual_upload" ? "Upload CSV" : "Run discovery"}
-            actionIcon={s.key === "manual_upload" ? Upload : Plus}
-            onAction={s.key === "manual_upload" ? onCsvClick : undefined}
-            actionDisabled={!s.available || !canManage}
-          />
-        ))}
+        {sources.map((s) => {
+          const avail = effectiveAvailable(s.key);
+          return (
+            <SourceCard
+              key={s.key}
+              label={s.label}
+              description={s.description}
+              available={avail}
+              blockedOn={avail ? null : s.blockedOn}
+              actionLabel={s.key === "manual_upload" ? "Upload CSV" : "Run discovery"}
+              actionIcon={s.key === "manual_upload" ? Upload : Plus}
+              onAction={getAction(s.key)}
+              actionDisabled={!avail || !canManage}
+            />
+          );
+        })}
       </div>
     </section>
   );

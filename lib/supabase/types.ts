@@ -317,7 +317,9 @@ export type Database = {
             | "google_operator"
             | "competitor_mining"
             | "linkedin"
-            | "manual_upload";
+            | "manual_upload"
+            | "yellowpages_ca"
+            | "brave_search";
           company_name: string;
           domain: string | null;
           website_url: string | null;
@@ -359,7 +361,9 @@ export type Database = {
             | "google_operator"
             | "competitor_mining"
             | "linkedin"
-            | "manual_upload";
+            | "manual_upload"
+            | "yellowpages_ca"
+            | "brave_search";
           company_name: string;
           domain?: string | null;
           website_url?: string | null;
@@ -418,7 +422,9 @@ export type Database = {
             | "google_operator"
             | "competitor_mining"
             | "linkedin"
-            | "manual_upload";
+            | "manual_upload"
+            | "yellowpages_ca"
+            | "brave_search";
           triggered_by: UUID | null;
           status: string;
           candidates_found: number;
@@ -440,7 +446,9 @@ export type Database = {
             | "google_operator"
             | "competitor_mining"
             | "linkedin"
-            | "manual_upload";
+            | "manual_upload"
+            | "yellowpages_ca"
+            | "brave_search";
           triggered_by?: UUID | null;
           status?: string;
           candidates_found?: number;
