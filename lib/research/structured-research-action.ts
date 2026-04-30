@@ -2,10 +2,13 @@
 
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
+import { ANTHROPIC_DEFAULT_MODEL, claudeIsAvailable } from "@/lib/anthropic/client";
+import { isUnderDailyCap, recordClaudeCall } from "@/lib/anthropic/cost-tracking";
 import { writeAuditLog } from "@/lib/audit/log";
 import { requireUser } from "@/lib/auth";
 import { createClient } from "@/lib/supabase/server";
 import type { Database } from "@/lib/supabase/types";
+import { runResearchWithClaude } from "./claude-research";
 
 const inputSchema = z.object({
   prospect_id: z.string().uuid(),
@@ -131,25 +134,88 @@ export async function runStructuredResearch(
 
   const existingPains = normalizePainPoints(research.pain_points);
 
-  // ── PHASE 2 SWAP POINT ────────────────────────────────────────────────
-  // When ANTHROPIC_API_KEY is funded, replace the next two calls with:
-  //   const result = await classifyWithClaude({
-  //     what_they_do: research.what_they_do,
-  //     notes: research.notes,
-  //     options,
-  //     existingPains,
-  //   });
-  // Claude returns the same { pain_points, decision_maker_email } shape.
+  // ── PHASE 2: try Claude first, fall back to heuristic ────────────────
+  // Claude (Sonnet) does semantic pain classification — far better than
+  // substring matching when the research talks around the problem.
+  // Any failure (auth, rate-limit, parse, cap, hallucinated pain_id)
+  // falls through to the deterministic heuristic so the user always
+  // gets a result.
   const haystack = [research.what_they_do ?? "", research.notes ?? ""]
     .join("\n")
     .trim();
-  const newPains = haystack
-    ? classifyPainsHeuristic(haystack, options, existingPains)
-    : [];
-  const decisionMakerEmail = research.notes
-    ? pickDecisionMakerEmail(research.notes)
-    : null;
-  const method: "heuristic" | "claude" = "heuristic";
+
+  let newPains: PainPoint[] = [];
+  let decisionMakerEmail: string | null = null;
+  let method: "heuristic" | "claude" = "heuristic";
+  let claudeFallbackReason: string | null = null;
+  let claudeReasoning: string | null = null;
+  let claudeCostUsd: number | null = null;
+
+  if (claudeIsAvailable() && haystack) {
+    const cap = await isUnderDailyCap(user.tenantId);
+    if (!cap.under) {
+      claudeFallbackReason = `daily cap hit (spent $${cap.spent_today_usd.toFixed(2)} of $${cap.cap_usd.toFixed(2)})`;
+    } else {
+      const claudeResult = await runResearchWithClaude({
+        what_they_do: research.what_they_do,
+        notes: research.notes,
+        options,
+        existingPainIds: existingPains
+          .map((p) => p.pain_id)
+          .filter((id): id is string => Boolean(id)),
+      });
+      if (claudeResult.ok) {
+        newPains = claudeResult.result.pain_points.map((p) => ({
+          pain_id: p.pain_id,
+          pain_label: p.pain_label,
+          evidence_quote: p.evidence_quote,
+          confidence: p.confidence,
+        }));
+        decisionMakerEmail = claudeResult.result.decision_maker_email;
+        method = "claude";
+        claudeReasoning = claudeResult.result.reasoning;
+        claudeCostUsd = claudeResult.result.usage.cost_usd;
+        await recordClaudeCall({
+          tenantId: user.tenantId,
+          model: ANTHROPIC_DEFAULT_MODEL,
+          entity_type: "research",
+          entity_id: parsed.data.prospect_id,
+          usage: claudeResult.result.usage,
+          metadata: {
+            prospect_id: parsed.data.prospect_id,
+            pain_count: claudeResult.result.pain_points.length,
+            picked_email: claudeResult.result.decision_maker_email,
+          },
+        });
+      } else {
+        claudeFallbackReason = `${claudeResult.reason}: ${claudeResult.error.slice(0, 200)}`;
+        if (claudeResult.usage) {
+          await recordClaudeCall({
+            tenantId: user.tenantId,
+            model: ANTHROPIC_DEFAULT_MODEL,
+            entity_type: "research",
+            entity_id: parsed.data.prospect_id,
+            usage: claudeResult.usage,
+            metadata: {
+              prospect_id: parsed.data.prospect_id,
+              fallback_reason: claudeResult.reason,
+            },
+          });
+        }
+      }
+    }
+  } else if (!claudeIsAvailable()) {
+    claudeFallbackReason = "ANTHROPIC_API_KEY not set";
+  }
+
+  if (method === "heuristic") {
+    newPains = haystack
+      ? classifyPainsHeuristic(haystack, options, existingPains)
+      : [];
+    decisionMakerEmail = research.notes
+      ? pickDecisionMakerEmail(research.notes)
+      : null;
+  }
 
   // ── Merge pain points back into research row ──────────────────────────
   const mergedPains: PainPoint[] = [...existingPains, ...newPains];
@@ -212,12 +278,21 @@ export async function runStructuredResearch(
       method,
       pain_points_added: newPains.length,
       contacts_added: contactsAdded,
+      claude_fallback_reason: claudeFallbackReason,
+      claude_cost_usd: claudeCostUsd,
+      claude_reasoning: claudeReasoning?.slice(0, 300) ?? null,
     },
   });
 
   revalidatePath(`/companies/${parsed.data.prospect_id}`);
 
-  const reasoning = buildReasoning(newPains, decisionMakerEmail, contactsAdded);
+  const reasoning = buildReasoning(
+    newPains,
+    decisionMakerEmail,
+    contactsAdded,
+    method,
+    claudeReasoning,
+  );
   return {
     ok: true,
     method,
@@ -350,6 +425,8 @@ function buildReasoning(
   newPains: PainPoint[],
   email: string | null,
   contactsAdded: number,
+  method: "heuristic" | "claude",
+  claudeReasoning: string | null,
 ): string {
   const parts: string[] = [];
   if (newPains.length > 0) {
@@ -368,6 +445,12 @@ function buildReasoning(
   } else {
     parts.push("No contact email found in notes — try scraping again.");
   }
-  parts.push("Heuristic — Phase 2 will rerun via Claude.");
+  if (method === "claude" && claudeReasoning) {
+    // Surface Claude's own explanation so reviewers can sanity-check
+    // the picks. Trimmed to keep the toast readable.
+    parts.push(`(Claude) ${claudeReasoning.slice(0, 220)}`);
+  } else {
+    parts.push("Heuristic — fell back from Claude.");
+  }
   return parts.join(" ");
 }
