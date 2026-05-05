@@ -710,6 +710,11 @@ function ResearchTab({
         });
         router.refresh();
       } else {
+        // Even on scrape failure, Hunter may have found contacts — refresh so
+        // the contact field populates and the warning chip updates.
+        if (result.hunter_emails_count && result.hunter_emails_count > 0) {
+          router.refresh();
+        }
         setScrapeMessage({ tone: "warn", text: result.error });
       }
     });

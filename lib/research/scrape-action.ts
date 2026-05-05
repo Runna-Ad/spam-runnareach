@@ -21,7 +21,12 @@ export type ScrapeWebsiteResult =
       what_they_do_set: boolean;
       hunter_emails_count: number;
     }
-  | { ok: false; error: string };
+  | {
+      ok: false;
+      error: string;
+      // Hunter may still have found contacts even when the scrape failed
+      hunter_emails_count?: number;
+    };
 
 /**
  * Server action wired to the "Scrape website" button on the prospect
@@ -85,6 +90,40 @@ export async function scrapeWebsite(prospectId: string): Promise<ScrapeWebsiteRe
               : e.kind === "parse"
                 ? `Parser failed: ${e.detail}`
                 : `Network error: ${e.detail}`;
+
+    // Scrape failed — still try Hunter if we have the domain.
+    // Hunter queries its own database and doesn't need the site to be reachable.
+    const domain = prospect.domain ?? null;
+    if (domain) {
+      const hunterResult = await hunterDomainSearch(domain);
+      if (hunterResult.ok && hunterResult.contacts.length > 0) {
+        const supabase = await createClient();
+        let hunterCount = 0;
+        for (const contact of hunterResult.contacts) {
+          const rank = contact.confidence >= 70 ? 1 : 2;
+          const { error: insertErr } = await supabase.from("prospect_contacts").insert({
+            tenant_id: user.tenantId,
+            prospect_id: parsed.data.prospect_id,
+            email: contact.email,
+            full_name:
+              contact.first_name || contact.last_name
+                ? [contact.first_name, contact.last_name].filter(Boolean).join(" ")
+                : null,
+            job_title: contact.position ?? null,
+            email_is_role_based: false,
+            priority_rank: rank,
+            selected_by: "hunter",
+            selected_at: new Date().toISOString(),
+          } as never);
+          if (!insertErr || insertErr.code === "23505") hunterCount++;
+        }
+        if (hunterCount > 0) {
+          revalidatePath(`/companies/${parsed.data.prospect_id}`);
+          return { ok: false, error: `${msg} Hunter found ${hunterCount} contact${hunterCount === 1 ? "" : "s"} for this domain.`, hunter_emails_count: hunterCount };
+        }
+      }
+    }
+
     return { ok: false, error: msg };
   }
 
