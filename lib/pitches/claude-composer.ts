@@ -171,12 +171,26 @@ export async function composePitchWithClaude(
     Math.round((call.data.quality_self_score - violations * 0.15) * 100) / 100,
   );
 
+  // If the primary contact is a role-based inbox (contact@, info@, hello@, etc.),
+  // append a one-line forwarding ask so the gatekeeper has an easy action.
+  const primaryContact =
+    input.contacts.find((c) => !c.email_is_role_based && c.full_name) ??
+    input.contacts.find((c) => !c.email_is_role_based) ??
+    input.contacts[0];
+  const forwardingLine =
+    primaryContact?.email_is_role_based
+      ? lang === "es"
+        ? "\n\nSi no eres la persona indicada para esto, te agradecería mucho que puedas reenviarle este mensaje a quien corresponda."
+        : "\n\nIf you're not the right person for this, I'd really appreciate it if you could pass this along to whoever handles it."
+      : "";
+  const finalBody = call.data.body + forwardingLine;
+
   return {
     ok: true,
     result: {
       composed: {
         subject: call.data.subject,
-        body: call.data.body,
+        body: finalBody,
         pain_id: call.data.pain_id,
         case_study_id: call.data.case_study_id,
         contact_used: call.data.contact_email,

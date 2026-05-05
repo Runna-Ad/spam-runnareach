@@ -65,6 +65,7 @@ export default async function ProspectDetailPage({
       researchTableMissing={researchTableMissing}
       canEdit={user.role !== "viewer"}
       topContactEmail={topContact?.email ?? null}
+      topContactIsRoleBased={topContact?.is_role_based ?? false}
     />
   );
 }

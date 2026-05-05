@@ -357,18 +357,18 @@ function describeAuditAction(
 export async function getTopContact(
   tenantId: string,
   prospectId: string,
-): Promise<{ id: string; email: string } | null> {
+): Promise<{ id: string; email: string; is_role_based: boolean } | null> {
   const supabase = await createClient();
   const { data } = await supabase
     .from("prospect_contacts")
-    .select("id, email")
+    .select("id, email, email_is_role_based")
     .eq("tenant_id", tenantId)
     .eq("prospect_id", prospectId)
     .order("priority_rank", { ascending: true })
     .limit(1)
-    .maybeSingle<{ id: string; email: string | null }>();
+    .maybeSingle<{ id: string; email: string | null; email_is_role_based: boolean }>();
   if (!data?.email) return null;
-  return { id: data.id, email: data.email };
+  return { id: data.id, email: data.email, is_role_based: data.email_is_role_based };
 }
 
 function normalizePainPoints(raw: unknown): PainPoint[] {

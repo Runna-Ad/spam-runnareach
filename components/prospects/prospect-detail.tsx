@@ -59,6 +59,7 @@ interface ProspectDetailProps {
   researchTableMissing: boolean;
   canEdit: boolean;
   topContactEmail: string | null;
+  topContactIsRoleBased: boolean;
 }
 
 type Tab = "overview" | "research" | "activity";
@@ -103,6 +104,7 @@ export function ProspectDetail({
   researchTableMissing,
   canEdit,
   topContactEmail,
+  topContactIsRoleBased,
 }: ProspectDetailProps) {
   const [tab, setTab] = React.useState<Tab>("overview");
 
@@ -145,6 +147,8 @@ export function ProspectDetail({
             painOptions={painOptions}
             researchTableMissing={researchTableMissing}
             canEdit={canEdit}
+            topContactEmail={topContactEmail}
+            topContactIsRoleBased={topContactIsRoleBased}
           />
         ) : null}
         {tab === "activity" ? <ActivityTab activity={activity} /> : null}
@@ -545,12 +549,16 @@ function ResearchTab({
   painOptions,
   researchTableMissing,
   canEdit,
+  topContactEmail,
+  topContactIsRoleBased,
 }: {
   prospect: ProspectFull;
   research: ProspectResearch | null;
   painOptions: PainOption[];
   researchTableMissing: boolean;
   canEdit: boolean;
+  topContactEmail: string | null;
+  topContactIsRoleBased: boolean;
 }) {
   const [whatTheyDo, setWhatTheyDo] = React.useState(research?.what_they_do ?? "");
   const [techStack, setTechStack] = React.useState<string[]>(research?.tech_stack ?? []);
@@ -839,6 +847,15 @@ function ResearchTab({
               )}
             </Button>
           </div>
+          {topContactEmail && topContactIsRoleBased ? (
+            <p className="text-[11px] text-[var(--color-warning-300)]">
+              ⚠ Role-based email ({topContactEmail}) — pitch will include a forwarding ask. Add a personal email in Overview for better results.
+            </p>
+          ) : !topContactEmail ? (
+            <p className="text-[11px] text-[var(--color-warning-300)]">
+              ⚠ No contact email — scrape the website or add one in Overview first.
+            </p>
+          ) : null}
           <Button
             type="button"
             variant="primary"
