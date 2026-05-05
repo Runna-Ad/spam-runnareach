@@ -109,7 +109,7 @@ export async function scrapeWebsite(prospectId: string): Promise<ScrapeWebsiteRe
               contact.first_name || contact.last_name
                 ? [contact.first_name, contact.last_name].filter(Boolean).join(" ")
                 : null,
-            job_title: contact.position ?? null,
+            role_title: contact.position ?? null,
             email_is_role_based: false,
             priority_rank: rank,
             selected_by: "hunter",
@@ -234,7 +234,7 @@ export async function scrapeWebsite(prospectId: string): Promise<ScrapeWebsiteRe
             contact.first_name || contact.last_name
               ? [contact.first_name, contact.last_name].filter(Boolean).join(" ")
               : null,
-          job_title: contact.position ?? null,
+          role_title: contact.position ?? null,
           email_is_role_based: false,
           priority_rank: rank,
           selected_by: "hunter",
