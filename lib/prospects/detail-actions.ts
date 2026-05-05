@@ -302,3 +302,54 @@ export async function scrapeWebsiteStub(_prospectId: string): Promise<DetailActi
     error: "Scraper lands in the next slice. Until then, fill research notes manually.",
   };
 }
+
+const upsertContactSchema = z.object({
+  prospect_id: z.string().uuid(),
+  email: z.string().trim().email("Must be a valid email address").max(320),
+});
+
+/**
+ * Save a manually-entered contact email for a prospect.
+ * Uses priority_rank=1 so it wins over scraper-found contacts (rank=2/5).
+ * Idempotent: re-saving the same email is a no-op (23505 ignored).
+ */
+export async function upsertManualContact(
+  prospectId: string,
+  email: string,
+): Promise<DetailActionResult> {
+  const user = await requireUser();
+  if (user.role === "viewer") return { ok: false, error: "Viewers cannot edit contacts." };
+
+  const parsed = upsertContactSchema.safeParse({ prospect_id: prospectId, email });
+  if (!parsed.success) {
+    return { ok: false, error: parsed.error.issues[0]?.message ?? "Invalid input." };
+  }
+
+  const supabase = await createClient();
+
+  const { error } = await supabase.from("prospect_contacts").insert({
+    tenant_id: user.tenantId,
+    prospect_id: parsed.data.prospect_id,
+    email: parsed.data.email.toLowerCase(),
+    email_is_role_based: false,
+    priority_rank: 1,
+    selected_by: "manual",
+    selected_at: new Date().toISOString(),
+  } as never);
+
+  if (error && error.code !== "23505") {
+    return { ok: false, error: `Could not save contact: ${error.message}` };
+  }
+
+  await writeAuditLog({
+    tenantId: user.tenantId,
+    actorId: user.id,
+    action: "prospect.updated",
+    entityType: "prospect",
+    entityId: parsed.data.prospect_id,
+    metadata: { fields: ["contact_email"], email: parsed.data.email },
+  });
+
+  revalidatePath(`/companies/${parsed.data.prospect_id}`);
+  return { ok: true };
+}

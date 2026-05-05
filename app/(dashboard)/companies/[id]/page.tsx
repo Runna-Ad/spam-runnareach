@@ -4,6 +4,7 @@ import { requireUser } from "@/lib/auth";
 import {
   getProspect,
   getProspectResearch,
+  getTopContact,
   listPainTaxonomy,
   listProspectActivity,
   type ActivityEntry,
@@ -53,6 +54,8 @@ export default async function ProspectDetailPage({
     painOptions = [];
   }
 
+  const topContact = await getTopContact(user.tenantId, id).catch(() => null);
+
   return (
     <ProspectDetail
       prospect={prospect}
@@ -61,6 +64,7 @@ export default async function ProspectDetailPage({
       painOptions={painOptions}
       researchTableMissing={researchTableMissing}
       canEdit={user.role !== "viewer"}
+      topContactEmail={topContact?.email ?? null}
     />
   );
 }

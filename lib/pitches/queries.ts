@@ -75,7 +75,7 @@ export async function listPitches(tenantId: string): Promise<PitchListRow[]> {
     `,
     )
     .eq("tenant_id", tenantId)
-    .order("queued_at", { ascending: false, nullsFirst: false })
+    .order("created_at", { ascending: false })
     .limit(200)
     .returns<Row[]>();
 

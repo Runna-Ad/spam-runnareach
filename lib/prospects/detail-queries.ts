@@ -354,6 +354,23 @@ function describeAuditAction(
   }
 }
 
+export async function getTopContact(
+  tenantId: string,
+  prospectId: string,
+): Promise<{ id: string; email: string } | null> {
+  const supabase = await createClient();
+  const { data } = await supabase
+    .from("prospect_contacts")
+    .select("id, email")
+    .eq("tenant_id", tenantId)
+    .eq("prospect_id", prospectId)
+    .order("priority_rank", { ascending: true })
+    .limit(1)
+    .maybeSingle<{ id: string; email: string | null }>();
+  if (!data?.email) return null;
+  return { id: data.id, email: data.email };
+}
+
 function normalizePainPoints(raw: unknown): PainPoint[] {
   if (!Array.isArray(raw)) return [];
   return raw.flatMap((entry) => {

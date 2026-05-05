@@ -340,6 +340,15 @@ export async function generatePitch(
     variant_index: 1,
   };
 
+  // Delete any existing draft pitches for this prospect so we don't accumulate
+  // stale copies. Drafts haven't been approved or sent, so deletion is safe.
+  await supabase
+    .from("pitches")
+    .delete()
+    .eq("tenant_id", user.tenantId)
+    .eq("prospect_id", parsed.data.prospect_id)
+    .eq("status", "draft");
+
   const { data: created, error: insertErr } = await supabase
     .from("pitches")
     .insert(insert)
