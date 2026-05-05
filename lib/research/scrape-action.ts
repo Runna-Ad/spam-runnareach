@@ -6,7 +6,7 @@ import { writeAuditLog } from "@/lib/audit/log";
 import { requireUser } from "@/lib/auth";
 import { createClient } from "@/lib/supabase/server";
 import { scrapeSite, type SubPageExtract } from "./scraper";
-import { isRoleBasedEmail } from "./structured-research-action";
+import { isRoleBasedEmail } from "./email-utils";
 
 const inputSchema = z.object({
   prospect_id: z.string().uuid(),
