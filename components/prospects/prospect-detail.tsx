@@ -188,6 +188,7 @@ function TabButton({
 }
 
 function DetailHeader({ prospect, canEdit }: { prospect: ProspectFull; canEdit: boolean }) {
+  const router = useRouter();
   const [pendingStatus, setPendingStatus] = React.useState<StatusValue | null>(null);
   const [confirmOpen, setConfirmOpen] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
@@ -211,7 +212,11 @@ function DetailHeader({ prospect, canEdit }: { prospect: ProspectFull; canEdit: 
         next_status: next,
         suppressed_reason: reason ?? null,
       });
-      if (!result.ok) setError(result.error);
+      if (!result.ok) {
+        setError(result.error);
+      } else {
+        router.refresh();
+      }
       setConfirmOpen(false);
       setPendingStatus(null);
     });
@@ -341,6 +346,13 @@ function OverviewTab({
     prospect.match_score?.toString() ?? "",
   );
   const [contactEmail, setContactEmail] = React.useState(topContactEmail ?? "");
+  // Sync when scraper finds a new contact and router.refresh() re-renders the page with new props.
+  // Only auto-fill if the field is currently empty (don't clobber user edits).
+  React.useEffect(() => {
+    if (topContactEmail && !contactEmail) {
+      setContactEmail(topContactEmail);
+    }
+  }, [topContactEmail]); // eslint-disable-line react-hooks/exhaustive-deps
   const [contactStatus, setContactStatus] = React.useState<"idle" | "saved" | { error: string }>("idle");
   const [savingContact, startSaveContact] = React.useTransition();
   const [status, setStatus] = React.useState<"idle" | "saved" | { error: string }>("idle");
