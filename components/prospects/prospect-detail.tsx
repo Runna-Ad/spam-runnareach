@@ -703,9 +703,12 @@ function ResearchTab({
           result.hunter_emails_count > 0
             ? `${result.hunter_emails_count} contact${result.hunter_emails_count === 1 ? "" : "s"} from Hunter`
             : null,
+          result.contact_insert_errors.length > 0
+            ? `⚠ contact save failed: ${result.contact_insert_errors[0]}`
+            : null,
         ].filter(Boolean);
         setScrapeMessage({
-          tone: "ok",
+          tone: result.contact_insert_errors.length > 0 ? "warn" : "ok",
           text: parts.length > 0 ? `Scraped: ${parts.join(", ")}.` : "Scraped (no new fields).",
         });
         router.refresh();

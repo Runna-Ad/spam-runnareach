@@ -20,11 +20,11 @@ export type ScrapeWebsiteResult =
       emails_count: number;
       what_they_do_set: boolean;
       hunter_emails_count: number;
+      contact_insert_errors: string[];
     }
   | {
       ok: false;
       error: string;
-      // Hunter may still have found contacts even when the scrape failed
       hunter_emails_count?: number;
     };
 
@@ -199,9 +199,10 @@ export async function scrapeWebsite(prospectId: string): Promise<ScrapeWebsiteRe
   // Auto-populate prospect_contacts from scraped emails.
   // priority_rank=2 (personal) or 5 (role-based) so deliberate contacts
   // from structured-research (rank=1) always win in the pitch generator.
+  const contactInsertErrors: string[] = [];
   for (const email of site.contact_emails) {
     const roleBased = isRoleBasedEmail(email);
-    await supabase.from("prospect_contacts").insert({
+    const { error: contactErr } = await supabase.from("prospect_contacts").insert({
       tenant_id: user.tenantId,
       prospect_id: parsed.data.prospect_id,
       email: email.toLowerCase(),
@@ -210,7 +211,9 @@ export async function scrapeWebsite(prospectId: string): Promise<ScrapeWebsiteRe
       selected_by: "scraper",
       selected_at: new Date().toISOString(),
     } as never);
-    // 23505 = unique violation — email already saved; safe to ignore.
+    if (contactErr && contactErr.code !== "23505") {
+      contactInsertErrors.push(`${email}: ${contactErr.code} ${contactErr.message}`);
+    }
   }
 
   // If the scraper found no personal emails, ask Hunter.io for known contacts
@@ -268,6 +271,7 @@ export async function scrapeWebsite(prospectId: string): Promise<ScrapeWebsiteRe
       hunter_emails_count: hunterEmailsCount,
       key_pages: site.key_pages.length,
       sub_pages_scraped: site.sub_page_extracts.length,
+      contact_insert_errors: contactInsertErrors.length > 0 ? contactInsertErrors : undefined,
     },
   });
 
@@ -279,6 +283,7 @@ export async function scrapeWebsite(prospectId: string): Promise<ScrapeWebsiteRe
     emails_count: site.contact_emails.length,
     what_they_do_set: Boolean(whatTheyDo),
     hunter_emails_count: hunterEmailsCount,
+    contact_insert_errors: contactInsertErrors,
   };
 }
 
