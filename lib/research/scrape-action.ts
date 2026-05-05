@@ -5,7 +5,8 @@ import { z } from "zod";
 import { writeAuditLog } from "@/lib/audit/log";
 import { requireUser } from "@/lib/auth";
 import { createClient } from "@/lib/supabase/server";
-import { scrapeSite } from "./scraper";
+import { scrapeSite, type SubPageExtract } from "./scraper";
+import { isRoleBasedEmail } from "./structured-research-action";
 
 const inputSchema = z.object({
   prospect_id: z.string().uuid(),
@@ -154,6 +155,23 @@ export async function scrapeWebsite(prospectId: string): Promise<ScrapeWebsiteRe
     if (error) return { ok: false, error: `Could not create: ${error.message}` };
   }
 
+  // Auto-populate prospect_contacts from scraped emails.
+  // priority_rank=2 (personal) or 5 (role-based) so deliberate contacts
+  // from structured-research (rank=1) always win in the pitch generator.
+  for (const email of site.contact_emails) {
+    const roleBased = isRoleBasedEmail(email);
+    await supabase.from("prospect_contacts").insert({
+      tenant_id: user.tenantId,
+      prospect_id: parsed.data.prospect_id,
+      email: email.toLowerCase(),
+      email_is_role_based: roleBased,
+      priority_rank: roleBased ? 5 : 2,
+      selected_by: "scraper",
+      selected_at: new Date().toISOString(),
+    } as never);
+    // 23505 = unique violation — email already saved; safe to ignore.
+  }
+
   // Auto-bump status raw → researched.
   if (prospect.status === "raw") {
     await supabase
@@ -175,6 +193,7 @@ export async function scrapeWebsite(prospectId: string): Promise<ScrapeWebsiteRe
       tech_count: mergedTechStack.length,
       emails_count: site.contact_emails.length,
       key_pages: site.key_pages.length,
+      sub_pages_scraped: site.sub_page_extracts.length,
     },
   });
 
@@ -203,8 +222,10 @@ function buildScrapedNotesAddendum(site: {
   contact_emails: string[];
   social_links: { platform: string; url: string }[];
   key_pages: { label: string; url: string }[];
+  sub_page_extracts: SubPageExtract[];
 }): string | null {
   const lines: string[] = [];
+
   if (site.contact_emails.length > 0) {
     lines.push(`Contact emails: ${site.contact_emails.slice(0, 5).join(", ")}`);
   }
@@ -218,6 +239,12 @@ function buildScrapedNotesAddendum(site: {
       `Key pages: ${site.key_pages.map((p) => `${p.label} (${p.url})`).join(" · ")}`,
     );
   }
+
+  // Sub-page body text — gives Claude rich context for pitch generation
+  for (const sp of site.sub_page_extracts) {
+    lines.push(`\n[${sp.label} page]\n${sp.text}`);
+  }
+
   if (lines.length === 0) return null;
   return `[Scraped ${new Date().toISOString().slice(0, 10)}]\n${lines.join("\n")}`;
 }

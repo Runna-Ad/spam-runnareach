@@ -173,7 +173,19 @@ export async function generatePitch(
   let notableClientRows: GeneratorInputNotableClient[] = [];
   try {
     const allClients = await listNotableClients(user.tenantId);
-    notableClientRows = allClients.map((nc) => ({
+
+    // Filter notable clients by prospect size — prevents enterprise name-drops
+    // (Ford, La Comer, DiDi) appearing in pitches to SMB boutique prospects.
+    const prospectSize =
+      (prospect.employee_size_estimate ?? 0) >= 500 ? "enterprise" :
+      (prospect.employee_size_estimate ?? 0) >= 50  ? "mid_market" : "smb";
+    const sizeClients = allClients.filter((nc) =>
+      prospectSize === "enterprise" ? true :
+      prospectSize === "mid_market" ? nc.tier !== "enterprise" :
+      nc.tier === "smb"
+    );
+
+    notableClientRows = sizeClients.map((nc) => ({
       id: nc.id,
       name: nc.name,
       industry_tags: nc.industry_tags,

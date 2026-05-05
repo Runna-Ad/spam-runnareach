@@ -384,7 +384,7 @@ function pickDecisionMakerEmail(notes: string): string | null {
   return nonRole ?? candidates[0] ?? null;
 }
 
-function isRoleBasedEmail(email: string): boolean {
+export function isRoleBasedEmail(email: string): boolean {
   const local = email.split("@")[0];
   if (!local) return true;
   const lower = local.toLowerCase();
