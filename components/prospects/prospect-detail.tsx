@@ -700,6 +700,9 @@ function ResearchTab({
           result.emails_count > 0
             ? `${result.emails_count} email${result.emails_count === 1 ? "" : "s"} found`
             : null,
+          result.hunter_emails_count > 0
+            ? `${result.hunter_emails_count} contact${result.hunter_emails_count === 1 ? "" : "s"} from Hunter`
+            : null,
         ].filter(Boolean);
         setScrapeMessage({
           tone: "ok",

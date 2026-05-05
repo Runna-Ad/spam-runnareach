@@ -7,6 +7,7 @@ import { requireUser } from "@/lib/auth";
 import { createClient } from "@/lib/supabase/server";
 import { scrapeSite, type SubPageExtract } from "./scraper";
 import { isRoleBasedEmail } from "./email-utils";
+import { hunterDomainSearch } from "./hunter";
 
 const inputSchema = z.object({
   prospect_id: z.string().uuid(),
@@ -18,6 +19,7 @@ export type ScrapeWebsiteResult =
       tech_count: number;
       emails_count: number;
       what_they_do_set: boolean;
+      hunter_emails_count: number;
     }
   | { ok: false; error: string };
 
@@ -172,6 +174,38 @@ export async function scrapeWebsite(prospectId: string): Promise<ScrapeWebsiteRe
     // 23505 = unique violation — email already saved; safe to ignore.
   }
 
+  // If the scraper found no personal emails, ask Hunter.io for known contacts
+  // at this domain. Hunter is skipped silently if the API key is not set.
+  const scrapedPersonalCount = site.contact_emails.filter((e) => !isRoleBasedEmail(e)).length;
+  let hunterEmailsCount = 0;
+
+  if (scrapedPersonalCount === 0) {
+    const domain = prospect.domain ?? site.final_url.replace(/^https?:\/\//, "").split("/")[0];
+    const hunterResult = await hunterDomainSearch(domain ?? "");
+    if (hunterResult.ok && hunterResult.contacts.length > 0) {
+      for (const contact of hunterResult.contacts) {
+        // High-confidence Hunter results (>=70) get rank=1 so they surface
+        // above generic scraper finds; lower confidence gets rank=2.
+        const rank = contact.confidence >= 70 ? 1 : 2;
+        const { error } = await supabase.from("prospect_contacts").insert({
+          tenant_id: user.tenantId,
+          prospect_id: parsed.data.prospect_id,
+          email: contact.email,
+          full_name:
+            contact.first_name || contact.last_name
+              ? [contact.first_name, contact.last_name].filter(Boolean).join(" ")
+              : null,
+          job_title: contact.position ?? null,
+          email_is_role_based: false,
+          priority_rank: rank,
+          selected_by: "hunter",
+          selected_at: new Date().toISOString(),
+        } as never);
+        if (!error || error.code === "23505") hunterEmailsCount++;
+      }
+    }
+  }
+
   // Auto-bump status raw → researched.
   if (prospect.status === "raw") {
     await supabase
@@ -192,6 +226,7 @@ export async function scrapeWebsite(prospectId: string): Promise<ScrapeWebsiteRe
       final_url: site.final_url,
       tech_count: mergedTechStack.length,
       emails_count: site.contact_emails.length,
+      hunter_emails_count: hunterEmailsCount,
       key_pages: site.key_pages.length,
       sub_pages_scraped: site.sub_page_extracts.length,
     },
@@ -204,6 +239,7 @@ export async function scrapeWebsite(prospectId: string): Promise<ScrapeWebsiteRe
     tech_count: mergedTechStack.length,
     emails_count: site.contact_emails.length,
     what_they_do_set: Boolean(whatTheyDo),
+    hunter_emails_count: hunterEmailsCount,
   };
 }
 
