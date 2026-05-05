@@ -14,9 +14,11 @@ import {
   type ComposedPitch,
   type GeneratorInputContact,
   type GeneratorInputCaseStudy,
+  type GeneratorInputNotableClient,
   type GeneratorInputResearchPain,
   type GeneratorInputs,
 } from "./generator";
+import { listNotableClients } from "@/lib/notable-clients/queries";
 
 const generateSchema = z.object({
   prospect_id: z.string().uuid(),
@@ -87,10 +89,11 @@ export async function generatePitch(
     company_name: string;
     industry: string | null;
     language: "en" | "es";
+    employee_size_estimate: number | null;
   };
   const { data: prospect, error: prospectErr } = await supabase
     .from("prospects")
-    .select("id, company_name, industry, language")
+    .select("id, company_name, industry, language, employee_size_estimate")
     .eq("id", parsed.data.prospect_id)
     .eq("tenant_id", user.tenantId)
     .maybeSingle<ProspectRow>();
@@ -143,6 +146,7 @@ export async function generatePitch(
     testimonial_quote_en: string | null;
     testimonial_quote_es: string | null;
     measurable_results: unknown;
+    tier: "smb" | "mid_market" | "enterprise";
     case_study_pain_tags: { pain_id: string; strength: number }[];
   };
   const { data: caseRows, error: caseErr } = await supabase
@@ -152,7 +156,7 @@ export async function generatePitch(
       id, client_name, industry, hero_metric_en, hero_metric_es,
       result_description_en, result_description_es,
       testimonial_quote_en, testimonial_quote_es,
-      measurable_results,
+      measurable_results, tier,
       case_study_pain_tags(pain_id, strength)
     `,
     )
@@ -160,11 +164,27 @@ export async function generatePitch(
     .eq("is_active", true)
     .returns<CaseRow[]>();
   if (caseErr) return { ok: false, error: `Lookup failed: ${caseErr.message}` };
-  if (!caseRows || caseRows.length === 0) {
-    return {
-      ok: false,
-      error: "No active case studies — pitch generator needs at least one.",
-    };
+  // Case studies are no longer a hard requirement — the 3-tier fallback
+  // can produce a credible pitch using notable clients when there are no
+  // matched case studies.
+
+  // Load notable clients for Tier 2 / Tier 3 fallback.
+  // Filter by prospect market if available (prefer market-relevant clients).
+  let notableClientRows: GeneratorInputNotableClient[] = [];
+  try {
+    const allClients = await listNotableClients(user.tenantId);
+    notableClientRows = allClients.map((nc) => ({
+      id: nc.id,
+      name: nc.name,
+      industry_tags: nc.industry_tags,
+      markets: nc.markets,
+      relationship_description: nc.relationship_description,
+      key_result: nc.key_result,
+      description_en: nc.description_en,
+      description_es: nc.description_es,
+    }));
+  } catch {
+    // Non-fatal — pitch still works without notable clients
   }
 
   // Determine the chosen pain for case-study scoring (must mirror the
@@ -203,6 +223,7 @@ export async function generatePitch(
         : null,
       rejectionCounts.get(`${cs.id}:${chosenPainId ?? ""}`) ?? 0,
     ),
+    tier: cs.tier,
   }));
 
   // HARD FILTER: only pass case studies that are tagged for the chosen
@@ -220,6 +241,7 @@ export async function generatePitch(
     pains,
     contacts,
     case_studies,
+    notable_clients: notableClientRows,
     sender: {
       full_name: user.fullName,
       tenant_display_name: user.tenantDisplayName,
@@ -274,7 +296,7 @@ export async function generatePitch(
   if (!composed) {
     return {
       ok: false,
-      error: "Generator returned no pitch (no usable case study).",
+      error: "Generator returned no pitch — no pains or contacts to compose from.",
     };
   }
 

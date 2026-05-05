@@ -9,7 +9,8 @@
 --   - 15 pain taxonomy entries
 --   - 10 Rünna case studies (Ford, DiDi, Aeromexico, Bayer/Aspirina,
 --     Golden Hills, ANA Seguros, Pet's Club, SnapPad, Niki, DevFest YYC)
---   - 2 Alberta ICPs (DTC + pro services)
+--   - 4 ICPs (Alberta SMB, Western Canada Mid-Market, CDMX SMB, Mexico Multi-Ciudad)
+--   - 5 notable clients (Ford, La Comer, DiDi, Aeromexico, Estadio Azteca)
 --   - 11 prompt purposes × 1 champion variant each
 --   - 14 Canadian 2026 blackout dates
 -- ============================================================================
@@ -120,7 +121,19 @@ insert into pain_taxonomy (id, tenant_id, code, display_name_en, description_en,
 
   ('44444444-4444-4444-4444-44444444444f', '11111111-1111-1111-1111-111111111111', 'localization_needs',
    'Localization gaps', 'Company serves bilingual or multi-market audience but only produces in one language.',
-   array['English only', 'Spanish coming soon', 'LATAM expansion', 'bilingual planned']);
+   array['English only', 'Spanish coming soon', 'LATAM expansion', 'bilingual planned']),
+
+  ('44444444-4444-4444-4444-444444444450', '11111111-1111-1111-1111-111111111111', 'low_customer_retention',
+   'Low repeat purchase rate', 'One-and-done buyers. No loyalty programme, no post-purchase flows, no winback sequences. High new-customer CAC with no LTV to offset it.',
+   array['one-time buyers', 'no repeat', 'low LTV', 'churn', 'no loyalty program', 'single purchase']),
+
+  ('44444444-4444-4444-4444-444444444451', '11111111-1111-1111-1111-111111111111', 'poor_paid_media_roas',
+   'Poor ROAS / wasted ad spend', 'Running Facebook or Google ads with high spend and low return. No attribution clarity, no creative testing cadence, no bid strategy.',
+   array['poor ROAS', 'ads not working', 'wasted ad spend', 'high CPM', 'low return on ads', 'Facebook ads']),
+
+  ('44444444-4444-4444-4444-444444444452', '11111111-1111-1111-1111-111111111111', 'abandoned_cart_loss',
+   'No cart or browse abandonment recovery', 'No cart recovery emails, no browse abandonment sequence, no post-add-to-cart nurture. Revenue left on the table from high-intent visitors who didn't convert.',
+   array['abandoned cart', 'cart recovery', 'no recovery', 'lost sales', 'checkout abandonment', 'add to cart']);
 
 -- ----------------------------------------------------------------------------
 -- Case studies (20 Rünna wins, sourced from the 2026 ESP deck)
@@ -129,7 +142,7 @@ insert into pain_taxonomy (id, tenant_id, code, display_name_en, description_en,
 -- ----------------------------------------------------------------------------
 
 insert into case_studies (id, tenant_id, brand_instance_id, client_name, industry, hero_metric_en, result_description_en, measurable_results, featured_services_id, sort_order, is_active,
-  testimonial_quote_en, testimonial_quote_es, testimonial_author, testimonial_title) values
+  testimonial_quote_en, testimonial_quote_es, testimonial_author, testimonial_title, tier) values
 
   -- 1. Ford (training platform) — includes Melissa López testimonial
   ('55555555-5555-5555-5555-555555555551', '11111111-1111-1111-1111-111111111111', '22222222-2222-2222-2222-222222222222',
@@ -140,7 +153,7 @@ insert into case_studies (id, tenant_id, brand_instance_id, client_name, industr
    array['33333333-3333-3333-3333-333333333334', '33333333-3333-3333-3333-333333333333']::uuid[], 1, true,
    E'When we need a partner with innovative ideas, we always find the best creative team at Rünna. Across all the years we''ve worked together, their professionalism, sincerity, and transformative spirit have stood out as one of our best providers.',
    E'Cuando necesitamos un proveedor con ideas innovadoras, siempre encontramos en Rünna el mejor equipo creativo. Durante todos los años que hemos trabajado con ellos, su profesionalismo, sinceridad y espíritu transformador los ha destacado como uno de nuestros mejores proveedores.',
-   'Melissa López', 'CX & Distributor Training, Ford Motor Company México'),
+   'Melissa López', 'CX & Distributor Training, Ford Motor Company México', 'enterprise'),
 
   -- 2. DiDi (main, LATAM) — includes Evelena Zamorano testimonial
   ('55555555-5555-5555-5555-555555555552', '11111111-1111-1111-1111-111111111111', '22222222-2222-2222-2222-222222222222',
@@ -151,7 +164,7 @@ insert into case_studies (id, tenant_id, brand_instance_id, client_name, industr
    array['33333333-3333-3333-3333-333333333335']::uuid[], 2, true,
    E'In 2020 we needed a partner to help us build a better presence in digital media. Rünna''s support gave us the chance to keep building our brand at a new level. They''re always open to finding solutions to our challenges, on time, matching the pace of our industry — an incredible team that enriches our strategy to this day.',
    E'En 2020 necesitábamos un partner que nos ayudara a construir una mejor presencia en medios digitales. El apoyo de Rünna nos dio la oportunidad de seguir construyendo nuestra marca en un nuevo nivel. Rünna siempre está abierta a encontrar soluciones a nuestros desafíos, a tiempo y manteniendo el paso de nuestra industria; tienen un equipo increíble que enriquece nuestra estrategia hasta el día de hoy.',
-   'Evelena Zamorano', 'Sr. Brand Manager LATAM, DiDi Global Inc.'),
+   'Evelena Zamorano', 'Sr. Brand Manager LATAM, DiDi Global Inc.', 'enterprise'),
 
   -- 3. Aeromexico VR
   ('55555555-5555-5555-5555-555555555553', '11111111-1111-1111-1111-111111111111', '22222222-2222-2222-2222-222222222222',
@@ -160,7 +173,7 @@ insert into case_studies (id, tenant_id, brand_instance_id, client_name, industr
    E'360° VR destination app promoting Aeromexico''s new direct routes. Conceived as a short-term campaign; word-of-mouth alone drove 35,000+ downloads and 1M+ impressions without paid media.',
    '[{"metric": "35,000+", "label": "downloads"}, {"metric": "1M+", "label": "impressions (organic)"}, {"metric": "$0", "label": "paid media"}]'::jsonb,
    array['33333333-3333-3333-3333-333333333333']::uuid[], 3, true,
-   null, null, null, null),
+   null, null, null, null, 'enterprise'),
 
   -- 4. Bayer / Aspirina Protect (AR)
   ('55555555-5555-5555-5555-555555555554', '11111111-1111-1111-1111-111111111111', '22222222-2222-2222-2222-222222222222',
@@ -169,7 +182,7 @@ insert into case_studies (id, tenant_id, brand_instance_id, client_name, industr
    E'Augmented Reality app built for Bayer to hold doctors'' attention on a box of Aspirina Protect. A 3D human body model appeared over the box and walked through the drug''s benefits. Doctors not only engaged longer, they called colleagues over. Bayer México presented the app at a global convention.',
    '[{"metric": "<1 min → 5+ min", "label": "doctor engagement time"}, {"metric": "Global convention", "label": "Bayer international presentation"}]'::jsonb,
    array['33333333-3333-3333-3333-333333333334']::uuid[], 4, true,
-   null, null, null, null),
+   null, null, null, null, 'enterprise'),
 
   -- 5. Golden Hills (rebrand)
   ('55555555-5555-5555-5555-555555555555', '11111111-1111-1111-1111-111111111111', '22222222-2222-2222-2222-222222222222',
@@ -178,7 +191,7 @@ insert into case_studies (id, tenant_id, brand_instance_id, client_name, industr
    E'Full rebrand + packaging operation for Golden Hills. 400+ products redesigned around a clean, minimalist system with strategic chromatics, plus internal banners, tech sheets, and product mock-ups / renders for web + print.',
    '[{"metric": "400+", "label": "SKUs redesigned"}, {"metric": "1", "label": "unified packaging system"}]'::jsonb,
    array['33333333-3333-3333-3333-333333333331', '33333333-3333-3333-3333-333333333332']::uuid[], 5, true,
-   null, null, null, null),
+   null, null, null, null, 'mid_market'),
 
   -- 6. ANA Seguros
   ('55555555-5555-5555-5555-555555555556', '11111111-1111-1111-1111-111111111111', '22222222-2222-2222-2222-222222222222',
@@ -187,7 +200,7 @@ insert into case_studies (id, tenant_id, brand_instance_id, client_name, industr
    E'Digitized and automated the agent recruitment process for ANA Seguros via a dedicated app. Recruitment applications rose more than 1,000% and the hiring cycle compressed from ~2 months to under 2 weeks.',
    '[{"metric": "+1,000%", "label": "recruitment applications"}, {"metric": "2 months → <2 weeks", "label": "hiring cycle"}]'::jsonb,
    array['33333333-3333-3333-3333-333333333334', '33333333-3333-3333-3333-333333333333']::uuid[], 6, true,
-   null, null, null, null),
+   null, null, null, null, 'mid_market'),
 
   -- 7. Pet's Club (rebrand + packaging)
   ('55555555-5555-5555-5555-555555555557', '11111111-1111-1111-1111-111111111111', '22222222-2222-2222-2222-222222222222',
@@ -196,7 +209,7 @@ insert into case_studies (id, tenant_id, brand_instance_id, client_name, industr
    E'Relaunched Pet''s Club''s visual identity and packaging. Segmented the line into 3 pillars (Dogs / Cats / Other pets), each with its own personality but a unified master system. Designed a premium subline for dogs and cats. 290+ unique packages and labels shipped across the catalog.',
    '[{"metric": "290+", "label": "packages + labels designed"}, {"metric": "3 pillars", "label": "product-segment identity system"}]'::jsonb,
    array['33333333-3333-3333-3333-333333333331', '33333333-3333-3333-3333-333333333332']::uuid[], 7, true,
-   null, null, null, null),
+   null, null, null, null, 'mid_market'),
 
   -- 8. SnapPad (Canadian retail packaging)
   ('55555555-5555-5555-5555-555555555558', '11111111-1111-1111-1111-111111111111', '22222222-2222-2222-2222-222222222222',
@@ -205,7 +218,7 @@ insert into case_studies (id, tenant_id, brand_instance_id, client_name, industr
    E'Designed the Canadian retail packaging for SnapPad''s RV-accessories line, engineered to stand out at point-of-sale with clearer information hierarchy and stronger shelf presence. A Rünna proof point of Canadian retail work, delivered from the same MX creative team.',
    '[{"metric": "Canadian retail", "label": "shelf-ready packaging"}, {"metric": "RV-accessories line", "label": "category scope"}]'::jsonb,
    array['33333333-3333-3333-3333-333333333331']::uuid[], 8, true,
-   null, null, null, null),
+   null, null, null, null, 'smb'),
 
   -- 9. Niki (Canadian study-abroad platform)
   ('55555555-5555-5555-5555-555555555559', '11111111-1111-1111-1111-111111111111', '22222222-2222-2222-2222-222222222222',
@@ -214,7 +227,7 @@ insert into case_studies (id, tenant_id, brand_instance_id, client_name, industr
    E'Launched Niki''s brand and social presence from zero on a startup budget. Niki is a platform placing international students in Canadian institutions. In the first month the launch generated 2,000+ followers, 40,000+ video views, and 1,000+ unique visitors driven to the platform.',
    '[{"metric": "2,000+", "label": "followers in month 1"}, {"metric": "40,000+", "label": "video views in month 1"}, {"metric": "1,000+", "label": "unique platform visitors"}]'::jsonb,
    array['33333333-3333-3333-3333-333333333332', '33333333-3333-3333-3333-333333333335']::uuid[], 9, true,
-   null, null, null, null),
+   null, null, null, null, 'smb'),
 
   -- 10. DevFest Calgary 2024
   ('55555555-5555-5555-5555-55555555555a', '11111111-1111-1111-1111-111111111111', '22222222-2222-2222-2222-222222222222',
@@ -223,7 +236,7 @@ insert into case_studies (id, tenant_id, brand_instance_id, client_name, industr
    E'Meta + Instagram ad campaign for DevFest Calgary 2024, the local Google Developers conference. Promoted headline speakers, schedule, and event details; built anticipation and drove attendance within the Canadian developer community. Runna CA''s first public Canadian event-marketing work.',
    '[{"metric": "DevFest Calgary 2024", "label": "local developer conference"}, {"metric": "Meta + Instagram", "label": "ad campaign platforms"}]'::jsonb,
    array['33333333-3333-3333-3333-333333333335']::uuid[], 10, true,
-   null, null, null, null),
+   null, null, null, null, 'smb'),
 
   -- 11. DiDi Food
   ('5555555b-5555-5555-5555-55555555555b', '11111111-1111-1111-1111-111111111111', '22222222-2222-2222-2222-222222222222',
@@ -232,7 +245,7 @@ insert into case_studies (id, tenant_id, brand_instance_id, client_name, industr
    E'Managed DiDi Food''s social across FB / IG / TikTok / X in México + 6 LATAM countries for 4 years. An entertainment-led strategy doubled DiDi Food''s total community and lifted positive sentiment by 1,400%. Opened DiDi Food''s TikTok from scratch and reached 100,000+ followers in México in under 7 months.',
    '[{"metric": "100,000+", "label": "TikTok followers in 7 months"}, {"metric": "+1,400%", "label": "positive sentiment"}, {"metric": "6 LATAM countries", "label": "regional reach"}, {"metric": "Doubled", "label": "community size"}]'::jsonb,
    array['33333333-3333-3333-3333-333333333335']::uuid[], 11, true,
-   null, null, null, null),
+   null, null, null, null, 'enterprise'),
 
   -- 12. DiDi (TikTok paid)
   ('5555555c-5555-5555-5555-55555555555c', '11111111-1111-1111-1111-111111111111', '22222222-2222-2222-2222-222222222222',
@@ -241,7 +254,7 @@ insert into case_studies (id, tenant_id, brand_instance_id, client_name, industr
    E'"We don''t make ads, we make TikToks." Built DiDi''s TikTok paid-media strategy end-to-end: creative, production, and campaign management. Generated 120M+ impressions and 25,000+ app downloads at a $0.02 USD CPM using low-budget productions that read as native platform content.',
    '[{"metric": "120M+", "label": "impressions"}, {"metric": "25,000+", "label": "app downloads"}, {"metric": "$0.02 USD", "label": "CPM"}]'::jsonb,
    array['33333333-3333-3333-3333-333333333335']::uuid[], 12, true,
-   null, null, null, null),
+   null, null, null, null, 'enterprise'),
 
   -- 13. Blues Real
   ('5555555d-5555-5555-5555-55555555555d', '11111111-1111-1111-1111-111111111111', '22222222-2222-2222-2222-222222222222',
@@ -250,7 +263,7 @@ insert into case_studies (id, tenant_id, brand_instance_id, client_name, industr
    E'Brand awareness + lead-gen campaign on Meta + Instagram for Blues Real, a Riviera Maya real-estate agency. Static + animated creative highlighting exclusive investment opportunities, driving qualified leads to the Blues Real website. On a $1,000 USD monthly budget we averaged 950 clicks and 40,000 accounts reached.',
    '[{"metric": "$1,000/mo", "label": "ad budget"}, {"metric": "950 clicks/mo", "label": "site traffic"}, {"metric": "40,000 accounts/mo", "label": "reach"}]'::jsonb,
    array['33333333-3333-3333-3333-333333333335']::uuid[], 13, true,
-   null, null, null, null),
+   null, null, null, null, 'smb'),
 
   -- 14. El Club
   ('5555555e-5555-5555-5555-55555555555e', '11111111-1111-1111-1111-111111111111', '22222222-2222-2222-2222-222222222222',
@@ -259,7 +272,7 @@ insert into case_studies (id, tenant_id, brand_instance_id, client_name, industr
    E'Fitness studio in a saturated market. Built an organic posting grid and complemented it with Meta Ads. Month-over-month community growth to +3k followers. The launch campaign for the second location delivered 900+ leads, 30 quality leads, and 12+ first-day enrollments (vs 1 at the first location''s opening).',
    '[{"metric": "900+", "label": "leads on 2nd-location launch"}, {"metric": "30", "label": "quality leads"}, {"metric": "12+ enrollments", "label": "2nd-location opening day"}, {"metric": "+3k", "label": "community growth"}]'::jsonb,
    array['33333333-3333-3333-3333-333333333335']::uuid[], 14, true,
-   null, null, null, null),
+   null, null, null, null, 'smb'),
 
   -- 15. Lila
   ('5555555f-5555-5555-5555-55555555555f', '11111111-1111-1111-1111-111111111111', '22222222-2222-2222-2222-222222222222',
@@ -268,7 +281,7 @@ insert into case_studies (id, tenant_id, brand_instance_id, client_name, industr
    E'Launched a new composting product priced above the market average. Rigorous industry research surfaced the real pain points and informed the creative for a Meta + LinkedIn Ads campaign. 1,300+ leads generated in the first 3 weeks, with sales ramping as the campaign matured.',
    '[{"metric": "1,300+", "label": "leads in 3 weeks"}, {"metric": "Above-market pricing", "label": "premium positioning"}]'::jsonb,
    array['33333333-3333-3333-3333-333333333335']::uuid[], 15, true,
-   null, null, null, null),
+   null, null, null, null, 'smb'),
 
   -- 16. Walt Disney Studios — includes Ana C Díaz Montes testimonial
   ('55555560-5555-5555-5555-555555555560', '11111111-1111-1111-1111-111111111111', '22222222-2222-2222-2222-222222222222',
@@ -279,7 +292,7 @@ insert into case_studies (id, tenant_id, brand_instance_id, client_name, industr
    array['33333333-3333-3333-3333-333333333333']::uuid[], 16, true,
    E'We had a last-minute but high-impact project for The Walt Disney Company México''s leadership. Other agencies refused; Rünna responded immediately, made it very clear what they could do for us, and delivered a super-professional, interactive project that made us shine.',
    E'Tuvimos un proyecto de último minuto pero de alto impacto para el liderazgo de The Walt Disney Company México. Otras agencias se negaron a hacerlo y Rünna respondió de manera inmediata, dejaron muy claro qué podían hacer para nosotros y entregaron un proyecto súper profesional, interactivo y que nos hizo brillar.',
-   'Ana C Díaz Montes', 'PR & Advertising, Walt Disney Studios Motion Pictures'),
+   'Ana C Díaz Montes', 'PR & Advertising, Walt Disney Studios Motion Pictures', 'enterprise'),
 
   -- 17. Ford Edge 360
   ('55555561-5555-5555-5555-555555555561', '11111111-1111-1111-1111-111111111111', '22222222-2222-2222-2222-222222222222',
@@ -288,7 +301,7 @@ insert into case_studies (id, tenant_id, brand_instance_id, client_name, industr
    E'Ford Edge was delayed arriving to México and the sales force needed a way to demo the car before launch. Built the first VR test drive ever for a Ford vehicle: a 3D exterior model and a 360° interior tour, delivered in an app with Google Cardboard kits distributed in magazines. Customers took the test drive from home and Ford''s pre-launch interest climbed.',
    '[{"metric": "First", "label": "VR test drive in Ford history"}, {"metric": "Google Cardboard", "label": "distributed in-magazine"}, {"metric": "Pre-launch demo", "label": "unblocked sales force"}]'::jsonb,
    array['33333333-3333-3333-3333-333333333334', '33333333-3333-3333-3333-333333333333']::uuid[], 17, true,
-   null, null, null, null),
+   null, null, null, null, 'enterprise'),
 
   -- 18. Ford Pass Lincoln
   ('55555562-5555-5555-5555-555555555562', '11111111-1111-1111-1111-111111111111', '22222222-2222-2222-2222-222222222222',
@@ -297,7 +310,7 @@ insert into case_studies (id, tenant_id, brand_instance_id, client_name, industr
    E'Lincoln sales reps couldn''t use the Ford Pass companion app without a physical vehicle to pair. Built a full app simulation with a guided tour so reps, distributors, and floor staff could demo every feature without the car. Standard demo-gap problem, solved without changing the underlying app.',
    '[{"metric": "App simulation", "label": "demo-gap solved"}, {"metric": "Guided tour", "label": "no-training onboarding"}]'::jsonb,
    array['33333333-3333-3333-3333-333333333334', '33333333-3333-3333-3333-333333333333']::uuid[], 18, true,
-   null, null, null, null),
+   null, null, null, null, 'enterprise'),
 
   -- 19. Santander Universidades
   ('55555563-5555-5555-5555-555555555563', '11111111-1111-1111-1111-111111111111', '22222222-2222-2222-2222-222222222222',
@@ -306,7 +319,7 @@ insert into case_studies (id, tenant_id, brand_instance_id, client_name, industr
    E'Integrated platform for Santander to reach university students: financial tips, a founder blog, interactive games, advisor contact, and a geolocated coupon book with partner brands. Generated a valuable student database for Santander and strengthened brand affinity with the next generation of clients.',
    '[{"metric": "5 modules", "label": "tips + blog + games + advisor + coupons"}, {"metric": "Geolocated", "label": "partner-brand discount book"}]'::jsonb,
    array['33333333-3333-3333-3333-333333333334', '33333333-3333-3333-3333-333333333333']::uuid[], 19, true,
-   null, null, null, null),
+   null, null, null, null, 'enterprise'),
 
   -- 20. Estadio Azteca
   ('55555564-5555-5555-5555-555555555564', '11111111-1111-1111-1111-111111111111', '22222222-2222-2222-2222-222222222222',
@@ -315,7 +328,7 @@ insert into case_studies (id, tenant_id, brand_instance_id, client_name, industr
    E'Ran a new social-media strategy for Estadio Azteca: real-time event coverage (photo, video, static), reinforcing brand identity and promoting new products + services. Social became a live extension of the stadium experience rather than a promotional afterthought.',
    '[{"metric": "Real-time", "label": "event coverage"}, {"metric": "Estadio Azteca", "label": "iconic MX venue"}]'::jsonb,
    array['33333333-3333-3333-3333-333333333335']::uuid[], 20, true,
-   null, null, null, null);
+   null, null, null, null, 'enterprise');
 
 -- ----------------------------------------------------------------------------
 -- Case study → pain taxonomy mapping (many-to-many)
@@ -391,31 +404,110 @@ insert into case_study_pain_tags (case_study_id, pain_id, strength) values
   ('55555564-5555-5555-5555-555555555564', '44444444-4444-4444-4444-44444444444d', 0.9);
 
 -- ----------------------------------------------------------------------------
--- ICPs (2 Alberta initial)
+-- ICPs (4 fully detailed — 2 Canada, 2 Mexico)
+-- Run migration 0009_notable_clients.sql before seeding notable_clients below.
 -- ----------------------------------------------------------------------------
 
-insert into icps (id, tenant_id, name, market, language, industry_tags, geo_regions, employee_size_min, employee_size_max, business_types, google_places_types, search_keywords, excluded_keywords, is_active) values
+insert into icps (id, tenant_id, name, market, language, industry_tags, geo_regions, employee_size_min, employee_size_max, revenue_min_usd, revenue_max_usd, search_keywords, excluded_keywords, is_active) values
+  -- ICP 1: Alberta SMB Retail & DTC
   ('66666666-6666-6666-6666-666666666661', '11111111-1111-1111-1111-111111111111',
-   'Alberta DTC ecommerce, 5-50 employees', 'CA', 'en',
-   array['dtc', 'ecommerce', 'consumer goods', 'lifestyle brands'],
-   array['Alberta', 'Calgary', 'Edmonton'],
-   5, 50,
-   array['dtc_ecommerce', 'shopify_brand'],
-   array['store', 'clothing_store', 'shopping_mall'],
-   array['shopify', 'direct to consumer', 'online shop', 'dtc brand'],
-   array['dropshipping', 'MLM', 'adult', 'cannabis retail'],
+   'Alberta SMB Retail & DTC', 'CA', 'en',
+   array['clothing','furniture','pet supplies','home decor','toys','sporting goods','gifts','beauty','retail','consumer goods','ecommerce','boutique','fashion','wellness'],
+   array['Alberta','Calgary','Edmonton','Grande Prairie','Red Deer','Lethbridge','Fort McMurray','Medicine Hat'],
+   3, 75, null, 8000000,
+   array['clothing boutique','furniture store','pet supplies store','home decor store','toy store','sporting goods store','gift shop','beauty supply store','shoe store','jewellery store','candle shop','health food store'],
+   array['web agency','marketing agency','shopify agency','shopify developer','web development agency','digital agency','design studio','staffing','recruitment','real estate','insurance','mortgage','law firm','accounting firm','dropshipping','MLM'],
    true),
 
+  -- ICP 2: Western Canada Mid-Market Retail & DTC
   ('66666666-6666-6666-6666-666666666662', '11111111-1111-1111-1111-111111111111',
-   'Western Canada professional services, 10-100 employees', 'CA', 'en',
-   array['legal', 'accounting', 'consulting', 'financial services', 'agencies'],
-   array['Alberta', 'British Columbia', 'Saskatchewan'],
-   10, 100,
-   array['professional_services', 'b2b_services'],
-   array['lawyer', 'accounting', 'financial_planner', 'consultant'],
-   array['law firm', 'accounting firm', 'consulting', 'financial advisory'],
-   array['franchise', 'network marketing', 'real estate agent'],
+   'Western Canada Mid-Market Retail & DTC', 'CA', 'en',
+   array['retail','consumer goods','DTC','ecommerce','food and beverage','apparel','outdoor','sporting goods','home goods','health and wellness','beauty','pet products','specialty retail','CPG'],
+   array['British Columbia','Alberta','Saskatchewan','Manitoba','Vancouver','Victoria','Kelowna','Calgary','Edmonton','Saskatoon','Winnipeg'],
+   40, 400, 5000000, 100000000,
+   array['retail brand','consumer goods brand','DTC brand','ecommerce brand','outdoor brand','food brand','apparel brand','wellness brand','specialty retailer','lifestyle brand'],
+   array['web agency','marketing agency','staffing','recruitment','real estate','insurance','B2B software','SaaS','consulting','law firm','accounting','dropshipping','MLM','franchise','network marketing'],
+   true),
+
+  -- ICP 3: CDMX SMB Retail & DTC
+  ('66666666-6666-6666-6666-666666666671', '11111111-1111-1111-1111-111111111111',
+   'CDMX SMB Retail & DTC', 'MX', 'es',
+   array['moda','ropa','calzado','muebles','mascotas','hogar','decoracion','belleza','cosmeticos','deportes','joyeria','regalos','alimentos','retail','ecommerce','DTC'],
+   array['Ciudad de México','CDMX'],
+   5, 100, null, 5000000,
+   array['tienda de ropa','boutique de moda','tienda de mascotas','decoracion del hogar','tienda de calzado','joyeria','tienda de regalos','productos de belleza','tienda de muebles','tienda deportiva'],
+   array['agencia digital','agencia de marketing','desarrollo web','agencia de diseño','consultoria','bienes raices','seguros','reclutamiento','dropshipping','multinivel','MLM'],
+   true),
+
+  -- ICP 4: Mexico Multi-Ciudad Retail & DTC
+  ('66666666-6666-6666-6666-666666666672', '11111111-1111-1111-1111-111111111111',
+   'Mexico Multi-Ciudad Retail & DTC', 'MX', 'es',
+   array['moda','ropa','calzado','muebles','mascotas','hogar','decoracion','belleza','cosmeticos','deportes','joyeria','regalos','alimentos','retail','ecommerce','DTC','manufactura ligera','maquila','artesanias premium'],
+   array['Jalisco','Guadalajara','Nuevo León','Monterrey','Querétaro','Puebla','Yucatán','Mérida'],
+   10, 300, 1000000, 30000000,
+   array['tienda de ropa','boutique de moda','tienda de mascotas','decoracion del hogar','tienda de calzado','joyeria','tienda de regalos','productos de belleza','tienda de muebles','tienda deportiva','tienda en linea','marca de consumo','productos artesanales','alimentos gourmet'],
+   array['agencia digital','agencia de marketing','desarrollo web','agencia de diseño','consultoria','bienes raices','seguros','reclutamiento','dropshipping','multinivel','MLM'],
    true);
+
+-- ----------------------------------------------------------------------------
+-- Notable clients (5 Pedro's marquee clients — requires migration 0009)
+-- ----------------------------------------------------------------------------
+
+insert into notable_clients (id, tenant_id, name, industry_tags, markets, relationship_description, services_provided, key_result, description_en, description_es, is_active, sort_order) values
+  ('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', '11111111-1111-1111-1111-111111111111',
+   'Ford',
+   array['automotive','manufacturing','transport'],
+   array['MX','LATAM'],
+   '8+ years working together',
+   array['social media','production','brand campaigns'],
+   'Large-scale brand and production campaigns across multiple verticals',
+   'Over 8+ years we have built and scaled Ford''s brand campaigns and production across Mexico and LATAM — spanning automotive launches, digital content, and live event production.',
+   'Durante más de 8 años hemos construido y escalado las campañas de marca y producción de Ford en México y LATAM — desde lanzamientos automotrices hasta contenido digital y producción de eventos.',
+   true, 1),
+
+  ('bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb', '11111111-1111-1111-1111-111111111111',
+   'La Comer',
+   array['grocery','retail','FMCG','consumer goods','packaging'],
+   array['MX'],
+   '10+ years, 400+ product packages designed',
+   array['packaging design','brand identity','private label'],
+   '400+ packaging designs across food, cleaning, and consumer goods categories',
+   '10+ year partnership designing over 400 product packages across La Comer''s private label categories — food, cleaning supplies, and consumer goods.',
+   'Más de 10 años diseñando más de 400 empaques de producto para las categorías de marca propia de La Comer — alimentos, limpieza y consumibles.',
+   true, 2),
+
+  ('cccccccc-cccc-cccc-cccc-cccccccccccc', '11111111-1111-1111-1111-111111111111',
+   'DiDi',
+   array['tech','mobility','apps','rideshare'],
+   array['MX','LATAM'],
+   '5+ years — grew from 1 department to full company across 9 LATAM countries',
+   array['social media','content production','creative strategy'],
+   'Social media and production scaled to 9 LATAM markets',
+   'Started with DiDi''s Mexico City social team and scaled the entire creative operation across 9 LATAM countries — strategy, production, and community management.',
+   'Comenzamos con el equipo de redes sociales de DiDi en CDMX y escalamos toda la operación creativa a 9 países de LATAM — estrategia, producción y gestión de comunidad.',
+   true, 3),
+
+  ('dddddddd-dddd-dddd-dddd-dddddddddddd', '11111111-1111-1111-1111-111111111111',
+   'Aeromexico',
+   array['aviation','travel','tourism','hospitality'],
+   array['MX'],
+   'Versatile, impact-driven campaigns',
+   array['app creation','VR experiences','campaign production'],
+   'App creation, VR experiences, out-of-the-box campaigns',
+   'Produced Aeromexico''s most innovative campaigns — from VR travel experiences to mobile app activations and live event productions.',
+   'Producimos las campañas más innovadoras de Aeromexico — desde experiencias de viaje en VR hasta activaciones de app móvil y producciones de eventos en vivo.',
+   true, 4),
+
+  ('eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee', '11111111-1111-1111-1111-111111111111',
+   'Estadio Azteca',
+   array['sports','entertainment','venues','events'],
+   array['MX'],
+   'Social media and fan experience strategy',
+   array['social media','content strategy','event experience'],
+   '40% revenue increase on stadium tours',
+   'Redesigned Estadio Azteca''s social media strategy and fan experience journey — resulting in a 40% revenue increase on stadium tours.',
+   'Rediseñamos la estrategia de redes sociales y la experiencia del aficionado del Estadio Azteca — logrando un aumento del 40% en los ingresos de los tours del estadio.',
+   true, 5);
 
 -- ----------------------------------------------------------------------------
 -- Prompts (one row per purpose)

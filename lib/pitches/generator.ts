@@ -29,6 +29,7 @@ export type GeneratorInputProspect = {
   company_name: string;
   industry: string | null;
   language: "en" | "es";
+  employee_size_estimate: number | null;
 };
 
 export type GeneratorInputResearchPain = {
@@ -59,6 +60,19 @@ export type GeneratorInputCaseStudy = {
   measurable_results: { metric?: string; label?: string }[];
   /** strength from case_study_pain_tags for the chosen pain (0..1), or null. */
   pain_strength: number | null;
+  /** Prospect-size tier: smb / mid_market / enterprise. Used to avoid pitching enterprise logos to boutiques. */
+  tier: "smb" | "mid_market" | "enterprise";
+};
+
+export type GeneratorInputNotableClient = {
+  id: string;
+  name: string;
+  industry_tags: string[];
+  markets: string[];
+  relationship_description: string | null;
+  key_result: string | null;
+  description_en: string | null;
+  description_es: string | null;
 };
 
 export type GeneratorInputSender = {
@@ -88,6 +102,8 @@ export type GeneratorInputs = {
   pains: GeneratorInputResearchPain[];
   contacts: GeneratorInputContact[];
   case_studies: GeneratorInputCaseStudy[];
+  /** Notable clients for Tier 2 (industry match) and Tier 3 (name-drop) fallbacks. */
+  notable_clients: GeneratorInputNotableClient[];
   sender: GeneratorInputSender;
   /** Optional URL pattern for deep-link to runna-website pitch. Empty = no link. */
   deep_pitch_url?: string | null;
@@ -111,7 +127,7 @@ export function composePitchHeuristic(input: GeneratorInputs): ComposedPitch | n
     reasoning.push("No pain captured — pitch will be generic.");
   }
 
-  // 2) Case study selection
+  // 2) Case study selection (Tier 1)
   // Only consider case studies that have a non-null pain_strength for the
   // chosen pain. If pain_strength is null, the case wasn't tagged for this
   // pain — including it produces the "Pet's Club for a checkout pain" bug
@@ -131,20 +147,53 @@ export function composePitchHeuristic(input: GeneratorInputs): ComposedPitch | n
   const chosenCase = sorted[0] && (sorted[0].pain_strength ?? 0) >= 0.4 ? sorted[0] : null;
   if (chosenCase) {
     reasoning.push(
-      `Case: ${chosenCase.client_name} (${
+      `Tier 1 — Case: ${chosenCase.client_name} (${
         industryMatch(chosenCase.industry, input.prospect.industry)
           ? "industry match"
           : "no industry match"
       }, strength=${chosenCase.pain_strength ?? "n/a"}).`,
     );
   } else if (input.case_studies.length === 0) {
-    reasoning.push("No case studies available.");
+    reasoning.push("No case studies available — checking notable clients.");
   } else {
     reasoning.push(
       `No case study clearly addresses the chosen pain (best strength=${
         sorted[0]?.pain_strength ?? "n/a"
-      }) — pitch will skip the case bridge.`,
+      }) — checking notable clients.`,
     );
+  }
+
+  // ── Tier 2: notable client with matching industry ─────────────────────────
+  // Only used when Tier 1 (case study) produced no match. Find the first
+  // notable client whose industry_tags overlap with the prospect's industry.
+  const tier2Client = chosenCase
+    ? null
+    : (input.notable_clients.find((nc) =>
+        nc.industry_tags.some((tag) => industryMatch(tag, input.prospect.industry))
+      ) ?? null);
+
+  if (!chosenCase && tier2Client) {
+    reasoning.push(
+      `Tier 2 — Notable client: ${tier2Client.name} (industry match on "${input.prospect.industry ?? "unknown"}").`,
+    );
+  }
+
+  // ── Tier 3: name-drop hook ────────────────────────────────────────────────
+  // Used when both Tier 1 and Tier 2 produce nothing. Take up to 4 client
+  // names for a volume credibility line.
+  const tier3Names =
+    !chosenCase && !tier2Client && input.notable_clients.length > 0
+      ? input.notable_clients.slice(0, 4).map((nc) => nc.name)
+      : [];
+
+  if (tier3Names.length > 0) {
+    reasoning.push(
+      `Tier 3 — name-drop hook: ${tier3Names.join(", ")}.`,
+    );
+  }
+
+  if (!chosenCase && !tier2Client && tier3Names.length === 0) {
+    reasoning.push("No case study, no notable client match, no name-drop — pitch will be generic.");
   }
 
   // 3) Contact selection
@@ -170,16 +219,23 @@ export function composePitchHeuristic(input: GeneratorInputs): ComposedPitch | n
   const evidenceQuote = trimQuote(chosenPain?.evidence_quote ?? null);
   const senderFirst = extractFirstName(input.sender.full_name) ?? "Pedro";
   const senderSignature = buildSignature(input.sender);
+  const lang = input.prospect.language;
 
-  const tpl = getTemplate(input.prospect.language);
+  const tpl = getTemplate(lang);
   const vars: TemplateVars = {
     first_name: firstName,
     company_name: input.prospect.company_name,
-    industry: input.prospect.industry ?? (input.prospect.language === "es" ? "DTC" : "DTC"),
+    industry: input.prospect.industry ?? "DTC",
     evidence_quote: evidenceQuote,
-    pain_label: chosenPain?.pain_label ?? (input.prospect.language === "es" ? "esto" : "this"),
+    pain_label: chosenPain?.pain_label ?? (lang === "es" ? "esto" : "this"),
     case_client: chosenCase?.client_name ?? "",
     case_metric: heroMetric,
+    // Tier 2 fields
+    tier2_client_name: tier2Client?.name ?? "",
+    tier2_relationship: tier2Client?.relationship_description ?? null,
+    tier2_key_result: tier2Client?.key_result ?? null,
+    // Tier 3 fields
+    tier3_names: tier3Names,
     sender_first_name: senderFirst,
     sender_signature: senderSignature,
     deep_pitch_link_block: input.deep_pitch_url
@@ -188,9 +244,15 @@ export function composePitchHeuristic(input: GeneratorInputs): ComposedPitch | n
   };
 
   const subject = tpl.subject(vars);
-  // When there's no case, render the no-case template variant which
-  // skips the "We helped X" bridge and uses an agency-level claim.
-  const body = chosenCase ? tpl.body(vars) : tpl.bodyNoCase(vars);
+  // Render the appropriate tier body:
+  //   Tier 1 (chosenCase)  → tpl.body          "We helped {client} ({metric})."
+  //   Tier 2 (tier2Client) → tpl.bodyTier2      "{client} for {X}+ years in your industry..."
+  //   Tier 3 / none        → tpl.bodyNoCase     generic capability + name-drop hook
+  const body = chosenCase
+    ? tpl.body(vars)
+    : tier2Client
+      ? tpl.bodyTier2(vars)
+      : tpl.bodyNoCase(vars);
 
   // 5) Quality self-score
   const score = computeSelfScore({
@@ -198,7 +260,7 @@ export function composePitchHeuristic(input: GeneratorInputs): ComposedPitch | n
     hasNamedContact: firstName !== "there",
     hasIndustryMatch: chosenCase
       ? industryMatch(chosenCase.industry, input.prospect.industry)
-      : false,
+      : Boolean(tier2Client),
     hasMetric: heroMetric !== "(metric pending)" && heroMetric !== "(no case)",
   });
 
@@ -214,6 +276,9 @@ export function composePitchHeuristic(input: GeneratorInputs): ComposedPitch | n
     reasoning: reasoning.join(" "),
   };
 }
+
+// Re-export so external callers can use the same industry-match logic.
+export { industryMatch };
 
 function industryMatch(a: string | null, b: string | null): boolean {
   if (!a || !b) return false;

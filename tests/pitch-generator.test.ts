@@ -14,6 +14,7 @@ function fullInputs(over: Partial<GeneratorInputs> = {}): GeneratorInputs {
       company_name: "Calgary Coffee Roasters",
       industry: "DTC coffee",
       language: "en",
+      employee_size_estimate: null,
     },
     pains: [
       {
@@ -36,7 +37,7 @@ function fullInputs(over: Partial<GeneratorInputs> = {}): GeneratorInputs {
         industry: "DTC marketplace",
         hero_metric_en: "+47% mobile checkout completion in 30 days",
         hero_metric_es: "+47% checkout móvil completado en 30 días",
-        result_description_en: null, result_description_es: null, testimonial_quote_en: null, testimonial_quote_es: null, measurable_results: [], pain_strength: 0.9,
+        result_description_en: null, result_description_es: null, testimonial_quote_en: null, testimonial_quote_es: null, measurable_results: [], pain_strength: 0.9, tier: "smb" as const,
       },
       {
         id: "cs-aero",
@@ -44,9 +45,10 @@ function fullInputs(over: Partial<GeneratorInputs> = {}): GeneratorInputs {
         industry: "travel",
         hero_metric_en: "12pt NPS lift",
         hero_metric_es: "12pt aumento NPS",
-        result_description_en: null, result_description_es: null, testimonial_quote_en: null, testimonial_quote_es: null, measurable_results: [], pain_strength: 0.6,
+        result_description_en: null, result_description_es: null, testimonial_quote_en: null, testimonial_quote_es: null, measurable_results: [], pain_strength: 0.6, tier: "enterprise" as const,
       },
     ],
+    notable_clients: [],
     sender: {
       full_name: "Pedro De Velasco",
       tenant_display_name: "Runna CA",
@@ -65,7 +67,7 @@ test("composePitchHeuristic: produces no-case pitch when no case studies exist",
   const r = composePitchHeuristic(fullInputs({ case_studies: [] }));
   assert.ok(r);
   assert.equal(r!.case_study_id, null);
-  assert.match(r!.body, /This is the kind of work we do/);
+  assert.match(r!.body, /This is the shape of work we do/);
 });
 
 test("composePitchHeuristic: case_study_id=null when no case fits (strength<0.4)", () => {
@@ -84,13 +86,14 @@ test("composePitchHeuristic: case_study_id=null when no case fits (strength<0.4)
           testimonial_quote_es: null,
           measurable_results: [],
           pain_strength: 0.2,
+          tier: "smb" as const,
         },
       ],
     }),
   )!;
   assert.equal(r.case_study_id, null);
   assert.doesNotMatch(r.body, /Weak Match/);
-  assert.match(r.body, /This is the kind of work we do/);
+  assert.match(r.body, /This is the shape of work we do/);
 });
 
 test("composePitchHeuristic: case_study_id=null when no case is tagged for the pain", () => {
@@ -109,6 +112,7 @@ test("composePitchHeuristic: case_study_id=null when no case is tagged for the p
           testimonial_quote_es: null,
           measurable_results: [],
           pain_strength: null,
+          tier: "smb" as const,
         },
       ],
     }),
@@ -140,6 +144,7 @@ test("composePitchHeuristic: switches to Spanish when prospect.language='es'", (
         company_name: "Café CDMX",
         industry: "DTC coffee",
         language: "es",
+        employee_size_estimate: null,
       },
     }),
   )!;
@@ -162,7 +167,7 @@ test("composePitchHeuristic: prefers industry-match case study over higher-stren
           industry: "DTC coffee",
           hero_metric_en: "+30% subscription retention",
           hero_metric_es: null,
-          result_description_en: null, result_description_es: null, testimonial_quote_en: null, testimonial_quote_es: null, measurable_results: [], pain_strength: 0.5,
+          result_description_en: null, result_description_es: null, testimonial_quote_en: null, testimonial_quote_es: null, measurable_results: [], pain_strength: 0.5, tier: "smb" as const,
         },
         {
           id: "cs-misc",
@@ -170,7 +175,7 @@ test("composePitchHeuristic: prefers industry-match case study over higher-stren
           industry: "marketplace",
           hero_metric_en: "+47% checkout",
           hero_metric_es: null,
-          result_description_en: null, result_description_es: null, testimonial_quote_en: null, testimonial_quote_es: null, measurable_results: [], pain_strength: 0.95,
+          result_description_en: null, result_description_es: null, testimonial_quote_en: null, testimonial_quote_es: null, measurable_results: [], pain_strength: 0.95, tier: "smb" as const,
         },
       ],
     }),
@@ -187,6 +192,7 @@ test("composePitchHeuristic: falls back to highest-strength when no industry mat
         company_name: "Some Brand",
         industry: "industrial supplies",
         language: "en",
+        employee_size_estimate: null,
       },
       case_studies: [
         {
@@ -195,7 +201,7 @@ test("composePitchHeuristic: falls back to highest-strength when no industry mat
           industry: "marketing",
           hero_metric_en: "+10%",
           hero_metric_es: null,
-          result_description_en: null, result_description_es: null, testimonial_quote_en: null, testimonial_quote_es: null, measurable_results: [], pain_strength: 0.3,
+          result_description_en: null, result_description_es: null, testimonial_quote_en: null, testimonial_quote_es: null, measurable_results: [], pain_strength: 0.3, tier: "smb" as const,
         },
         {
           id: "cs-high",
@@ -203,7 +209,7 @@ test("composePitchHeuristic: falls back to highest-strength when no industry mat
           industry: "tech",
           hero_metric_en: "+99%",
           hero_metric_es: null,
-          result_description_en: null, result_description_es: null, testimonial_quote_en: null, testimonial_quote_es: null, measurable_results: [], pain_strength: 0.85,
+          result_description_en: null, result_description_es: null, testimonial_quote_en: null, testimonial_quote_es: null, measurable_results: [], pain_strength: 0.85, tier: "smb" as const,
         },
       ],
     }),
