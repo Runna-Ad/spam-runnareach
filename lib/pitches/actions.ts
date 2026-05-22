@@ -8,7 +8,7 @@ import { writeAuditLog } from "@/lib/audit/log";
 import { requireUser } from "@/lib/auth";
 import { createClient } from "@/lib/supabase/server";
 import type { Database } from "@/lib/supabase/types";
-import { composePitchWithClaude } from "./claude-composer";
+import { composePitchWithClaude, detectViolations } from "./claude-composer";
 import {
   composePitchHeuristic,
   type ComposedPitch,
@@ -83,43 +83,53 @@ export async function generatePitch(
 
   const supabase = await createClient();
 
-  // Load prospect.
+  // Load prospect + research in parallel — research fields feed directly into pitch quality.
   type ProspectRow = {
     id: string;
     company_name: string;
     industry: string | null;
     language: "en" | "es";
     employee_size_estimate: number | null;
+    city: string | null;
+    market: string | null;
   };
-  const { data: prospect, error: prospectErr } = await supabase
-    .from("prospects")
-    .select("id, company_name, industry, language, employee_size_estimate")
-    .eq("id", parsed.data.prospect_id)
-    .eq("tenant_id", user.tenantId)
-    .maybeSingle<ProspectRow>();
+  type ResearchRow = {
+    pain_points: unknown;
+    what_they_do: string | null;
+    tech_stack: string[];
+  };
+
+  const [{ data: prospect, error: prospectErr }, { data: research }] = await Promise.all([
+    supabase
+      .from("prospects")
+      .select("id, company_name, industry, language, employee_size_estimate, city, market")
+      .eq("id", parsed.data.prospect_id)
+      .eq("tenant_id", user.tenantId)
+      .maybeSingle<ProspectRow>(),
+    supabase
+      .from("prospect_research")
+      .select("pain_points, what_they_do, tech_stack")
+      .eq("tenant_id", user.tenantId)
+      .eq("prospect_id", parsed.data.prospect_id)
+      .maybeSingle<ResearchRow>(),
+  ]);
+
   if (prospectErr) return { ok: false, error: `Lookup failed: ${prospectErr.message}` };
   if (!prospect) return { ok: false, error: "Prospect not found." };
 
-  // Load research.pain_points.
-  type ResearchRow = { pain_points: unknown };
-  const { data: research } = await supabase
-    .from("prospect_research")
-    .select("pain_points")
-    .eq("tenant_id", user.tenantId)
-    .eq("prospect_id", parsed.data.prospect_id)
-    .maybeSingle<ResearchRow>();
   const pains: GeneratorInputResearchPain[] = normalizePains(research?.pain_points ?? null);
 
-  // Load contacts.
+  // Load contacts — include role_title so Claude can address "as founder/GM of..."
   type ContactRow = {
     full_name: string | null;
     email: string | null;
     email_is_role_based: boolean;
+    role_title: string | null;
     priority_rank: number;
   };
   const { data: contactRows } = await supabase
     .from("prospect_contacts")
-    .select("full_name, email, email_is_role_based, priority_rank")
+    .select("full_name, email, email_is_role_based, role_title, priority_rank")
     .eq("tenant_id", user.tenantId)
     .eq("prospect_id", parsed.data.prospect_id)
     .order("priority_rank", { ascending: true })
@@ -129,6 +139,7 @@ export async function generatePitch(
     full_name: c.full_name,
     email: c.email,
     email_is_role_based: c.email_is_role_based,
+    role_title: c.role_title ?? null,
   }));
 
   // Load case studies + their pain_tags. We pull all active case studies
@@ -249,7 +260,11 @@ export async function generatePitch(
     : allCases;
 
   const generatorInputs: GeneratorInputs = {
-    prospect,
+    prospect: {
+      ...prospect,
+      what_they_do: research?.what_they_do ?? null,
+      tech_stack: research?.tech_stack ?? [],
+    },
     pains,
     contacts,
     case_studies,
@@ -303,6 +318,20 @@ export async function generatePitch(
   if (!composed) {
     composed = composePitchHeuristic(generatorInputs);
     method = "heuristic";
+    // Apply the same violation penalty the Claude path uses — ensures
+    // quality_self_score is honest regardless of which composer ran.
+    if (composed) {
+      const violations = detectViolations(composed.body, generatorInputs.prospect.language);
+      if (violations > 0) {
+        composed = {
+          ...composed,
+          quality_self_score: Math.max(
+            0,
+            Math.round((composed.quality_self_score - violations * 0.15) * 100) / 100,
+          ),
+        };
+      }
+    }
   }
 
   if (!composed) {
@@ -339,6 +368,9 @@ export async function generatePitch(
     token_count_out: claudeUsage?.output_tokens ?? null,
     variant_index: 1,
   };
+  // preview_text added in migration 0014 — spread after typed insert until
+  // types are regenerated with `npx supabase gen types typescript`.
+  const insertWithPreview = { ...insert, preview_text: composed.preview_text };
 
   // Delete any existing draft pitches for this prospect so we don't accumulate
   // stale copies. Drafts haven't been approved or sent, so deletion is safe.
@@ -351,7 +383,7 @@ export async function generatePitch(
 
   const { data: created, error: insertErr } = await supabase
     .from("pitches")
-    .insert(insert)
+    .insert(insertWithPreview as never)
     .select("id")
     .single<{ id: string }>();
 

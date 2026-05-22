@@ -15,6 +15,10 @@ function fullInputs(over: Partial<GeneratorInputs> = {}): GeneratorInputs {
       industry: "DTC coffee",
       language: "en",
       employee_size_estimate: null,
+      city: null,
+      market: null,
+      what_they_do: null,
+      tech_stack: [],
     },
     pains: [
       {
@@ -28,6 +32,7 @@ function fullInputs(over: Partial<GeneratorInputs> = {}): GeneratorInputs {
         full_name: "Sarah Lee",
         email: "sarah@ccr.example",
         email_is_role_based: false,
+        role_title: null,
       },
     ],
     case_studies: [
@@ -67,7 +72,7 @@ test("composePitchHeuristic: produces no-case pitch when no case studies exist",
   const r = composePitchHeuristic(fullInputs({ case_studies: [] }));
   assert.ok(r);
   assert.equal(r!.case_study_id, null);
-  assert.match(r!.body, /This is the shape of work we do/);
+  assert.match(r!.body, /This is exactly the kind of work we do/);
 });
 
 test("composePitchHeuristic: case_study_id=null when no case fits (strength<0.4)", () => {
@@ -93,7 +98,7 @@ test("composePitchHeuristic: case_study_id=null when no case fits (strength<0.4)
   )!;
   assert.equal(r.case_study_id, null);
   assert.doesNotMatch(r.body, /Weak Match/);
-  assert.match(r.body, /This is the shape of work we do/);
+  assert.match(r.body, /This is exactly the kind of work we do/);
 });
 
 test("composePitchHeuristic: case_study_id=null when no case is tagged for the pain", () => {
@@ -125,13 +130,16 @@ test("composePitchHeuristic: case_study_id=null when no case is tagged for the p
 
 test("composePitchHeuristic: produces subject + body in English", () => {
   const r = composePitchHeuristic(fullInputs())!;
+  // Evidence present → subject uses "Checked [company] — noticed something" pattern
   assert.match(r.subject, /Calgary Coffee Roasters/);
-  assert.match(r.subject, /poor mobile conversion/i);
+  assert.match(r.subject, /noticed something/i);
+  // preview_text should contain the observation
+  assert.ok(r.preview_text.length > 0);
   assert.match(r.body, /^Hi Sarah,/);
   assert.match(r.body, /mobile checkout takes 3 screens/);
   assert.match(r.body, /DiDi/);
   assert.match(r.body, /\+47% mobile checkout/);
-  assert.match(r.body, /Worth a 15-min look next week\?/);
+  assert.match(r.body, /no call, no commitment/);
   assert.match(r.body, /— Pedro/);
   assert.match(r.body, /Runna CA/);
 });
@@ -145,14 +153,19 @@ test("composePitchHeuristic: switches to Spanish when prospect.language='es'", (
         industry: "DTC coffee",
         language: "es",
         employee_size_estimate: null,
+        city: null,
+        market: null,
+        what_they_do: null,
+        tech_stack: [],
       },
     }),
   )!;
-  assert.match(r.subject, /^Una idea sobre/);
+  // Evidence present → ES subject uses "Revisé [company] — encontré algo" pattern
   assert.match(r.subject, /Café CDMX/);
+  assert.match(r.subject, /Revisé|encontré/i);
   assert.match(r.body, /^Hola Sarah,/);
   assert.match(r.body, /\+47% checkout móvil/);
-  assert.match(r.body, /15 min/);
+  assert.match(r.body, /5 min/);
 });
 
 // ── Case study selection: industry match wins ──────────────────────────────
@@ -193,6 +206,10 @@ test("composePitchHeuristic: falls back to highest-strength when no industry mat
         industry: "industrial supplies",
         language: "en",
         employee_size_estimate: null,
+        city: null,
+        market: null,
+        what_they_do: null,
+        tech_stack: [],
       },
       case_studies: [
         {
@@ -223,8 +240,8 @@ test("composePitchHeuristic: prefers non-role-based contact when both exist", ()
   const r = composePitchHeuristic(
     fullInputs({
       contacts: [
-        { full_name: null, email: "info@x.example", email_is_role_based: true },
-        { full_name: "Maria", email: "maria@x.example", email_is_role_based: false },
+        { full_name: null, email: "info@x.example", email_is_role_based: true, role_title: null },
+        { full_name: "Maria", email: "maria@x.example", email_is_role_based: false, role_title: null },
       ],
     }),
   )!;
@@ -236,7 +253,7 @@ test("composePitchHeuristic: falls back to 'there' when only role-based contacts
   const r = composePitchHeuristic(
     fullInputs({
       contacts: [
-        { full_name: null, email: "info@x.example", email_is_role_based: true },
+        { full_name: null, email: "info@x.example", email_is_role_based: true, role_title: null },
       ],
     }),
   )!;
@@ -278,10 +295,11 @@ test("composePitchHeuristic: trims evidence quote to 120 chars", () => {
       ],
     }),
   )!;
-  // Should be no more than 120 chars + an "..." suffix
-  const m = r.body.match(/"(.+?)"/);
-  assert.ok(m);
-  assert.ok(m![1]!.length <= 120, `quote length ${m![1]!.length} > 120`);
+  // The trimQuote function caps at 120 chars + "...". The evidence appears
+  // inline after "— " in the opening hook, not in quotes. Verify the body
+  // contains "..." (truncation happened) and does NOT contain the full quote.
+  assert.match(r.body, /\.\.\./);
+  assert.doesNotMatch(r.body, /readable for the prospect/);
 });
 
 // ── Quality self-score ─────────────────────────────────────────────────────

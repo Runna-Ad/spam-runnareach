@@ -26,7 +26,9 @@ import {
   savePitchEdit,
   transitionPitchStatus,
 } from "@/lib/pitches/actions";
+import { sendPitch } from "@/lib/pitches/send-action";
 import type { PitchListRow, PitchStatus } from "@/lib/pitches/queries";
+import type { SenderInbox } from "@/lib/settings/sending-queries";
 import { cn, relativeTime } from "@/lib/utils";
 
 const STATUS_META: Record<
@@ -55,11 +57,12 @@ interface PitchesPageProps {
   pitches: PitchListRow[];
   counts: { total: number; draft: number; queued: number; approved: number; sent: number };
   canEdit: boolean;
+  inboxes: SenderInbox[];
 }
 
 type FilterValue = "ALL" | PitchStatus;
 
-export function PitchesPage({ pitches, counts, canEdit }: PitchesPageProps) {
+export function PitchesPage({ pitches, counts, canEdit, inboxes }: PitchesPageProps) {
   const router = useRouter();
   const [filter, setFilter] = React.useState<FilterValue>("draft");
   const [selectedId, setSelectedId] = React.useState<string | null>(
@@ -142,6 +145,7 @@ export function PitchesPage({ pitches, counts, canEdit }: PitchesPageProps) {
               key={selected.id}
               pitch={selected}
               canEdit={canEdit}
+              inboxes={inboxes}
               onChange={() => router.refresh()}
             />
           ) : (
@@ -217,10 +221,12 @@ function PitchRow({
 function PitchDetail({
   pitch,
   canEdit,
+  inboxes,
   onChange,
 }: {
   pitch: PitchListRow;
   canEdit: boolean;
+  inboxes: SenderInbox[];
   onChange: () => void;
 }) {
   const meta = STATUS_META[pitch.status];
@@ -229,6 +235,7 @@ function PitchDetail({
   const [bodyLoaded, setBodyLoaded] = React.useState(false);
   const [saving, startSave] = React.useTransition();
   const [transitioning, startTransition] = React.useTransition();
+  const [sending, startSending] = React.useTransition();
   const [error, setError] = React.useState<string | null>(null);
   const [savedFlash, setSavedFlash] = React.useState(false);
   const [rejectReason, setRejectReason] = React.useState("");
@@ -236,6 +243,25 @@ function PitchDetail({
     "wrong_case" | "wrong_pain" | "tone_off" | "wrong_contact" | "other"
   >("wrong_case");
   const [confirmingReject, setConfirmingReject] = React.useState(false);
+
+  // Inbox selector for the Send panel
+  const connectedInboxes = inboxes.filter((i) => i.gmail_connected && !i.paused);
+  const [selectedInboxId, setSelectedInboxId] = React.useState<string>(
+    connectedInboxes[0]?.id ?? "",
+  );
+
+  const handleSend = () => {
+    if (!selectedInboxId) return;
+    setError(null);
+    startSending(async () => {
+      const res = await sendPitch({ pitch_id: pitch.id, inbox_id: selectedInboxId });
+      if (res.ok) {
+        onChange();
+      } else {
+        setError(res.error);
+      }
+    });
+  };
 
   // Load body from server (we only loaded list rows in the parent).
   // The list row doesn't include body; fetch it via getPitch on demand.
@@ -440,9 +466,39 @@ function PitchDetail({
             </>
           ) : null}
           {pitch.status === "approved" ? (
-            <span className="inline-flex items-center gap-1 rounded-[var(--radius-sm)] bg-[color-mix(in_oklab,var(--color-success-500),transparent_85%)] px-2 py-1 text-[11px] text-[var(--color-success-300)]">
-              <CheckCircle2 className="h-3 w-3" /> Approved — Phase 4 will send
-            </span>
+            connectedInboxes.length === 0 ? (
+              <span className="inline-flex items-center gap-1 rounded-[var(--radius-sm)] bg-[color-mix(in_oklab,var(--color-warning-500),transparent_85%)] px-2 py-1 text-[11px] text-[var(--color-warning-300)]">
+                <CheckCircle2 className="h-3 w-3" /> Approved — connect a Gmail inbox in Settings → Sending to send
+              </span>
+            ) : (
+              <div className="flex items-center gap-2">
+                <Select
+                  value={selectedInboxId}
+                  onChange={(e) => setSelectedInboxId(e.target.value)}
+                  className="h-8 max-w-[220px] py-0 text-xs"
+                  aria-label="Sender inbox"
+                >
+                  {connectedInboxes.map((i) => (
+                    <option key={i.id} value={i.id}>
+                      {i.email} ({i.sends_today}/{i.daily_cap})
+                    </option>
+                  ))}
+                </Select>
+                <Button
+                  type="button"
+                  variant="primary"
+                  onClick={handleSend}
+                  disabled={sending || !selectedInboxId}
+                >
+                  {sending ? (
+                    <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden />
+                  ) : (
+                    <Send className="h-3.5 w-3.5" aria-hidden />
+                  )}
+                  {sending ? "Sending…" : "Send now"}
+                </Button>
+              </div>
+            )
           ) : null}
         </div>
       ) : null}

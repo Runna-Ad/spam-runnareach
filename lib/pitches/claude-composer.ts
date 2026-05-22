@@ -27,7 +27,8 @@ import type {
 // ── Zod schema (unchanged from v1) ───────────────────────────────────────────
 
 const responseSchema = z.object({
-  subject: z.string().trim().min(8).max(200),
+  subject: z.string().trim().min(4).max(120),
+  preview_text: z.string().trim().min(20).max(150),
   body: z.string().trim().min(80).max(2000),
   pain_id: z.string().uuid().nullable(),
   case_study_id: z.string().uuid().nullable(),
@@ -190,6 +191,7 @@ export async function composePitchWithClaude(
     result: {
       composed: {
         subject: call.data.subject,
+        preview_text: call.data.preview_text,
         body: finalBody,
         pain_id: call.data.pain_id,
         case_study_id: call.data.case_study_id,
@@ -365,39 +367,47 @@ function buildSystemPrompt(lang: "en" | "es", size: SizeSignal): string {
   const langName = lang === "es" ? "Spanish — Mexican B2B register" : "English — Canadian market";
   const voiceRules = lang === "es" ? buildSpanishVoiceRules(size) : buildEnglishVoiceRules();
 
-  return `You are a B2B cold-email copywriter for Runna CA, a Canadian creative + design agency
-working with DTC ecommerce brands and professional services.
+  return `You are a B2B cold-email copywriter for Runna CA, a Canadian creative + design agency.
+Runna's full toolkit: brand identity, packaging, web/ecommerce design, email marketing
+flows, paid social (Meta/TikTok/Google), AI automation, custom apps and dashboards, content
+strategy and production, UX redesign. Any of these may be relevant depending on the prospect.
 
 Your job: compose a 5-line elevator-pitch email opener (~120-160 words). The email must
 fit in a recipient's inbox preview, get them curious, and earn a reply — not close a deal.
 ${voiceRules}
 
 CRITICAL — evidence_quote and translated_pain handling:
-The "translated_pain" field in the payload is the ALREADY-TRANSLATED human-language version
-of the pain. Use it directly as the core of the email. Do NOT re-jargonize it.
-The raw evidence_quote (if shown) is background context only — NEVER quote it verbatim.
+The "translated_pain" field is the ALREADY-TRANSLATED human-language version of the pain.
+Use it as your hook. Do NOT re-jargonize it or quote it verbatim.
 
 Wrong: 'Vi "Outdated website — no e-commerce functionality..."'
 Right (ES): "Revisé [company].com — sin checkout, sin ficha de producto real."
 Right (EN): "Checked [company].com — no product pages, no checkout path."
 
-Required structure (when a case study fits):
+REQUIRED EMAIL STRUCTURE — solution-first, ALWAYS:
 1. Salutation (see voice rules)
-2. Opening hook — one concrete observation about the prospect's business drawn from the
-   translated_pain, written as a natural statement — NOT a quotation
-3. Pain framing — name the pattern in industry context
-4. Bridge to ONE case study: "Ayudamos a {client} ({metric}). Misma forma..." or equivalent
-5. Soft CTA (see voice rules — Loom offer)
+2. Opening hook — one concrete, specific observation about THIS prospect's situation.
+   Pull from: what_they_do, tech_stack, city, translated_pain. Be specific, not generic.
+   "Checked your store — no cart recovery flow on Tiendanube" beats "Noticed an opportunity."
+3. Proposed solution — THIS is the core of the email. One to two sentences:
+   - Name the SPECIFIC fix: "3-email cart recovery sequence + Meta dynamic retargeting",
+     not "email marketing." "Mobile checkout redesign with A/B tested CTA placement",
+     not "UX improvements."
+   - Tailor it to their stack, market, and industry. If they're on Shopify → mention
+     Klaviyo flows. If they run paid ads already → mention creative refresh + attribution.
+     If MX market → reference MX consumer habits. If CA → Canadian shopper behaviour.
+   - Include a real benchmark when confident: "DTC brands recover 15-25% of abandoned carts
+     with this setup", "well-run Meta retargeting averages 3-5x ROAS for this category."
+   - Use solution_hints in the payload as a starting point, then go further using what
+     you know about current trends, platforms, and what actually works for this industry.
+4. Case study bridge — ONLY if case_study_id is chosen. It's PROOF, not the pitch:
+   ONE sentence after the solution: "Did this for {client} — {metric}. Same profile."
+   If no case study fits well: SKIP entirely. The solution IS the credibility.
+5. Soft CTA (see voice rules — Loom/video offer)
 6. Sign off: sender's first name, then full signature
 
-Structure when case_study_id=null (no good fit):
-1. Salutation
-2. Opening hook (same — must be specific since it's your only anchor)
-3. Pain framing
-4. (skip the "we helped" bridge entirely — NO client names)
-5. Agency-level social proof only ("This is the shape of work we do for {industry} brands")
-6. Soft CTA
-7. Sign off
+Quality bar: a prospect should read line 3 and think "that's exactly my problem and that's
+exactly what I need." Generic = fail. Specific, data-backed, tailored = win.
 
 Language: ${langName}.
 IMPORTANT: Write the ENTIRE email in ${langName}. Do not mix languages.
@@ -408,9 +418,38 @@ Case-study selection rules — be honest, don't force a connection:
 3. If no chosen_case clearly addresses the prospect's pain, set case_study_id=null.
 4. pain_id and case_study_id MUST come from the candidates in the payload. No invented UUIDs.
 
+SUBJECT LINE — high open rates come from specificity and curiosity, not cleverness:
+
+Rules (apply every time, no exceptions):
+- ≤50 chars — gets cut off on mobile beyond that. Shorter is almost always better.
+- Lower case wins for cold outreach — "quick thought on their checkout" feels personal,
+  "Quick Thought On Their Checkout" feels like a newsletter.
+- Lead with what you KNOW, not what you're offering:
+  ✓ "Checked troquer.com — noticed something" (they open to find out what)
+  ✓ "El Club's cart abandonment" (specific, implies knowledge)
+  ✗ "A quick question for you" (lazy opener, mass-email feel)
+  ✗ "Opportunity for Calgary Coffee Roasters" (salesy, low-trust)
+- If you have evidence_quote: use "Checked [domain] — [short observation]" or
+  "Revisé [domain] — [observación breve]"
+- If no evidence: use the PAIN as the subject, not your solution:
+  "[Company]'s [pain in plain English]" or "[Company].com — [one thing]"
+- Avoid: "Free", "Guaranteed", "Re:", "FW:", exclamation marks, ALL CAPS words,
+  "Quick question", "Following up", "Just checking in", "Opportunity"
+
+PREVIEW TEXT — the 1–2 lines shown under the subject in Gmail/Outlook:
+- ≤150 chars. This is the second thing read after the subject.
+- Do NOT repeat the subject. Extend it.
+- Should answer "why should I open this?" with a micro-tease.
+- If subject is a curiosity gap ("Checked [domain] — noticed something"):
+  preview text = the observation itself ("No cart recovery flow, no retargeting pixel — leaving ~25% revenue on the table.")
+- If subject names the pain:
+  preview text = the specific fix or benchmark ("3-email Klaviyo sequence + Meta dynamic retargeting — DTC brands recover 15–25% of abandoned carts with this.")
+- Never use: "I'd love to connect", "Let me know if you're interested", "Hope this finds you well"
+
 Output the final pitch as a JSON object with EXACTLY these fields:
 {
-  "subject": string,                    // 8–200 chars, plain text
+  "subject": string,                    // ≤50 chars ideally, max 120, lower case, plain text
+  "preview_text": string,               // 20–150 chars, extends subject, never repeats it
   "body": string,                       // 80–2000 chars, plain text with \\n line breaks, no markdown
   "pain_id": string | null,             // UUID from pain_candidates[].pain_id, or null
   "case_study_id": string | null,       // UUID from chosen_cases[].id, or null if no case fits
@@ -500,13 +539,28 @@ function buildStage3UserPrompt(
   chosenCases: GeneratorInputCaseStudy[],
 ): string {
   const lang = input.prospect.language;
+  // Resolve solution hint for the top pain so Claude has a concrete starting point.
+  const topPain = input.pains.find((p) => p.pain_id && p.evidence_quote)
+    ?? input.pains.find((p) => p.pain_id)
+    ?? input.pains[0]
+    ?? null;
+  const solutionHint = topPain?.pain_label
+    ? getSolutionHint(topPain.pain_label, lang)
+    : null;
+
   const payload = {
     prospect: {
       company_name: input.prospect.company_name,
       industry: input.prospect.industry ?? null,
       language: lang,
+      city: input.prospect.city ?? null,
+      market: input.prospect.market ?? null,
+      what_they_do: input.prospect.what_they_do ?? null,
+      tech_stack: input.prospect.tech_stack ?? [],
     },
     translated_pain: translatedPain,
+    // Baseline solution to propose — tailor this using what_they_do, tech_stack, and industry.
+    solution_hint: solutionHint,
     pain_candidates: input.pains.map((p) => ({
       pain_id: p.pain_id,
       pain_label: p.pain_label,
@@ -516,6 +570,7 @@ function buildStage3UserPrompt(
       full_name: c.full_name,
       email: c.email,
       role_based: c.email_is_role_based,
+      role_title: c.role_title ?? null,
     })),
     chosen_cases: chosenCases.map((cs) => ({
       id: cs.id,
@@ -555,8 +610,26 @@ function buildStage3UserPrompt(
 ${JSON.stringify(payload, null, 2)}
 \`\`\`
 
-The "translated_pain" is already in the correct language — use it as the core of the email.
-Do NOT re-jargonize or re-translate it. Write the body around it, not from scratch.
+The "translated_pain" is already in the correct language — use it as the opening hook.
+The "solution_hint" is your baseline — elaborate on it using the prospect's specific context.
+Do NOT re-jargonize translated_pain or copy solution_hint verbatim. Make both feel tailored.
+
+SOLUTION TAILORING — this is the most important part of the email:
+- Start from solution_hint, then make it MORE specific using what_they_do + tech_stack + market
+- If they're on Shopify → mention Klaviyo; Tiendanube → mention its email integrations
+- If they run paid media already → focus on creative refresh + attribution improvement
+- If they have no digital presence → website + social strategy as first step
+- Cite a real benchmark when you're confident it's accurate for this category
+- Runna's full toolkit is available: email flows, Meta/TikTok paid, AI automation, custom apps,
+  UX redesign, content systems, packaging, brand — propose whatever actually fits
+
+PERSONALIZATION INSTRUCTIONS — use these fields when present:
+- prospect.what_they_do → use as the basis for your opening hook. Reference what they actually do ("veo que venden X", "I see you carry X") instead of a generic observation.
+- prospect.city → weave in a geographic reference naturally (e.g., "marcas en Guadalajara como la tuya" / "brands in Vancouver like yours"). Don't force it if it feels awkward.
+- prospect.tech_stack → if they're on a platform you recognize (Shopify, WooCommerce, Tiendanube, etc.), reference it in the pain framing: "Vi que usan Tiendanube — sin flujo de recuperación activo, eso se traduce directo en ventas perdidas." / "I saw you're on Shopify — without a recovery flow, those abandoned carts are just gone."
+  EXCEPTION: the system-level forbidden words still apply — never write "Shopify" or "WooCommerce" in Spanish emails. In Spanish, say "su plataforma" or "la tienda" instead.
+- contacts[].role_title → if a contact has a role_title (e.g. "CEO", "Dueña", "Founder", "Marketing Manager"), use it in the salutation or opening: "Como dueño de {company}..." / "As the founder of {company}..." — only when it fits naturally.
+- prospect.market → adapt agency positioning: if market="CA", lean on Canadian portfolio and "Canadian-first" framing; if market="MX", lean on MX portfolio and regional understanding.
 
 If deep_pitch_url is provided, append one line before sign-off:
   EN: "More context if useful: {deep_pitch_url}"
@@ -568,12 +641,13 @@ Set measurable_result_included=true only if the chosen case's hero_metric is a r
 
 // ── Violation detector ────────────────────────────────────────────────────────
 
-function detectViolations(body: string, lang: "en" | "es"): number {
+export function detectViolations(body: string, lang: "en" | "es"): number {
   let count = 0;
   const lower = body.toLowerCase();
 
   if (lang === "es") {
     const forbidden = [
+      // English jargon / template openers
       "hola there",
       "abandonment",
       "retention automation",
@@ -582,26 +656,43 @@ function detectViolations(body: string, lang: "en" | "es"): number {
       "woocommerce",
       "shopify",
       "funnel",
-      "performance",
+      // NOTE: "performance" removed — too broad (false-positives on web/tech context).
+      // Covered by "retention automation" and "performance marketing" if Claude uses it.
       "i hope",
       "best regards",
       "dear ",
+      // Anglicisms that slip through in MX marketing context
+      " leads",      // "tus leads", "generar leads" — space prefix avoids matching "liderazgo"
+      "engagement",  // no Spanish equivalent so Claude borrows the English word
     ];
     for (const term of forbidden) {
       if (lower.includes(term)) count++;
     }
   } else {
+    // "hola" needs word-boundary check — includes("hola") false-positives on
+    // company names like "HolaFly", "Shola", "Enholabuena" etc.
+    if (/\bhola\b/.test(lower)) count++;
+
     const forbidden = [
-      "hola",
+      // Spanish bleed-through
       "vale la pena",
       "marca",
       "tienda",
+      // Corporate / American hype — banned in system prompt
       "synergy",
-      "leverage the",
+      "leverage the",   // "leverage your", "leverage this" also bad but lower risk
       "best-in-class",
       "circle back",
+      "thought leader",
+      // Hype verbs the system prompt explicitly bans
+      "unlock ",        // trailing space avoids false-positive on "unlocked" result metrics
+      "supercharge",
+      "game-changer",
+      "game changer",
+      // Forbidden openers
       "i hope this finds you",
       "just reaching out",
+      "quick question",
     ];
     for (const term of forbidden) {
       if (lower.includes(term)) count++;
@@ -609,6 +700,66 @@ function detectViolations(body: string, lang: "en" | "es"): number {
   }
 
   return count;
+}
+
+// ── Solution hints ────────────────────────────────────────────────────────────
+// Baseline solution proposals keyed by pain label substring (lowercased).
+// Claude uses these as a starting point and tailors them to the specific prospect.
+
+const SOLUTION_HINTS_EN: [string, string][] = [
+  ["abandoned_cart", "3-email cart recovery sequence + Meta dynamic retargeting — DTC brands typically recover 15-25% of abandoned carts with this setup"],
+  ["cart", "cart recovery email flow (3-step: reminder → urgency → offer) + retargeting with the specific products they left behind"],
+  ["mobile conversion", "mobile UX audit + checkout redesign focused on reducing friction — most DTC brands recover 20-30% of mobile dropoff with the right fix"],
+  ["email", "full email flow rebuild: welcome series → nurture → cart recovery → win-back — average well-run DTC email generates 30-40% of total revenue"],
+  ["paid media", "paid social audit + creative refresh — new ad creative + tighter audience targeting typically doubles ROAS for brands in this category"],
+  ["roas", "paid social restructure: creative refresh, audience segmentation, and attribution cleanup — brands in your category see 3-5x ROAS when these are aligned"],
+  ["social engagement", "content strategy overhaul + consistent weekly production cadence — engagement follows consistency, and most brands in this space are inconsistent"],
+  ["content velocity", "content production system: strategy + reusable templates + batch filming — goes from ad hoc to 4-5 posts/week without adding headcount"],
+  ["retention", "post-purchase email + SMS sequence: thank-you → usage tips → replenishment reminder → loyalty offer — increases LTV by 20-40% for consumable DTC brands"],
+  ["website", "website redesign focused on conversion: speed, mobile-first layout, clear product pages and frictionless checkout path"],
+  ["outdated", "full site rebuild or conversion lift: speed optimization, mobile-first redesign, product page restructure, and streamlined checkout"],
+  ["brand", "brand audit + unified visual system across all touchpoints — logo, color, typography, tone of voice — so every asset reinforces the same identity"],
+  ["packaging", "packaging redesign engineered for shelf presence: clearer information hierarchy, stronger visual identity, premium subline if relevant"],
+  ["value prop", "value proposition clarification + messaging hierarchy — one clear reason to buy, applied consistently across ads, site, and social"],
+  ["launch", "full launch campaign: paid social + organic content + email sequence + landing page — all coordinated and timed together"],
+  ["competitor", "brand differentiation strategy + content positioning you as the category authority — so price isn't the only differentiator"],
+  ["sales process", "digital sales process: automated follow-up sequences, lead capture forms, CRM integration — removes manual steps from the pipeline"],
+  ["event", "event activation package: pre-event campaign, live social content, post-event recap — turns attendance into lasting brand equity"],
+  ["proof", "social proof architecture: case studies, testimonials, and trust signals placed at the exact points where buyers hesitate"],
+  ["ai", "AI-powered automation: chatbot for lead capture, automated follow-ups, or custom dashboard that surfaces the data your team actually needs"],
+];
+
+const SOLUTION_HINTS_ES: [string, string][] = [
+  ["abandoned_cart", "secuencia de 3 emails de recuperación + retargeting en Meta con los productos que dejaron — marcas DTC típicamente recuperan 15-25% de los carritos abandonados con esta configuración"],
+  ["carrito", "flujo de recuperación de carrito (3 pasos: recordatorio → urgencia → oferta) + retargeting con los productos exactos que dejaron"],
+  ["mobile", "auditoría UX móvil + rediseño del checkout — la mayoría de marcas DTC recuperan 20-30% del abandono en móvil con el fix correcto"],
+  ["email", "reconstrucción completa de flujos de email: bienvenida → nurture → recuperación de carrito → win-back — el email bien ejecutado genera 30-40% de los ingresos de marcas DTC"],
+  ["paid media", "auditoría de paid social + refresh creativo — nuevo creativo + segmentación más precisa típicamente duplica el ROAS en esta categoría"],
+  ["roas", "reestructura de paid social: refresh creativo, segmentación de audiencias y limpieza de atribución — marcas en tu categoría llegan a 3-5x ROAS cuando estos tres están alineados"],
+  ["engagement", "estrategia de contenido renovada + cadencia de producción semanal consistente — el engagement sigue a la consistencia, y la mayoría de marcas en este espacio no son consistentes"],
+  ["contenido", "sistema de producción de contenido: estrategia + plantillas reutilizables + grabación en bloque — pasa de publicar ad hoc a 4-5 posts/semana sin agregar headcount"],
+  ["retención", "secuencia post-compra de email + SMS: gracias → tips de uso → recordatorio de reabastecimiento → oferta de lealtad — incrementa el LTV 20-40% para marcas DTC de consumibles"],
+  ["sitio", "rediseño web orientado a conversión: velocidad, diseño mobile-first, páginas de producto claras y checkout sin fricción"],
+  ["página", "construcción o rediseño del sitio: optimización de velocidad, diseño mobile-first, estructura de páginas de producto y checkout simplificado"],
+  ["marca", "auditoría de marca + sistema visual unificado en todos los touchpoints — logo, color, tipografía, tono de voz — para que cada pieza refuerce la misma identidad"],
+  ["empaque", "rediseño de empaque orientado a presencia en anaquel: jerarquía de información más clara, identidad visual más fuerte, sublínea premium si aplica"],
+  ["propuesta de valor", "clarificación de propuesta de valor + jerarquía de mensajes — una razón clara para comprar, aplicada consistentemente en ads, sitio y redes"],
+  ["lanzamiento", "campaña de lanzamiento completa: paid social + contenido orgánico + secuencia de email + landing page — todo coordinado y sincronizado"],
+  ["competencia", "estrategia de diferenciación de marca + contenido que te posiciona como autoridad en la categoría — para que el precio no sea el único diferenciador"],
+  ["ventas", "proceso de ventas digital: secuencias de seguimiento automatizadas, captura de leads, integración con CRM — elimina los pasos manuales del pipeline"],
+  ["evento", "paquete de activación de evento: campaña previa, contenido en vivo, recap post-evento — convierte la asistencia en brand equity duradero"],
+  ["prueba social", "arquitectura de prueba social: casos de éxito, testimoniales y señales de confianza colocadas exactamente donde el comprador duda"],
+  ["ai", "automatización con IA: chatbot para captura de leads, seguimientos automáticos o dashboard personalizado que muestra los datos que tu equipo realmente necesita"],
+];
+
+export function getSolutionHint(painLabel: string | null, lang: "en" | "es"): string | null {
+  if (!painLabel) return null;
+  const lower = painLabel.toLowerCase();
+  const hints = lang === "es" ? SOLUTION_HINTS_ES : SOLUTION_HINTS_EN;
+  for (const [keyword, hint] of hints) {
+    if (lower.includes(keyword)) return hint;
+  }
+  return null;
 }
 
 // Re-used from generator.ts logic — avoids import cycle.

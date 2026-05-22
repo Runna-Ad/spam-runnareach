@@ -23,6 +23,7 @@
  */
 
 import { getTemplate, type TemplateVars } from "./templates.ts";
+import { getSolutionHint } from "./claude-composer.ts";
 
 export type GeneratorInputProspect = {
   id: string;
@@ -30,6 +31,10 @@ export type GeneratorInputProspect = {
   industry: string | null;
   language: "en" | "es";
   employee_size_estimate: number | null;
+  city: string | null;
+  market: string | null;
+  what_they_do: string | null;
+  tech_stack: string[];
 };
 
 export type GeneratorInputResearchPain = {
@@ -42,6 +47,7 @@ export type GeneratorInputContact = {
   full_name: string | null;
   email: string | null;
   email_is_role_based: boolean;
+  role_title: string | null;
 };
 
 export type GeneratorInputCaseStudy = {
@@ -82,6 +88,11 @@ export type GeneratorInputSender = {
 
 export type ComposedPitch = {
   subject: string;
+  /**
+   * 1–2 sentence inbox teaser (≤150 chars). Shown under the subject in
+   * Gmail/Outlook preview pane. Should extend — not repeat — the subject.
+   */
+  preview_text: string;
   body: string;
   pain_id: string | null;
   /**
@@ -222,12 +233,14 @@ export function composePitchHeuristic(input: GeneratorInputs): ComposedPitch | n
   const lang = input.prospect.language;
 
   const tpl = getTemplate(lang);
+  const solutionHint = getSolutionHint(chosenPain?.pain_label ?? null, lang);
   const vars: TemplateVars = {
     first_name: firstName,
     company_name: input.prospect.company_name,
     industry: input.prospect.industry ?? "DTC",
     evidence_quote: evidenceQuote,
     pain_label: chosenPain?.pain_label ?? (lang === "es" ? "esto" : "this"),
+    solution_hint: solutionHint,
     case_client: chosenCase?.client_name ?? "",
     case_metric: heroMetric,
     // Tier 2 fields
@@ -244,6 +257,7 @@ export function composePitchHeuristic(input: GeneratorInputs): ComposedPitch | n
   };
 
   const subject = tpl.subject(vars);
+  const preview_text = tpl.previewText(vars);
   // Render the appropriate tier body:
   //   Tier 1 (chosenCase)  → tpl.body          "We helped {client} ({metric})."
   //   Tier 2 (tier2Client) → tpl.bodyTier2      "{client} for {X}+ years in your industry..."
@@ -266,6 +280,7 @@ export function composePitchHeuristic(input: GeneratorInputs): ComposedPitch | n
 
   return {
     subject,
+    preview_text,
     body,
     pain_id: chosenPain?.pain_id ?? null,
     case_study_id: chosenCase?.id ?? null,

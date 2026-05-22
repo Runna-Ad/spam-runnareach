@@ -23,12 +23,22 @@
 
 export type PitchTemplate = {
   subject: (vars: TemplateVars) => string;
-  /** Standard body — uses {case_client} and {case_metric}. */
+  /**
+   * 1–2 sentence inbox preview teaser (≤150 chars).
+   * Shown under the subject in Gmail/Outlook preview pane.
+   * Should extend — not repeat — the subject.
+   */
+  previewText: (vars: TemplateVars) => string;
+  /** Tier 1 — case study with measurable result. */
   body: (vars: TemplateVars) => string;
   /**
-   * No-case-fit body — used when no case study clearly addresses the
-   * prospect's pain. Skips the "we helped X" bridge entirely and leans
-   * on a generic agency-level claim. Better than fabricating a fake fit.
+   * Tier 2 — notable client with industry match.
+   * Uses relationship_description + key_result for the credibility hook.
+   */
+  bodyTier2: (vars: TemplateVars) => string;
+  /**
+   * Tier 3 / no-match body — generic capability claim + optional name-drop.
+   * Used when neither Tier 1 nor Tier 2 has a relevant match.
    */
   bodyNoCase: (vars: TemplateVars) => string;
 };
@@ -39,61 +49,195 @@ export type TemplateVars = {
   industry: string;
   evidence_quote: string;
   pain_label: string;
+  /**
+   * One-line proposed solution for this pain — no case study required.
+   * Falls back to generic capability line when null.
+   */
+  solution_hint: string | null;
+  /** Tier 1 vars */
   case_client: string;
   case_metric: string;
+  /** Tier 2 vars */
+  tier2_client_name: string;
+  tier2_relationship: string | null;
+  tier2_key_result: string | null;
+  /** Tier 3 vars — up to 4 names for name-drop */
+  tier3_names: string[];
   sender_first_name: string;
   sender_signature: string;
   deep_pitch_link_block: string;
 };
 
 const EN: PitchTemplate = {
-  subject: ({ company_name, pain_label }) =>
-    `Quick thought on ${pain_label} at ${company_name}`,
-  body: (v) => `Hi ${v.first_name},
+  subject: ({ company_name, pain_label, evidence_quote }) => {
+    // Evidence-first: tease the observation if we have one (creates curiosity gap).
+    // Falls back to pain-specific subject lines by category.
+    if (evidence_quote) {
+      return `Checked ${company_name} — noticed something`;
+    }
+    const pl = pain_label.toLowerCase();
+    if (pl.includes("cart") || pl.includes("abandon"))
+      return `${company_name}'s cart abandonment`;
+    if (pl.includes("email") || pl.includes("retention"))
+      return `quick thought on ${company_name}'s email`;
+    if (pl.includes("paid") || pl.includes("roas") || pl.includes("ads"))
+      return `${company_name}'s paid media — one gap`;
+    if (pl.includes("mobile") || pl.includes("conversion"))
+      return `${company_name}'s mobile checkout`;
+    if (pl.includes("social") || pl.includes("content") || pl.includes("engagement"))
+      return `${company_name}'s social presence`;
+    if (pl.includes("website") || pl.includes("web") || pl.includes("ecommerce"))
+      return `${company_name}.com — one thing I'd change`;
+    if (pl.includes("brand"))
+      return `quick thought on ${company_name}'s brand`;
+    return `quick thought on ${lowercaseFirst(pain_label)} at ${company_name}`;
+  },
+  previewText: ({ company_name, pain_label, evidence_quote, solution_hint }) => {
+    if (evidence_quote) {
+      const trimmed = evidence_quote.length > 80
+        ? evidence_quote.slice(0, 77) + "..."
+        : evidence_quote;
+      return `${trimmed} — here's the fix.`;
+    }
+    const hint = solution_hint
+      ? `${(solution_hint.split("—")[0] ?? solution_hint).trim().slice(0, 60)}...`
+      : null;
+    return hint
+      ? `Most ${company_name}-stage brands fix ${lowercaseFirst(pain_label)} with ${hint}`
+      : `There's a specific fix for ${lowercaseFirst(pain_label)} — takes 5 min to walk through.`;
+  },
+  body: (v) => {
+    const solution = v.solution_hint ?? `diagnosing the exact pattern and shipping a fix built for ${v.industry} brands`;
+    return `Hi ${v.first_name},
 
-Saw "${v.evidence_quote}" — most ${v.industry} brands at your stage hit a wall on ${lowercaseFirst(v.pain_label)}.
+${v.evidence_quote ? `Checked ${v.company_name} — ${v.evidence_quote.endsWith(".") ? v.evidence_quote : v.evidence_quote + "."}` : `Most ${v.industry} brands at your stage hit a wall on ${lowercaseFirst(v.pain_label)}.`}
 
-We helped ${v.case_client} (${v.case_metric}). Same shape as what we're seeing on your end.
+The fix here: ${solution}.
 
-Worth a 15-min look next week?${v.deep_pitch_link_block}
+We did this for ${v.case_client} (${v.case_metric}) — same profile as yours.
+
+I can send a 5-min Loom walking through exactly what I'd change — no call, no commitment.${v.deep_pitch_link_block}
 
 — ${v.sender_first_name}
-${v.sender_signature}`,
-  bodyNoCase: (v) => `Hi ${v.first_name},
+${v.sender_signature}`;
+  },
+  bodyTier2: (v) => {
+    const solution = v.solution_hint ?? `diagnosing the specific pattern and shipping a fix built for ${v.industry}`;
+    const relationship = v.tier2_relationship ?? "a long-standing partnership";
+    const result = v.tier2_key_result ? ` (${v.tier2_key_result})` : "";
+    return `Hi ${v.first_name},
 
-Saw "${v.evidence_quote}" — most ${v.industry} brands at your stage hit a wall on ${lowercaseFirst(v.pain_label)}.
+${v.evidence_quote ? `Checked ${v.company_name} — ${v.evidence_quote.endsWith(".") ? v.evidence_quote : v.evidence_quote + "."}` : `Most ${v.industry} brands at your stage struggle with ${lowercaseFirst(v.pain_label)}.`}
 
-This is the kind of work we do for ${v.industry} teams — diagnosing the specific pattern, then shipping a fix that holds up under real customer behavior.
+The fix here: ${solution}.
 
-Worth a 15-min look next week?${v.deep_pitch_link_block}
+We've done similar work with ${v.tier2_client_name}${result} through ${relationship} — your situation has the same fingerprints.
+
+I can send a 5-min Loom walking through exactly what I'd change — no call, no commitment.${v.deep_pitch_link_block}
 
 — ${v.sender_first_name}
-${v.sender_signature}`,
+${v.sender_signature}`;
+  },
+  bodyNoCase: (v) => {
+    const solution = v.solution_hint ?? `diagnosing the specific pattern and building the fix — email flows, paid social, UX, or AI automation depending on where the biggest lever is`;
+    return `Hi ${v.first_name},
+
+${v.evidence_quote ? `Checked ${v.company_name} — ${v.evidence_quote.endsWith(".") ? v.evidence_quote : v.evidence_quote + "."}` : `Most ${v.industry} brands at your stage hit a wall on ${lowercaseFirst(v.pain_label)}.`}
+
+The fix here: ${solution}.
+
+This is exactly the kind of work we do — and we've applied it across DTC, professional services, and ${v.industry} specifically.
+
+I can send a 5-min Loom walking through exactly what I'd build for you — no call, no commitment.${v.deep_pitch_link_block}
+
+— ${v.sender_first_name}
+${v.sender_signature}`;
+  },
 };
 
 const ES: PitchTemplate = {
-  subject: ({ company_name, pain_label }) =>
-    `Una idea sobre ${lowercaseFirst(pain_label)} en ${company_name}`,
-  body: (v) => `Hola ${v.first_name},
+  subject: ({ company_name, pain_label, evidence_quote }) => {
+    if (evidence_quote) {
+      return `Revisé ${company_name} — encontré algo`;
+    }
+    const pl = pain_label.toLowerCase();
+    if (pl.includes("carrito") || pl.includes("abandon"))
+      return `el carrito de ${company_name}`;
+    if (pl.includes("email") || pl.includes("retención"))
+      return `una idea sobre el email de ${company_name}`;
+    if (pl.includes("pagado") || pl.includes("roas") || pl.includes("anunc"))
+      return `${company_name} — una brecha en paid media`;
+    if (pl.includes("móvil") || pl.includes("conversión"))
+      return `el checkout móvil de ${company_name}`;
+    if (pl.includes("social") || pl.includes("contenido") || pl.includes("engagement"))
+      return `la presencia social de ${company_name}`;
+    if (pl.includes("sitio") || pl.includes("web") || pl.includes("ecommerce"))
+      return `${company_name}.com — algo que cambiaría`;
+    if (pl.includes("marca"))
+      return `una idea sobre la marca de ${company_name}`;
+    return `una idea sobre ${lowercaseFirst(pain_label)} en ${company_name}`;
+  },
+  previewText: ({ company_name, pain_label, evidence_quote, solution_hint }) => {
+    if (evidence_quote) {
+      const trimmed = evidence_quote.length > 80
+        ? evidence_quote.slice(0, 77) + "..."
+        : evidence_quote;
+      return `${trimmed} — aquí está el fix.`;
+    }
+    const hint = solution_hint
+      ? `${(solution_hint.split("—")[0] ?? solution_hint).trim().slice(0, 60)}...`
+      : null;
+    return hint
+      ? `La mayoría de marcas como ${company_name} resuelven ${lowercaseFirst(pain_label)} con ${hint}`
+      : `Hay un fix específico para ${lowercaseFirst(pain_label)} — te lo explico en 5 min.`;
+  },
+  body: (v) => {
+    const solution = v.solution_hint ?? `diagnosticar el patrón exacto y construir el fix adecuado para marcas ${v.industry}`;
+    return `Hola ${v.first_name},
 
-Vi "${v.evidence_quote}" — la mayoría de marcas ${v.industry} a tu escala chocan con ${lowercaseFirst(v.pain_label)}.
+${v.evidence_quote ? `Revisé ${v.company_name} — ${v.evidence_quote.endsWith(".") ? v.evidence_quote : v.evidence_quote + "."}` : `La mayoría de marcas ${v.industry} a tu escala chocan con ${lowercaseFirst(v.pain_label)}.`}
 
-Trabajamos con ${v.case_client} (${v.case_metric}). Misma forma que lo que vemos en su caso.
+El fix aquí: ${solution}.
 
-¿Vale la pena una llamada de 15 min la próxima semana?${v.deep_pitch_link_block}
+Lo hicimos para ${v.case_client} (${v.case_metric}) — perfil muy similar al tuyo.
+
+Te mando un video de 5 min mostrándote exactamente qué cambiaríamos — sin compromiso, sin llamada.${v.deep_pitch_link_block}
 
 — ${v.sender_first_name}
-${v.sender_signature}`,
-  bodyNoCase: (v) => `Hola ${v.first_name},
+${v.sender_signature}`;
+  },
+  bodyTier2: (v) => {
+    const solution = v.solution_hint ?? `diagnosticar el patrón específico y construir el fix para tu tipo de negocio`;
+    const relationship = v.tier2_relationship ?? "una relación de largo plazo";
+    const result = v.tier2_key_result ? ` (${v.tier2_key_result})` : "";
+    return `Hola ${v.first_name},
 
-Vi "${v.evidence_quote}" — la mayoría de marcas ${v.industry} a tu escala chocan con ${lowercaseFirst(v.pain_label)}.
+${v.evidence_quote ? `Revisé ${v.company_name} — ${v.evidence_quote.endsWith(".") ? v.evidence_quote : v.evidence_quote + "."}` : `La mayoría de marcas ${v.industry} a tu escala chocan con ${lowercaseFirst(v.pain_label)}.`}
 
-Este es el tipo de trabajo que hacemos para equipos ${v.industry} — diagnosticando el patrón específico y enviando un fix que aguante bajo comportamiento real de clientes.
+El fix aquí: ${solution}.
 
-¿Vale la pena una llamada de 15 min la próxima semana?${v.deep_pitch_link_block}
+Hicimos trabajo similar con ${v.tier2_client_name}${result} en ${relationship} — lo que vemos en tu caso tiene la misma forma.
+
+Te mando un video de 5 min mostrándote exactamente qué cambiaríamos — sin compromiso, sin llamada.${v.deep_pitch_link_block}
 
 — ${v.sender_first_name}
-${v.sender_signature}`,
+${v.sender_signature}`;
+  },
+  bodyNoCase: (v) => {
+    const solution = v.solution_hint ?? `diagnosticar el patrón específico y construir el fix — flujos de email, paid social, UX o automatización con IA según dónde esté la palanca más grande`;
+    return `Hola ${v.first_name},
+
+${v.evidence_quote ? `Revisé ${v.company_name} — ${v.evidence_quote.endsWith(".") ? v.evidence_quote : v.evidence_quote + "."}` : `La mayoría de marcas ${v.industry} a tu escala chocan con ${lowercaseFirst(v.pain_label)}.`}
+
+El fix aquí: ${solution}.
+
+Este es exactamente el tipo de trabajo que hacemos — lo hemos aplicado en DTC, servicios profesionales y marcas ${v.industry} en México y Canadá.
+
+Te mando un video de 5 min mostrándote exactamente qué construiríamos para ti — sin compromiso, sin llamada.${v.deep_pitch_link_block}
+
+— ${v.sender_first_name}
+${v.sender_signature}`;
+  },
 };
 
 export function getTemplate(language: "en" | "es"): PitchTemplate {

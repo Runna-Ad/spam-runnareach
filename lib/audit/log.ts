@@ -12,13 +12,14 @@ export type AuditAction =
   | "prospect.scraped"
   | "prospect.scored"
   | "research.edited"
-  | "research.created";
+  | "research.created"
+  | "pitch.sent";
 
 export type AuditPayload = {
   tenantId: string;
   actorId: string | null;
   action: AuditAction;
-  entityType: "prospect" | "research" | "icp" | "case_study";
+  entityType: "prospect" | "research" | "icp" | "case_study" | "pitch";
   entityId: string;
   metadata?: Record<string, unknown>;
 };

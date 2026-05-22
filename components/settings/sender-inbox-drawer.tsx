@@ -230,26 +230,35 @@ export function SenderInboxDrawer({ mode, brands, open, onOpenChange }: SenderIn
 
               <Section
                 title="Gmail OAuth"
-                description="Connect this inbox to Gmail to actually send. Requires the Google Cloud Gmail API key + OAuth client."
+                description="Connect this inbox to Gmail to actually send. Requires GOOGLE_CLIENT_ID + GOOGLE_CLIENT_SECRET in .env.local."
               >
                 <div className="flex items-center gap-3 rounded-[var(--radius-md)] border border-dashed border-[var(--color-border-default)] bg-[var(--color-bg-900)] p-3">
                   <Mail className="h-4 w-4 text-[var(--color-fg-500)]" aria-hidden />
                   <div className="flex flex-1 flex-col">
-                    <span className="text-xs text-[var(--color-fg-500)]">
-                      Google Cloud credentials required — add them to .env.local to enable Gmail connect.
-                    </span>
+                    {isEdit && mode.inbox.gmail_connected ? (
+                      <span className="text-xs text-[var(--color-success-300)]">
+                        ✓ Gmail connected — inbox can send.
+                      </span>
+                    ) : (
+                      <span className="text-xs text-[var(--color-fg-500)]">
+                        {isEdit
+                          ? "Not connected. Click to authorise Gmail access for this inbox."
+                          : "Save the inbox first, then connect Gmail from the edit drawer."}
+                      </span>
+                    )}
                   </div>
-                  <Button
-                    type="button"
-                    size="sm"
-                    variant="secondary"
-                    disabled
-                    onClick={() => {
-                      /* wired when Google Cloud creds land */
-                    }}
-                  >
-                    Connect Gmail
-                  </Button>
+                  {isEdit ? (
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant={mode.inbox.gmail_connected ? "ghost" : "secondary"}
+                      onClick={() => {
+                        window.location.href = `/api/auth/google/connect?inbox_id=${mode.inbox.id}`;
+                      }}
+                    >
+                      {mode.inbox.gmail_connected ? "Reconnect Gmail" : "Connect Gmail"}
+                    </Button>
+                  ) : null}
                 </div>
               </Section>
             </div>

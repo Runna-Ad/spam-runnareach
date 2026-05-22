@@ -8,6 +8,7 @@ import { createClient } from "@/lib/supabase/server";
 import { scrapeSite, type SubPageExtract } from "./scraper";
 import { isRoleBasedEmail } from "./email-utils";
 import { hunterDomainSearch } from "./hunter";
+import { anymailFindDecisionMaker } from "./anymail-finder";
 
 const inputSchema = z.object({
   prospect_id: z.string().uuid(),
@@ -20,12 +21,14 @@ export type ScrapeWebsiteResult =
       emails_count: number;
       what_they_do_set: boolean;
       hunter_emails_count: number;
+      anymail_found: boolean;
       contact_insert_errors: string[];
     }
   | {
       ok: false;
       error: string;
       hunter_emails_count?: number;
+      anymail_found?: boolean;
     };
 
 /**
@@ -56,10 +59,13 @@ export async function scrapeWebsite(prospectId: string): Promise<ScrapeWebsiteRe
     domain: string | null;
     website_url: string | null;
     status: string;
+    match_score: number | null;
+    language: string | null;
+    market: string | null;
   };
   const { data: prospect, error: prospectErr } = await supabase
     .from("prospects")
-    .select("id, domain, website_url, status")
+    .select("id, domain, website_url, status, match_score, language, market")
     .eq("id", parsed.data.prospect_id)
     .eq("tenant_id", user.tenantId)
     .maybeSingle<ProspectRow>();
@@ -91,16 +97,41 @@ export async function scrapeWebsite(prospectId: string): Promise<ScrapeWebsiteRe
                 ? `Parser failed: ${e.detail}`
                 : `Network error: ${e.detail}`;
 
-    // Scrape failed — still try Hunter if we have the domain.
-    // Hunter queries its own database and doesn't need the site to be reachable.
+    // Scrape failed — still try Anymail Finder + Hunter in parallel if we have
+    // the domain AND the prospect scored ≥ 80 (preserve credits on low scorers).
     const domain = prospect.domain ?? null;
-    if (domain) {
-      const hunterResult = await hunterDomainSearch(domain);
+    if (domain && (prospect.match_score ?? 0) >= 80) {
+      const supabase = await createClient();
+      const [anymailResult, hunterResult] = await Promise.all([
+        anymailFindDecisionMaker(domain),
+        hunterDomainSearch(domain),
+      ]);
+
+      let hunterCount = 0;
+      let anymailFound = false;
+
+      // Anymail Finder — verified decision-maker email, rank=1
+      if (anymailResult.ok) {
+        const c = anymailResult.contact;
+        const { error: insertErr } = await supabase.from("prospect_contacts").insert({
+          tenant_id: user.tenantId,
+          prospect_id: parsed.data.prospect_id,
+          email: c.email,
+          full_name: c.full_name ?? null,
+          role_title: c.job_title ?? null,
+          linkedin_url: c.linkedin_url ?? null,
+          email_is_role_based: false,
+          priority_rank: 1,
+          selected_by: "anymail",
+          selected_at: new Date().toISOString(),
+        } as never);
+        if (!insertErr || insertErr.code === "23505") anymailFound = true;
+      }
+
+      // Hunter — domain sweep, rank=2 (below Anymail verified contact)
       if (hunterResult.ok && hunterResult.contacts.length > 0) {
-        const supabase = await createClient();
-        let hunterCount = 0;
         for (const contact of hunterResult.contacts) {
-          const rank = contact.confidence >= 70 ? 1 : 2;
+          const rank = contact.confidence >= 70 ? 2 : 3;
           const { error: insertErr } = await supabase.from("prospect_contacts").insert({
             tenant_id: user.tenantId,
             prospect_id: parsed.data.prospect_id,
@@ -117,10 +148,15 @@ export async function scrapeWebsite(prospectId: string): Promise<ScrapeWebsiteRe
           } as never);
           if (!insertErr || insertErr.code === "23505") hunterCount++;
         }
-        if (hunterCount > 0) {
-          revalidatePath(`/companies/${parsed.data.prospect_id}`);
-          return { ok: false, error: `${msg} Hunter found ${hunterCount} contact${hunterCount === 1 ? "" : "s"} for this domain.`, hunter_emails_count: hunterCount };
-        }
+      }
+
+      if (anymailFound || hunterCount > 0) {
+        const parts = [
+          anymailFound ? "1 verified contact from Anymail" : null,
+          hunterCount > 0 ? `${hunterCount} contact${hunterCount === 1 ? "" : "s"} from Hunter` : null,
+        ].filter(Boolean).join(", ");
+        revalidatePath(`/companies/${parsed.data.prospect_id}`);
+        return { ok: false, error: `${msg} ${parts}.`, hunter_emails_count: hunterCount, anymail_found: anymailFound };
       }
     }
 
@@ -216,19 +252,43 @@ export async function scrapeWebsite(prospectId: string): Promise<ScrapeWebsiteRe
     }
   }
 
-  // If the scraper found no personal emails, ask Hunter.io for known contacts
-  // at this domain. Hunter is skipped silently if the API key is not set.
+  // If the scraper found no personal emails, run Anymail Finder + Hunter in parallel
+  // for high-scoring prospects (≥ 80) to preserve credits.
   const scrapedPersonalCount = site.contact_emails.filter((e) => !isRoleBasedEmail(e)).length;
   let hunterEmailsCount = 0;
+  let anymailFound = false;
+  const qualifiesForEnrichment = (prospect.match_score ?? 0) >= 80;
 
-  if (scrapedPersonalCount === 0) {
+  if (scrapedPersonalCount === 0 && qualifiesForEnrichment) {
     const domain = prospect.domain ?? site.final_url.replace(/^https?:\/\//, "").split("/")[0];
-    const hunterResult = await hunterDomainSearch(domain ?? "");
+
+    const [anymailResult, hunterResult] = await Promise.all([
+      anymailFindDecisionMaker(domain ?? ""),
+      hunterDomainSearch(domain ?? ""),
+    ]);
+
+    // Anymail Finder — verified decision-maker email, rank=1 (beats everything)
+    if (anymailResult.ok) {
+      const c = anymailResult.contact;
+      const { error } = await supabase.from("prospect_contacts").insert({
+        tenant_id: user.tenantId,
+        prospect_id: parsed.data.prospect_id,
+        email: c.email,
+        full_name: c.full_name ?? null,
+        role_title: c.job_title ?? null,
+        linkedin_url: c.linkedin_url ?? null,
+        email_is_role_based: false,
+        priority_rank: 1,
+        selected_by: "anymail",
+        selected_at: new Date().toISOString(),
+      } as never);
+      if (!error || error.code === "23505") anymailFound = true;
+    }
+
+    // Hunter — domain sweep, rank=2 (below Anymail verified contact)
     if (hunterResult.ok && hunterResult.contacts.length > 0) {
       for (const contact of hunterResult.contacts) {
-        // High-confidence Hunter results (>=70) get rank=1 so they surface
-        // above generic scraper finds; lower confidence gets rank=2.
-        const rank = contact.confidence >= 70 ? 1 : 2;
+        const rank = contact.confidence >= 70 ? 2 : 3;
         const { error } = await supabase.from("prospect_contacts").insert({
           tenant_id: user.tenantId,
           prospect_id: parsed.data.prospect_id,
@@ -246,6 +306,19 @@ export async function scrapeWebsite(prospectId: string): Promise<ScrapeWebsiteRe
         if (!error || error.code === "23505") hunterEmailsCount++;
       }
     }
+  }
+
+  // Auto-fill language + market on the prospect if currently null.
+  // Never overwrites a human-set value — only fills the gap.
+  const prospectPatch: Record<string, unknown> = { updated_at: new Date().toISOString() };
+  if (!prospect.language) prospectPatch.language = site.language;
+  if (!prospect.market && site.market) prospectPatch.market = site.market;
+  if (Object.keys(prospectPatch).length > 1) {
+    await supabase
+      .from("prospects")
+      .update(prospectPatch as never)
+      .eq("id", parsed.data.prospect_id)
+      .eq("tenant_id", user.tenantId);
   }
 
   // Auto-bump status raw → researched.
@@ -269,6 +342,7 @@ export async function scrapeWebsite(prospectId: string): Promise<ScrapeWebsiteRe
       tech_count: mergedTechStack.length,
       emails_count: site.contact_emails.length,
       hunter_emails_count: hunterEmailsCount,
+      anymail_found: anymailFound,
       key_pages: site.key_pages.length,
       sub_pages_scraped: site.sub_page_extracts.length,
       contact_insert_errors: contactInsertErrors.length > 0 ? contactInsertErrors : undefined,
@@ -283,6 +357,7 @@ export async function scrapeWebsite(prospectId: string): Promise<ScrapeWebsiteRe
     emails_count: site.contact_emails.length,
     what_they_do_set: Boolean(whatTheyDo),
     hunter_emails_count: hunterEmailsCount,
+    anymail_found: anymailFound,
     contact_insert_errors: contactInsertErrors,
   };
 }

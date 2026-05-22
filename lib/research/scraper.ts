@@ -11,6 +11,21 @@ const USER_AGENT =
 const FETCH_TIMEOUT_MS = 15_000;
 const MAX_HTML_BYTES = 2_000_000; // 2 MB hard cap
 
+// Sub-page scraping constants
+const SUBPAGE_TIMEOUT_MS = 10_000;
+const SUBPAGE_RATE_LIMIT_MS = 500;
+const MAX_SUBPAGES = 3;
+const SUBPAGE_MAX_CHARS = 600;
+
+/** Priority order for which sub-pages to scrape (first MAX_SUBPAGES wins) */
+const SUBPAGE_PRIORITY = ["About", "Services", "Team", "Work", "Pricing", "Plans"];
+
+export type SubPageExtract = {
+  label: string;  // e.g. "About", "Services", "Team"
+  url: string;
+  text: string;   // up to SUBPAGE_MAX_CHARS of cleaned body text
+};
+
 export type ScrapedSite = {
   fetched_url: string;
   final_url: string;        // after redirects
@@ -20,6 +35,11 @@ export type ScrapedSite = {
   contact_emails: string[];
   social_links: { platform: string; url: string }[];
   key_pages: { label: string; url: string }[];
+  sub_page_extracts: SubPageExtract[]; // body text from About/Services/Team pages
+  /** Detected content language — "en" | "es". Defaults to "en" when ambiguous. */
+  language: "en" | "es";
+  /** Detected market — "CA" | "MX" | "US" | null when indeterminate. */
+  market: "CA" | "MX" | "US" | null;
   scraped_at: string;       // ISO
 };
 
@@ -51,6 +71,12 @@ export async function scrapeSite(rawUrl: string): Promise<ScrapeResult> {
 
   try {
     const parsed = parseSite(fetched.html, fetched.final_url);
+
+    // Follow key pages (About, Services, Team) for richer content.
+    // Failures are silently ignored — homepage-only is always the fallback.
+    const subPageExtracts = await scrapeSubPages(parsed.key_pages);
+    const richWhatTheyDo = synthesizeWhatTheyDo(parsed.what_they_do, subPageExtracts);
+
     return {
       ok: true,
       site: {
@@ -58,6 +84,8 @@ export async function scrapeSite(rawUrl: string): Promise<ScrapeResult> {
         final_url: fetched.final_url,
         http_status: fetched.status,
         ...parsed,
+        what_they_do: richWhatTheyDo,
+        sub_page_extracts: subPageExtracts,
         scraped_at: new Date().toISOString(),
       },
     };
@@ -145,7 +173,7 @@ async function fetchHtml(url: string): Promise<FetchResult> {
   }
 }
 
-type ParsedSite = Omit<ScrapedSite, "fetched_url" | "final_url" | "http_status" | "scraped_at">;
+type ParsedSite = Omit<ScrapedSite, "fetched_url" | "final_url" | "http_status" | "scraped_at" | "sub_page_extracts">;
 
 export function parseSite(html: string, baseUrl: string): ParsedSite {
   const $ = cheerio.load(html);
@@ -156,7 +184,128 @@ export function parseSite(html: string, baseUrl: string): ParsedSite {
     contact_emails: extractContactEmails(html, $),
     social_links: extractSocials($, baseUrl),
     key_pages: extractKeyPages($, baseUrl),
+    language: detectLanguage($, html, baseUrl),
+    market: detectMarket(baseUrl, html, $),
   };
+}
+
+// ── Language detection ─────────────────────────────────────────────────────────
+//
+// Priority:
+//   1. <html lang="..."> attribute — authoritative when present
+//   2. URL TLD (.mx → es)
+//   3. Body text stopword frequency count (Spanish vs English)
+//   4. Default: "en"
+
+const ES_STOPWORDS = [
+  "de", "la", "el", "en", "y", "con", "por", "para", "que", "del",
+  "los", "las", "una", "un", "es", "su", "nos", "más", "tu", "se",
+  "como", "nuestro", "nuestra", "también", "aquí", "somos",
+];
+const EN_STOPWORDS = [
+  "the", "and", "for", "with", "our", "your", "we", "are", "is",
+  "this", "that", "from", "have", "not", "all", "by", "an", "or",
+  "be", "has", "you", "at", "do", "about", "more",
+];
+
+export function detectLanguage(
+  $: cheerio.CheerioAPI,
+  html: string,
+  finalUrl: string,
+): "en" | "es" {
+  // 1. <html lang> attribute
+  const htmlLang = ($("html").attr("lang") ?? "").toLowerCase().slice(0, 5);
+  if (htmlLang.startsWith("es")) return "es";
+  if (htmlLang.startsWith("en")) return "en";
+
+  // 2. TLD heuristic
+  const tld = getTld(finalUrl);
+  if (tld === "mx" || tld === "com.mx") return "es";
+
+  // 3. Stopword frequency in visible body text
+  const bodyText = ($("body").text() ?? "").toLowerCase();
+  const words = bodyText.match(/\b[a-záéíóúüñ]{2,}\b/gi) ?? [];
+  const sample = words.slice(0, 500); // first 500 words — fast, representative
+
+  let esScore = 0;
+  let enScore = 0;
+  for (const w of sample) {
+    if (ES_STOPWORDS.includes(w)) esScore++;
+    if (EN_STOPWORDS.includes(w)) enScore++;
+  }
+  if (esScore > enScore * 1.5) return "es"; // clear Spanish majority
+  if (enScore > esScore * 1.5) return "en";
+
+  // 4. Default
+  return "en";
+}
+
+// ── Market detection ───────────────────────────────────────────────────────────
+//
+// Priority:
+//   1. TLD: .mx / .com.mx → MX, .ca → CA
+//   2. Currency signals in raw HTML
+//   3. City/province/state names in visible text
+//   4. null — indeterminate (don't guess)
+
+const CA_PROVINCES = [
+  "alberta", "british columbia", "ontario", "quebec", "saskatchewan",
+  "manitoba", "nova scotia", "new brunswick", "newfoundland",
+  "prince edward island", "northwest territories", "nunavut", "yukon",
+  // Major cities
+  "toronto", "vancouver", "calgary", "edmonton", "ottawa", "montreal",
+  "winnipeg", "halifax", "saskatoon", "victoria",
+];
+
+const MX_CITIES = [
+  "ciudad de méxico", "cdmx", "guadalajara", "monterrey", "puebla",
+  "tijuana", "mexicali", "mérida", "querétaro", "cancún", "toluca",
+  "chihuahua", "hermosillo", "saltillo", "aguascalientes", "morelia",
+  "veracruz", "tuxtla", "oaxaca", "culiacán", "leon", "león",
+  // country context
+  "méxico", "mexico city", "estado de méxico",
+];
+
+export function detectMarket(
+  finalUrl: string,
+  html: string,
+  $: cheerio.CheerioAPI,
+): "CA" | "MX" | "US" | null {
+  // 1. TLD — most reliable signal
+  const tld = getTld(finalUrl);
+  if (tld === "mx" || tld === "com.mx") return "MX";
+  if (tld === "ca") return "CA";
+  if (tld === "us") return "US";
+
+  const lowerHtml = html.toLowerCase();
+  const bodyText = ($("body").text() ?? "").toLowerCase();
+
+  // 2. Currency signals in raw HTML
+  if (/\bcad\b|c\$|canadian\s+dollar/i.test(lowerHtml)) return "CA";
+  if (/\bmxn\b|peso\s+mexicano|\.mx\b/i.test(lowerHtml)) return "MX";
+  if (/\busd\b|us\s+dollar|\$\s*usd/i.test(lowerHtml)) return "US";
+
+  // 3. Geographic mentions in visible text
+  if (CA_PROVINCES.some((p) => bodyText.includes(p))) return "CA";
+  if (MX_CITIES.some((c) => bodyText.includes(c))) return "MX";
+
+  // 4. Indeterminate — .com / .io / .co / .net could be anywhere
+  return null;
+}
+
+function getTld(url: string): string {
+  try {
+    const hostname = new URL(url).hostname.toLowerCase();
+    // Strip www. prefix
+    const bare = hostname.replace(/^www\./, "");
+    // com.mx, co.uk style second-level TLDs
+    if (bare.endsWith(".com.mx")) return "com.mx";
+    if (bare.endsWith(".co.uk")) return "co.uk";
+    // Single-level TLD
+    return bare.split(".").pop() ?? "";
+  } catch {
+    return "";
+  }
 }
 
 function extractWhatTheyDo($: cheerio.CheerioAPI): string | null {
@@ -292,7 +441,7 @@ function extractContactEmails(html: string, $: cheerio.CheerioAPI): string[] {
 
   // Strip obvious junk (image hashes that happen to look like emails — rare,
   // but kept simple).
-  return Array.from(found).filter((e) => !e.includes("@2x.") && !e.includes("@3x."));
+  return Array.from(found).filter((e) => !e.includes("@2x.") && !e.includes("@3x.") && !isMonitoringEmail(e));
 }
 
 function isValidEmail(email: string): boolean {
@@ -300,6 +449,19 @@ function isValidEmail(email: string): boolean {
   if (!/^[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}$/i.test(email)) return false;
   if (email.endsWith(".png") || email.endsWith(".jpg") || email.endsWith(".svg")) return false;
   return true;
+}
+
+// Reject error-tracking and monitoring emails embedded in page HTML.
+// Wix sites include Sentry DSN-style addresses like {32hexchars}@sentry.wixpress.com.
+const MONITORING_DOMAINS = ["sentry.io", "sentry.wixpress.com", "sentry-next.wixpress.com", "bugsnag.com", "rollbar.com", "datadog.com", "newrelic.com", "honeybadger.io"];
+const HEX_LOCAL_RE = /^[0-9a-f]{16,}$/i;
+
+function isMonitoringEmail(email: string): boolean {
+  const [local, domain] = email.split("@");
+  if (!local || !domain) return false;
+  if (MONITORING_DOMAINS.some((d) => domain === d || domain.endsWith(`.${d}`))) return true;
+  if (HEX_LOCAL_RE.test(local)) return true;
+  return false;
 }
 
 const SOCIAL_HOSTS: Array<{ platform: string; pattern: RegExp }> = [
@@ -379,4 +541,121 @@ function extractKeyPages(
   });
 
   return Array.from(seen.entries()).map(([label, url]) => ({ label, url }));
+}
+
+// ── Multi-page scraping ───────────────────────────────────────────────────────
+
+/**
+ * Fetch body text from the highest-priority key pages (About, Services, Team…).
+ * Silently skips any page that times out, errors, or returns no useful text.
+ */
+async function scrapeSubPages(
+  keyPages: { label: string; url: string }[],
+): Promise<SubPageExtract[]> {
+  // Sort by SUBPAGE_PRIORITY order; unknown labels go last
+  const sorted = [...keyPages].sort((a, b) => {
+    const ai = SUBPAGE_PRIORITY.indexOf(a.label);
+    const bi = SUBPAGE_PRIORITY.indexOf(b.label);
+    return (ai === -1 ? 99 : ai) - (bi === -1 ? 99 : bi);
+  });
+
+  const results: SubPageExtract[] = [];
+
+  for (const page of sorted.slice(0, MAX_SUBPAGES)) {
+    if (results.length > 0) await sleep(SUBPAGE_RATE_LIMIT_MS);
+    const text = await fetchSubPageText(page.url);
+    if (text) results.push({ label: page.label, url: page.url, text });
+  }
+
+  return results;
+}
+
+/** Fetch one sub-page and extract its main body text (capped at SUBPAGE_MAX_CHARS). */
+async function fetchSubPageText(url: string): Promise<string | null> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), SUBPAGE_TIMEOUT_MS);
+
+  try {
+    const res = await fetch(url, {
+      headers: {
+        "User-Agent": USER_AGENT,
+        Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        "Accept-Language": "en-US,en;q=0.9,es;q=0.8",
+      },
+      redirect: "follow",
+      signal: controller.signal,
+    });
+
+    if (!res.ok) return null;
+    const ct = res.headers.get("content-type") ?? "";
+    if (!/text\/html|application\/xhtml/i.test(ct)) return null;
+
+    const html = await res.text();
+    if (html.length > MAX_HTML_BYTES) return null;
+
+    return extractMainText(html);
+  } catch {
+    return null;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/**
+ * Extract meaningful body text from a sub-page HTML string.
+ * Tries semantic containers first; strips nav/header/footer noise before reading.
+ */
+function extractMainText(html: string): string | null {
+  const $ = cheerio.load(html);
+
+  // Strip layout/chrome elements that add noise
+  $(
+    "nav, header, footer, script, style, noscript, " +
+    "[class*='nav'], [class*='header'], [class*='footer'], " +
+    "[class*='menu'], [class*='cookie'], [class*='banner'], " +
+    "[class*='popup'], [class*='modal'], [class*='sidebar']",
+  ).remove();
+
+  // Walk candidate containers, largest text chunk wins
+  const candidates = [
+    $("main"),
+    $("article"),
+    $('[role="main"]'),
+    $(".content, .page-content, .entry-content, .post-content, .site-content"),
+    $("body"),
+  ];
+
+  for (const el of candidates) {
+    if (el.length === 0) continue;
+    const text = el.text().replace(/\s+/g, " ").trim();
+    if (text.length >= 50) return text.slice(0, SUBPAGE_MAX_CHARS);
+  }
+
+  return null;
+}
+
+/**
+ * Combine the homepage description with About-page body text to produce a
+ * richer "what they do" string.  Falls back gracefully if sub-pages are empty.
+ */
+function synthesizeWhatTheyDo(
+  homepage: string | null,
+  subPages: SubPageExtract[],
+): string | null {
+  const aboutText = subPages.find((p) => p.label === "About")?.text ?? null;
+
+  if (!aboutText) return homepage; // no about page — keep as-is
+
+  // Short or absent homepage description → use about page directly
+  if (!homepage || homepage.length < 80) {
+    return aboutText.slice(0, SUBPAGE_MAX_CHARS);
+  }
+
+  // Both exist — lead with homepage pitch, extend with about context
+  const combined = cleanText(`${homepage} — ${aboutText}`).slice(0, SUBPAGE_MAX_CHARS);
+  return combined;
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((r) => setTimeout(r, ms));
 }
