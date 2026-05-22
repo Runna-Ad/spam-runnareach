@@ -120,7 +120,7 @@ const EN: PitchTemplate = {
 
 ${opener(v, "en")}
 
-Here's what moves the needle: ${solution}.
+What we'd do: ${solution}.
 
 We did this for ${v.case_client} — ${v.case_metric}. Same situation as yours.
 
@@ -138,7 +138,7 @@ ${v.sender_signature}`;
 
 ${opener(v, "en")}
 
-Here's what moves the needle: ${solution}.
+What we'd do: ${solution}.
 
 We've done similar work with ${v.tier2_client_name}${result} — your situation has the same shape.
 
@@ -155,7 +155,7 @@ ${v.sender_signature}`;
 
 ${opener(v, "en")}
 
-Here's what moves the needle: ${solution}.
+What we'd do: ${solution}.
 
 We've solved this for brands like yours across DTC, ${v.industry} and professional services.
 
@@ -211,7 +211,7 @@ const ES: PitchTemplate = {
 
 ${opener(v, "es")}
 
-Lo que mueve la aguja aqui: ${solution}.
+Lo que haríamos: ${solution}.
 
 Lo hicimos para ${v.case_client} — ${v.case_metric}. Mismo perfil que el tuyo.
 
@@ -229,7 +229,7 @@ ${v.sender_signature}`;
 
 ${opener(v, "es")}
 
-Lo que mueve la aguja aqui: ${solution}.
+Lo que haríamos: ${solution}.
 
 Hicimos algo similar con ${v.tier2_client_name}${result}. Lo que veo en tu caso tiene la misma forma.
 
@@ -246,7 +246,7 @@ ${v.sender_signature}`;
 
 ${opener(v, "es")}
 
-Lo que mueve la aguja aqui: ${solution}.
+Lo que haríamos: ${solution}.
 
 Lo hemos resuelto para marcas como la tuya en DTC, ${v.industry} y servicios profesionales en Mexico y Canada.
 

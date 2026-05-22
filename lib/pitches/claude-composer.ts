@@ -379,7 +379,12 @@ to grab a coffee. 70-100 words max. Get them curious enough to reply — not clo
 
 ABSOLUTE FORMAT RULES (violations will fail QA):
 - NO em dashes (—). Use commas, periods, or restructure the sentence.
-- NO corporate jargon: no "El fix aqui", no "diagnosticar el patron", no "flujos de".
+- NO marketing/tech jargon. Write for a business owner who has never heard of: retargeting,
+  funnel, LTV, ROAS, nurture sequence, drip campaign, attribution, segmentation, CRM, UTM,
+  dynamic ads, lookalike audiences, win-back, churn, conversion rate optimization, UX audit.
+  Instead: describe what changes for them in plain language. "People who almost bought come
+  back and buy" not "cart recovery retargeting." "Your ads make more per peso" not "improved ROAS."
+- NO corporate labels: no "El fix aqui", no "Lo que mueve la aguja", no "diagnosticar el patron".
 - NO language mixing: the entire email must be in one language.
 - NO greeting with "there" in Spanish: "Hola there" is a critical failure.
 ${voiceRules}
@@ -721,49 +726,49 @@ export function detectViolations(body: string, lang: "en" | "es"): number {
 // Claude uses these as a starting point and tailors them to the specific prospect.
 
 const SOLUTION_HINTS_EN: [string, string][] = [
-  ["abandoned_cart", "3-email cart recovery sequence + Meta dynamic retargeting — DTC brands typically recover 15-25% of abandoned carts with this setup"],
-  ["cart", "cart recovery email flow (3-step: reminder → urgency → offer) + retargeting with the specific products they left behind"],
-  ["mobile conversion", "mobile UX audit + checkout redesign focused on reducing friction — most DTC brands recover 20-30% of mobile dropoff with the right fix"],
-  ["email", "full email flow rebuild: welcome series → nurture → cart recovery → win-back — average well-run DTC email generates 30-40% of total revenue"],
-  ["paid media", "paid social audit + creative refresh — new ad creative + tighter audience targeting typically doubles ROAS for brands in this category"],
-  ["roas", "paid social restructure: creative refresh, audience segmentation, and attribution cleanup — brands in your category see 3-5x ROAS when these are aligned"],
-  ["social engagement", "content strategy overhaul + consistent weekly production cadence — engagement follows consistency, and most brands in this space are inconsistent"],
-  ["content velocity", "content production system: strategy + reusable templates + batch filming — goes from ad hoc to 4-5 posts/week without adding headcount"],
-  ["retention", "post-purchase email + SMS sequence: thank-you → usage tips → replenishment reminder → loyalty offer — increases LTV by 20-40% for consumable DTC brands"],
-  ["website", "website redesign focused on conversion: speed, mobile-first layout, clear product pages and frictionless checkout path"],
-  ["outdated", "full site rebuild or conversion lift: speed optimization, mobile-first redesign, product page restructure, and streamlined checkout"],
-  ["brand", "brand audit + unified visual system across all touchpoints — logo, color, typography, tone of voice — so every asset reinforces the same identity"],
-  ["packaging", "packaging redesign engineered for shelf presence: clearer information hierarchy, stronger visual identity, premium subline if relevant"],
-  ["value prop", "value proposition clarification + messaging hierarchy — one clear reason to buy, applied consistently across ads, site, and social"],
-  ["launch", "full launch campaign: paid social + organic content + email sequence + landing page — all coordinated and timed together"],
-  ["competitor", "brand differentiation strategy + content positioning you as the category authority — so price isn't the only differentiator"],
-  ["sales process", "digital sales process: automated follow-up sequences, lead capture forms, CRM integration — removes manual steps from the pipeline"],
-  ["event", "event activation package: pre-event campaign, live social content, post-event recap — turns attendance into lasting brand equity"],
-  ["proof", "social proof architecture: case studies, testimonials, and trust signals placed at the exact points where buyers hesitate"],
-  ["ai", "AI-powered automation: chatbot for lead capture, automated follow-ups, or custom dashboard that surfaces the data your team actually needs"],
+  ["abandoned_cart", "automatically reaching back out to everyone who added things and left without buying — most stores get 15-25% of those sales back"],
+  ["cart", "automatic reminders that follow up with people who added things and left — showing them exactly what they left behind"],
+  ["mobile conversion", "fixing the parts of your site where phone shoppers give up — most brands get 20-30% more sales from the same traffic once those are fixed"],
+  ["email", "automatic emails that follow your customers through every stage — so the right message reaches them at the right moment without you lifting a finger"],
+  ["paid media", "refreshing your ads and who they reach — when those two are dialed in, brands in your category often double what they make per dollar spent"],
+  ["roas", "fixing your ads so you make more for every dollar you spend — better creative, better audiences, and actually knowing what's working"],
+  ["social engagement", "a content plan you can actually stick to — the brands that post consistently win, and most don't"],
+  ["content velocity", "a simple system to post 4-5 times a week without it taking over your life"],
+  ["retention", "automatic messages after every purchase — a thank you, helpful tips, a reminder when they're running low — the brands that do this well make 20-40% more from each customer"],
+  ["website", "making your site faster, easier to use on a phone, and easier to actually buy from"],
+  ["outdated", "rebuilding your site so it loads fast, looks great on any phone, and makes buying simple"],
+  ["brand", "cleaning up how your brand looks everywhere — so it feels intentional, not like five different people made it"],
+  ["packaging", "redesigning your packaging to stand out in 3 seconds and tell the story clearly"],
+  ["value prop", "getting crystal clear on your one best reason to buy, then saying that same thing everywhere consistently"],
+  ["launch", "coordinating your ads, social posts, emails and landing page to go live together — so nothing falls flat on its own"],
+  ["competitor", "standing for something specific so people choose you for reasons other than price"],
+  ["sales process", "automating the follow-up so no interested buyer gets forgotten and you stop chasing manually"],
+  ["event", "turning your event into content and a campaign — before, during and after — not just showing up"],
+  ["proof", "putting your best customer stories in exactly the spots where people hesitate before buying"],
+  ["ai", "automating the repetitive stuff — follow-ups, capturing leads, reporting — so your team focuses on what actually matters"],
 ];
 
 const SOLUTION_HINTS_ES: [string, string][] = [
-  ["abandoned_cart", "secuencia de 3 emails de recuperación + retargeting en Meta con los productos que dejaron — marcas DTC típicamente recuperan 15-25% de los carritos abandonados con esta configuración"],
-  ["carrito", "flujo de recuperación de carrito (3 pasos: recordatorio → urgencia → oferta) + retargeting con los productos exactos que dejaron"],
-  ["mobile", "auditoría UX móvil + rediseño del checkout — la mayoría de marcas DTC recuperan 20-30% del abandono en móvil con el fix correcto"],
-  ["email", "reconstrucción completa de flujos de email: bienvenida → nurture → recuperación de carrito → win-back — el email bien ejecutado genera 30-40% de los ingresos de marcas DTC"],
-  ["paid media", "auditoría de paid social + refresh creativo — nuevo creativo + segmentación más precisa típicamente duplica el ROAS en esta categoría"],
-  ["roas", "reestructura de paid social: refresh creativo, segmentación de audiencias y limpieza de atribución — marcas en tu categoría llegan a 3-5x ROAS cuando estos tres están alineados"],
-  ["engagement", "estrategia de contenido renovada + cadencia de producción semanal consistente — el engagement sigue a la consistencia, y la mayoría de marcas en este espacio no son consistentes"],
-  ["contenido", "sistema de producción de contenido: estrategia + plantillas reutilizables + grabación en bloque — pasa de publicar ad hoc a 4-5 posts/semana sin agregar headcount"],
-  ["retención", "secuencia post-compra de email + SMS: gracias → tips de uso → recordatorio de reabastecimiento → oferta de lealtad — incrementa el LTV 20-40% para marcas DTC de consumibles"],
-  ["sitio", "rediseño web orientado a conversión: velocidad, diseño mobile-first, páginas de producto claras y checkout sin fricción"],
-  ["página", "construcción o rediseño del sitio: optimización de velocidad, diseño mobile-first, estructura de páginas de producto y checkout simplificado"],
-  ["marca", "auditoría de marca + sistema visual unificado en todos los touchpoints — logo, color, tipografía, tono de voz — para que cada pieza refuerce la misma identidad"],
-  ["empaque", "rediseño de empaque orientado a presencia en anaquel: jerarquía de información más clara, identidad visual más fuerte, sublínea premium si aplica"],
-  ["propuesta de valor", "clarificación de propuesta de valor + jerarquía de mensajes — una razón clara para comprar, aplicada consistentemente en ads, sitio y redes"],
-  ["lanzamiento", "campaña de lanzamiento completa: paid social + contenido orgánico + secuencia de email + landing page — todo coordinado y sincronizado"],
-  ["competencia", "estrategia de diferenciación de marca + contenido que te posiciona como autoridad en la categoría — para que el precio no sea el único diferenciador"],
-  ["ventas", "proceso de ventas digital: secuencias de seguimiento automatizadas, captura de leads, integración con CRM — elimina los pasos manuales del pipeline"],
-  ["evento", "paquete de activación de evento: campaña previa, contenido en vivo, recap post-evento — convierte la asistencia en brand equity duradero"],
-  ["prueba social", "arquitectura de prueba social: casos de éxito, testimoniales y señales de confianza colocadas exactamente donde el comprador duda"],
-  ["ai", "automatización con IA: chatbot para captura de leads, seguimientos automáticos o dashboard personalizado que muestra los datos que tu equipo realmente necesita"],
+  ["abandoned_cart", "mandarle un mensaje automático a cada persona que llenó su carrito y se fue sin comprar — la mayoría de tiendas recupera entre 15 y 25% de esas ventas"],
+  ["carrito", "recordatorios automáticos para quien agregó cosas y se fue sin comprar — mostrándoles exactamente lo que dejaron"],
+  ["mobile", "arreglar las partes de tu sitio donde la gente se rinde desde el celular — la mayoría de tiendas recupera 20-30% más ventas del mismo tráfico una vez que se arregla eso"],
+  ["email", "mensajes automáticos que acompañan a tu cliente en cada momento — para que el mensaje correcto llegue solo, sin que tú tengas que hacer nada"],
+  ["paid media", "renovar tus anuncios y a quién les llegan — cuando esos dos están bien alineados, las marcas en tu categoría suelen duplicar lo que ganan por cada peso invertido"],
+  ["roas", "hacer que tus anuncios rindan más por cada peso que gastas — mejor creatividad, mejor selección de quién los ve y saber de verdad qué está funcionando"],
+  ["engagement", "un plan de contenido que puedas mantener — las marcas que publican seguido ganan seguidores, las que publican cuando se acuerdan no"],
+  ["contenido", "un sistema sencillo para publicar 4-5 veces a la semana sin que te consuma la vida"],
+  ["retención", "mensajes automáticos después de cada compra — agradecimiento, tips útiles, recordatorio cuando ya se les acabó — las tiendas que lo hacen bien ganan 20-40% más de cada cliente"],
+  ["sitio", "hacer tu sitio más rápido, más fácil de usar desde el celular y más fácil para comprar"],
+  ["página", "reconstruir tu sitio para que cargue rápido, se vea bien en cualquier celular y comprar sea simple"],
+  ["marca", "limpiar cómo se ve tu marca en todos lados — para que se sienta intencional y consistente, no como si la hubieran hecho cinco personas distintas"],
+  ["empaque", "rediseñar tu empaque para que se destaque en 3 segundos y cuente la historia de forma clara"],
+  ["propuesta de valor", "encontrar tu razón número uno para que te compren a ti, y decirla igual en todos lados"],
+  ["lanzamiento", "coordinar tus anuncios, redes sociales, correos y página de destino para que todo salga junto y con fuerza"],
+  ["competencia", "definir por qué te eligen a ti y no al de precio más bajo"],
+  ["ventas", "automatizar el seguimiento para que ningún interesado quede en el olvido y dejes de perseguir a mano"],
+  ["evento", "convertir tu evento en contenido y campaña — antes, durante y después — no solo aparecer"],
+  ["prueba social", "poner las historias de tus mejores clientes justo en los momentos donde la gente duda antes de comprar"],
+  ["ai", "automatizar lo repetitivo — seguimientos, captura de interesados, reportes — para que tu equipo se enfoque en lo que realmente importa"],
 ];
 
 export function getSolutionHint(painLabel: string | null, lang: "en" | "es"): string | null {
