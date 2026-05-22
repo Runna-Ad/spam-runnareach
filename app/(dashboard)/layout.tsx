@@ -20,7 +20,7 @@ export default async function DashboardLayout({ children }: { children: ReactNod
             route="/dashboard"
             phase={0}
             title="Profile not provisioned"
-            description="Your auth account exists but there's no Runna CA profile yet. Contact an admin or try signing out and back in."
+            description="Your auth account exists but there's no Runna profile yet. Contact an admin or try signing out and back in."
           />
         </main>
       </div>

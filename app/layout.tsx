@@ -18,9 +18,9 @@ const inter = Inter({
 });
 
 export const metadata: Metadata = {
-  title: "S.P.A.M. — Runna CA Opportunity Engine",
+  title: "S.P.A.M. — Runna Opportunity Engine",
   description:
-    "Smart Prospecting & Acquisition Machine. Human-in-the-loop AI sales system for Runna CA.",
+    "Smart Prospecting & Acquisition Machine. Human-in-the-loop AI sales system for Runna.",
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {

@@ -200,7 +200,7 @@ export function CommandPalette({ open, onOpenChange }: CommandPaletteProps) {
                 </span>
               </div>
               <span className="inline-flex items-center gap-1">
-                <Building2 className="h-3 w-3" aria-hidden /> Runna CA
+                <Building2 className="h-3 w-3" aria-hidden /> Runna
               </span>
             </div>
           </Command>

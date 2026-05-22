@@ -24,7 +24,7 @@ export default function SignInPage() {
           />
           <div className="flex flex-col items-center">
             <span className="font-[family-name:var(--font-display)] text-xl font-semibold tracking-tight text-[var(--color-fg-50)]">
-              Runna CA
+              Runna
             </span>
             <span className="mt-0.5 font-mono text-[10px] uppercase tracking-[0.22em] text-[var(--color-fg-500)]">
               S.P.A.M.

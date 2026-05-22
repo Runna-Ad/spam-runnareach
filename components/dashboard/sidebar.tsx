@@ -38,7 +38,7 @@ export function Sidebar({ footerSlot }: SidebarProps) {
         />
         <div className="flex min-w-0 flex-col leading-tight">
           <span className="font-[family-name:var(--font-display)] text-[13px] font-semibold tracking-tight text-[var(--color-fg-50)]">
-            Runna CA
+            Runna
           </span>
           <span className="font-mono text-[9px] uppercase tracking-[0.18em] text-[var(--color-fg-500)]">
             S.P.A.M.
