@@ -367,13 +367,21 @@ function buildSystemPrompt(lang: "en" | "es", size: SizeSignal): string {
   const langName = lang === "es" ? "Spanish — Mexican B2B register" : "English — Canadian market";
   const voiceRules = lang === "es" ? buildSpanishVoiceRules(size) : buildEnglishVoiceRules();
 
-  return `You are a B2B cold-email copywriter for Runna CA, a Canadian creative + design agency.
+  return `You are a B2B cold-email copywriter for Runna, a creative + design agency.
 Runna's full toolkit: brand identity, packaging, web/ecommerce design, email marketing
 flows, paid social (Meta/TikTok/Google), AI automation, custom apps and dashboards, content
 strategy and production, UX redesign. Any of these may be relevant depending on the prospect.
 
-Your job: compose a 5-line elevator-pitch email opener (~120-160 words). The email must
-fit in a recipient's inbox preview, get them curious, and earn a reply — not close a deal.
+Your job: write a cold email that reads like a real human wrote it — conversational, specific,
+warm. Think of it like introducing yourself to someone at a bar: you notice something about
+them, mention it genuinely, show you can help with one specific thing, then ask if they want
+to grab a coffee. 70-100 words max. Get them curious enough to reply — not close a deal.
+
+ABSOLUTE FORMAT RULES (violations will fail QA):
+- NO em dashes (—). Use commas, periods, or restructure the sentence.
+- NO corporate jargon: no "El fix aqui", no "diagnosticar el patron", no "flujos de".
+- NO language mixing: the entire email must be in one language.
+- NO greeting with "there" in Spanish: "Hola there" is a critical failure.
 ${voiceRules}
 
 CRITICAL — evidence_quote and translated_pain handling:
@@ -647,8 +655,11 @@ export function detectViolations(body: string, lang: "en" | "es"): number {
 
   if (lang === "es") {
     const forbidden = [
-      // English jargon / template openers
+      // Language mixing / template openers
       "hola there",
+      // Em dash — banned per Pedro. Reads corporate, triggers spam filters.
+      "—",
+      // English jargon in Spanish emails
       "abandonment",
       "retention automation",
       "default setup",
@@ -656,8 +667,9 @@ export function detectViolations(body: string, lang: "en" | "es"): number {
       "woocommerce",
       "shopify",
       "funnel",
-      // NOTE: "performance" removed — too broad (false-positives on web/tech context).
-      // Covered by "retention automation" and "performance marketing" if Claude uses it.
+      "el fix aquí",
+      "el fix aqui",
+      "diagnosticar el patrón",
       "i hope",
       "best regards",
       "dear ",
@@ -674,18 +686,20 @@ export function detectViolations(body: string, lang: "en" | "es"): number {
     if (/\bhola\b/.test(lower)) count++;
 
     const forbidden = [
+      // Em dash — banned per Pedro. Reads corporate, triggers spam filters.
+      "—",
       // Spanish bleed-through
       "vale la pena",
       "marca",
       "tienda",
       // Corporate / American hype — banned in system prompt
       "synergy",
-      "leverage the",   // "leverage your", "leverage this" also bad but lower risk
+      "leverage the",
       "best-in-class",
       "circle back",
       "thought leader",
       // Hype verbs the system prompt explicitly bans
-      "unlock ",        // trailing space avoids false-positive on "unlocked" result metrics
+      "unlock ",
       "supercharge",
       "game-changer",
       "game changer",

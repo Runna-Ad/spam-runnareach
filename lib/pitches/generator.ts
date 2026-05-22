@@ -213,8 +213,11 @@ export function composePitchHeuristic(input: GeneratorInputs): ComposedPitch | n
     input.contacts.find((c) => !c.email_is_role_based) ??
     input.contacts[0] ??
     null;
-  const firstName = extractFirstName(realContact?.full_name) ?? "there";
-  if (realContact && firstName !== "there") {
+  // Language-aware fallback: ES gets "" (template renders "Hola,"), EN gets "there".
+  // "Hola there" is a critical failure — mixing languages in the greeting kills credibility.
+  const firstName = extractFirstName(realContact?.full_name)
+    ?? (input.prospect.language === "es" ? "" : "there");
+  if (realContact && firstName !== "there" && firstName !== "") {
     reasoning.push(`Contact: ${realContact.full_name} (${realContact.email ?? "no email"}).`);
   } else {
     reasoning.push("Contact: generic salutation — no decision-maker named.");
@@ -271,7 +274,7 @@ export function composePitchHeuristic(input: GeneratorInputs): ComposedPitch | n
   // 5) Quality self-score
   const score = computeSelfScore({
     hasEvidence: Boolean(evidenceQuote),
-    hasNamedContact: firstName !== "there",
+    hasNamedContact: firstName !== "there" && firstName !== "",
     hasIndustryMatch: chosenCase
       ? industryMatch(chosenCase.industry, input.prospect.industry)
       : Boolean(tier2Client),

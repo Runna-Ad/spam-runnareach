@@ -72,7 +72,7 @@ test("composePitchHeuristic: produces no-case pitch when no case studies exist",
   const r = composePitchHeuristic(fullInputs({ case_studies: [] }));
   assert.ok(r);
   assert.equal(r!.case_study_id, null);
-  assert.match(r!.body, /This is exactly the kind of work we do/);
+  assert.match(r!.body, /We've solved this for brands like yours/);
 });
 
 test("composePitchHeuristic: case_study_id=null when no case fits (strength<0.4)", () => {
@@ -98,7 +98,7 @@ test("composePitchHeuristic: case_study_id=null when no case fits (strength<0.4)
   )!;
   assert.equal(r.case_study_id, null);
   assert.doesNotMatch(r.body, /Weak Match/);
-  assert.match(r.body, /This is exactly the kind of work we do/);
+  assert.match(r.body, /We've solved this for brands like yours/);
 });
 
 test("composePitchHeuristic: case_study_id=null when no case is tagged for the pain", () => {
@@ -139,9 +139,9 @@ test("composePitchHeuristic: produces subject + body in English", () => {
   assert.match(r.body, /mobile checkout takes 3 screens/);
   assert.match(r.body, /DiDi/);
   assert.match(r.body, /\+47% mobile checkout/);
-  assert.match(r.body, /no call, no commitment/);
+  assert.match(r.body, /no call, no commitment/i);
   assert.match(r.body, /— Pedro/);
-  assert.match(r.body, /Runna CA/);
+  assert.match(r.body, /Runna/);
 });
 
 test("composePitchHeuristic: switches to Spanish when prospect.language='es'", () => {
