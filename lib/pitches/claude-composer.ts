@@ -1,9 +1,12 @@
 /**
- * 3-stage pitch composer.
+ * 2-stage pitch composer (collapsed from 3 stages to reduce Vercel timeout risk).
  *
- * Stage 1 — Pain Translation  (Haiku): audit jargon → one human sentence
- * Stage 2 — Credibility Match (Haiku/deterministic): tier + industry filter
- * Stage 3 — Pitch Assembly   (Sonnet): write the email with strict rules
+ * Stage 1 — Credibility Match (deterministic / Haiku only when 3+ candidates tied)
+ * Stage 2 — Pitch Assembly   (Sonnet): translate pain + write the email in one pass
+ *
+ * The pain-translation step was previously a separate Haiku call (Stage 1 old).
+ * It's now embedded in the Stage 2 Sonnet prompt — Sonnet handles it natively and
+ * we save a full network round-trip (~3-5s on Vercel cold starts).
  *
  * External signature is identical to v1 — the rest of the pipeline is unchanged.
  */
@@ -30,9 +33,12 @@ const responseSchema = z.object({
   subject: z.string().trim().min(4).max(120),
   preview_text: z.string().trim().min(20).max(150),
   body: z.string().trim().min(80).max(2000),
-  pain_id: z.string().uuid().nullable(),
+  // pain_id can be a text slug like "abandoned_cart_loss" or a UUID — accept both.
+  pain_id: z.string().nullable(),
+  // case_study_id is always a UUID from the DB.
   case_study_id: z.string().uuid().nullable(),
-  contact_email: z.string().email().nullable(),
+  // contact_email may be missing from Claude response — coerce null gracefully.
+  contact_email: z.union([z.string().email(), z.literal(""), z.null()]).transform(v => v || null),
   measurable_result_included: z.boolean(),
   quality_self_score: z.number().min(0).max(1),
   reasoning: z.string().trim().max(800).optional().default("(no reasoning provided)"),
@@ -109,35 +115,37 @@ export async function composePitchWithClaude(
   const size = deriveSize(input.prospect.employee_size_estimate);
   let totalUsage: ClaudeUsage = { ...ZERO_USAGE };
 
-  // ── Stage 1: translate top pain into human language ───────────────────────
-  const stage1 = await translateTopPain(input);
+  // ── Stage 1: pick case studies by tier + industry (deterministic / Haiku tie-breaker) ─
+  const stage1 = await stage1MatchCredibility(input, size);
   totalUsage = addUsage(totalUsage, stage1.usage);
 
-  // ── Stage 2: pick case studies by tier + industry ─────────────────────────
-  const stage2 = await matchCredibility(input, size);
-  totalUsage = addUsage(totalUsage, stage2.usage);
-
-  // ── Stage 3: assemble the pitch ───────────────────────────────────────────
+  // ── Stage 2: translate pain + assemble pitch in one Sonnet pass ───────────
   const lang = input.prospect.language;
   const system =
     buildSystemPrompt(lang, size) +
     buildNotableClientsTierContext(input.notable_clients, lang);
-  const user = buildStage3UserPrompt(input, stage1.text, stage2.cases);
+  const user = buildStage2UserPrompt(input, stage1.cases);
 
   const call = await structuredCall({
     model: ANTHROPIC_DEFAULT_MODEL,
     system,
     user,
-    max_tokens: 800,
+    max_tokens: 600,
     schema: responseSchema,
   });
 
   if (!call.ok) {
+    // If stage1 had no API calls (totalUsage all-zero) and the Sonnet call failed
+    // before returning any token counts (call.usage=null), return null usage so
+    // callers know no credits were spent. Otherwise combine what we have.
+    const combined = call.usage !== null
+      ? addUsage(totalUsage, call.usage)
+      : totalUsage.input_tokens > 0 ? totalUsage : null;
     return {
       ok: false,
       error: call.error,
       reason: call.reason,
-      usage: addUsage(totalUsage, call.usage ?? ZERO_USAGE),
+      usage: combined,
     };
   }
 
@@ -207,86 +215,9 @@ export async function composePitchWithClaude(
   };
 }
 
-// ── Stage 1: Pain Translation ─────────────────────────────────────────────────
+// ── Stage 1: Credibility Match ───────────────────────────────────────────────
 
-async function translateTopPain(
-  input: GeneratorInputs,
-): Promise<{ text: string; usage: ClaudeUsage }> {
-  // Best pain: one with both pain_id AND evidence_quote → just evidence_quote → any labeled
-  const topPain =
-    input.pains.find((p) => p.pain_id && p.evidence_quote) ??
-    input.pains.find((p) => p.evidence_quote) ??
-    input.pains.find((p) => p.pain_label) ??
-    null;
-
-  if (!topPain) {
-    const fallback =
-      input.prospect.language === "es"
-        ? "Hay oportunidades claras de mejora en su operación actual."
-        : "There are clear opportunities to improve their current setup.";
-    return { text: fallback, usage: { ...ZERO_USAGE } };
-  }
-
-  const lang = input.prospect.language;
-  const langInstruction =
-    lang === "es"
-      ? "Responde SOLO en español mexicano natural. Nada de inglés, nada de jerga técnica."
-      : "Respond ONLY in natural English. No technical jargon.";
-
-  const systemPrompt = `You translate technical marketing audit findings into how a real business owner would describe the problem to a friend over coffee.
-
-RULES:
-- Output exactly ONE sentence. No more.
-- ${langInstruction}
-- No technical terms: no "abandonment flow", "retention automation", "Meta Pixel", "WooCommerce", "Shopify", platform names, or marketing jargon.
-- Describe the BUSINESS CONSEQUENCE, not the technical symptom.
-- Plain language. Short words. Sound human, not SaaS.
-- Do NOT mention the prospect's name. No greetings. Just the sentence.
-
-GOOD EXAMPLE (es):
-Input: "No cart abandonment flow visible; WooCommerce default setup"
-Output: "Estás perdiendo ventas de gente que llena el carrito y se va sin comprar — y no hay nada que las traiga de regreso."
-
-GOOD EXAMPLE (en):
-Input: "No cart abandonment flow visible; WooCommerce default setup"
-Output: "You're losing sales from shoppers who add to cart and leave — and nothing is bringing them back."
-
-BAD EXAMPLE (never):
-"Vi que no tienes cart abandonment flow visible..." ← mixing languages, using jargon. NEVER.`;
-
-  const userPrompt = `Technical pain: ${topPain.pain_label ?? "(unlabeled)"}
-${topPain.evidence_quote ? `Evidence: ${topPain.evidence_quote}` : ""}
-
-Translate to one human sentence in ${lang === "es" ? "Mexican Spanish" : "English"}.`;
-
-  const client = getClient();
-  let response: Awaited<ReturnType<typeof client.messages.create>>;
-  try {
-    response = await client.messages.create({
-      model: ANTHROPIC_HAIKU_MODEL,
-      max_tokens: 200,
-      system: systemPrompt,
-      messages: [{ role: "user", content: userPrompt }],
-    });
-  } catch (err) {
-    // Non-fatal: fall back to generic pain label
-    const fallback =
-      topPain.pain_label ??
-      (lang === "es"
-        ? "Hay oportunidades claras de mejora en su operación actual."
-        : "There are clear opportunities to improve their current setup.");
-    return { text: fallback, usage: { ...ZERO_USAGE } };
-  }
-
-  const textBlock = response.content.find((b) => b.type === "text");
-  const text = textBlock?.type === "text" ? textBlock.text.trim() : (topPain.pain_label ?? "");
-  const usage = usageFromResponse(ANTHROPIC_HAIKU_MODEL, response.usage);
-  return { text, usage };
-}
-
-// ── Stage 2: Credibility Match ────────────────────────────────────────────────
-
-async function matchCredibility(
+async function stage1MatchCredibility(
   input: GeneratorInputs,
   size: SizeSignal,
 ): Promise<{ cases: GeneratorInputCaseStudy[]; usage: ClaudeUsage }> {
@@ -389,9 +320,10 @@ ABSOLUTE FORMAT RULES (violations will fail QA):
 - NO greeting with "there" in Spanish: "Hola there" is a critical failure.
 ${voiceRules}
 
-CRITICAL — evidence_quote and translated_pain handling:
-The "translated_pain" field is the ALREADY-TRANSLATED human-language version of the pain.
-Use it as your hook. Do NOT re-jargonize it or quote it verbatim.
+CRITICAL — pain translation handling:
+pain_candidates contains raw audit findings. Your FIRST internal step is to translate the
+best pain into how a real business owner would describe it to a friend. No jargon. No quotes
+from the audit. Describe the BUSINESS CONSEQUENCE in plain language.
 
 Wrong: 'Vi "Outdated website — no e-commerce functionality..."'
 Right (ES): "Revisé [company].com — sin checkout, sin ficha de producto real."
@@ -546,9 +478,8 @@ TIER 3 — Name-drop (use only if no Tier 2 match):
 Never invent clients not in these lists.`;
 }
 
-function buildStage3UserPrompt(
+function buildStage2UserPrompt(
   input: GeneratorInputs,
-  translatedPain: string,
   chosenCases: GeneratorInputCaseStudy[],
 ): string {
   const lang = input.prospect.language;
@@ -571,7 +502,6 @@ function buildStage3UserPrompt(
       what_they_do: input.prospect.what_they_do ?? null,
       tech_stack: input.prospect.tech_stack ?? [],
     },
-    translated_pain: translatedPain,
     // Baseline solution to propose — tailor this using what_they_do, tech_stack, and industry.
     solution_hint: solutionHint,
     pain_candidates: input.pains.map((p) => ({
@@ -623,9 +553,14 @@ function buildStage3UserPrompt(
 ${JSON.stringify(payload, null, 2)}
 \`\`\`
 
-The "translated_pain" is already in the correct language — use it as the opening hook.
-The "solution_hint" is your baseline — elaborate on it using the prospect's specific context.
-Do NOT re-jargonize translated_pain or copy solution_hint verbatim. Make both feel tailored.
+PAIN TRANSLATION — do this first internally before writing the email:
+Pick the best pain from pain_candidates (prefer one with both pain_id + evidence_quote).
+Translate it from technical audit language into how a business owner would describe it to
+a friend over coffee — one concrete sentence, no jargon, business consequence not symptom.
+Use this translation as your opening hook.
+
+Good: "Estás perdiendo ventas de gente que llena el carrito y se va sin comprar"
+Bad: "No cart abandonment flow visible; WooCommerce default setup"
 
 SOLUTION TAILORING — this is the most important part of the email:
 - Start from solution_hint, then make it MORE specific using what_they_do + tech_stack + market
@@ -774,9 +709,23 @@ const SOLUTION_HINTS_ES: [string, string][] = [
 export function getSolutionHint(painLabel: string | null, lang: "en" | "es"): string | null {
   if (!painLabel) return null;
   const lower = painLabel.toLowerCase();
-  const hints = lang === "es" ? SOLUTION_HINTS_ES : SOLUTION_HINTS_EN;
-  for (const [keyword, hint] of hints) {
+  // Pain labels are stored in English regardless of prospect language.
+  // Always check EN keywords first, then ES keywords as a fallback.
+  // This ensures "Cart abandonment" matches for an ES-language prospect.
+  const primary = lang === "es" ? SOLUTION_HINTS_ES : SOLUTION_HINTS_EN;
+  const fallback = lang === "es" ? SOLUTION_HINTS_EN : SOLUTION_HINTS_ES;
+  for (const [keyword, hint] of primary) {
     if (lower.includes(keyword)) return hint;
+  }
+  // EN pain label on an ES prospect — find the EN match, then return the ES equivalent.
+  if (lang === "es") {
+    for (const [keyword, _hint] of fallback) {
+      if (lower.includes(keyword)) {
+        // Find the matching ES hint by index position (EN and ES lists are parallel).
+        const idx = SOLUTION_HINTS_EN.findIndex(([k]) => k === keyword);
+        if (idx >= 0 && idx < SOLUTION_HINTS_ES.length) return SOLUTION_HINTS_ES[idx]?.[1] ?? null;
+      }
+    }
   }
   return null;
 }

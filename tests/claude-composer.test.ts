@@ -60,11 +60,15 @@ function inputs(over: Partial<GeneratorInputs> = {}): GeneratorInputs {
       industry: "DTC coffee",
       language: "en",
       employee_size_estimate: null,
+      city: null,
+      market: null,
+      what_they_do: null,
+      tech_stack: [],
     },
     pains: [
       { pain_id: PAIN_ID, pain_label: "Poor mobile conversion", evidence_quote: "checkout breaks on iPhone" },
     ],
-    contacts: [{ full_name: "Sarah", email: "sarah@cc.example", email_is_role_based: false }],
+    contacts: [{ full_name: "Sarah", email: "sarah@cc.example", email_is_role_based: false, role_title: null }],
     case_studies: [
       {
         id: CASE_ID,
@@ -85,7 +89,8 @@ function inputs(over: Partial<GeneratorInputs> = {}): GeneratorInputs {
 function validResponse(over: Record<string, unknown> = {}) {
   return JSON.stringify({
     subject: "Quick thought on mobile conversion at Calgary Coffee",
-    body: "Hi Sarah,\n\nSaw \"checkout breaks on iPhone\" — most DTC coffee brands hit this wall.\n\nWe helped DiDi (+47% mobile checkout completion). Same shape as what we're seeing on your end.\n\nWorth a 15-min look next week?\n\n— Pedro\nPedro De Velasco\nRunna CA",
+    preview_text: "No cart recovery flow, no retargeting — leaving ~25% revenue on the table.",
+    body: "Hi Sarah,\n\nSaw \"checkout breaks on iPhone\" — most DTC coffee brands hit this wall.\n\nWe helped DiDi (+47% mobile checkout completion). Same shape as what we're seeing on your end.\n\nI can send a 5-min Loom walking through exactly what I'd change — no call, no commitment.\n\nPedro\nPedro De Velasco\nRunna CA",
     pain_id: PAIN_ID,
     case_study_id: CASE_ID,
     contact_email: "sarah@cc.example",
@@ -135,11 +140,11 @@ test("composePitchWithClaude: passes correct system+user prompts", async () => {
     await composePitchWithClaude(inputs());
     assert.equal(calls.length, 1);
     const call = calls[0]!;
-    // System prompt mentions Runna CA + cold-email + JSON-only
-    assert.match(call.system ?? "", /Runna CA/);
+    // System prompt: cold-email copywriter + JSON-only instruction
     assert.match(call.system ?? "", /cold[- ]email/i);
     assert.match(call.system ?? "", /JSON/);
-    // User prompt includes the candidate IDs as JSON
+    // User prompt (payload): sender agency name + candidate IDs
+    assert.match(call.messages[0]!.content, /Runna CA/);
     assert.match(call.messages[0]!.content, new RegExp(CASE_ID));
     assert.match(call.messages[0]!.content, new RegExp(PAIN_ID));
   } finally {

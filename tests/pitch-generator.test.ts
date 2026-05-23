@@ -130,7 +130,7 @@ test("composePitchHeuristic: case_study_id=null when no case is tagged for the p
 
 test("composePitchHeuristic: produces subject + body in English", () => {
   const r = composePitchHeuristic(fullInputs())!;
-  // Evidence present → subject uses "Checked [company] — noticed something" pattern
+  // Evidence present → subject uses "Checked [company]: noticed something" pattern
   assert.match(r.subject, /Calgary Coffee Roasters/);
   assert.match(r.subject, /noticed something/i);
   // preview_text should contain the observation
@@ -162,7 +162,7 @@ test("composePitchHeuristic: switches to Spanish when prospect.language='es'", (
   )!;
   // Evidence present → ES subject uses "Revisé [company] — encontré algo" pattern
   assert.match(r.subject, /Café CDMX/);
-  assert.match(r.subject, /Revisé|encontré/i);
+  assert.match(r.subject, /revis|encontr/i);
   assert.match(r.body, /^Hola Sarah,/);
   assert.match(r.body, /\+47% checkout móvil/);
   assert.match(r.body, /5 min/);

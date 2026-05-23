@@ -12,20 +12,32 @@ import type { z } from "zod";
  */
 export const ANTHROPIC_DEFAULT_MODEL = "claude-sonnet-4-5-20250929";
 export const ANTHROPIC_HAIKU_MODEL = "claude-haiku-4-5";
-const DEFAULT_TIMEOUT_MS = 15_000;
-const DEFAULT_MAX_RETRIES = 2;
+// 25s per call — enough for Sonnet to respond under normal conditions.
+// Keep well under Vercel's 60s maxDuration since pitch generation makes
+// 3 sequential calls (Stage 1 Haiku → Stage 2 Haiku → Stage 3 Sonnet).
+const DEFAULT_TIMEOUT_MS = 20_000;
+// No retries — each stage failing once is enough signal to fall back to
+// the heuristic. With maxRetries=2 a single bad stage burns 45s (3×15s)
+// and blows the Vercel function budget before stage 2 even starts.
+const DEFAULT_MAX_RETRIES = 0;
 
-let _client: Anthropic | null = null;
+// Test seam — null in production, set via __test__.setClient in unit tests.
+// Production always gets a fresh client (never a singleton) to avoid stale
+// TCP connections on Vercel warm starts. Tests inject a fake to avoid real API calls.
+let _testClient: Anthropic | null = null;
+
+// Fresh client per call — Vercel serverless functions are stateless and
+// a cached singleton can hold stale TCP connections from prior invocations,
+// causing "Connection error" on warm starts.
 export function getClient(): Anthropic {
-  if (_client) return _client;
+  if (_testClient) return _testClient;
   const apiKey = process.env.ANTHROPIC_API_KEY;
   if (!apiKey) throw new Error("ANTHROPIC_API_KEY not set");
-  _client = new Anthropic({
+  return new Anthropic({
     apiKey,
     timeout: DEFAULT_TIMEOUT_MS,
     maxRetries: DEFAULT_MAX_RETRIES,
   });
-  return _client;
 }
 
 /**
@@ -189,13 +201,10 @@ function classifyErr(err: unknown): "auth" | "rate_limit" | "timeout" | "unknown
   return "unknown";
 }
 
-// Test seam — let unit tests inject a mock SDK. Production code never
-// calls these; tests do via lib/anthropic/client.ts dynamic import.
+// Test seam — restores the ability to inject a fake client in unit tests.
+// In production _testClient is always null (never set), so getClient() creates
+// a fresh Anthropic instance per call with no stale TCP connections.
 export const __test__ = {
-  reset() {
-    _client = null;
-  },
-  setClient(c: Anthropic | null) {
-    _client = c;
-  },
+  reset() { _testClient = null; },
+  setClient(c: Anthropic | null) { _testClient = c; },
 };
