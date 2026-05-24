@@ -938,7 +938,135 @@ export type Database = {
         Update: Partial<Database["public"]["Tables"]["icps"]["Row"]>;
         Relationships: NoRels;
       };
+    // ── Prompts ───────────────────────────────────────────────────────────
+    prompts: {
+      Row: {
+        id: UUID;
+        tenant_id: UUID;
+        purpose: "research" | "scoring" | "pain_classification" | "contact_selection" | "pitch_en" | "pitch_es" | "reply_classify" | "reply_auto_draft" | "learning_proposal" | "compliance_footer_ca" | "compliance_footer_mx";
+        language: "en" | "es";
+        description: string | null;
+        is_active: boolean;
+        created_at: Timestamptz;
+        updated_at: Timestamptz;
+      };
+      Insert: {
+        id?: UUID;
+        tenant_id: UUID;
+        purpose: "research" | "scoring" | "pain_classification" | "contact_selection" | "pitch_en" | "pitch_es" | "reply_classify" | "reply_auto_draft" | "learning_proposal" | "compliance_footer_ca" | "compliance_footer_mx";
+        language: "en" | "es";
+        description?: string | null;
+        is_active?: boolean;
+        created_at?: Timestamptz;
+        updated_at?: Timestamptz;
+      };
+      Update: Partial<{
+        purpose: "research" | "scoring" | "pain_classification" | "contact_selection" | "pitch_en" | "pitch_es" | "reply_classify" | "reply_auto_draft" | "learning_proposal" | "compliance_footer_ca" | "compliance_footer_mx";
+        language: "en" | "es";
+        description: string | null;
+        is_active: boolean;
+        updated_at: Timestamptz;
+      }>;
+      Relationships: NoRels;
     };
+    prompt_variants: {
+      Row: {
+        id: UUID;
+        prompt_id: UUID;
+        version: string;
+        status: "champion" | "challenger" | "candidate" | "retired";
+        system_prompt: string;
+        user_prompt_template: string;
+        model: string;
+        temperature: number | null;
+        max_tokens: number | null;
+        challenger_traffic_pct: number | null;
+        hit_count: number;
+        reply_count: number;
+        booked_count: number;
+        created_by: UUID | null;
+        promoted_at: Timestamptz | null;
+        retired_at: Timestamptz | null;
+        created_at: Timestamptz;
+      };
+      Insert: {
+        id?: UUID;
+        prompt_id: UUID;
+        version: string;
+        status?: "champion" | "challenger" | "candidate" | "retired";
+        system_prompt: string;
+        user_prompt_template: string;
+        model: string;
+        temperature?: number | null;
+        max_tokens?: number | null;
+        challenger_traffic_pct?: number | null;
+        hit_count?: number;
+        reply_count?: number;
+        booked_count?: number;
+        created_by?: UUID | null;
+        promoted_at?: Timestamptz | null;
+        retired_at?: Timestamptz | null;
+        created_at?: Timestamptz;
+      };
+      Update: Partial<{
+        status: "champion" | "challenger" | "candidate" | "retired";
+        system_prompt: string;
+        user_prompt_template: string;
+        model: string;
+        temperature: number | null;
+        max_tokens: number | null;
+        challenger_traffic_pct: number | null;
+        hit_count: number;
+        reply_count: number;
+        booked_count: number;
+        promoted_at: Timestamptz | null;
+        retired_at: Timestamptz | null;
+      }>;
+      Relationships: NoRels;
+    };
+    prompt_change_proposals: {
+      Row: {
+        id: UUID;
+        tenant_id: UUID;
+        prompt_id: UUID;
+        current_variant_id: UUID | null;
+        proposed_variant_id: UUID | null;
+        status: "pending" | "approved" | "ab_testing" | "promoted" | "rejected";
+        evidence: Record<string, unknown>;
+        expected_impact: string | null;
+        reasoning: string | null;
+        reviewed_by: UUID | null;
+        reviewed_at: Timestamptz | null;
+        proposed_at: Timestamptz;
+        expires_at: Timestamptz;
+      };
+      Insert: {
+        id?: UUID;
+        tenant_id: UUID;
+        prompt_id: UUID;
+        current_variant_id?: UUID | null;
+        proposed_variant_id?: UUID | null;
+        status?: "pending" | "approved" | "ab_testing" | "promoted" | "rejected";
+        evidence?: Record<string, unknown>;
+        expected_impact?: string | null;
+        reasoning?: string | null;
+        reviewed_by?: UUID | null;
+        reviewed_at?: Timestamptz | null;
+        proposed_at?: Timestamptz;
+        expires_at?: Timestamptz;
+      };
+      Update: Partial<{
+        status: "pending" | "approved" | "ab_testing" | "promoted" | "rejected";
+        evidence: Record<string, unknown>;
+        expected_impact: string | null;
+        reasoning: string | null;
+        reviewed_by: UUID | null;
+        reviewed_at: Timestamptz | null;
+      }>;
+      Relationships: NoRels;
+    };
+    };
+    // ────────────────────────────────────────────────────────────────────────
     // Empty views/functions/enums need to be `{ [_ in never]: never }` —
     // `Record<string, never>` doesn't extend `Record<string, GenericView>`
     // and the whole Database falls back to `any`, which then collapses

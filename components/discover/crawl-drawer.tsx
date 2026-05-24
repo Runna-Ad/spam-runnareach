@@ -34,6 +34,24 @@ const CA_PROVINCES = [
   { value: "Saskatchewan", label: "Saskatchewan" },
 ];
 
+const MX_STATES = [
+  { value: "0", label: "Todo México" },
+  { value: "09", label: "Ciudad de México" },
+  { value: "14", label: "Jalisco" },
+  { value: "19", label: "Nuevo León" },
+  { value: "15", label: "Estado de México" },
+  { value: "21", label: "Puebla" },
+  { value: "22", label: "Querétaro" },
+  { value: "11", label: "Guanajuato" },
+  { value: "26", label: "Sonora" },
+  { value: "28", label: "Tamaulipas" },
+  { value: "30", label: "Veracruz" },
+  { value: "31", label: "Yucatán" },
+  { value: "02", label: "Baja California" },
+  { value: "25", label: "Sinaloa" },
+  { value: "08", label: "Chihuahua" },
+];
+
 const PAGES_OPTIONS = [
   { value: "1", label: "1 page (~10 results)" },
   { value: "3", label: "3 pages (~30 results)" },
@@ -59,6 +77,9 @@ export function CrawlDrawer({
   icps,
 }: CrawlDrawerProps) {
   const isYP = source === "yellowpages_ca";
+  const isDenue = source === "denue";
+  const isYelp = source === "yelp";
+  const isGoogle = source === "google_places";
 
   const [keyword, setKeyword] = React.useState("");
   const [location, setLocation] = React.useState("Canada");
@@ -68,27 +89,38 @@ export function CrawlDrawer({
   const [result, setResult] = React.useState<CrawlResult | null>(null);
   const [running, startRun] = React.useTransition();
 
-  // Reset on close
+  // Reset on close — default location depends on source
   React.useEffect(() => {
     if (!open) {
       setKeyword("");
-      setLocation("Canada");
+      setLocation(isDenue ? "0" : "Canada");
       setMarket("CA");
       setPages("3");
       setIcpId("");
       setResult(null);
     }
-  }, [open]);
+  }, [open, isDenue]);
+
+  // For Yelp + Google Places: auto-update the default location when market changes
+  React.useEffect(() => {
+    if (isYelp || isGoogle) {
+      setLocation(
+        market === "MX" ? "Mexico"
+        : market === "US" ? "United States"
+        : "Canada",
+      );
+    }
+  }, [isYelp, isGoogle, market]);
 
   const handleRun = () => {
-    if (!keyword.trim()) return;
+    if (!keyword.trim() && !isDenue) return;
     setResult(null);
     startRun(async () => {
       const out = await runCrawl({
         source,
-        keyword: keyword.trim(),
-        location: isYP ? location : undefined,
-        market: isYP ? "CA" : market,
+        keyword: keyword.trim() || "0",
+        location: isYP ? location : isDenue ? location : isYelp ? location : isGoogle ? location : undefined,
+        market: isYP ? "CA" : isDenue ? "MX" : market,
         pages: Number(pages),
         icp_id: icpId || null,
       });
@@ -96,8 +128,14 @@ export function CrawlDrawer({
     });
   };
 
-  const sourceLabel = isYP ? "Yellow Pages CA" : "Brave Search";
-  const canSubmit = keyword.trim().length > 0 && !running;
+  const sourceLabel =
+    isYP ? "Yellow Pages CA"
+    : isDenue ? "DENUE México"
+    : isYelp ? "Yelp Fusion"
+    : isGoogle ? "Google Places"
+    : "Brave Search";
+
+  const canSubmit = (isDenue || keyword.trim().length > 0) && !running;
 
   return (
     <Drawer open={open} onOpenChange={onOpenChange}>
@@ -110,17 +148,35 @@ export function CrawlDrawer({
           <DrawerDescription>
             {isYP
               ? "Scrapes yellowpages.ca for matching businesses. Free — no API key needed."
-              : "Keyword search via Brave Search API. 2,000 free queries/month."}
+              : isDenue
+                ? "Queries INEGI's national business registry — ~5M Mexican businesses, free API."
+                : isYelp
+                  ? "Searches Yelp's business directory across CA, MX & US. 500 free calls/day. Great for finding SMBs without websites."
+                  : isGoogle
+                    ? "Searches Google's full business index — returns website URL directly. ~7,000 free calls/month."
+                    : "Keyword search via Brave Search API. 2,000 free queries/month."}
           </DrawerDescription>
         </DrawerHeader>
 
         <DrawerBody className="flex flex-col gap-5">
           {/* Keyword */}
           <div className="flex flex-col gap-1.5">
-            <Label htmlFor="crawl-keyword">Keyword *</Label>
+            <Label htmlFor="crawl-keyword">
+              {isDenue ? "Búsqueda (opcional)" : "Keyword *"}
+            </Label>
             <Input
               id="crawl-keyword"
-              placeholder={isYP ? 'e.g. "pet food"' : 'e.g. "pet food" shopify canada'}
+              placeholder={
+                isYP
+                  ? 'e.g. "pet food"'
+                  : isDenue
+                    ? 'SCIAN code (e.g. "46", "5411") or name (e.g. "restaurante")'
+                    : isYelp
+                      ? 'e.g. "web design", "restaurants", "pet grooming"'
+                      : isGoogle
+                        ? 'e.g. "clothing boutique", "pet store", "furniture"'
+                        : 'e.g. "pet food" shopify canada'
+              }
               value={keyword}
               onChange={(e) => setKeyword(e.target.value)}
               onKeyDown={(e) => e.key === "Enter" && canSubmit && handleRun()}
@@ -128,11 +184,17 @@ export function CrawlDrawer({
             <p className="text-[11px] text-[var(--color-fg-500)]">
               {isYP
                 ? "Matches the YP search field — use plain English like a customer would."
-                : "Full Brave query string — supports site:, \" \", and other operators."}
+                : isDenue
+                  ? "Enter a SCIAN sector code (46 = retail, 54 = professional services) or leave blank to search all industries in the selected state."
+                  : isYelp
+                    ? "Yelp category or business type — plain English. Returns up to 50 results sorted by popularity."
+                    : isGoogle
+                      ? "Business type or industry — location is appended automatically. Returns up to 20 results with website URLs."
+                      : "Full Brave query string — supports site:, \" \", and other operators."}
             </p>
           </div>
 
-          {/* Location (YP only) */}
+          {/* Location — YP provinces */}
           {isYP && (
             <div className="flex flex-col gap-1.5">
               <Label htmlFor="crawl-location">Province</Label>
@@ -150,8 +212,26 @@ export function CrawlDrawer({
             </div>
           )}
 
-          {/* Market (Brave only) */}
-          {!isYP && (
+          {/* Location — DENUE Mexican states */}
+          {isDenue && (
+            <div className="flex flex-col gap-1.5">
+              <Label htmlFor="crawl-state">Estado</Label>
+              <Select
+                id="crawl-state"
+                value={location}
+                onChange={(e) => setLocation(e.target.value)}
+              >
+                {MX_STATES.map((s) => (
+                  <option key={s.value} value={s.value}>
+                    {s.label}
+                  </option>
+                ))}
+              </Select>
+            </div>
+          )}
+
+          {/* Market (Brave + Yelp + Google) */}
+          {!isYP && !isDenue && (
             <div className="flex flex-col gap-1.5">
               <Label htmlFor="crawl-market">Market</Label>
               <Select
@@ -165,6 +245,24 @@ export function CrawlDrawer({
                 <option value="MX">Mexico (MX)</option>
                 <option value="US">United States (US)</option>
               </Select>
+            </div>
+          )}
+
+          {/* Location — Yelp / Google free-text (city, province, or country) */}
+          {(isYelp || isGoogle) && (
+            <div className="flex flex-col gap-1.5">
+              <Label htmlFor="crawl-location-text">Location</Label>
+              <Input
+                id="crawl-location-text"
+                placeholder='e.g. "Alberta, Canada", "Ciudad de México", "Toronto, ON"'
+                value={location}
+                onChange={(e) => setLocation(e.target.value)}
+              />
+              <p className="text-[11px] text-[var(--color-fg-500)]">
+                {isGoogle
+                  ? "Appended to your keyword query — be as specific or broad as you like."
+                  : "City, province, state, or country — Yelp geocodes this automatically."}
+              </p>
             </div>
           )}
 

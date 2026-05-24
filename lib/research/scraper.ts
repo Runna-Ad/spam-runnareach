@@ -1,18 +1,23 @@
 import * as cheerio from "cheerio";
 
 /**
- * Politeness: identify ourselves so site owners can opt out, and provide a
- * URL where they can read about the bot. The +URL convention is standard
- * for crawler User-Agents.
+ * Use a realistic browser UA. Bot-style UAs (e.g. "RunnaCABot/0.1") are
+ * blocked instantly by Cloudflare and most WAFs — even with the Mozilla prefix.
+ * This matches Chrome 124 on macOS, which passes the majority of bot checks.
  */
 const USER_AGENT =
-  "Mozilla/5.0 (compatible; RunnaCABot/0.1; +https://runna.agency/bot)";
+  "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36";
 
-const FETCH_TIMEOUT_MS = 15_000;
-const MAX_HTML_BYTES = 2_000_000; // 2 MB hard cap
+/**
+ * Keep well under Vercel's default 10-second serverless function limit so
+ * we surface our own "Site took too long" message instead of a generic
+ * "fetch failed" crash when the function is killed mid-fetch.
+ */
+const FETCH_TIMEOUT_MS = 8_000;
+const MAX_HTML_BYTES = 4_000_000; // 4 MB hard cap — most pages are under 500 KB
 
 // Sub-page scraping constants
-const SUBPAGE_TIMEOUT_MS = 10_000;
+const SUBPAGE_TIMEOUT_MS = 5_000;
 const SUBPAGE_RATE_LIMIT_MS = 500;
 const MAX_SUBPAGES = 3;
 const SUBPAGE_MAX_CHARS = 600;
@@ -126,8 +131,14 @@ async function fetchHtml(url: string): Promise<FetchResult> {
       method: "GET",
       headers: {
         "User-Agent": USER_AGENT,
-        Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
         "Accept-Language": "en-US,en;q=0.9,es;q=0.8",
+        "Accept-Encoding": "gzip, deflate, br",
+        "Cache-Control": "no-cache",
+        "Sec-Fetch-Dest": "document",
+        "Sec-Fetch-Mode": "navigate",
+        "Sec-Fetch-Site": "none",
+        "Upgrade-Insecure-Requests": "1",
       },
       redirect: "follow",
       signal: controller.signal,

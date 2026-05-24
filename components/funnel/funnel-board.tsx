@@ -276,21 +276,42 @@ function FunnelCardItem({
               </a>
             ) : null}
           </div>
-          {card.match_score !== null ? (
-            <span
-              className={cn(
-                "shrink-0 rounded-[var(--radius-sm)] px-1.5 py-0.5 font-mono text-[10px]",
-                card.match_score >= 70
-                  ? "bg-[color-mix(in_oklab,var(--color-success-500),transparent_85%)] text-[var(--color-success-300)]"
-                  : card.match_score >= 40
-                    ? "bg-[color-mix(in_oklab,var(--color-info-500),transparent_85%)] text-[var(--color-info-300)]"
-                    : "bg-[var(--color-bg-700)] text-[var(--color-fg-500)]",
+          <div className="flex shrink-0 items-center gap-1">
+            {!card.domain && card.status === "pitched" && (
+              <span
+                className="rounded-[var(--radius-sm)] px-1 py-0.5 text-[9px] font-medium bg-[color-mix(in_oklab,var(--color-info-500),transparent_80%)] text-[var(--color-info-300)]"
+                title="No website — pitched on building one"
+              >
+                🌐 No site
+              </span>
+            )}
+            {card.match_score !== null &&
+              card.match_score >= 40 &&
+              card.match_score < 70 &&
+              card.status !== "pitched" && (
+                <span
+                  className="rounded-[var(--radius-sm)] px-1 py-0.5 text-[9px] font-medium bg-[color-mix(in_oklab,var(--color-warning-500),transparent_80%)] text-[var(--color-warning-300)]"
+                  title={`Score ${card.match_score} — review and fill in missing info to unlock pitch`}
+                >
+                  ⚠ Review
+                </span>
               )}
-              title={`Match score ${card.match_score}/100`}
-            >
-              {card.match_score}
-            </span>
-          ) : null}
+            {card.match_score !== null ? (
+              <span
+                className={cn(
+                  "rounded-[var(--radius-sm)] px-1.5 py-0.5 font-mono text-[10px]",
+                  card.match_score >= 70
+                    ? "bg-[color-mix(in_oklab,var(--color-success-500),transparent_85%)] text-[var(--color-success-300)]"
+                    : card.match_score >= 40
+                      ? "bg-[color-mix(in_oklab,var(--color-info-500),transparent_85%)] text-[var(--color-info-300)]"
+                      : "bg-[var(--color-bg-700)] text-[var(--color-fg-500)]",
+                )}
+                title={`Match score ${card.match_score}/100`}
+              >
+                {card.match_score}
+              </span>
+            ) : null}
+          </div>
         </div>
         <div className="flex items-center gap-2 text-[10px] text-[var(--color-fg-700)]">
           {card.icp_name ? <span className="truncate">{card.icp_name}</span> : null}

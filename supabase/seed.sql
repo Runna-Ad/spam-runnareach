@@ -26,7 +26,8 @@ values
 insert into brand_instances (id, tenant_id, code, display_name, website_url, primary_market, languages)
 values
   ('22222222-2222-2222-2222-222222222221', '11111111-1111-1111-1111-111111111111', 'RUNNA_CA', 'Runna CA', 'https://runna.agency', 'CA', array['en']::language[]),
-  ('22222222-2222-2222-2222-222222222222', '11111111-1111-1111-1111-111111111111', 'RUNNA', 'Rünna', 'https://runna.mx', 'MX', array['es', 'en']::language[]);
+  ('22222222-2222-2222-2222-222222222222', '11111111-1111-1111-1111-111111111111', 'RUNNA', 'Rünna', 'https://runna.mx', 'MX', array['es', 'en']::language[]),
+  ('22222222-2222-2222-2222-222222222223', '11111111-1111-1111-1111-111111111111', 'RUNNA_OUTREACH', 'Runna Outreach', 'https://runna.agency', 'CA', array['en', 'es']::language[]);
 
 -- ----------------------------------------------------------------------------
 -- Services (5 Runna CA services)

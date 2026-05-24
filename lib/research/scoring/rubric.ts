@@ -12,6 +12,26 @@
  * "why 72?".
  */
 
+// ── Province / state abbreviation expansion ───────────────────────────────────
+// Google Places and YP both return two-letter codes (e.g. "AB"), but ICPs
+// store full province names (e.g. "Alberta"). Without this map, geo matching
+// fails for every Canadian prospect.
+const CANADIAN_PROVINCE_ABBREV: Record<string, string> = {
+  "ab": "Alberta",
+  "bc": "British Columbia",
+  "mb": "Manitoba",
+  "nb": "New Brunswick",
+  "nl": "Newfoundland and Labrador",
+  "nt": "Northwest Territories",
+  "ns": "Nova Scotia",
+  "nu": "Nunavut",
+  "on": "Ontario",
+  "pe": "Prince Edward Island",
+  "qc": "Quebec",
+  "sk": "Saskatchewan",
+  "yt": "Yukon",
+};
+
 export type RubricInputProspect = {
   industry: string | null;
   city: string | null;
@@ -78,10 +98,23 @@ export function scoreWithHeuristic(
   const reasoningParts: string[] = [];
 
   // ---- Industry fit (/20) -------------------------------------------------
+  // Token-based matching so "direct to consumer" matches "consumer goods",
+  // "furniture store" matches "furniture", etc. Pure substring matching fails
+  // when the ICP tag is an abbreviation ("dtc") or the prospect industry is
+  // a multi-word phrase ("direct to consumer").
   let industry_fit_pts = 0;
   if (prospect.industry && icp?.industry_tags?.length) {
     const lower = prospect.industry.toLowerCase();
-    const hit = icp.industry_tags.find((t) => lower.includes(t.toLowerCase()));
+    const tokens = lower.split(/[\s\-\/,]+/).filter((t) => t.length > 2);
+    const hit = icp.industry_tags.find((t) => {
+      const tLower = t.toLowerCase();
+      // Direct substring match (handles "consumer goods" ⊂ "consumer goods")
+      if (lower.includes(tLower)) return true;
+      // Token match: any individual word in the industry string matches the tag
+      // e.g. "furniture store" has token "furniture" which matches tag "furniture"
+      if (tokens.some((tok) => tLower.includes(tok) || tok.includes(tLower))) return true;
+      return false;
+    });
     if (hit) {
       industry_fit_pts = MAX_PTS.industry_fit_pts;
       reasoningParts.push(`Industry "${prospect.industry}" matches ICP tag "${hit}".`);
@@ -122,14 +155,27 @@ export function scoreWithHeuristic(
   }
 
   // ---- Geo fit (/15) ------------------------------------------------------
+  // Province abbreviations (AB, BC, ON…) are expanded to full names before
+  // matching so "AB" correctly matches ICP geo_region "Alberta".
   let geo_fit_pts = 0;
   if (icp?.geo_regions?.length) {
-    const candidates = [prospect.region, prospect.city, prospect.country_code]
+    const rawCandidates = [prospect.region, prospect.city, prospect.country_code]
       .filter(Boolean)
       .map((s) => (s as string).toLowerCase());
-    const hit = icp.geo_regions.find((r) =>
-      candidates.some((c) => c.includes(r.toLowerCase())),
-    );
+
+    // Expand two-letter abbreviations to full province names
+    const expandedCandidates = rawCandidates.flatMap((c) => {
+      const full = CANADIAN_PROVINCE_ABBREV[c];
+      return full ? [c, full.toLowerCase()] : [c];
+    });
+
+    const hit = icp.geo_regions.find((r) => {
+      const rLower = r.toLowerCase();
+      return expandedCandidates.some(
+        (c) => c.includes(rLower) || rLower.includes(c),
+      );
+    });
+
     if (hit) {
       geo_fit_pts = MAX_PTS.geo_fit_pts;
       reasoningParts.push(`Located in ICP region "${hit}".`);
@@ -177,12 +223,15 @@ export function scoreWithHeuristic(
     }
   }
 
-  // ---- Service match (/10) — placeholder ---------------------------------
-  // Stub: any pain with a canonical pain_id implies SOME service should match.
-  // Phase 2 replaces this with case_study_pains lookup + best_service inference.
+  // ---- Service match (/10) — graduated scoring ───────────────────────────
+  // Canonical pain_id = full 10 pts (maps to a Runna service definitively).
+  // Labelled pain + evidence = 6 pts (clear signal, just not yet taxonomised).
+  // Bare label only = 4 pts (weak signal — pain named but no proof).
   const service_match_pts = pains.some((p) => p.pain_id)
     ? MAX_PTS.service_match_pts
-    : Math.min(pains.length, 1) * 4;
+    : pains.some((p) => p.pain_label && p.evidence_quote)
+      ? Math.round(MAX_PTS.service_match_pts * 0.6) // 6 pts
+      : Math.min(pains.length, 1) * 4;              // 4 pts
 
   // ---- Contact discoverability (/10) -------------------------------------
   // Stub: scraper writes contact emails into research.notes (next slice
@@ -200,16 +249,20 @@ export function scoreWithHeuristic(
   }
 
   // ---- Excluded-keyword instant disqualifier ------------------------------
-  // ICPs can list keywords that should suppress a prospect. If any appear in
-  // industry / what_they_do, we slash the score in half (don't zero — the
-  // user can override). Phase 2 turns this into status='suppressed'.
+  // Uses word-boundary regex (\b) so excluded keyword "agency" does NOT match
+  // "No visible agency relationships" (a non-agency company), but DOES match
+  // "We are a web agency" (an actual agency). Multi-word phrases like
+  // "web agency" are also supported.
   let exclusionFactor = 1;
   if (icp?.excluded_keywords?.length) {
     const haystack = [prospect.industry, research?.what_they_do]
       .filter(Boolean)
       .join(" ")
       .toLowerCase();
-    const banned = icp.excluded_keywords.find((k) => haystack.includes(k.toLowerCase()));
+    const banned = icp.excluded_keywords.find((k) => {
+      const escaped = k.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      return new RegExp(`\\b${escaped}\\b`, "i").test(haystack);
+    });
     if (banned) {
       exclusionFactor = 0.5;
       reasoningParts.push(`Excluded keyword "${banned}" detected — score halved.`);

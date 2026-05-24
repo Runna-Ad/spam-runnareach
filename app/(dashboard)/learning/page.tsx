@@ -1,12 +1,19 @@
-import { PhasePlaceholder } from "@/components/dashboard/phase-placeholder";
+import { requireUser } from "@/lib/auth";
+import { listPromptsWithChampions, getPromptDetail } from "@/lib/prompts/queries";
+import { LearningClient } from "./learning-client";
 
-export default function LearningPage() {
+export default async function LearningPage() {
+  const user = await requireUser();
+  const prompts = await listPromptsWithChampions(user.tenantId);
+
+  // Pre-load detail for the first prompt in the list
+  const firstPromptId = prompts[0]?.id ?? null;
+  const initialDetail = firstPromptId ? await getPromptDetail(firstPromptId) : null;
+
   return (
-    <PhasePlaceholder
-      route="/learning"
-      phase={5}
-      title="Learning"
-      description="Sunday prompt-tweak proposals with diff, evidence, and impact estimate. Approve, A/B, or reject. Prompt version history with rollback."
+    <LearningClient
+      prompts={prompts}
+      initialDetail={initialDetail}
     />
   );
 }

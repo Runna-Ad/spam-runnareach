@@ -90,7 +90,7 @@ function validResponse(over: Record<string, unknown> = {}) {
   return JSON.stringify({
     subject: "Quick thought on mobile conversion at Calgary Coffee",
     preview_text: "No cart recovery flow, no retargeting — leaving ~25% revenue on the table.",
-    body: "Hi Sarah,\n\nSaw \"checkout breaks on iPhone\" — most DTC coffee brands hit this wall.\n\nWe helped DiDi (+47% mobile checkout completion). Same shape as what we're seeing on your end.\n\nI can send a 5-min Loom walking through exactly what I'd change — no call, no commitment.\n\nPedro\nPedro De Velasco\nRunna CA",
+    body: "Hi Sarah,\n\nSaw \"checkout breaks on iPhone\" — most DTC coffee brands hit this wall.\n\nWe helped DiDi (+47% mobile checkout completion). Same shape as what we're seeing on your end.\n\n👉 See Calgary Coffee's number: https://runna-hunter.vercel.app/\n\nPedro\nPedro De Velasco\nRunna CA",
     pain_id: PAIN_ID,
     case_study_id: CASE_ID,
     contact_email: "sarah@cc.example",

@@ -14,13 +14,25 @@ interface SendingListProps {
   inboxes: SenderInbox[];
   brands: BrandLite[];
   canManage: boolean;
+  gmailError?: string | null;
+  gmailConnected?: boolean;
 }
 
-export function SendingList({ inboxes, brands, canManage }: SendingListProps) {
+export function SendingList({ inboxes, brands, canManage, gmailError, gmailConnected }: SendingListProps) {
   const [drawer, setDrawer] = React.useState<SenderDrawerMode | null>(null);
 
   return (
     <div className="flex flex-col gap-4 p-4">
+      {gmailError && (
+        <div className="rounded-lg border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm text-red-300">
+          ⚠ Gmail connect failed: {gmailError}
+        </div>
+      )}
+      {gmailConnected && (
+        <div className="rounded-lg border border-emerald-500/30 bg-emerald-500/10 px-4 py-3 text-sm text-emerald-300">
+          ✓ Gmail connected successfully.
+        </div>
+      )}
       <div className="flex items-center justify-between">
         <div>
           <h2 className="text-sm font-semibold tracking-tight text-[var(--color-fg-50)]">

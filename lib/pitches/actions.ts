@@ -9,6 +9,7 @@ import { requireUser } from "@/lib/auth";
 import { createClient } from "@/lib/supabase/server";
 import type { Database } from "@/lib/supabase/types";
 import { composePitchWithClaude, detectViolations } from "./claude-composer";
+import { HUNTER_URL, renderIndustryTemplate } from "./industry-templates";
 import {
   composePitchHeuristic,
   type ComposedPitch,
@@ -273,7 +274,7 @@ export async function generatePitch(
       full_name: user.fullName,
       tenant_display_name: user.tenantDisplayName,
     },
-    deep_pitch_url: null, // Plumbing-ready: when runna-website API exists, set here.
+    deep_pitch_url: HUNTER_URL, // Inefficiency Hunter — the primary CTA for all pitches.
   };
 
   // ── PHASE 2: try Claude first, fall back to heuristic ─────────────────
@@ -316,22 +317,11 @@ export async function generatePitch(
   }
 
   if (!composed) {
-    composed = composePitchHeuristic(generatorInputs);
+    // Use industry-specific template fallback instead of the old generic heuristic.
+    // Templates are Pedro-authored, properly copywritten, and CTA to the Inefficiency Hunter.
+    // The old composePitchHeuristic is kept for reference but no longer used in production.
+    composed = renderIndustryTemplate(generatorInputs, claudeFallbackReason ?? "Claude unavailable");
     method = "heuristic";
-    // Apply the same violation penalty the Claude path uses — ensures
-    // quality_self_score is honest regardless of which composer ran.
-    if (composed) {
-      const violations = detectViolations(composed.body, generatorInputs.prospect.language);
-      if (violations > 0) {
-        composed = {
-          ...composed,
-          quality_self_score: Math.max(
-            0,
-            Math.round((composed.quality_self_score - violations * 0.15) * 100) / 100,
-          ),
-        };
-      }
-    }
   }
 
   if (!composed) {

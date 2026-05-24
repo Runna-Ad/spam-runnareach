@@ -13,6 +13,9 @@ import {
 } from "@/lib/prospects/detail-queries";
 
 export const dynamic = "force-dynamic";
+// Pitch generation makes 3 sequential Claude calls — needs more than Vercel's
+// default 10s. 60s gives each stage (Haiku×2 + Sonnet×1) comfortable headroom.
+export const maxDuration = 60;
 
 export default async function ProspectDetailPage({
   params,

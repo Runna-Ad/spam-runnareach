@@ -33,6 +33,7 @@ export type SuggestInput = {
     geo_regions: string[];
     google_places_types: string[];
     search_keywords: string[];
+    excluded_keywords: string[];
   };
 };
 
@@ -42,6 +43,12 @@ export type SuggestOutput = {
   geo_regions: string[];
   google_places_types: string[];
   search_keywords: string[];
+  excluded_keywords: string[];
+  /** Numeric ranges as strings so they slot directly into FormState inputs. Null = no suggestion. */
+  employee_size_min: string | null;
+  employee_size_max: string | null;
+  revenue_min_usd: string | null;
+  revenue_max_usd: string | null;
   reasoning: string;
 };
 
@@ -188,6 +195,11 @@ export function suggestIcpFields(input: SuggestInput): SuggestOutput {
     geo_regions,
     google_places_types,
     search_keywords,
+    excluded_keywords: [],
+    employee_size_min: null,
+    employee_size_max: null,
+    revenue_min_usd: null,
+    revenue_max_usd: null,
     reasoning:
       reasoning.length > 0
         ? `Suggested via heuristic. ${reasoning.join(". ")}.`

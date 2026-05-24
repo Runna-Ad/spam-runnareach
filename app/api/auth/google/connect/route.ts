@@ -25,6 +25,14 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
     return NextResponse.json({ error: "Not authorised." }, { status: 403 });
   }
 
+  const clientId = process.env.GOOGLE_CLIENT_ID;
+  if (!clientId) {
+    return NextResponse.json({ error: "GOOGLE_CLIENT_ID not configured." }, { status: 500 });
+  }
+
+  const origin = req.nextUrl.origin;
+  const redirectUri = `${origin}/api/auth/google/callback`;
+
   const inboxId = req.nextUrl.searchParams.get("inbox_id");
   if (!inboxId) {
     return NextResponse.json({ error: "inbox_id required." }, { status: 400 });
@@ -42,17 +50,6 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
   if (!inbox) {
     return NextResponse.json({ error: "Inbox not found." }, { status: 404 });
   }
-
-  const clientId = process.env.GOOGLE_CLIENT_ID;
-  const appUrl = process.env.NEXT_PUBLIC_APP_URL;
-  if (!clientId || !appUrl) {
-    return NextResponse.json(
-      { error: "GOOGLE_CLIENT_ID or NEXT_PUBLIC_APP_URL not configured." },
-      { status: 500 },
-    );
-  }
-
-  const redirectUri = `${appUrl}/api/auth/google/callback`;
 
   const params = new URLSearchParams({
     client_id: clientId,

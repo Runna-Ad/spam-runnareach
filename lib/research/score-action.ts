@@ -12,6 +12,7 @@ import {
   type RubricInputResearch,
   type RubricResult,
 } from "./scoring/rubric";
+import { scoreWithClaude } from "./scoring/claude-scorer";
 
 const inputSchema = z.object({
   prospect_id: z.string().uuid(),
@@ -142,14 +143,22 @@ export async function scoreProspect(
       }
     : null;
 
-  // ── PHASE 2 SWAP POINT ──────────────────────────────────────────────────
-  // When ANTHROPIC_API_KEY is funded, this is the line that changes:
-  //   const result = process.env.ANTHROPIC_API_KEY
-  //     ? await scoreWithClaude(rubricProspect, rubricResearch, rubricIcp)
-  //     : scoreWithHeuristic(rubricProspect, rubricResearch, rubricIcp);
-  // For now we always use the heuristic.
-  const result = scoreWithHeuristic(rubricProspect, rubricResearch, rubricIcp);
-  const method: "heuristic" | "claude" = "heuristic";
+  // ── Scorer dispatch ──────────────────────────────────────────────────────
+  // Use Claude when API key is present; fall back to heuristic otherwise.
+  // scoreWithClaude already falls back internally on any API error.
+  let result: RubricResult;
+  let cost_usd = 0;
+  let method: "heuristic" | "claude";
+
+  if (process.env.ANTHROPIC_API_KEY) {
+    const claudeResult = await scoreWithClaude(rubricProspect, rubricResearch, rubricIcp);
+    result = claudeResult;
+    cost_usd = claudeResult.cost_usd;
+    method = claudeResult.model === "heuristic_fallback" ? "heuristic" : "claude";
+  } else {
+    result = scoreWithHeuristic(rubricProspect, rubricResearch, rubricIcp);
+    method = "heuristic";
+  }
 
   // Mark prior active scores as superseded so the partial index stays clean.
   const nowIso = new Date().toISOString();
@@ -175,7 +184,7 @@ export async function scoreProspect(
     red_flag_penalty: result.breakdown.red_flag_penalty,
     confidence: result.confidence,
     reasoning: result.reasoning,
-    cost_usd: 0, // heuristic is free
+    cost_usd, // $0 for heuristic, actual spend for Claude calls
     generated_at: nowIso,
   });
 

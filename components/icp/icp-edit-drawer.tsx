@@ -28,7 +28,7 @@ import {
 } from "@/lib/icp/option-sources";
 import type { Icp, IcpLanguage, IcpMarket } from "@/lib/icp/queries";
 import type { IcpSuggestionLists } from "@/lib/icp/suggestions";
-import { suggestIcpFields } from "@/lib/icp/suggest-fields";
+import { suggestIcpFieldsAction } from "@/lib/icp/suggest-action";
 import { cn } from "@/lib/utils";
 
 export type IcpDrawerMode =
@@ -40,6 +40,8 @@ interface IcpEditDrawerProps {
   tenantSuggestions: IcpSuggestionLists;
   open: boolean;
   onOpenChange: (open: boolean) => void;
+  /** True when GOOGLE_PLACES_API_KEY is configured server-side. */
+  placesKeyConfigured: boolean;
 }
 
 type FormState = {
@@ -152,6 +154,7 @@ export function IcpEditDrawer({
   tenantSuggestions,
   open,
   onOpenChange,
+  placesKeyConfigured,
 }: IcpEditDrawerProps) {
   const [state, setState] = React.useState<FormState>(BLANK);
   const [error, setError] = React.useState<string | null>(null);
@@ -207,11 +210,11 @@ export function IcpEditDrawer({
     });
   };
 
-  const handleSuggest = () => {
+  const handleSuggest = async () => {
     setSuggestNote(null);
     setSuggesting(true);
     try {
-      const out = suggestIcpFields({
+      const out = await suggestIcpFieldsAction({
         name: state.name,
         market: state.market,
         language: state.language,
@@ -221,6 +224,7 @@ export function IcpEditDrawer({
           geo_regions: state.geo_regions,
           google_places_types: state.google_places_types,
           search_keywords: state.search_keywords,
+          excluded_keywords: state.excluded_keywords,
         },
       });
       setState((s) => ({
@@ -230,8 +234,16 @@ export function IcpEditDrawer({
         geo_regions: dedupe([...s.geo_regions, ...out.geo_regions]),
         google_places_types: dedupe([...s.google_places_types, ...out.google_places_types]),
         search_keywords: dedupe([...s.search_keywords, ...out.search_keywords]),
+        excluded_keywords: dedupe([...s.excluded_keywords, ...out.excluded_keywords]),
+        // Only overwrite size/revenue fields if they're currently blank
+        employee_size_min: s.employee_size_min || (out.employee_size_min ?? ""),
+        employee_size_max: s.employee_size_max || (out.employee_size_max ?? ""),
+        revenue_min_usd: s.revenue_min_usd || (out.revenue_min_usd ?? ""),
+        revenue_max_usd: s.revenue_max_usd || (out.revenue_max_usd ?? ""),
       }));
       setSuggestNote(out.reasoning);
+    } catch {
+      setSuggestNote("AI suggestion failed — please try again.");
     } finally {
       setSuggesting(false);
     }
@@ -250,7 +262,6 @@ export function IcpEditDrawer({
     });
   };
 
-  const placesKeyConfigured = false; // TODO: flip when Google Places API key lands
   const preview = isEdit ? mode.icp.reachable_pool_count : null;
 
   return (
@@ -284,7 +295,7 @@ export function IcpEditDrawer({
               Suggest from name
             </Button>
             <span className="text-[10px] text-[var(--color-fg-700)]">
-              Heuristic today · Claude when credits land
+              Powered by Claude · fills all fields
             </span>
           </div>
           {suggestNote ? (

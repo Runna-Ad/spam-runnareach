@@ -3,6 +3,7 @@
 import {
   CheckCircle2,
   Lock,
+  Play,
   Plus,
   Upload,
   XCircle,
@@ -23,6 +24,7 @@ import type { DiscoveryRun } from "@/lib/discover/runs-queries";
 import { cn, relativeTime } from "@/lib/utils";
 import { CsvUploadDrawer } from "./csv-upload-drawer";
 import { CrawlDrawer } from "./crawl-drawer";
+import { RunAllModal } from "./run-all-modal";
 
 interface DiscoverPageProps {
   runs: DiscoveryRun[];
@@ -47,6 +49,7 @@ export function DiscoverPage({
 }: DiscoverPageProps) {
   const [uploadOpen, setUploadOpen] = React.useState(false);
   const [crawlSource, setCrawlSource] = React.useState<CrawlableSource | null>(null);
+  const [runAllOpen, setRunAllOpen] = React.useState(false);
 
   return (
     <div className="flex h-full flex-col">
@@ -57,11 +60,21 @@ export function DiscoverPage({
           {icps.length === 1 ? "" : "s"}
         </span>
         {canManage ? (
-          <div className="ml-auto">
+          <div className="ml-auto flex items-center gap-2">
+            {availableCrawlSources.length > 0 && icps.length > 0 && (
+              <Button
+                type="button"
+                size="sm"
+                variant="primary"
+                onClick={() => setRunAllOpen(true)}
+              >
+                <Play className="h-3.5 w-3.5" aria-hidden /> Run All Sources
+              </Button>
+            )}
             <Button
               type="button"
               size="sm"
-              variant="primary"
+              variant="secondary"
               onClick={() => setUploadOpen(true)}
             >
               <Upload className="h-3.5 w-3.5" aria-hidden /> Upload CSV
@@ -81,6 +94,12 @@ export function DiscoverPage({
       </div>
 
       <CsvUploadDrawer open={uploadOpen} onOpenChange={setUploadOpen} icps={icps} />
+
+      <RunAllModal
+        open={runAllOpen}
+        onOpenChange={setRunAllOpen}
+        icps={icps}
+      />
 
       {crawlSource && (
         <CrawlDrawer

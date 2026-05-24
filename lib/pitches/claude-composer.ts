@@ -173,8 +173,11 @@ export async function composePitchWithClaude(
     };
   }
 
-  // Violation detector — drop score per forbidden term found
-  const violations = detectViolations(call.data.body, lang);
+  // Violation detector — drop score per forbidden term found in body or subject.
+  // Subject violations get the same penalty — an em-dash subject is still a violation.
+  const violations =
+    detectViolations(call.data.body, lang) +
+    detectViolations(call.data.subject, lang);
   const adjustedScore = Math.max(
     0,
     Math.round((call.data.quality_self_score - violations * 0.15) * 100) / 100,
@@ -348,7 +351,7 @@ REQUIRED EMAIL STRUCTURE — solution-first, ALWAYS:
 4. Case study bridge — ONLY if case_study_id is chosen. It's PROOF, not the pitch:
    ONE sentence after the solution: "Did this for {client} — {metric}. Same profile."
    If no case study fits well: SKIP entirely. The solution IS the credibility.
-5. Soft CTA (see voice rules — Loom/video offer)
+5. CTA — Inefficiency Hunter link (see voice rules)
 6. Sign off: sender's first name, then full signature
 
 Quality bar: a prospect should read line 3 and think "that's exactly my problem and that's
@@ -363,32 +366,69 @@ Case-study selection rules — be honest, don't force a connection:
 3. If no chosen_case clearly addresses the prospect's pain, set case_study_id=null.
 4. pain_id and case_study_id MUST come from the candidates in the payload. No invented UUIDs.
 
-SUBJECT LINE — high open rates come from specificity and curiosity, not cleverness:
+SUBJECT LINE — there are exactly 5 engines that get cold emails opened. Use one:
 
-Rules (apply every time, no exceptions):
-- ≤50 chars — gets cut off on mobile beyond that. Shorter is almost always better.
-- Lower case wins for cold outreach — "quick thought on their checkout" feels personal,
-  "Quick Thought On Their Checkout" feels like a newsletter.
-- Lead with what you KNOW, not what you're offering:
-  ✓ "Checked troquer.com — noticed something" (they open to find out what)
-  ✓ "El Club's cart abandonment" (specific, implies knowledge)
-  ✗ "A quick question for you" (lazy opener, mass-email feel)
-  ✗ "Opportunity for Calgary Coffee Roasters" (salesy, low-trust)
-- If you have evidence_quote: use "Checked [domain] — [short observation]" or
-  "Revisé [domain] — [observación breve]"
-- If no evidence: use the PAIN as the subject, not your solution:
-  "[Company]'s [pain in plain English]" or "[Company].com — [one thing]"
-- Avoid: "Free", "Guaranteed", "Re:", "FW:", exclamation marks, ALL CAPS words,
-  "Quick question", "Following up", "Just checking in", "Opportunity"
+ABSOLUTE RULES (no exceptions):
+- ≤50 chars. ALL lower case. ZERO em dashes (—). Use comma or colon instead.
+- NEVER "[company] + pain label" — "studio f: carritos abandonados" reads like a spam report.
+  The prospect shouldn't know what the email is about until they open it.
+
+THE 5 ENGINES — pick the one that best fits the evidence you have:
+
+1. NAMED + NUMBERED (default — highest reply rate)
+   Formula: [company] + a number, timeframe, or dollar-implied loss
+   EN: "[company]'s marketing math doesn't add up"
+   EN: "30 seconds: what [company] loses monthly"
+   EN: "[company]: 3 things I'd fix this week"
+   ES: "[empresa] reparte presupuesto a ciegas"
+   ES: "30 segundos: lo que pierde [empresa] al mes"
+   ES: "3 fugas de marketing en [empresa]"
+
+2. LEAK STATEMENT (state their loss as fact, no question mark)
+   Formula: name the exact place where money/leads/time disappears
+   EN: "[company]'s leads are dying in the follow-up"
+   EN: "what [company]'s ad budget is quietly losing"
+   EN: "Calgary Coffee's checkout is losing mobile sales"
+   ES: "[empresa] gasta en ads que no venden"
+   ES: "lo que le cuesta a [empresa] no tener seguimiento"
+   ES: "los carritos de [empresa] se van sin comprar"
+   A statement already implies you know — they open to find out how much.
+
+3. NICHE MIRROR (name their exact segment + geography)
+   Formula: [city/region] + [their niche] + [pain implied]
+   EN: "Calgary brokerages: your lead leak, in dollars"
+   EN: "Banff brewers are quietly losing taproom traffic"
+   ES: "lo que tu competencia en CDMX ya sabe"
+   ES: "marcas D2C en México están quemando presupuesto"
+   Reads like industry intel, not a pitch. Strong in MX markets.
+
+4. THE REFRAME (take something they think is fine and call it a cost)
+   Formula: "how much is [X] costing you?" — reframes a tool or process as a leak
+   EN: "how much is [company]'s CRM costing you?"
+   EN: "[company] — money stuck between floor and digital"
+   ES: "¿cuánto le cuesta a [empresa] el marketing improvisado?"
+   ES: "el número que [empresa] no ha calculado"
+
+5. PEER PRESSURE (use sparingly — weakest engine, gimmicky if overused)
+   EN: "what [company]'s competitors already know"
+   ES: "lo que tu competencia en CDMX ya sabe"
+   Only use this when you have no specific evidence and other engines won't fit.
+
+PICK ENGINE BASED ON EVIDENCE:
+- Have evidence_quote with specific numbers → Engine 2 (Leak Statement) using those specifics
+- Have company name + industry + city → Engine 3 (Niche Mirror)
+- Have company name + clear pain → Engine 1 (Named + Numbered)
+- Have no specific evidence → Engine 4 (Reframe) or Engine 1 generic
 
 PREVIEW TEXT — the 1–2 lines shown under the subject in Gmail/Outlook:
-- ≤150 chars. This is the second thing read after the subject.
-- Do NOT repeat the subject. Extend it.
-- Should answer "why should I open this?" with a micro-tease.
-- If subject is a curiosity gap ("Checked [domain] — noticed something"):
-  preview text = the observation itself ("No cart recovery flow, no retargeting pixel — leaving ~25% revenue on the table.")
-- If subject names the pain:
-  preview text = the specific fix or benchmark ("3-email Klaviyo sequence + Meta dynamic retargeting — DTC brands recover 15–25% of abandoned carts with this.")
+- ≤150 chars. Second thing read. Must answer "why should I open this?"
+- NEVER repeat the subject. Subject = curiosity; preview = the hook that justifies opening.
+- Subject is curiosity gap → preview names the specific observation
+  ("no cart recovery running, that's daily revenue walking out" /
+   "sin flujo de recuperación activo, eso son ventas que se van cada día")
+- Subject names the pain → preview names the fix + benchmark
+  ("3-email Klaviyo sequence, DTC brands recover 15-25% of those carts" /
+   "secuencia de 3 correos, las marcas D2C recuperan 15-25% de esos carritos")
 - Never use: "I'd love to connect", "Let me know if you're interested", "Hope this finds you well"
 
 Output the final pitch as a JSON object with EXACTLY these fields:
@@ -424,8 +464,12 @@ ${register}
 - Plain text only. No markdown, no links other than what we provide.
 - FORBIDDEN words: "abandonment", "funnel", "lead", "Meta Pixel", "WooCommerce",
   "Shopify", "retention automation", "default setup", any English anglicism.
-- CTA (exact): "te mando un video de 5 min mostrándote exactamente qué cambiar — sin compromiso, sin llamada."
-  (or usted-form for enterprise: "le mando un video de 5 min mostrándole exactamente qué cambiar — sin compromiso, sin llamada.")
+- CTA: link to the Inefficiency Hunter — 30-second diagnostic, zero friction, no email required.
+  Use the hunter_url from the payload. Format:
+  "👉 Tu número aquí: {hunter_url}"
+  or "👉 Ve el número de {company}: {hunter_url}"
+  or "👉 {hunter_url}" (if the sentence before already names the tool)
+  Always place the 👉 emoji before the link. No video offer, no call ask, no commitment language.
 - Sign off: sender's first name + agency name.`;
 }
 
@@ -438,7 +482,12 @@ Voice rules (Canadian market):
 - FORBIDDEN openings: "I hope this finds you well", "Quick question", "Just reaching out".
 - Use direct phrasing: "You're losing sales" not "There are conversion optimization opportunities".
 - Salutation: "Hi {first_name},"
-- CTA (exact): "I can send a 5-min Loom walking through exactly what I'd change — no call, no commitment."
+- CTA: link to the Inefficiency Hunter — 30-second diagnostic, zero friction, no email required.
+  Use the hunter_url from the payload. Format:
+  "👉 See {company}'s number: {hunter_url}"
+  or "👉 Your number is here: {hunter_url}"
+  or "👉 {hunter_url}" (if the sentence before already names the tool)
+  Always place the 👉 emoji before the link. No Loom, no video offer, no call ask.
 - If the selected case study is a Canadian client (SnapPad, Niki, or DevFest Calgary),
   open the bridge with "We worked with {client}, a Canadian {category}..." — local proof lands harder.
 - Sign off: sender's first name + agency name.`;
@@ -544,7 +593,7 @@ function buildStage2UserPrompt(
       relationship_description: nc.relationship_description,
       key_result: nc.key_result,
     })),
-    deep_pitch_url: input.deep_pitch_url ?? null,
+    hunter_url: input.deep_pitch_url ?? null,
   };
 
   return `Compose the cold-email pitch from this payload:
@@ -579,9 +628,9 @@ PERSONALIZATION INSTRUCTIONS — use these fields when present:
 - contacts[].role_title → if a contact has a role_title (e.g. "CEO", "Dueña", "Founder", "Marketing Manager"), use it in the salutation or opening: "Como dueño de {company}..." / "As the founder of {company}..." — only when it fits naturally.
 - prospect.market → adapt agency positioning: if market="CA", lean on Canadian portfolio and "Canadian-first" framing; if market="MX", lean on MX portfolio and regional understanding.
 
-If deep_pitch_url is provided, append one line before sign-off:
-  EN: "More context if useful: {deep_pitch_url}"
-  ES: "Más contexto si te sirve: {deep_pitch_url}"
+hunter_url is the Inefficiency Hunter link — use it as the primary CTA (per voice rules above).
+One line with 👉 emoji, placed after the case-study bridge (or solution if no case), before sign-off.
+Do NOT add any other links or video offers.
 
 Set contact_email to the non-role-based named contact's email; otherwise best fallback; null if none.
 Set measurable_result_included=true only if the chosen case's hero_metric is a real number/%.`;

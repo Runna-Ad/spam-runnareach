@@ -3,6 +3,9 @@ import { requireUser } from "@/lib/auth";
 import { listIcps } from "@/lib/icp/queries";
 import { listDiscoveryRuns } from "@/lib/discover/runs-queries";
 import { braveIsAvailable } from "@/lib/discover/sources/brave-search";
+import { denueIsAvailable } from "@/lib/discover/sources/denue";
+import { yelpIsAvailable } from "@/lib/discover/sources/yelp";
+import { googlePlacesIsAvailable } from "@/lib/discover/sources/google-places";
 import type { CrawlableSource } from "@/lib/discover/source-meta";
 
 export const dynamic = "force-dynamic";
@@ -19,6 +22,9 @@ export default async function DiscoverRoute() {
   const availableCrawlSources: CrawlableSource[] = [
     "yellowpages_ca", // always available — no key needed
     ...(braveIsAvailable() ? (["brave_search"] as CrawlableSource[]) : []),
+    ...(denueIsAvailable() ? (["denue"] as CrawlableSource[]) : []),
+    ...(yelpIsAvailable() ? (["yelp"] as CrawlableSource[]) : []),
+    ...(googlePlacesIsAvailable() ? (["google_places"] as CrawlableSource[]) : []),
   ];
 
   return (

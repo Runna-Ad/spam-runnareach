@@ -4,6 +4,18 @@ Running log of mistakes, root causes, and rules to prevent recurrence. Newest at
 
 ---
 
+[2026-05-23] LESSON: `import type` from a server-only module still bleeds into the client bundle in Next.js/Turbopack.
+ROOT CAUSE: Even `export type { X } from "./server-module"` in a re-exporting file causes Turbopack to trace the dependency graph through the server module, pulling in `next/headers` into the client bundle.
+RULE: Always split server-only types into a separate `types.ts` file with zero server imports. Client components import from `types.ts`; queries/actions import from `types.ts` too. Never re-export types from a file that also imports server-only modules.
+TAGS: #bug #architecture #nextjs #server-client-boundary
+
+[2026-05-23] LESSON: Inserting new table types into types.ts outside the `Tables` object causes `Property 'x' does not exist` errors.
+ROOT CAUSE: Miscounted closing braces — the `Tables: {` block was closed one `};` early, so new table definitions were at the top-level `public` object instead of inside `Tables`.
+RULE: When extending types.ts, always grep for `Tables:\|Views:\|icps:` to confirm nesting before adding. New tables go BEFORE the `Views` line.
+TAGS: #bug #typescript
+
+---
+
 ## [2026-04-25] LESSON: TypeScript status arrays drifted from the prospect_status enum
 
 **What went wrong:** Six files (`STATUS_OPTIONS` arrays in detail-actions schema, prospect-detail, companies-page; `ColStatus` union + `COLUMNS` config + grouped `Record` keys in funnel-board; pipeline strip in dashboard) all referenced `"meeting_booked"`. The `prospect_status` enum in `0001_initial_schema.sql` actually has `"booked"` — `meeting_booked` is the value of a *different* enum (`opportunity_stage`). Anyone trying to mark a prospect as that stage would hit `invalid input value for enum prospect_status: meeting_booked` at runtime. Caught only when seeding screenshot fixtures.
@@ -197,3 +209,35 @@ If none of those exist, the case study gets a deliverable-scoped entry (e.g. "Ca
 **When to apply:** Every session that starts with a handoff block, prior-agent summary, or "picking up from" context. Treat those as claims to verify, not facts to trust.
 
 **TAGS:** #override #handoff #verification #trust-but-verify #session-start
+
+---
+
+[2026-05-23] SESSION WRAP — key decisions + state for next session:
+
+SHIPPED THIS SESSION:
+- Connection error root cause was trailing \n in Vercel API key → fixed with .trim()
+- No-keepalive agent (https.Agent keepAlive:false) prevents stale TCP on Vercel warm starts
+- Collapsed 3-stage to 2-stage Claude pipeline (Stage 1 deterministic + Stage 2 Sonnet)
+- Pedro's 5 subject line engines wired into system prompt (Named+Numbered, Leak, Niche Mirror, Reframe, Peer Pressure)
+- 8 industry fallback templates (Pedro-authored) replacing heuristic slop
+- 3 hospitality sub-type templates: hotel, beach_club, villa_rental (from Templates_Cancun_LosCabos_Hospitality.docx)
+- Hospitality calculator is LIVE at https://runna-hunter.vercel.app/ (same URL, hospitality mode built)
+- All pitches now CTA to Hunter URL (hunter_url in payload) — Loom offer removed everywhere
+- ICP "Suggest from name" wired to Claude Haiku (getClient() + full field coverage including excluded_keywords + size/revenue ranges)
+- placesKeyConfigured passed from server → grid → drawer (no longer hardcoded false)
+- 6 strategic ICPs created in DB: Alberta, Western CA, Eastern CA, CDMX, Norte MX, Sur MX/Destinos
+- GOOGLE_PLACES_API_KEY confirmed set in Vercel — Places preview now active in /icp
+
+RULE: ALL cold email CTAs → https://runna-hunter.vercel.app/ — no Loom, no call ask, no video offer. Hunter self-qualifies the prospect. This is permanent.
+
+RULE: Hospitality prospects (hotel, resort, villa, beach club) get English templates by default — they market to North American travellers, English is the right language regardless of MX market setting.
+
+OPEN ITEMS FOR NEXT SESSION:
+- New sender inbox setup (Gmail OAuth + runnareach.com SPF/DKIM/DMARC warm-up)
+- Clean DELETE of all test prospect rows in /companies
+- Full UX/UI audit (screen by screen)
+- Code reaper (dead imports, stubs, as never casts)
+- Design God Mode + Huashu Designs (Pedro to clarify "Huashu")
+- Learning section (Pedro to define scope)
+- Analytics dashboard
+

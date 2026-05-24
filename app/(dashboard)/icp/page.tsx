@@ -12,9 +12,11 @@ export default async function IcpPage() {
     getIcpSuggestionLists(user.tenantId),
   ]);
 
+  const placesKeyConfigured = !!process.env.GOOGLE_PLACES_API_KEY;
+
   return (
     <div className="flex h-full flex-col">
-      <IcpGrid icps={icps} tenantSuggestions={tenantSuggestions} />
+      <IcpGrid icps={icps} tenantSuggestions={tenantSuggestions} placesKeyConfigured={placesKeyConfigured} />
     </div>
   );
 }

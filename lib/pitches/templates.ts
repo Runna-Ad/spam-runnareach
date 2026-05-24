@@ -79,14 +79,14 @@ function lowercaseFirst(s: string): string {
 
 const EN: PitchTemplate = {
   subject: ({ company_name, pain_label, evidence_quote }) => {
-    if (evidence_quote) return `checked ${company_name} — noticed something`;
+    if (evidence_quote) return `checked ${company_name}: noticed something`;
     const pl = pain_label.toLowerCase();
     if (pl.includes("cart") || pl.includes("abandon"))
       return `${company_name}'s cart abandonment`;
     if (pl.includes("email") || pl.includes("retention"))
       return `quick thought on ${company_name}'s email`;
     if (pl.includes("paid") || pl.includes("roas") || pl.includes("ads"))
-      return `${company_name}'s paid media — one gap`;
+      return `${company_name}'s paid media: one gap`;
     if (pl.includes("mobile") || pl.includes("conversion"))
       return `${company_name}'s mobile checkout`;
     if (pl.includes("social") || pl.includes("content") || pl.includes("engagement"))
@@ -170,7 +170,7 @@ ${v.sender_signature}`;
 
 const ES: PitchTemplate = {
   subject: ({ company_name, pain_label, evidence_quote }) => {
-    if (evidence_quote) return `revisé ${company_name} — encontré algo`;
+    if (evidence_quote) return `revisé ${company_name}: encontré algo`;
     const pl = pain_label.toLowerCase();
     if (pl.includes("carrito") || pl.includes("abandon"))
       return `el carrito de ${company_name}`;

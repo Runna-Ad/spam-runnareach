@@ -239,7 +239,7 @@ export function composePitchHeuristic(input: GeneratorInputs): ComposedPitch | n
   const solutionHint = getSolutionHint(chosenPain?.pain_label ?? null, lang);
   const vars: TemplateVars = {
     first_name: firstName,
-    company_name: input.prospect.company_name,
+    company_name: cleanCompanyName(input.prospect.company_name),
     industry: input.prospect.industry ?? "DTC",
     evidence_quote: evidenceQuote,
     pain_label: chosenPain?.pain_label ?? (lang === "es" ? "esto" : "this"),
@@ -305,6 +305,32 @@ function industryMatch(a: string | null, b: string | null): boolean {
   if (al === bl) return true;
   // Substring either way (handles "DTC coffee" vs "coffee" vs "DTC apparel" vs "DTC").
   return al.includes(bl) || bl.includes(al);
+}
+
+/**
+ * Strip SEO junk from company names before use in pitches.
+ *
+ * Many prospects are imported with names like:
+ *   "Tienda de ropa de mujer | Tienda Online |Studio F México"
+ *   "Buy Shoes Online - Best Prices - NikeStore"
+ *
+ * Heuristic: if the name contains " | ", take the LAST non-empty segment
+ * (the brand is usually at the end). If it contains " - " and is long,
+ * same logic. Falls back to the original if the result would be empty.
+ */
+function cleanCompanyName(name: string): string {
+  if (!name) return name;
+  // Pipe separator — very common in page titles: "Category | Subcategory | Brand"
+  if (name.includes("|")) {
+    const parts = name.split("|").map((s) => s.trim()).filter(Boolean);
+    if (parts.length > 1) return parts[parts.length - 1] ?? name;
+  }
+  // Dash separator — "Brand - Slogan - Site name"
+  if (name.includes(" - ") && name.length > 40) {
+    const parts = name.split(" - ").map((s) => s.trim()).filter(Boolean);
+    if (parts.length > 1) return parts[0] ?? name; // brand is usually first with dash
+  }
+  return name;
 }
 
 function extractFirstName(fullName: string | null | undefined): string | null {

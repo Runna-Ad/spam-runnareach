@@ -13,6 +13,7 @@ import {
   Send,
   Settings,
   ShieldCheck,
+  Star,
   Target,
   Trophy,
 } from "lucide-react";
@@ -54,6 +55,7 @@ export const NAV_SECTIONS: readonly NavSection[] = [
     label: "Library",
     items: [
       { label: "Case Studies", href: "/case-studies", icon: ScrollText, phase: 0 },
+      { label: "Notable Clients", href: "/notable-clients", icon: Star, phase: 0 },
       { label: "ICP", href: "/icp", icon: Target, phase: 0 },
     ],
   },

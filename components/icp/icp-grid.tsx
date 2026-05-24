@@ -12,9 +12,10 @@ import { IcpEditDrawer, type IcpDrawerMode } from "./icp-edit-drawer";
 interface IcpGridProps {
   icps: Icp[];
   tenantSuggestions: IcpSuggestionLists;
+  placesKeyConfigured: boolean;
 }
 
-export function IcpGrid({ icps, tenantSuggestions }: IcpGridProps) {
+export function IcpGrid({ icps, tenantSuggestions, placesKeyConfigured }: IcpGridProps) {
   const [showInactive, setShowInactive] = React.useState(false);
   const [drawerMode, setDrawerMode] = React.useState<IcpDrawerMode | null>(null);
 
@@ -99,6 +100,7 @@ export function IcpGrid({ icps, tenantSuggestions }: IcpGridProps) {
         onOpenChange={(open) => {
           if (!open) setDrawerMode(null);
         }}
+        placesKeyConfigured={placesKeyConfigured}
       />
     </>
   );

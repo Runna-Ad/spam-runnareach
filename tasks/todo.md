@@ -671,3 +671,50 @@ _TBD_
 
 ### Tech debt introduced
 _TBD_
+
+---
+
+## 🔴 Next session checklist — updated priority order (2026-05-23)
+
+> ❌ NEVER auto-insert contacts from scraping — prospects are being reset, this plan is cancelled.
+> ❌ Notable clients tier filter (plan file) — parked until after reset + audit.
+
+### OPERATIONAL (do first)
+
+### 1. 📧 Email sender inbox
+- Connect Gmail OAuth in /settings/sending (GOOGLE_CLIENT_ID + GOOGLE_CLIENT_SECRET already in Vercel)
+- Configure runnareach.com SPF, DKIM, DMARC records
+- Warm-up period before ANY live sends (cold domain = spam folder — critical)
+- Wire the inbox to the pitch send queue
+
+### 2. 🗑️ Company reset
+- Clean DELETE of ALL test prospect rows — they were all test data
+- Keep discovery_runs history if any (optional)
+- ⚠️ CONFIRM WITH PEDRO BEFORE RUNNING — do not delete without explicit "yes"
+
+### PRODUCT
+
+### 3. 🔍 UX/UI audit
+- Screen-by-screen punch list before touching anything
+- Flag: inconsistent spacing, stale labels, disabled states that should be live, mobile breakpoints
+- Cross-reference with live build at spam-runnareach.vercel.app
+- Output a ranked list — don't fix anything during the audit pass
+
+### 4. ✂️ Code reaper
+- Dead imports, commented-out blocks, stubs with no callers, stale `as never` casts
+- `npx tsc --noEmit` baseline is 64 errors — reduce where possible
+- Remove `as never` where generated types now cover them
+
+### 5. 🎨 Design God Mode + Huashu
+- Ask Pedro to clarify "Huashu" before starting (specific design system? reference brand? visual direction?)
+- Full visual pass: typography hierarchy, color token consistency, spacing, hover/focus states
+- Target: Nike meets Vercel — dark, sharp, zero clutter
+
+### 6. 📚 Learning section
+- Ask Pedro to define scope before building: internal training? prospect-facing? agent docs?
+- Build /learning route once scope confirmed
+
+### 7. 📊 Analytics
+- Pitch funnel metrics, cost tracking, Claude vs template breakdown, ICP match rates, funnel by status
+- Decision needed: custom Supabase queries vs PostHog/Amplitude
+

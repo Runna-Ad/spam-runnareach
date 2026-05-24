@@ -126,19 +126,40 @@ export async function searchBrave(
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 /**
+ * Returns true if a page title looks like an article/listicle rather than
+ * a business homepage — e.g. "Top 10 Shopify Stores in Canada" or
+ * "List of Best Pet Food Brands | Blog".
+ */
+function isArticleTitle(title: string): boolean {
+  return /^(top\s+\d+|best\s+\d+|list\s+of|how\s+to|\d+\s+best|\d+\s+top|the\s+best|what\s+is|what\s+are|why\s+|guide\s+to|complete\s+guide|ultimate\s+guide|everything\s+you)/i.test(
+    title.trim(),
+  );
+}
+
+/**
  * Strip common suffixes from page titles so "Acme Pet Food | Home – Shopify"
- * becomes "Acme Pet Food".
+ * becomes "Acme Pet Food". Falls back to the domain name if the cleaned title
+ * still looks like an article or is too long to be a business name.
  */
 function cleanTitle(title: string, url: string): string {
+  // Remove common page-title suffixes
   let clean = title
     .replace(/\s*[|·—–-]\s*(Home|Welcome|Shop|Shopify|WooCommerce|Store)[^|]*$/i, "")
+    .replace(/\s*[|·—–-]\s*(What You Need to Know|Tips?|Guide|Blog|Article)[^|]*$/i, "")
     .replace(/\s*[|·—–-]\s*$/, "")
     .trim();
 
-  if (!clean) {
-    // Fall back to domain as name
+  // If the result still looks like an article title, is very long (>60 chars),
+  // or starts with a common service keyword rather than a proper noun,
+  // use the domain as the company name instead.
+  const looksLikeService = /^(shopify|woocommerce|wordpress|ecommerce|e-commerce|web\s+design|website\s+design|digital\s+marketing|seo|custom\s+|online\s+store)/i.test(clean);
+  if (!clean || isArticleTitle(clean) || clean.length > 60 || looksLikeService) {
     try {
-      clean = new URL(url).hostname.replace(/^www\./, "").split(".")[0] ?? url;
+      const hostname = new URL(url).hostname.replace(/^www\./, "");
+      // Use just the first label (e.g. "cloudstech" from "cloudstech.ca")
+      clean = hostname.split(".")[0] ?? hostname;
+      // Capitalise first letter
+      clean = clean.charAt(0).toUpperCase() + clean.slice(1);
     } catch {
       clean = url;
     }
@@ -169,8 +190,22 @@ function isUsableUrl(url: string): boolean {
       // News / content farms
       "entrepreneur.com", "forbes.com", "inc.com", "medium.com",
       "wordpress.com", "substack.com", "hubspot.com",
+      "webpronews.com", "techcrunch.com", "mashable.com", "venturebeat.com",
+      "businessinsider.com", "globeandmail.com", "theglobeandmail.com",
+      "financialpost.com", "nationalpost.com", "cbc.ca", "bbc.com",
+      "ctvnews.ca", "thestar.com", "montrealgazette.com", "vancouversun.com",
+      // Vendors / e-commerce service providers (not DTC brands)
+      "magenest.com", "plytix.com", "tidio.com", "klaviyo.com",
+      "yotpo.com", "gorgias.com", "recharge.com", "omnisend.com",
+      "acowebs.com", "woocommerce.com",
     ];
-    return !blocked.some((b) => u.hostname === b || u.hostname.endsWith(`.${b}`));
+    if (blocked.some((b) => u.hostname === b || u.hostname.endsWith(`.${b}`))) {
+      return false;
+    }
+    // Block URL paths that look like blog/article pages (list posts, guides, etc.)
+    const path = u.pathname.toLowerCase();
+    if (/\/(blog|article|news|resources|guide|post)\//.test(path)) return false;
+    return true;
   } catch {
     return false;
   }

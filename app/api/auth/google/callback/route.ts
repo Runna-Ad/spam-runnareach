@@ -11,12 +11,13 @@ import { createClient } from "@/lib/supabase/server";
 import { encryptToken } from "@/lib/gmail/crypto";
 
 export async function GET(req: NextRequest): Promise<NextResponse> {
-  const appUrl = process.env.NEXT_PUBLIC_APP_URL ?? "";
-  const settingsUrl = `${appUrl}/settings/sending`;
+  // Derive origin from request — don't rely on NEXT_PUBLIC_APP_URL
+  const origin = req.nextUrl.origin;
+  const settingsUrl = `${origin}/settings/sending`;
 
   const user = await requireUser().catch(() => null);
   if (!user) {
-    return NextResponse.redirect(`${appUrl}/sign-in`);
+    return NextResponse.redirect(`${origin}/sign-in`);
   }
 
   const { searchParams } = req.nextUrl;
@@ -47,7 +48,7 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
   // Exchange code for tokens
   const clientId = process.env.GOOGLE_CLIENT_ID;
   const clientSecret = process.env.GOOGLE_CLIENT_SECRET;
-  const redirectUri = `${appUrl}/api/auth/google/callback`;
+  const redirectUri = `${origin}/api/auth/google/callback`;
 
   if (!clientId || !clientSecret) {
     return NextResponse.redirect(`${settingsUrl}?gmail_error=missing_credentials`);
@@ -68,7 +69,12 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
   if (!tokenRes.ok) {
     const body = await tokenRes.text().catch(() => "");
     console.error("[gmail/callback] Token exchange failed:", body);
-    return NextResponse.redirect(`${settingsUrl}?gmail_error=token_exchange_failed`);
+    // Temporary: surface the raw Google error so we can diagnose
+    let googleErr = "unknown";
+    try { googleErr = JSON.parse(body).error ?? body; } catch { googleErr = body.slice(0, 120); }
+    return NextResponse.redirect(
+      `${settingsUrl}?gmail_error=token_exchange_failed&google_err=${encodeURIComponent(googleErr)}`,
+    );
   }
 
   const tokens = (await tokenRes.json()) as {

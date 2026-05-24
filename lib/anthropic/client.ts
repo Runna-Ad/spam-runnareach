@@ -1,5 +1,14 @@
 import Anthropic from "@anthropic-ai/sdk";
+import https from "node:https";
 import type { z } from "zod";
+
+// No-keep-alive agent — prevents "Connection error" on Vercel warm starts.
+// The Anthropic SDK uses agentkeepalive by default, which pools TCP connections
+// across requests. On serverless warm starts the pooled socket is dead (Vercel/AWS
+// closed it while idle) and the next request hits ECONNRESET → "Connection error."
+// Disabling keep-alive forces a fresh TCP handshake per request (a few ms slower)
+// but is completely reliable in stateless serverless environments.
+const NO_KEEPALIVE_AGENT = new https.Agent({ keepAlive: false });
 
 /**
  * Single shared Anthropic client. Pinned to a specific Sonnet 4.5
@@ -31,12 +40,16 @@ let _testClient: Anthropic | null = null;
 // causing "Connection error" on warm starts.
 export function getClient(): Anthropic {
   if (_testClient) return _testClient;
-  const apiKey = process.env.ANTHROPIC_API_KEY;
+  // Trim so a trailing newline (common in copy-paste or env var tooling) never
+  // causes "is not a legal HTTP header value" — that error was the real root cause
+  // of the "Connection error." that plagued pitch generation on Vercel.
+  const apiKey = process.env.ANTHROPIC_API_KEY?.trim();
   if (!apiKey) throw new Error("ANTHROPIC_API_KEY not set");
   return new Anthropic({
     apiKey,
     timeout: DEFAULT_TIMEOUT_MS,
     maxRetries: DEFAULT_MAX_RETRIES,
+    httpAgent: NO_KEEPALIVE_AGENT,
   });
 }
 
@@ -129,6 +142,14 @@ export async function structuredCall<T>(
     });
   } catch (err) {
     const reason = classifyErr(err);
+    // Log cause for diagnostics but NEVER include it in the returned error string —
+    // cause messages can contain the raw API key value (e.g. "X is not a legal HTTP header value").
+    const cause = err instanceof Error && (err as { cause?: unknown }).cause instanceof Error
+      ? ((err as { cause?: unknown }).cause as Error).message
+      : "";
+    // Scrub any token-shaped string from the cause before logging.
+    const safeCause = cause.replace(/sk-ant-[A-Za-z0-9_-]{20,}/g, "[REDACTED]");
+    console.error(`[structuredCall] model=${model} reason=${reason} cause=${safeCause || "(none)"}`);
     return {
       ok: false,
       error: err instanceof Error ? err.message : String(err),
@@ -191,13 +212,19 @@ export async function structuredCall<T>(
 function classifyErr(err: unknown): "auth" | "rate_limit" | "timeout" | "unknown" {
   if (!(err instanceof Error)) return "unknown";
   const m = err.message.toLowerCase();
+  // Check cause as well — Anthropic SDK wraps fetch errors as "Connection error."
+  // but the real cause (ENOTFOUND, ECONNRESET, etc.) is in err.cause.message.
+  const cause = (err as { cause?: unknown }).cause;
+  const mc = cause instanceof Error ? cause.message.toLowerCase() : "";
   if (m.includes("401") || m.includes("authentication") || m.includes("invalid api key")) {
     return "auth";
   }
   if (m.includes("429") || m.includes("rate limit") || m.includes("overloaded")) {
     return "rate_limit";
   }
-  if (m.includes("timeout") || m.includes("aborted")) return "timeout";
+  if (m.includes("timeout") || m.includes("aborted") || mc.includes("timeout") || mc.includes("aborted")) {
+    return "timeout";
+  }
   return "unknown";
 }
 

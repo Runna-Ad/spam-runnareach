@@ -350,13 +350,11 @@ function OverviewTab({
     prospect.match_score?.toString() ?? "",
   );
   const [contactEmail, setContactEmail] = React.useState(topContactEmail ?? "");
-  // Sync when scraper finds a new contact and router.refresh() re-renders the page with new props.
-  // Only auto-fill if the field is currently empty (don't clobber user edits).
+  // Always sync from server — topContactEmail only changes when the DB changes
+  // (scrape, manual save), so overwriting local state is the correct behaviour.
   React.useEffect(() => {
-    if (topContactEmail && !contactEmail) {
-      setContactEmail(topContactEmail);
-    }
-  }, [topContactEmail]); // eslint-disable-line react-hooks/exhaustive-deps
+    setContactEmail(topContactEmail ?? "");
+  }, [topContactEmail]);
   const [contactStatus, setContactStatus] = React.useState<"idle" | "saved" | { error: string }>("idle");
   const [savingContact, startSaveContact] = React.useTransition();
   const [status, setStatus] = React.useState<"idle" | "saved" | { error: string }>("idle");
@@ -700,6 +698,7 @@ function ResearchTab({
           result.emails_count > 0
             ? `${result.emails_count} email${result.emails_count === 1 ? "" : "s"} found`
             : null,
+          result.anymail_found ? "✓ verified contact from Anymail" : null,
           result.hunter_emails_count > 0
             ? `${result.hunter_emails_count} contact${result.hunter_emails_count === 1 ? "" : "s"} from Hunter`
             : null,
@@ -713,12 +712,20 @@ function ResearchTab({
         });
         router.refresh();
       } else {
-        // Even on scrape failure, Hunter may have found contacts — refresh so
-        // the contact field populates and the warning chip updates.
-        if (result.hunter_emails_count && result.hunter_emails_count > 0) {
-          router.refresh();
-        }
-        setScrapeMessage({ tone: "warn", text: result.error });
+        // Refresh so contacts, pain points, and status changes render.
+        const needsRefresh =
+          (result.hunter_emails_count && result.hunter_emails_count > 0) ||
+          result.anymail_found ||
+          result.pain_point_added ||
+          result.auto_archived;
+        if (needsRefresh) router.refresh();
+
+        setScrapeMessage({
+          tone: result.auto_archived ? "warn" : "warn",
+          text: result.auto_archived
+            ? `⚠ Lead auto-archived: ${result.error}`
+            : result.error,
+        });
       }
     });
   };
