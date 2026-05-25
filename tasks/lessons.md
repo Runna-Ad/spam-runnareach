@@ -4,6 +4,31 @@ Running log of mistakes, root causes, and rules to prevent recurrence. Newest at
 
 ---
 
+[2026-05-25] LESSON: Playwright screenshots hit the login wall when using `npx playwright screenshot <url>` directly against a deployed app with auth.
+ROOT CAUSE: Playwright CLI has no session state — it starts a fresh unauthenticated browser every time.
+RULE: Always use the project's `scripts/screenshot-*.mjs` auth pattern (create Supabase session → inject cookie via `context.addCookies` or sign-in form fill → then navigate). Never use bare `npx playwright screenshot <url>` for authenticated pages.
+TAGS: #bug #playwright #auth #screenshot
+
+[2026-05-25] LESSON: Supabase MCP `execute_sql` and `apply_migration` tools silently require elevated permissions — they return "You do not have permission" for DDL and even SELECT on user tables.
+ROOT CAUSE: The connected MCP token may be scoped read-only or the project-level MCP config doesn't include the management API scope.
+RULE: Don't assume the Supabase MCP can run arbitrary SQL. For DDL migrations, write the SQL file locally and ask Pedro to paste into the Supabase Dashboard SQL Editor. For verification queries, try `execute_sql` but have a fallback (TypeScript compile check, or ask Pedro to confirm in the dashboard).
+TAGS: #supabase #mcp #permissions #migrations
+
+[2026-05-25] LESSON: Design God Mode and huashu-design are different passes with different outputs — don't conflate them.
+ROOT CAUSE: Design God Mode = systematic polish (token consistency, component states, hover/focus, accessibility). huashu-design = philosophical audit (anti-AI-slop, information density for AI tools, the one "120% detail", empty state quality, typography expressiveness).
+RULE: Run Design God Mode first (it fixes the broken stuff), then huashu-design as a second pass (it elevates what's working into something with character). The two complement; neither replaces the other.
+TAGS: #design #workflow #huashu #process
+
+[2026-05-25] LESSON: Empty states with only plain text and no visual weight communicate "broken app" not "no data yet."
+ROOT CAUSE: Default EmptyState renders title + description as centered text — honest but passive. Users scan, not read. Without icon + CTA button, the page feels abandoned.
+RULE: Every empty state needs three things: (1) an icon or visual element that reinforces *what* is empty, (2) a one-line title that's honest about the state, (3) a primary or secondary CTA button that takes the user to the next step. Never leave them with just text and a URL in prose.
+TAGS: #design #ux #empty-states
+
+[2026-05-25] LESSON: "plan already written" doesn't mean "already implemented" — always verify before assuming done.
+ROOT CAUSE: The notable_clients tier plan was fully written (migration SQL, type, filter code) but the DB migration had not been applied. Code compiled cleanly because the type was declared manually in queries.ts, masking the missing column.
+RULE: When a plan file exists and code looks complete, always verify DB state independently (check migrations list, query the column, or ask Pedro). TypeScript compiling ≠ schema applied.
+TAGS: #migrations #schema #verification #supabase
+
 [2026-05-23] LESSON: `import type` from a server-only module still bleeds into the client bundle in Next.js/Turbopack.
 ROOT CAUSE: Even `export type { X } from "./server-module"` in a re-exporting file causes Turbopack to trace the dependency graph through the server module, pulling in `next/headers` into the client bundle.
 RULE: Always split server-only types into a separate `types.ts` file with zero server imports. Client components import from `types.ts`; queries/actions import from `types.ts` too. Never re-export types from a file that also imports server-only modules.

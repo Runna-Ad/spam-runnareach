@@ -767,3 +767,40 @@ _TBD_
 - Run `npx tsc --noEmit 2>&1 | grep "error TS"` to see current list
 
 After reaper → #5 Design God Mode (wait for Pedro) → #7 Analytics
+
+---
+
+## SESSION LOG — 2026-05-25
+
+### What was done this session:
+
+**Design deployment catch**
+- All Design God Mode + huashu-design changes were sitting uncommitted from previous session
+- Committed 34 files + deployed via Vercel CLI (`vercel --prod --yes`)
+
+**huashu-design second pass (P0 + P1)**
+
+*P0 — Embarrassing empty states fixed:*
+- Funnel: replaced 7× "Empty." void with guided pipeline-journey empty state (colored stage dots + CTA) when total=0; per-column contextual hints when individual columns empty
+- Learning: status dots on every prompt row (green glow = champion, amber = active/not set, gray = inactive)
+- Companies: Building2 icon + "Go to Discover" primary CTA button
+- Pitches: Sparkles icon + "Go to Companies" secondary CTA button
+
+*P1 — 120% detail:*
+- Dashboard greeting: purple→pink left-border bar + radial brand glow (color-mix ~8% opacity)
+- Learning page title: text-xl → text-2xl + tracking-tight
+
+**Notable client tier filtering**
+- Confirmed all code was already written from previous session (migration SQL, NotableClient type with tier, size filter in actions.ts)
+- Pedro applied `0010_notable_clients_tier.sql` migration via Supabase dashboard
+- All current clients (Ford, La Comer, DiDi, Aeromexico) default to 'enterprise' tier
+- SMB prospects now get empty notable_clients → capability-focused pitch, no enterprise name-drops
+
+### Still open:
+- [ ] ⏳ #7 Analytics — pitch funnel metrics, cost tracking, Claude vs template breakdown
+- [ ] ⏳ #1C — Language + market detection in scraper
+- [ ] Minor: "saales yoy" typo in SnapPad case study (must fix in DB directly)
+
+### Next session — start here:
+Pick up with **#7 Analytics** (biggest remaining feature) or **#1C scraper** (smaller, self-contained).
+Run `npx tsc --noEmit` first to confirm baseline is still 0 errors.

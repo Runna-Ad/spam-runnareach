@@ -4,6 +4,60 @@ Discoveries, patterns, libraries, and techniques learned during build. Newest at
 
 ---
 
+## [2026-05-25] DISCOVERY: huashu-design "information density" rule for AI tools
+
+**What:** For SaaS/AI products (not just dashboards), the design target is "high density" not "minimal" — each screen needs at least 3 visible signals of product intelligence. Empty pages and "not set" lists communicate nothing about the product's capability.
+
+**Use when:** Auditing pages in an AI-driven product — pitches, learning, funnel, etc. If the page only shows empty states, add guided onboarding content that demonstrates what the AI will do, not just that there's no data yet.
+
+**Pattern:** Replace dead empty states with: (1) visual pipeline/flow diagram showing the journey, (2) stage-level hints explaining how each state fills, (3) status dots/indicators so lists with no data still have visual rhythm.
+
+---
+
+## [2026-05-25] DISCOVERY: CSS radial-gradient as "120% detail" for page headers
+
+**What:** A very subtle brand radial glow behind a heading (opacity ~6-8%) creates a premium "spotlight" feeling without being visible as a gradient. Combined with a thin left-border bar in brand color, this is the huashu "one detail at 120%" signature.
+
+**Use when:** The hero greeting or main page title feels like generic SaaS. This is the minimum intervention that distinguishes designed from template.
+
+**How:**
+```tsx
+<div
+  className="relative pl-4"
+  style={{
+    background: "radial-gradient(ellipse 55% 80% at 0% 50%, color-mix(in oklab, var(--color-accent-300), transparent 92%) 0%, transparent 100%)",
+  }}
+>
+  <span
+    className="absolute left-0 top-0 bottom-0 w-0.5 rounded-full"
+    style={{ background: "linear-gradient(to bottom, var(--color-accent-300), var(--color-brand-pink))" }}
+  />
+  {/* heading content */}
+</div>
+```
+Cost: ~10 lines. Impact: the page feels intentionally crafted.
+
+---
+
+## [2026-05-25] DISCOVERY: Status dots are the minimum viable visual hierarchy for dense lists
+
+**What:** A 6px colored dot (with optional glow via box-shadow) in front of every row in a list gives instant scannable status at a glance — green=active/good, amber=warning/pending, gray=off. Replaces reading text like "not set · —" for every row.
+
+**Use when:** Any sidebar list, prompt list, settings list, or nav group where rows have a status that matters. 1.5px gap, `shrink-0`, aligned to text center.
+
+**Pattern:**
+```tsx
+<span
+  className="h-1.5 w-1.5 shrink-0 rounded-full"
+  style={{
+    background: hasChampion ? "var(--color-success-300)" : "var(--color-fg-700)",
+    boxShadow: hasChampion ? "0 0 4px var(--color-success-300)" : undefined,
+  }}
+/>
+```
+
+---
+
 ## [2026-04-23] DISCOVERY: `pdftotext -layout` is the reliable path for Keynote-exported PDFs >100MB
 
 **What:** Claude Code's built-in `Read` tool refuses PDFs over 100MB for text extraction (hard limit). Pedro's `MASTER- Runna Pres '26-ESP.pdf` is 211MB (60-page Keynote export, image-heavy). Poppler's `pdftotext -layout` extracts full readable text in under a second.
