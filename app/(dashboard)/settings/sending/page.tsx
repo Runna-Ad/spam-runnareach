@@ -22,8 +22,7 @@ export default async function SettingsSendingPage({
   const user = await requireUser();
   const params = await searchParams;
   const gmailError = params.gmail_error
-    ? (GMAIL_ERROR_LABELS[params.gmail_error] ?? `OAuth error: ${params.gmail_error}`) +
-      (params.google_err ? ` — Google: ${params.google_err}` : "")
+    ? (GMAIL_ERROR_LABELS[params.gmail_error] ?? `OAuth error: ${params.gmail_error}`)
     : null;
   const gmailConnected = params.gmail_connected === "1";
 

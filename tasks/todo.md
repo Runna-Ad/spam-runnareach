@@ -718,3 +718,52 @@ _TBD_
 - Pitch funnel metrics, cost tracking, Claude vs template breakdown, ICP match rates, funnel by status
 - Decision needed: custom Supabase queries vs PostHog/Amplitude
 
+
+---
+
+## SESSION LOG — 2026-05-23 (Evening)
+
+### Priority list (Pedro's order — do not change):
+- [x] ✅ #1 Sender inbox — Gmail OAuth setup (pedro@runnareach.com connected, Runna Outreach brand, 30/day cap)
+- [x] ✅ #2 Company reset — deleted all test prospects + cascading data (opportunities, contacts, research, pitches, replies)
+- [x] ✅ #3 UX/UI audit — full screen-by-screen sweep + critical fixes deployed
+- [x] ✅ #4 Code reaper — DONE: 68 → 0 TS errors. as-never casts across all supabase mutations, pitches query fix, dashboard name-casing, noUncheckedIndexedAccess char fix. Deployed 2026-05-25.
+- [x] ✅ #5 Design God Mode + Huashu — DONE 2026-05-25. Full audit + implement: colored pipeline stages, hash-based case study avatars, discover button hierarchy, sidebar gradient + active indicator, user avatar gradient, ICP card improvements, learning empty states. 0 TS errors maintained.
+- [x] ✅ #6 Learning section — built (prompt version control, A/B, Sunday proposals, diff view, approve/reject/rollback)
+- [ ] ⏳ #7 Analytics — pitch funnel metrics, cost tracking, Claude vs template breakdown
+
+---
+
+### What was done this session:
+
+**Gmail OAuth (#1)**
+- Added `RUNNA_OUTREACH` brand_code enum + brand instance in DB
+- Built `/api/auth/google/connect` + `/api/auth/google/callback` routes
+- Added error surfacing (banner on /settings/sending for gmail_error + gmail_connected params)
+- Root cause of `invalid_client`: Google client secret was misread from screenshot (`I` vs `l`), then after fixing that, original secret was gone (Google only shows it once). Reset secret in GCP console, updated Vercel with `printf` (no trailing newline), tested with curl → `invalid_grant` (correct), deployed → ✅ connected
+- Debug endpoint `/api/auth/google/debug-creds` created + deleted after diagnosis
+
+**Company reset (#2)**
+- SQL: `DELETE FROM opportunities WHERE tenant_id = '...'` first (RESTRICT FK), then `DELETE FROM prospects WHERE tenant_id = '...'` (cascades contacts, research, pitches, replies)
+- ICPs preserved (already updated to correct ones)
+- Prompt variants, case studies, notable clients, brands — all untouched
+
+**UX/UI audit (#3)**
+- Full sweep: dashboard, discover, companies, pitches, funnel, opportunities, inbox, analytics, learning, settings/sending, settings/users, icp, case-studies, notable-clients, compliance, design
+- Fixed: name casing (PEDRO → Pedro) in dashboard greeting + users table
+- Fixed: "When Phase 4 sends pitches" → "When pitches are sent" in inbox empty state  
+- Fixed: Phase chip removed from topbar + all PhasePlaceholder pages (Opportunities, Analytics, etc.)
+- NOT fixed (intentional behavior, not bugs): Funnel empty columns, blocked source buttons, Brave Search "ready" chip
+- Still open (minor): SnapPad "saales yoy" typo, "pool not computed" on ICP cards, activity log showing 15 stale entries
+
+---
+
+### Next session — start here:
+**#4 Code reaper** — 68 TS errors currently. Goals:
+- Remove dead imports + unused variables
+- Replace `as never` casts with proper types where possible
+- Delete stub/placeholder code that's been superseded
+- Target: get TS errors to 0 or as close as possible
+- Run `npx tsc --noEmit 2>&1 | grep "error TS"` to see current list
+
+After reaper → #5 Design God Mode (wait for Pedro) → #7 Analytics

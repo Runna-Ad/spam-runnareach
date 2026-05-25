@@ -35,14 +35,15 @@ const MARKET_FLAG: Record<"CA" | "MX" | "US" | "LATAM", string> = {
 
 // Pipeline strip — every status, in flow order. Counts default to 0 if the
 // tenant has no prospects in that bucket yet.
-const PIPELINE_STAGES: { key: string; label: string }[] = [
-  { key: "raw", label: "Raw" },
-  { key: "researched", label: "Researched" },
-  { key: "pitched", label: "Pitched" },
-  { key: "replied", label: "Replied" },
-  { key: "booked", label: "Booked" },
-  { key: "won", label: "Won" },
-  { key: "lost", label: "Lost" },
+// Each stage has a distinct accent color to convey progression.
+const PIPELINE_STAGES: { key: string; label: string; color: string; glowColor: string }[] = [
+  { key: "raw",        label: "Raw",        color: "var(--color-fg-500)",     glowColor: "rgb(245 243 250 / 0.08)" },
+  { key: "researched", label: "Researched", color: "var(--color-info-300)",   glowColor: "rgb(139 92 246 / 0.12)" },
+  { key: "pitched",    label: "Pitched",    color: "var(--color-accent-300)", glowColor: "rgb(119 92 191 / 0.12)" },
+  { key: "replied",    label: "Replied",    color: "var(--color-brand-gold)", glowColor: "rgb(251 174 66 / 0.12)" },
+  { key: "booked",     label: "Booked",     color: "var(--color-brand-pink)", glowColor: "rgb(222 90 95 / 0.12)" },
+  { key: "won",        label: "Won",        color: "var(--color-success-300)",glowColor: "rgb(74 222 128 / 0.12)" },
+  { key: "lost",       label: "Lost",       color: "var(--color-fg-700)",     glowColor: "transparent" },
 ];
 
 export default async function TodayPage() {
@@ -90,7 +91,13 @@ export default async function TodayPage() {
           })}
         </p>
         <h1 className="mt-1 font-[family-name:var(--font-display)] text-3xl font-semibold tracking-tight text-[var(--color-fg-50)]">
-          {greeting()}, {user.fullName?.split(" ")[0] ?? "there"}.
+          {greeting()},{" "}
+          {(() => {
+            const first = user.fullName?.split(" ")[0];
+            return first
+              ? first.charAt(0).toUpperCase() + first.slice(1).toLowerCase()
+              : "there";
+          })()}.
         </h1>
         <p className="mt-1 text-sm text-[var(--color-fg-500)]">
           {totalProspects === 0
@@ -153,25 +160,33 @@ export default async function TodayPage() {
                 <Link
                   key={s.key}
                   href={`/companies?status=${s.key}` as never}
+                  style={
+                    !empty
+                      ? {
+                          backgroundColor: s.glowColor,
+                          boxShadow: `inset 0 1px 0 0 ${s.glowColor}`,
+                        }
+                      : undefined
+                  }
                   className={cn(
-                    "flex flex-col gap-0.5 rounded-[var(--radius-md)] px-2 py-2.5 transition-[background,box-shadow]",
+                    "group flex flex-col gap-1 rounded-[var(--radius-md)] px-2 py-2.5",
+                    "transition-[background,box-shadow,opacity] duration-[var(--duration-standard)]",
                     "ring-1 ring-inset",
                     empty
                       ? "bg-[var(--color-bg-900)] ring-[var(--color-border-subtle)] hover:ring-[var(--color-border-default)]"
-                      : "bg-[var(--color-bg-900)] ring-[var(--color-border-default)] hover:ring-[var(--color-accent-300)]",
+                      : "ring-[var(--color-border-default)] hover:ring-[var(--color-border-strong)] hover:brightness-110",
                   )}
                 >
                   <span
-                    className={cn(
-                      "font-mono text-xl font-semibold tracking-tight",
-                      empty
-                        ? "text-[var(--color-fg-700)]"
-                        : "text-[var(--color-fg-50)]",
-                    )}
+                    className="font-mono text-xl font-semibold tracking-tight transition-colors"
+                    style={{ color: empty ? "var(--color-fg-700)" : s.color }}
                   >
                     {n}
                   </span>
-                  <span className="text-[10px] uppercase tracking-wider text-[var(--color-fg-500)]">
+                  <span
+                    className="text-[10px] uppercase tracking-wider transition-colors"
+                    style={{ color: empty ? "var(--color-fg-700)" : "var(--color-fg-500)" }}
+                  >
                     {s.label}
                   </span>
                 </Link>
@@ -252,20 +267,31 @@ interface StatTileProps {
 }
 
 function StatTile({ label, value, icon: Icon, accent, href, subtitle }: StatTileProps) {
+  const hasValue = value > 0;
   const inner = (
-    <CardContent className="flex items-center gap-3 p-4">
+    <CardContent
+      className={cn(
+        "flex items-center gap-3 p-4 transition-[background]",
+        accent && hasValue && "bg-[color-mix(in_oklab,var(--color-accent-300),transparent_94%)]",
+      )}
+    >
       <div
         className={cn(
-          "flex h-8 w-8 items-center justify-center rounded-[var(--radius-md)]",
-          accent
-            ? "bg-[color-mix(in_oklab,var(--color-accent-300),transparent_80%)] text-[var(--color-accent-300)]"
-            : "bg-[var(--color-bg-700)] text-[var(--color-fg-300)]",
+          "flex h-9 w-9 shrink-0 items-center justify-center rounded-[var(--radius-md)]",
+          accent && hasValue
+            ? "bg-[color-mix(in_oklab,var(--color-accent-300),transparent_75%)] text-[var(--color-accent-300)]"
+            : "bg-[var(--color-bg-700)] text-[var(--color-fg-500)]",
         )}
       >
         <Icon className="h-4 w-4" aria-hidden />
       </div>
       <div className="min-w-0">
-        <div className="font-mono text-2xl font-semibold tracking-tight text-[var(--color-fg-50)]">
+        <div
+          className={cn(
+            "font-mono text-2xl font-semibold tracking-tight",
+            hasValue ? "text-[var(--color-fg-50)]" : "text-[var(--color-fg-700)]",
+          )}
+        >
           {value}
         </div>
         <div className="text-[10px] uppercase tracking-wider text-[var(--color-fg-500)]">
@@ -282,7 +308,12 @@ function StatTile({ label, value, icon: Icon, accent, href, subtitle }: StatTile
       // Typed-routes can't statically prove dynamic ?status=… params, so we
       // cast. Link still validates at runtime.
       <Link href={href as never} className="group">
-        <Card className="transition-[box-shadow] group-hover:ring-[var(--color-accent-300)]">
+        <Card
+          className={cn(
+            "transition-[box-shadow] group-hover:ring-[var(--color-border-strong)]",
+            accent && hasValue && "ring-[color-mix(in_oklab,var(--color-accent-300),transparent_60%)] group-hover:ring-[var(--color-accent-300)]",
+          )}
+        >
           {inner}
         </Card>
       </Link>

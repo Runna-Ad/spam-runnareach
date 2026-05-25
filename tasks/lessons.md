@@ -241,3 +241,28 @@ OPEN ITEMS FOR NEXT SESSION:
 - Learning section (Pedro to define scope)
 - Analytics dashboard
 
+
+[2026-05-23] LESSON: OAuth client secret invalid_client despite correct-looking value
+ROOT CAUSE: Reading secrets from screenshots causes character misreads (l vs I, 0 vs O, etc.). The original secret had a lowercase `l` that was misread as uppercase `I`. Even after fixing that, the first creation dialog secret was already gone (Google only shows it once) leaving "Client secrets" section empty.
+RULE: NEVER read secrets from screenshots. Always use the copy button, Download JSON, or Reset Secret to get a machine-accurate value. To validate credentials before deploying, curl Google's token endpoint with a dummy code — `invalid_grant` = creds OK, `invalid_client` = creds bad.
+TAGS: #bug #api #oauth
+
+[2026-05-23] LESSON: UX audit — calling intentional empty states "bugs"
+ROOT CAUSE: Did a screen-by-screen audit without full product context. Flagged Funnel "Empty." columns and disabled discovery source buttons as bugs when they are correct intentional behavior. Pedro called it out.
+RULE: Before flagging something as broken in an audit, ask "could this be intentional given the product's state?" Empty states that depend on data (funnel with no prospects) are correct. Disabled buttons on locked features are correct. Only flag things that are unambiguously wrong (404 on a sidebar link, wrong copy, crashes).
+TAGS: #ux #audit #overcalling
+
+[2026-05-23] LESSON: vercel env add with echo adds a trailing \\n that breaks OAuth
+ROOT CAUSE: `echo "value" | vercel env add KEY production` stores "value\n". Google OAuth rejects credentials with trailing whitespace — returns invalid_client.
+RULE: ALWAYS use `printf "value" | vercel env add KEY production` (no -n flag needed — printf has no trailing newline by default). After adding any OAuth credential, verify with the debug-creds pattern (show length + last charCode) and curl Google's token endpoint with a dummy code to confirm invalid_grant (creds OK) vs invalid_client (creds bad).
+TAGS: #bug #oauth #vercel #credentials
+
+[2026-05-25] LESSON: noUncheckedIndexedAccess breaks string[0] even after truthiness guard
+ROOT CAUSE: tsconfig has `noUncheckedIndexedAccess: true` — means `string[0]` returns `string | undefined` even when the string is confirmed truthy (TS doesn't narrow string to "non-empty" based on truthiness).
+RULE: Use `.charAt(0)` instead of `[0]` for string character access. For array first-element access, use `arr.find(Boolean)` or destructuring with defaults. Always check tsconfig for noUncheckedIndexedAccess when debugging TS2532 errors.
+TAGS: #bug #typescript #config
+
+[2026-05-25] LESSON: .returns<T>() before .maybeSingle() doesn't fix never — maybeSingle() overwrites the type
+ROOT CAUSE: In supabase-js, `.returns<T>()` overrides SELECT row type but `.maybeSingle()` wraps the result in its own narrowing. When the base table type is `never` (table not in schema types), `.returns<T>().maybeSingle()` still resolves data as `never`.
+RULE: For single-row queries on tables missing from types.ts, cast the raw result directly: `const r = rawData as unknown as MyType`. For list queries, `.returns<Row[]>()` at the END of the chain (before `.eq()` calls are already processed) works. Don't put `.returns<T>()` before terminal calls like `.maybeSingle()` or `.single()`.
+TAGS: #bug #typescript #supabase

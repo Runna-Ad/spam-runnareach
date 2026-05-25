@@ -29,9 +29,7 @@ export function PhasePlaceholder({ route, phase, title, description }: PhasePlac
     <div className="flex h-full flex-col">
       <div className="flex h-11 items-center gap-2 border-b border-[var(--color-border-subtle)] px-4">
         <span className="font-mono text-xs text-[var(--color-fg-500)]">{route}</span>
-        <Chip tone={meta.tone} className="ml-auto">
-          {meta.label}
-        </Chip>
+        <span className="ml-auto" />
       </div>
       <div className="flex-1 p-4">
         <EmptyState

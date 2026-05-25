@@ -200,11 +200,24 @@ function SourceCard({
   actionDisabled: boolean;
 }) {
   return (
-    <Card className={cn(!available && "opacity-70")}>
+    <Card
+      className={cn(
+        "transition-[opacity,box-shadow]",
+        !available && "opacity-50",
+        available && "hover:ring-[var(--color-border-strong)]",
+      )}
+    >
       <CardContent className="flex flex-col gap-3 p-4">
         <div className="flex items-start justify-between gap-2">
           <div className="flex min-w-0 flex-col">
-            <span className="truncate text-sm font-medium text-[var(--color-fg-50)]">{label}</span>
+            <span
+              className={cn(
+                "truncate text-sm font-medium",
+                available ? "text-[var(--color-fg-50)]" : "text-[var(--color-fg-300)]",
+              )}
+            >
+              {label}
+            </span>
             <p className="mt-0.5 text-[11px] text-[var(--color-fg-500)]">{description}</p>
           </div>
           {available ? (
@@ -212,7 +225,7 @@ function SourceCard({
               <CheckCircle2 className="h-3 w-3" aria-hidden /> ready
             </Chip>
           ) : (
-            <Chip tone="warning" className="shrink-0 gap-1">
+            <Chip tone="neutral" className="shrink-0 gap-1">
               <Lock className="h-3 w-3" aria-hidden /> blocked
             </Chip>
           )}
@@ -221,10 +234,11 @@ function SourceCard({
           <p className="text-[11px] italic text-[var(--color-fg-700)]">{blockedOn}</p>
         ) : null}
         <div className="mt-auto pt-1">
+          {/* Ready sources get a primary button — it's the most important action on this card */}
           <Button
             type="button"
             size="sm"
-            variant="secondary"
+            variant={available && !actionDisabled ? "primary" : "secondary"}
             disabled={actionDisabled}
             onClick={onAction}
           >

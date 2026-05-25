@@ -167,7 +167,7 @@ export function InboxPage({
           {replies.length === 0 ? (
             <EmptyState
               title="Inbox is empty"
-              description="No replies yet. When Phase 4 sends pitches, replies land here. Or click 'Log reply' to add one manually now."
+              description="No replies yet. When pitches are sent, replies land here. Or click 'Log reply' to add one manually now."
               action={
                 canEdit ? (
                   <Button type="button" variant="primary" onClick={() => setCreateOpen(true)}>

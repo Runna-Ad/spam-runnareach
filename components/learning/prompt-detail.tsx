@@ -48,9 +48,12 @@ function ChampionTab({ detail }: { detail: PromptDetail }) {
 
   if (!champion) {
     return (
-      <p className="text-sm text-white/40 text-center py-12">
-        No champion variant set for this prompt.
-      </p>
+      <div className="flex flex-col items-center gap-2 py-14 text-center">
+        <p className="text-sm font-medium text-white/50">No champion set yet</p>
+        <p className="max-w-xs text-xs text-white/30">
+          Create a variant in the Proposals tab and promote it to champion to activate this prompt.
+        </p>
+      </div>
     );
   }
 

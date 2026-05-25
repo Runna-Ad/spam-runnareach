@@ -75,7 +75,7 @@ export async function runCrawl(input: CrawlInput): Promise<CrawlResult> {
       triggered_by: user.id,
       status: "running",
       started_at: nowIso,
-    })
+    } as never)
     .select("id")
     .single<{ id: string }>();
 
@@ -213,7 +213,7 @@ export async function runCrawl(input: CrawlInput): Promise<CrawlResult> {
 
   // ── Bulk insert ─────────────────────────────────────────────────────────
   if (inserts.length > 0) {
-    const { error: insertErr } = await supabase.from("prospects").insert(inserts);
+    const { error: insertErr } = await supabase.from("prospects").insert(inserts as never);
     if (insertErr) {
       await failRun(runRow.id, `Insert failed: ${insertErr.message}`);
       return { ok: false, error: `Could not save prospects: ${insertErr.message}` };
@@ -294,7 +294,7 @@ export async function runCrawl(input: CrawlInput): Promise<CrawlResult> {
       candidates_new,
       candidates_duplicate,
       completed_at: new Date().toISOString(),
-    })
+    } as never)
     .eq("id", runRow.id);
 
   await writeAuditLog({
@@ -502,7 +502,7 @@ async function failRun(runId: string, msg: string) {
       status: "failed",
       error_message: msg.slice(0, 500),
       completed_at: new Date().toISOString(),
-    })
+    } as never)
     .eq("id", runId);
 }
 

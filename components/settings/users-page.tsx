@@ -262,7 +262,13 @@ function MemberRow({
         <td className="px-3 py-2">
           <div className="flex flex-col">
             <span className="truncate text-[var(--color-fg-50)]">
-              {member.full_name ?? "—"}
+              {member.full_name
+                ? member.full_name
+                    .split(" ")
+                    .filter(Boolean)
+                    .map((w) => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase())
+                    .join(" ")
+                : "—"}
               {isSelf ? (
                 <Chip tone="accent" className="ml-2">
                   you

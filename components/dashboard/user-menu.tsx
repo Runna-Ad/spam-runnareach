@@ -22,8 +22,12 @@ export function UserMenu({ user }: UserMenuProps) {
 
   return (
     <div className="flex items-center gap-2 rounded-[var(--radius-md)] bg-[var(--color-bg-800)] px-2 py-1.5 ring-1 ring-inset ring-[var(--color-border-subtle)]">
+      {/* Avatar with brand gradient ring */}
       <div
-        className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-[var(--color-bg-700)] text-[10px] font-medium text-[var(--color-fg-300)]"
+        className="relative flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-[10px] font-medium text-[var(--color-fg-50)]"
+        style={{
+          background: "linear-gradient(135deg, var(--color-accent-300), var(--color-brand-pink))",
+        }}
         aria-hidden
       >
         {initials || "··"}

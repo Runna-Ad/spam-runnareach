@@ -45,7 +45,7 @@ export function PromptList({ prompts, selectedId, onSelect }: Props) {
                       {PURPOSE_LABELS[prompt.purpose]}
                     </span>
                     <span className="text-[11px] text-white/40 truncate">
-                      {prompt.champion ? `v${prompt.champion.version}` : "no champion"}{" "}
+                      {prompt.champion ? `v${prompt.champion.version}` : "not set"}{" "}
                       · {prompt.champion?.model?.split("-").slice(1, 3).join("-") ?? "—"}
                     </span>
                   </div>

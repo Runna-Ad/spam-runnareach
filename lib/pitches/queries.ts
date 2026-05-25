@@ -118,7 +118,31 @@ export async function getPitch(
   pitchId: string,
 ): Promise<PitchDetail | null> {
   const supabase = await createClient();
-  const { data, error } = await supabase
+  type PitchDetailRow = {
+    id: string;
+    prospect_id: string;
+    case_study_id: string | null;
+    status: PitchStatus;
+    subject: string;
+    variant_index: number;
+    quality_self_score: number | null;
+    pain_id: string | null;
+    approved_at: string | null;
+    sent_at: string | null;
+    body_original: string;
+    body_edited: string | null;
+    body_sent: string | null;
+    measurable_result_included: boolean;
+    auto_rejected: boolean;
+    auto_rejected_reason: string | null;
+    rejection_reason: string | null;
+    prospects: { company_name: string; market: "CA" | "MX" | "US" | "LATAM"; language: "en" | "es" } | null;
+    case_studies: { client_name: string } | null;
+    prospect_contacts: { full_name: string | null; email: string | null } | null;
+    pain_taxonomy: { display_name_en: string } | null;
+  };
+
+  const { data: rawData, error } = await supabase
     .from("pitches")
     .select(
       `
@@ -138,15 +162,9 @@ export async function getPitch(
     .maybeSingle();
 
   if (error) throw new Error(`Failed to load pitch: ${error.message}`);
-  if (!data) return null;
+  if (!rawData) return null;
 
-  type Row = NonNullable<typeof data>;
-  const r = data as Row & {
-    prospects: { company_name: string; market: "CA" | "MX" | "US" | "LATAM"; language: "en" | "es" } | null;
-    case_studies: { client_name: string } | null;
-    prospect_contacts: { full_name: string | null; email: string | null } | null;
-    pain_taxonomy: { display_name_en: string } | null;
-  };
+  const r = rawData as unknown as PitchDetailRow;
 
   return {
     id: r.id,

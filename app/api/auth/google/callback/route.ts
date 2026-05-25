@@ -69,12 +69,7 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
   if (!tokenRes.ok) {
     const body = await tokenRes.text().catch(() => "");
     console.error("[gmail/callback] Token exchange failed:", body);
-    // Temporary: surface the raw Google error so we can diagnose
-    let googleErr = "unknown";
-    try { googleErr = JSON.parse(body).error ?? body; } catch { googleErr = body.slice(0, 120); }
-    return NextResponse.redirect(
-      `${settingsUrl}?gmail_error=token_exchange_failed&google_err=${encodeURIComponent(googleErr)}`,
-    );
+    return NextResponse.redirect(`${settingsUrl}?gmail_error=token_exchange_failed`);
   }
 
   const tokens = (await tokenRes.json()) as {

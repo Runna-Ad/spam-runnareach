@@ -59,7 +59,7 @@ export async function createSenderInbox(input: CreateSenderInboxInput): Promise<
 
   const { data, error } = await supabase
     .from("sender_inboxes")
-    .insert(payload)
+    .insert(payload as never)
     .select("id")
     .single<{ id: string }>();
 
@@ -93,7 +93,7 @@ export async function updateSenderInbox(input: UpdateSenderInboxInput): Promise<
 
   const { error } = await supabase
     .from("sender_inboxes")
-    .update(payload)
+    .update(payload as never)
     .eq("id", parsed.data.id)
     .eq("tenant_id", user.tenantId);
 

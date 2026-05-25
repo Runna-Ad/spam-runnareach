@@ -43,7 +43,7 @@ export async function writeAuditLog(p: AuditPayload): Promise<void> {
       entity_type: p.entityType,
       entity_id: p.entityId,
       metadata: p.metadata ?? {},
-    });
+    } as never);
     if (error) {
       // Surface to logs but don't propagate.
       console.warn(`[audit] insert failed: ${error.message}`, {

@@ -311,7 +311,7 @@ export async function scrapeWebsite(prospectId: string): Promise<ScrapeWebsiteRe
         research_method: nextMethod,
         last_scraped_at: site.scraped_at,
         last_edited_by_user_id: user.id,
-      })
+      } as never)
       .eq("id", existing.id);
     if (error) return { ok: false, error: `Could not save: ${error.message}` };
   } else {
@@ -325,7 +325,7 @@ export async function scrapeWebsite(prospectId: string): Promise<ScrapeWebsiteRe
       research_method: nextMethod,
       last_scraped_at: site.scraped_at,
       last_edited_by_user_id: user.id,
-    });
+    } as never);
     if (error) return { ok: false, error: `Could not create: ${error.message}` };
   }
 
@@ -421,7 +421,7 @@ export async function scrapeWebsite(prospectId: string): Promise<ScrapeWebsiteRe
   if (prospect.status === "raw") {
     await supabase
       .from("prospects")
-      .update({ status: "researched", updated_at: new Date().toISOString() })
+      .update({ status: "researched", updated_at: new Date().toISOString() } as never)
       .eq("id", parsed.data.prospect_id)
       .eq("tenant_id", user.tenantId);
   }

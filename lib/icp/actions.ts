@@ -88,7 +88,7 @@ export async function createIcp(input: CreateIcpInput): Promise<IcpActionResult>
   // supabase-js 2.47 typing quirk — see tasks/lessons.md "supabase-js 2.47 types `.update()` / `.insert()` payload as `never`".
   const { data, error } = await supabase
     .from("icps")
-    .insert(payload)
+    .insert(payload as never)
     .select("id")
     .single<{ id: string }>();
 
@@ -137,7 +137,7 @@ export async function updateIcp(input: UpdateIcpInput): Promise<IcpActionResult>
 
   const { error } = await supabase
     .from("icps")
-    .update(payload)
+    .update(payload as never)
     .eq("id", parsed.data.id)
     .eq("tenant_id", user.tenantId);
 
@@ -162,7 +162,7 @@ export async function softDeleteIcp(id: string): Promise<IcpActionResult> {
 
   const { error } = await supabase
     .from("icps")
-    .update({ is_active: false, updated_at: new Date().toISOString() })
+    .update({ is_active: false, updated_at: new Date().toISOString() } as never)
     .eq("id", parsed.data)
     .eq("tenant_id", user.tenantId);
 

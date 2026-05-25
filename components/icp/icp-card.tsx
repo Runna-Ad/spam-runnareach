@@ -32,19 +32,18 @@ export function IcpCard({ icp, onOpen }: IcpCardProps) {
       )}
       aria-label={`Edit ICP: ${icp.name}`}
     >
-      <div className="flex items-start gap-2">
-        <span
-          aria-label={MARKET_LABEL[icp.market]}
-          title={MARKET_LABEL[icp.market]}
-          className="text-lg leading-none"
-        >
-          {MARKET_FLAG[icp.market]}
-        </span>
+      <div className="flex items-start gap-2.5">
+        {/* Market flag in a subtle container */}
+        <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-[var(--radius-md)] bg-[var(--color-bg-700)] text-xl">
+          <span aria-label={MARKET_LABEL[icp.market]} title={MARKET_LABEL[icp.market]}>
+            {MARKET_FLAG[icp.market]}
+          </span>
+        </div>
         <div className="flex min-w-0 flex-1 flex-col">
-          <h3 className="truncate text-sm font-semibold tracking-tight text-[var(--color-fg-50)]">
+          <h3 className="line-clamp-2 text-sm font-semibold leading-snug tracking-tight text-[var(--color-fg-50)]">
             {icp.name}
           </h3>
-          <p className="truncate text-[11px] text-[var(--color-fg-500)]">
+          <p className="mt-0.5 text-[11px] text-[var(--color-fg-500)]">
             {MARKET_LABEL[icp.market]} · {icp.language.toUpperCase()}
           </p>
         </div>
@@ -87,11 +86,18 @@ export function IcpCard({ icp, onOpen }: IcpCardProps) {
       </div>
 
       <div className="mt-auto flex items-center justify-between pt-1">
-        <span className="inline-flex items-center gap-1 text-[11px] text-[var(--color-fg-500)]">
+        <span
+          className={cn(
+            "inline-flex items-center gap-1 text-[11px]",
+            icp.reachable_pool_count !== null
+              ? "text-[var(--color-fg-500)]"
+              : "text-[var(--color-fg-700)]",
+          )}
+        >
           <Users className="h-3 w-3" aria-hidden />
           {icp.reachable_pool_count !== null
             ? `${icp.reachable_pool_count.toLocaleString()} in pool`
-            : "pool not computed"}
+            : "pool pending"}
         </span>
         <Chip tone={icp.is_active ? "success" : "neutral"}>
           {icp.is_active ? "active" : "archived"}

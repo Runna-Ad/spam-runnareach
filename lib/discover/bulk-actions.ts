@@ -63,7 +63,9 @@ export async function bulkTransitionStatus(
     .select("id, status")
     .in("id", parsed.data.prospect_ids)
     .eq("tenant_id", user.tenantId);
-  const priorById = new Map((priorRows ?? []).map((r) => [r.id, r.status]));
+  const priorById = new Map(
+    ((priorRows ?? []) as Array<{ id: string; status: string }>).map((r) => [r.id, r.status]),
+  );
 
   const payload: ProspectUpdate = {
     status: parsed.data.next_status,
@@ -80,7 +82,7 @@ export async function bulkTransitionStatus(
 
   const { error, count } = await supabase
     .from("prospects")
-    .update(payload, { count: "exact" })
+    .update(payload as never, { count: "exact" })
     .in("id", parsed.data.prospect_ids)
     .eq("tenant_id", user.tenantId);
 

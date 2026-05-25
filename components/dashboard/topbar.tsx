@@ -34,10 +34,7 @@ export function Topbar() {
         </span>
       </button>
 
-      <div className="ml-auto flex items-center gap-1 text-xs text-[var(--color-fg-500)]">
-        <Command className="h-3.5 w-3.5" aria-hidden />
-        <span>Phase 0 — foundation</span>
-      </div>
+      <div className="ml-auto" />
     </header>
   );
 }

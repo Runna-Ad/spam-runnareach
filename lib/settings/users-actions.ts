@@ -145,7 +145,7 @@ export async function changeMemberRole(input: {
 
   const { error } = await supabase
     .from("users")
-    .update({ role: parsed.data.role, updated_at: new Date().toISOString() })
+    .update({ role: parsed.data.role, updated_at: new Date().toISOString() } as never)
     .eq("id", parsed.data.userId)
     .eq("tenant_id", user.tenantId);
 

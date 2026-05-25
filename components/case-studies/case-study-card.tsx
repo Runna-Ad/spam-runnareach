@@ -104,6 +104,26 @@ export function CaseStudyCard({ caseStudy, painTaxonomy, onOpen }: CaseStudyCard
   );
 }
 
+// 6 distinct brand-aware palette entries: [bg, text] using CSS custom props
+// Chosen to be legible on dark surfaces and aligned with the Rünna palette.
+const AVATAR_PALETTE: Array<{ bg: string; fg: string }> = [
+  { bg: "color-mix(in oklab,var(--color-accent-300),transparent 78%)",  fg: "var(--color-accent-300)" },
+  { bg: "color-mix(in oklab,var(--color-brand-pink),transparent 78%)",  fg: "var(--color-brand-pink)" },
+  { bg: "color-mix(in oklab,var(--color-brand-gold),transparent 78%)",  fg: "var(--color-brand-gold)" },
+  { bg: "color-mix(in oklab,var(--color-success-500),transparent 78%)", fg: "var(--color-success-300)" },
+  { bg: "color-mix(in oklab,var(--color-info-500),transparent 78%)",    fg: "var(--color-info-300)" },
+  { bg: "color-mix(in oklab,var(--color-fg-300),transparent 85%)",      fg: "var(--color-fg-300)" },
+];
+
+/** Simple deterministic hash so the same client always gets the same color. */
+function hashName(name: string): number {
+  let h = 0;
+  for (let i = 0; i < name.length; i++) {
+    h = (Math.imul(31, h) + name.charCodeAt(i)) | 0;
+  }
+  return Math.abs(h);
+}
+
 function LogoOrInitials({ client, logoUrl }: { client: string; logoUrl: string | null }) {
   if (logoUrl) {
     return (
@@ -120,15 +140,13 @@ function LogoOrInitials({ client, logoUrl }: { client: string; logoUrl: string |
   }
 
   const initials = deriveInitials(client);
+  const palette = AVATAR_PALETTE[hashName(client) % AVATAR_PALETTE.length]!;
+
   return (
     <div
       aria-hidden
-      className={cn(
-        "grid h-10 w-10 shrink-0 place-items-center rounded-[var(--radius-md)]",
-        "bg-[var(--color-bg-900)] ring-1 ring-inset ring-[var(--color-border-default)]",
-        "font-[family-name:var(--font-display)] text-[13px] font-semibold tracking-tight",
-        "text-[var(--color-accent-300)]",
-      )}
+      className="grid h-10 w-10 shrink-0 place-items-center rounded-[var(--radius-md)] font-[family-name:var(--font-display)] text-[13px] font-semibold tracking-tight"
+      style={{ background: palette.bg, color: palette.fg }}
     >
       {initials}
     </div>

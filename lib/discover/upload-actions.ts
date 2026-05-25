@@ -68,7 +68,7 @@ export async function uploadProspects(
       triggered_by: user.id,
       status: "running",
       started_at: nowIso,
-    })
+    } as never)
     .select("id")
     .single<{ id: string }>();
 
@@ -141,7 +141,7 @@ export async function uploadProspects(
   }
 
   if (inserts.length > 0) {
-    const { error: insertErr } = await supabase.from("prospects").insert(inserts);
+    const { error: insertErr } = await supabase.from("prospects").insert(inserts as never);
     if (insertErr) {
       await failRun(runRow.id, `Could not insert prospects: ${insertErr.message}`);
       return { ok: false, error: `Could not insert prospects: ${insertErr.message}` };
@@ -158,7 +158,7 @@ export async function uploadProspects(
       candidates_new,
       candidates_duplicate,
       completed_at: completedAt,
-    })
+    } as never)
     .eq("id", runRow.id);
 
   revalidatePath("/discover");
@@ -182,7 +182,7 @@ async function failRun(runId: string, msg: string) {
       status: "failed",
       error_message: msg,
       completed_at: new Date().toISOString(),
-    })
+    } as never)
     .eq("id", runId);
 }
 
