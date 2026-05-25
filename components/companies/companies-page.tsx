@@ -1,6 +1,7 @@
 "use client";
 
-import { ExternalLink, Filter, Gauge, Loader2, Search, X } from "lucide-react";
+import { ArrowRight, Building2, ExternalLink, Filter, Gauge, Loader2, Search, X } from "lucide-react";
+import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import * as React from "react";
 import { Button } from "@/components/ui/button";
@@ -294,8 +295,17 @@ export function CompaniesPage({ prospects, icps, initialFilters }: CompaniesPage
       <div className="flex-1 overflow-y-auto">
         {prospects.length === 0 ? (
           <EmptyState
+            icon={<Building2 className="h-8 w-8 opacity-40" />}
             title="No prospects yet"
-            description="Upload a CSV at /discover to seed the pipeline. Discovered prospects will populate this list."
+            description="Upload a CSV or run a discovery source to seed the pipeline."
+            action={
+              <Link href="/discover">
+                <Button variant="primary" size="sm">
+                  Go to Discover
+                  <ArrowRight className="ml-1.5 h-3.5 w-3.5" aria-hidden />
+                </Button>
+              </Link>
+            }
           />
         ) : filtered.length === 0 ? (
           <EmptyState

@@ -34,7 +34,7 @@ export function LearningClient({ prompts, initialDetail }: Props) {
       {/* Page header */}
       <div className="px-6 pt-6 pb-4 border-b border-white/10 flex items-center justify-between gap-4 shrink-0">
         <div className="flex flex-col gap-0.5">
-          <h1 className="text-xl font-semibold text-white">Learning</h1>
+          <h1 className="text-2xl font-semibold tracking-tight text-white">Learning</h1>
           <p className="text-sm text-white/40">
             Prompt version control · A/B testing · Sunday analysis proposals
           </p>

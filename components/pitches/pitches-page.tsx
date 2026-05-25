@@ -116,8 +116,17 @@ export function PitchesPage({ pitches, counts, canEdit, inboxes }: PitchesPagePr
         <div className="w-[420px] shrink-0 overflow-y-auto border-r border-[var(--color-border-subtle)]">
           {pitches.length === 0 ? (
             <EmptyState
+              icon={<Sparkles className="h-8 w-8 opacity-40" />}
               title="No pitches yet"
-              description="From a prospect detail page, click 'Generate pitch' to create one."
+              description="Open a prospect from Companies, then click 'Generate pitch' to create your first one."
+              action={
+                <Link href="/companies">
+                  <Button variant="secondary" size="sm">
+                    Go to Companies
+                    <ArrowRight className="ml-1.5 h-3.5 w-3.5" aria-hidden />
+                  </Button>
+                </Link>
+              }
             />
           ) : visible.length === 0 ? (
             <EmptyState

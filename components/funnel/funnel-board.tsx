@@ -1,6 +1,6 @@
 "use client";
 
-import { ExternalLink, GripVertical } from "lucide-react";
+import { ArrowRight, ExternalLink, GripVertical } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import * as React from "react";
@@ -114,6 +114,76 @@ export function FunnelBoard({ cards, canEdit }: FunnelBoardProps) {
 
   const total = state.length;
 
+  // When the board is completely empty, show a guided onboarding view
+  // instead of 7 columns of "Empty." — the void communicates nothing.
+  if (total === 0) {
+    return (
+      <div className="flex h-full flex-col">
+        <header className="flex h-11 shrink-0 items-center gap-3 border-b border-[var(--color-border-subtle)] px-4">
+          <span className="font-mono text-xs text-[var(--color-fg-500)]">/funnel</span>
+          <span className="text-[11px] text-[var(--color-fg-500)]">
+            <span className="font-medium text-[var(--color-fg-50)]">0</span> in pipeline
+          </span>
+        </header>
+        <div className="flex flex-1 items-center justify-center p-8">
+          <div className="flex max-w-md flex-col items-center gap-8 text-center">
+            {/* Pipeline journey visual */}
+            <div className="flex items-center gap-0">
+              {[
+                { label: "Raw",        color: "var(--color-fg-500)" },
+                { label: "Research",   color: "var(--color-info-300)" },
+                { label: "Pitch",      color: "var(--color-accent-300)" },
+                { label: "Reply",      color: "var(--color-brand-gold)" },
+                { label: "Booked",     color: "var(--color-brand-pink)" },
+                { label: "Won",        color: "var(--color-success-300)" },
+              ].map((s, i, arr) => (
+                <React.Fragment key={s.label}>
+                  <div className="flex flex-col items-center gap-2 px-2">
+                    <div
+                      className="h-2.5 w-2.5 rounded-full"
+                      style={{
+                        background: `color-mix(in oklab, ${s.color}, transparent 60%)`,
+                        boxShadow: `0 0 6px ${s.color}40, inset 0 0 0 1px ${s.color}80`,
+                      }}
+                    />
+                    <span
+                      className="text-[9px] uppercase tracking-wider whitespace-nowrap"
+                      style={{ color: s.color }}
+                    >
+                      {s.label}
+                    </span>
+                  </div>
+                  {i < arr.length - 1 && (
+                    <div className="mb-4 h-px w-5 bg-[var(--color-border-subtle)]" />
+                  )}
+                </React.Fragment>
+              ))}
+            </div>
+
+            <div className="flex flex-col gap-1.5">
+              <h3 className="text-sm font-semibold tracking-tight text-[var(--color-fg-50)]">
+                Your pipeline is empty
+              </h3>
+              <p className="text-xs leading-relaxed text-[var(--color-fg-500)]">
+                Add prospects at Discover to start filling your funnel.
+                Once added, drag cards between stages as they progress
+                from research through to booked.
+              </p>
+            </div>
+
+            <Link
+              href="/discover"
+              className="inline-flex items-center gap-1.5 rounded-[var(--radius-md)] bg-[var(--color-accent-300)] px-4 py-2 text-sm font-medium text-[var(--color-bg-900)] transition-opacity hover:opacity-90"
+            >
+              Go to Discover
+              <ArrowRight className="h-3.5 w-3.5" aria-hidden />
+            </Link>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="flex h-full flex-col">
       <header className="flex h-11 shrink-0 items-center gap-3 border-b border-[var(--color-border-subtle)] px-4">
@@ -184,8 +254,14 @@ export function FunnelBoard({ cards, canEdit }: FunnelBoardProps) {
 
                 <div className="flex-1 overflow-y-auto p-2">
                   {items.length === 0 ? (
-                    <p className="px-1 py-3 text-[11px] italic text-[var(--color-fg-700)]">
-                      Empty.
+                    <p className="px-1 py-4 text-[10px] text-[var(--color-fg-700)] leading-relaxed">
+                      {col.key === "raw" && "Prospects land here from Discover."}
+                      {col.key === "researched" && "Run research from a prospect page."}
+                      {col.key === "pitched" && "Generate a pitch from a prospect page."}
+                      {col.key === "replied" && "Mark a reply from the Inbox."}
+                      {col.key === "booked" && "Set from the prospect page."}
+                      {col.key === "won" && "Set from the prospect page."}
+                      {col.key === "lost" && "Set from the prospect page."}
                     </p>
                   ) : (
                     <ul className="space-y-2">

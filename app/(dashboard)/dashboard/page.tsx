@@ -80,8 +80,23 @@ export default async function TodayPage() {
 
   return (
     <div className="mx-auto max-w-6xl space-y-6 p-6">
-      {/* Greeting */}
-      <div>
+      {/* Greeting — 120% detail: subtle accent radial behind the heading */}
+      <div
+        className="relative pl-4"
+        style={{
+          background:
+            "radial-gradient(ellipse 55% 80% at 0% 50%, color-mix(in oklab, var(--color-accent-300), transparent 92%) 0%, transparent 100%)",
+        }}
+      >
+        {/* Thin left accent bar */}
+        <span
+          className="absolute left-0 top-0 bottom-0 w-0.5 rounded-full"
+          style={{
+            background:
+              "linear-gradient(to bottom, var(--color-accent-300), var(--color-brand-pink))",
+          }}
+          aria-hidden
+        />
         <p className="font-mono text-xs tracking-wider text-[var(--color-fg-500)]">
           TODAY ·{" "}
           {new Date().toLocaleDateString("en-CA", {

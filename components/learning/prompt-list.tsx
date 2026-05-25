@@ -44,7 +44,21 @@ export function PromptList({ prompts, selectedId, onSelect }: Props) {
                     <span className="text-sm font-medium truncate">
                       {PURPOSE_LABELS[prompt.purpose]}
                     </span>
-                    <span className="text-[11px] text-white/40 truncate">
+                    <span className="flex items-center gap-1.5 text-[11px] text-white/40 truncate">
+                      {/* Status dot — green = has champion, amber = no champion but active, gray = off */}
+                      <span
+                        className="h-1.5 w-1.5 shrink-0 rounded-full"
+                        style={{
+                          background: !prompt.is_active
+                            ? "var(--color-fg-700)"
+                            : prompt.champion
+                              ? "var(--color-success-300)"
+                              : "color-mix(in oklab, var(--color-brand-gold), transparent 30%)",
+                          boxShadow: prompt.champion && prompt.is_active
+                            ? "0 0 4px var(--color-success-300)"
+                            : undefined,
+                        }}
+                      />
                       {prompt.champion ? `v${prompt.champion.version}` : "not set"}{" "}
                       · {prompt.champion?.model?.split("-").slice(1, 3).join("-") ?? "—"}
                     </span>
