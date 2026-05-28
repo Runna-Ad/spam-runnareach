@@ -8,7 +8,7 @@
 // regenerated post-migration. This is intentional and not a bug.
 // ─────────────────────────────────────────────────────────────────────────────
 
-import { createClient } from "@/lib/supabase/server";
+import { createServiceRoleClient } from "@/lib/supabase/service-role";
 import type {
   WarmupConfig,
   WarmupBuddy,
@@ -24,7 +24,7 @@ type AnySupabase = any;
 // ── Config ─────────────────────────────────────────────────────────────────────
 
 export async function getWarmupConfig(tenantId: string): Promise<WarmupConfig | null> {
-  const supabase = (await createClient()) as AnySupabase;
+  const supabase = createServiceRoleClient() as AnySupabase;
   const { data } = await supabase
     .from("warmup_config")
     .select("*")
@@ -34,7 +34,7 @@ export async function getWarmupConfig(tenantId: string): Promise<WarmupConfig | 
 }
 
 export async function getAllActiveConfigs(): Promise<WarmupConfig[]> {
-  const supabase = (await createClient()) as AnySupabase;
+  const supabase = createServiceRoleClient() as AnySupabase;
   const { data } = await supabase
     .from("warmup_config")
     .select("*")
@@ -57,7 +57,7 @@ export async function updateWarmupConfigDay(
     >
   >,
 ): Promise<void> {
-  const supabase = (await createClient()) as AnySupabase;
+  const supabase = createServiceRoleClient() as AnySupabase;
   await supabase
     .from("warmup_config")
     .update({ ...patch, updated_at: new Date().toISOString() })
@@ -65,7 +65,7 @@ export async function updateWarmupConfigDay(
 }
 
 export async function resetDailyCount(configId: string): Promise<void> {
-  const supabase = (await createClient()) as AnySupabase;
+  const supabase = createServiceRoleClient() as AnySupabase;
   await supabase
     .from("warmup_config")
     .update({
@@ -79,7 +79,7 @@ export async function resetDailyCount(configId: string): Promise<void> {
 // ── Buddies ────────────────────────────────────────────────────────────────────
 
 export async function getActiveBuddies(): Promise<WarmupBuddy[]> {
-  const supabase = (await createClient()) as AnySupabase;
+  const supabase = createServiceRoleClient() as AnySupabase;
   const { data } = await supabase
     .from("warmup_buddies")
     .select("*")
@@ -89,7 +89,7 @@ export async function getActiveBuddies(): Promise<WarmupBuddy[]> {
 }
 
 export async function markBuddyUsed(buddyId: string): Promise<void> {
-  const supabase = (await createClient()) as AnySupabase;
+  const supabase = createServiceRoleClient() as AnySupabase;
   await supabase
     .from("warmup_buddies")
     .update({ last_used_at: new Date().toISOString() })
@@ -99,7 +99,7 @@ export async function markBuddyUsed(buddyId: string): Promise<void> {
 // ── Templates ─────────────────────────────────────────────────────────────────
 
 export async function getRandomTemplate(): Promise<WarmupTemplate | null> {
-  const supabase = (await createClient()) as AnySupabase;
+  const supabase = createServiceRoleClient() as AnySupabase;
   const { data } = await supabase
     .from("warmup_templates")
     .select("*")
@@ -115,7 +115,7 @@ export async function getRandomTemplate(): Promise<WarmupTemplate | null> {
 export async function insertWarmupLog(
   entry: Omit<WarmupLogEntry, "id" | "created_at">,
 ): Promise<string | null> {
-  const supabase = (await createClient()) as AnySupabase;
+  const supabase = createServiceRoleClient() as AnySupabase;
   const { data } = await supabase
     .from("warmup_log")
     .insert(entry)
@@ -128,12 +128,12 @@ export async function updateWarmupLog(
   logId: string,
   patch: Partial<Pick<WarmupLogEntry, "landed_in_inbox" | "reply_sent" | "message_id" | "thread_id">>,
 ): Promise<void> {
-  const supabase = (await createClient()) as AnySupabase;
+  const supabase = createServiceRoleClient() as AnySupabase;
   await supabase.from("warmup_log").update(patch).eq("id", logId);
 }
 
 export async function getRecentLog(tenantId: string, limit = 50): Promise<WarmupLogEntry[]> {
-  const supabase = (await createClient()) as AnySupabase;
+  const supabase = createServiceRoleClient() as AnySupabase;
   const { data } = await supabase
     .from("warmup_log")
     .select("*")
@@ -147,7 +147,7 @@ export async function getRecentLogByConfig(
   configId: string,
   since: string,
 ): Promise<WarmupLogEntry[]> {
-  const supabase = (await createClient()) as AnySupabase;
+  const supabase = createServiceRoleClient() as AnySupabase;
   const { data } = await supabase
     .from("warmup_log")
     .select("*")
@@ -158,7 +158,7 @@ export async function getRecentLogByConfig(
 
 /** Returns log entries from yesterday (direction=sent) that haven't been inbox-checked yet. */
 export async function getPendingInboxChecks(configId: string): Promise<WarmupLogEntry[]> {
-  const supabase = (await createClient()) as AnySupabase;
+  const supabase = createServiceRoleClient() as AnySupabase;
   const yesterday = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
   const { data } = await supabase
     .from("warmup_log")
@@ -176,7 +176,7 @@ export async function getPendingInboxChecks(configId: string): Promise<WarmupLog
 export async function upsertDomainHealth(
   row: Omit<DomainHealth, "id" | "created_at">,
 ): Promise<void> {
-  const supabase = (await createClient()) as AnySupabase;
+  const supabase = createServiceRoleClient() as AnySupabase;
   await supabase
     .from("domain_health")
     .upsert(row, { onConflict: "tenant_id,domain,recorded_date" });
@@ -187,7 +187,7 @@ export async function getDomainHealthHistory(
   domain: string,
   days = 14,
 ): Promise<DomainHealth[]> {
-  const supabase = (await createClient()) as AnySupabase;
+  const supabase = createServiceRoleClient() as AnySupabase;
   const since = new Date(Date.now() - days * 24 * 60 * 60 * 1000)
     .toISOString()
     .split("T")[0];
@@ -205,7 +205,7 @@ export async function getLatestDomainHealth(
   tenantId: string,
   domain: string,
 ): Promise<DomainHealth | null> {
-  const supabase = (await createClient()) as AnySupabase;
+  const supabase = createServiceRoleClient() as AnySupabase;
   const { data } = await supabase
     .from("domain_health")
     .select("*")

@@ -9,7 +9,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { NextRequest, NextResponse } from "next/server";
-import { createClient } from "@/lib/supabase/server";
+import { createServiceRoleClient } from "@/lib/supabase/service-role";
 import { getAccessToken } from "@/lib/gmail/client";
 import { fetchDomainStats, listPostmasterDomains } from "@/lib/warmup/postmaster";
 import {
@@ -36,7 +36,7 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  const supabase = await createClient();
+  const supabase = createServiceRoleClient();
   const results: { tenant_id: string; domain: string; status: string }[] = [];
 
   try {

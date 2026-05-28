@@ -14,7 +14,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { NextRequest, NextResponse } from "next/server";
-import { createClient } from "@/lib/supabase/server";
+import { createServiceRoleClient } from "@/lib/supabase/service-role";
 import { getAccessToken, sendGmailMessage } from "@/lib/gmail/client";
 import {
   getAllActiveConfigs,
@@ -62,7 +62,7 @@ async function getSendingInbox(
   tenantId: string,
   sendingEmail: string,
 ): Promise<InboxRow | null> {
-  const supabase = await createClient();
+  const supabase = createServiceRoleClient();
   const { data } = await supabase
     .from("sender_inboxes")
     .select("id, email, display_name, gmail_refresh_token_encrypted")
