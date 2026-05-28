@@ -7,7 +7,7 @@
   "crons": [
     {
       "path": "/api/warmup/engine",
-      "schedule": "*/30 * * * *"
+      "schedule": "0 14 * * *"
     },
     {
       "path": "/api/warmup/postmaster-sync",
