@@ -156,8 +156,9 @@ async function processConfig(config: WarmupConfig): Promise<EngineTickResult> {
       return result;
     }
 
-    // ── Step 6: Send up to 3 emails this tick (burst prevention)
-    const sendThisTick = Math.min(dayPlan.remainingToday, 3);
+    // ── Step 6: Send all remaining emails for today in one tick
+    // (Cron fires once/day on Hobby tier — no burst risk, send the full daily target)
+    const sendThisTick = dayPlan.remainingToday;
     let buddyIndex = config.last_buddy_index;
 
     for (let i = 0; i < sendThisTick; i++) {
