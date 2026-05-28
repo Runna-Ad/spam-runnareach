@@ -62,9 +62,9 @@ export async function triggerEngineManually(): Promise<
 
   const baseUrl =
     process.env.NEXT_PUBLIC_APP_URL ??
-    process.env.VERCEL_URL
+    (process.env.VERCEL_URL
       ? `https://${process.env.VERCEL_URL}`
-      : "http://localhost:3000";
+      : "http://localhost:3000");
 
   try {
     const res = await fetch(`${baseUrl}/api/warmup/engine`, {
