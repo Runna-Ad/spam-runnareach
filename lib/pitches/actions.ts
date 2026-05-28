@@ -613,9 +613,18 @@ function normalizePains(raw: unknown): GeneratorInputResearchPain[] {
     if (!entry || typeof entry !== "object") return [];
     const e = entry as Record<string, unknown>;
     const pain_id = typeof e.pain_id === "string" ? e.pain_id : null;
-    const pain_label = typeof e.pain_label === "string" ? e.pain_label : null;
+    const pain_label = typeof e.pain_label === "string" ? e.pain_label.trim() : null;
+
+    // ── Evidence-quote gate (mirrors score-action normalizePainPoints) ───────
+    // Only pains with a real scraped quote reach the pitch generator.
+    // Filters: quote must exist, be ≥20 chars, and not be a recycled copy of
+    // the pain label (the Claude fallback anti-pattern).
     const evidence_quote =
-      typeof e.evidence_quote === "string" ? e.evidence_quote : null;
+      typeof e.evidence_quote === "string" ? e.evidence_quote.trim() : null;
+    if (!evidence_quote || evidence_quote.length < 20 || evidence_quote === pain_label) {
+      return [];
+    }
+
     if (!pain_id && !pain_label) return [];
     return [{ pain_id, pain_label, evidence_quote }];
   });

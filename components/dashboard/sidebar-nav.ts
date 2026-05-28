@@ -5,6 +5,7 @@ import {
   Building2,
   FileText,
   Filter,
+  Flame,
   Inbox,
   LayoutDashboard,
   LineChart,
@@ -64,6 +65,7 @@ export const NAV_SECTIONS: readonly NavSection[] = [
     items: [
       { label: "Compliance", href: "/compliance", icon: ShieldCheck, phase: 0 },
       { label: "Deliverability", href: "/analytics?tab=deliverability", icon: LineChart, phase: 4 },
+      { label: "Warmup", href: "/warmup", icon: Flame, phase: 0 },
       { label: "Design", href: "/design", icon: FileText, phase: 0 },
       { label: "Settings", href: "/settings/profile", icon: Settings, phase: 0 },
     ],

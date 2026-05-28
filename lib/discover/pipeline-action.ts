@@ -24,6 +24,9 @@
 import { revalidatePath } from "next/cache";
 import { requireUser } from "@/lib/auth";
 import { createClient } from "@/lib/supabase/server";
+import { anymailFindDecisionMaker } from "@/lib/research/anymail-finder";
+import { hunterDomainSearch } from "@/lib/research/hunter";
+import { snapVerifyEnrich } from "@/lib/research/snap-contact";
 import { scrapeWebsite } from "@/lib/research/scrape-action";
 import { runStructuredResearch } from "@/lib/research/structured-research-action";
 import { deepResearchProspect } from "@/lib/research/deep-research-action";
@@ -76,6 +79,60 @@ export async function getProspectIdsForRuns(
 
   if (error) return { ok: false, error: error.message };
   return { ok: true, ids: (data ?? []).map((r) => r.id) };
+}
+
+// ── Public: get ALL raw prospect IDs for an ICP (or entire tenant) ────────────
+// Used as a fallback when the discovery run timed out and we still need to
+// process prospects that were inserted before the 504 hit.
+
+export async function getRawProspectIds(
+  icpId?: string,
+): Promise<{ ok: true; ids: string[] } | { ok: false; error: string }> {
+  const user = await requireUser();
+  const supabase = await createClient();
+
+  type Row = { id: string };
+  let query = supabase
+    .from("prospects")
+    .select("id")
+    .eq("tenant_id", user.tenantId)
+    .eq("status", "raw");
+
+  if (icpId) {
+    query = query.eq("icp_id", icpId);
+  }
+
+  const { data, error } = await query
+    .order("created_at", { ascending: true })
+    .limit(50)
+    .returns<Row[]>();
+
+  if (error) return { ok: false, error: error.message };
+  return { ok: true, ids: (data ?? []).map((r) => r.id) };
+}
+
+// ── Public: count raw prospects (for UI badges) ────────────────────────────────
+
+export async function countRawProspects(
+  icpId?: string,
+): Promise<{ ok: true; count: number } | { ok: false; error: string }> {
+  const user = await requireUser();
+  const supabase = await createClient();
+
+  let query = supabase
+    .from("prospects")
+    .select("id", { count: "exact", head: true })
+    .eq("tenant_id", user.tenantId)
+    .eq("status", "raw");
+
+  if (icpId) {
+    query = query.eq("icp_id", icpId);
+  }
+
+  const { count, error } = await query;
+
+  if (error) return { ok: false, error: error.message };
+  return { ok: true, count: count ?? 0 };
 }
 
 // ── Public: process one prospect through the full pipeline ───────────────────
@@ -298,7 +355,44 @@ export async function processSingleProspect(
     return { prospect_id: prospectId, company_name: name, score, outcome: "needs_review" };
   }
 
-  // Score ≥ 70: generate pitch
+  // Score ≥ 70: enrich contacts then generate pitch
+  // Contact enrichment runs here — after scoring — so we only spend
+  // Anymail / Hunter credits on prospects that cleared the quality bar.
+  if (p?.domain) {
+    try {
+      await enrichContactsForProspect(user.tenantId, prospectId, p.domain, p.company_name, supabase);
+    } catch {
+      // Non-fatal — gate check below will catch the no-contact case
+    }
+  }
+
+  // ── No-contact gate ───────────────────────────────────────────────────────
+  // A pitch with no send address is useless. If all three enrichment tiers
+  // (SnapVerify → Anymail → Hunter) came up empty, hold the prospect for
+  // manual review rather than generating an unsendable pitch.
+  type ContactRow = { email: string };
+  const { data: validContacts } = await supabase
+    .from("prospect_contacts")
+    .select("email")
+    .eq("prospect_id", prospectId)
+    .eq("tenant_id", user.tenantId)
+    .not("email", "is", null)
+    .limit(1)
+    .returns<ContactRow[]>();
+
+  if (!validContacts || validContacts.length === 0) {
+    await supabase
+      .from("prospects")
+      .update({
+        pitch_gate_passed: false,
+        updated_at: new Date().toISOString(),
+      } as never)
+      .eq("id", prospectId)
+      .eq("tenant_id", user.tenantId);
+    revalidatePath("/companies");
+    return { prospect_id: prospectId, company_name: name, score, outcome: "needs_review" };
+  }
+
   try {
     const pitchResult = await generatePitch(prospectId);
     if (pitchResult.ok) {
@@ -331,6 +425,219 @@ export async function processSingleProspect(
 
   revalidatePath("/companies");
   return { prospect_id: prospectId, company_name: name, score, outcome: "needs_review" };
+}
+
+// ── Public: re-enrich contacts for an existing prospect ──────────────────────
+// Called from the prospect detail page when a prospect already passed through
+// the pipeline but ended up with no contact email (all three tiers missed).
+// Works on any status — doesn't require the prospect to be raw.
+
+export async function reEnrichProspectContacts(
+  prospectId: string,
+): Promise<
+  | { ok: true; found: boolean; email?: string; method?: string }
+  | { ok: false; error: string }
+> {
+  const user = await requireUser();
+  const supabase = await createClient();
+
+  type ProspectRow = { domain: string | null; company_name: string };
+  const { data: p } = await supabase
+    .from("prospects")
+    .select("domain, company_name")
+    .eq("id", prospectId)
+    .eq("tenant_id", user.tenantId)
+    .maybeSingle<ProspectRow>();
+
+  if (!p?.domain) {
+    return { ok: false, error: "Prospect has no domain — can't enrich contacts" };
+  }
+
+  try {
+    await enrichContactsForProspect(user.tenantId, prospectId, p.domain, p.company_name, supabase);
+  } catch (err) {
+    return { ok: false, error: (err as Error).message ?? "Enrichment failed" };
+  }
+
+  // Report what was found (if anything)
+  type ContactRow = { email: string; selected_by: string };
+  const { data: contacts } = await supabase
+    .from("prospect_contacts")
+    .select("email, selected_by")
+    .eq("prospect_id", prospectId)
+    .eq("tenant_id", user.tenantId)
+    .not("email", "is", null)
+    .order("priority_rank", { ascending: true })
+    .limit(1)
+    .returns<ContactRow[]>();
+
+  const best = contacts?.[0];
+  if (best) {
+    return { ok: true, found: true, email: best.email, method: best.selected_by };
+  }
+  return { ok: true, found: false };
+}
+
+// ── Contact enrichment helper (score-gated, three-tier waterfall) ─────────────
+
+/**
+ * Three-tier contact enrichment for a single prospect (score ≥ 70 only):
+ *
+ *   Tier 1 — SnapVerify (free): extracts named people from scraped site data,
+ *             generates email guesses, SMTP-probes via Supabase edge function,
+ *             or applies Google Workspace heuristic. Zero API credits.
+ *
+ *   Tier 2 — Anymail Finder: verified decision-maker search. Costs credits.
+ *             Only runs if SnapVerify found nothing.
+ *
+ *   Tier 3 — Hunter.io: domain-wide email sweep. Only runs if Anymail missed.
+ *
+ * Short-circuits on first success — each tier preserves the next tier's credits.
+ * Duplicate inserts (23505) are silently ignored.
+ */
+async function enrichContactsForProspect(
+  tenantId: string,
+  prospectId: string,
+  domain: string,
+  companyName: string,
+  supabase: Awaited<ReturnType<typeof createClient>>,
+): Promise<void> {
+  // ── Fetch already-scraped research data (stored after scrape step) ────────
+  type ResearchRow = { notes: string | null; what_they_do: string | null };
+  const { data: research } = await supabase
+    .from("prospect_research")
+    .select("notes, what_they_do")
+    .eq("prospect_id", prospectId)
+    .eq("tenant_id", tenantId)
+    .maybeSingle<ResearchRow>();
+
+  // ── Tier 1: SnapVerify ────────────────────────────────────────────────────
+  const snapResult = await snapVerifyEnrich(
+    prospectId,
+    domain,
+    research?.notes ?? null,
+    research?.what_they_do ?? null,
+    companyName,
+  );
+
+  if (snapResult.found) {
+    const priorityRank = snapResult.method === "smtp_verified" ? 1 : 2;
+    await supabase.from("prospect_contacts").insert({
+      tenant_id: tenantId,
+      prospect_id: prospectId,
+      email: snapResult.email,
+      full_name: snapResult.full_name ?? null,
+      role_title: snapResult.role_title ?? null,
+      email_is_role_based: false,
+      priority_rank: priorityRank,
+      selected_by:
+        snapResult.method === "smtp_verified"
+          ? "snapverify_smtp"
+          : snapResult.method === "google_workspace_guess"
+            ? "snapverify_google_guess"
+            : "snapverify_mx_heuristic",
+      selected_at: new Date().toISOString(),
+    } as never);
+    // Short-circuit — SnapVerify found a personal email, skip paid tiers
+    return;
+  }
+
+  // ── Tier 2: Anymail Finder ────────────────────────────────────────────────
+  const anymailResult = await anymailFindDecisionMaker(domain);
+  if (anymailResult.ok) {
+    const c = anymailResult.contact;
+    await supabase.from("prospect_contacts").insert({
+      tenant_id: tenantId,
+      prospect_id: prospectId,
+      email: c.email,
+      full_name: c.full_name ?? null,
+      role_title: c.job_title ?? null,
+      linkedin_url: c.linkedin_url ?? null,
+      email_is_role_based: false,
+      priority_rank: 1,
+      selected_by: "anymail",
+      selected_at: new Date().toISOString(),
+    } as never);
+    return; // short-circuit — Anymail found someone, skip Hunter
+  }
+
+  // ── Tier 3: Hunter.io ─────────────────────────────────────────────────────
+  const hunterResult = await hunterDomainSearch(domain);
+  if (hunterResult.ok && hunterResult.contacts.length > 0) {
+    for (const contact of hunterResult.contacts) {
+      const rank = contact.confidence >= 70 ? 2 : 3;
+      await supabase.from("prospect_contacts").insert({
+        tenant_id: tenantId,
+        prospect_id: prospectId,
+        email: contact.email,
+        full_name:
+          contact.first_name || contact.last_name
+            ? [contact.first_name, contact.last_name].filter(Boolean).join(" ")
+            : null,
+        role_title: contact.position ?? null,
+        email_is_role_based: false,
+        priority_rank: rank,
+        selected_by: "hunter",
+        selected_at: new Date().toISOString(),
+      } as never);
+    }
+  }
+}
+
+// ── Prune run to top 30 ────────────────────────────────────────────────────────
+
+/**
+ * After the pipeline processes a batch of prospects, keep only the top 30
+ * by score and hard-delete the rest. Called from the RunAllModal after the
+ * pipeline loop completes.
+ *
+ * Sort order:
+ *   1. Pitched prospects always survive (score ≥70, pitch already generated)
+ *   2. Remaining sorted by match_score DESC (null last)
+ *
+ * If ≤30 prospects were processed, nothing is deleted.
+ */
+export async function pruneRunToTop30(
+  prospectIds: string[],
+): Promise<{ ok: true; kept: number; deleted: number } | { ok: false; error: string }> {
+  if (prospectIds.length <= 30) return { ok: true, kept: prospectIds.length, deleted: 0 };
+
+  const user = await requireUser();
+  const supabase = await createClient();
+
+  type Row = { id: string; match_score: number | null; status: string };
+  const { data, error } = await supabase
+    .from("prospects")
+    .select("id, match_score, status")
+    .eq("tenant_id", user.tenantId)
+    .in("id", prospectIds)
+    .returns<Row[]>();
+
+  if (error) return { ok: false, error: error.message };
+
+  const all = data ?? [];
+  if (all.length <= 30) return { ok: true, kept: all.length, deleted: 0 };
+
+  // Sort: pitched first (must survive), then by score descending, nulls last
+  all.sort((a, b) => {
+    if (a.status === "pitched" && b.status !== "pitched") return -1;
+    if (b.status === "pitched" && a.status !== "pitched") return 1;
+    return (b.match_score ?? -1) - (a.match_score ?? -1);
+  });
+
+  const toDelete = all.slice(30).map((p) => p.id);
+
+  const { error: delErr } = await supabase
+    .from("prospects")
+    .delete()
+    .in("id", toDelete)
+    .eq("tenant_id", user.tenantId);
+
+  if (delErr) return { ok: false, error: delErr.message };
+
+  revalidatePath("/companies");
+  revalidatePath("/discover");
+  return { ok: true, kept: Math.min(all.length, 30), deleted: toDelete.length };
 }
 
 // ── Website discovery helper ───────────────────────────────────────────────────

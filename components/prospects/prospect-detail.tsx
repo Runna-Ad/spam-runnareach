@@ -18,6 +18,7 @@ import {
   Search,
   Sparkles,
   Trash2,
+  UserCheck,
 } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
@@ -49,6 +50,7 @@ import { runStructuredResearch } from "@/lib/research/structured-research-action
 import { deepResearchProspect } from "@/lib/research/deep-research-action";
 import { buildDeepResearchPrompt } from "@/lib/research/deep-research-prompt";
 import { generatePitch } from "@/lib/pitches/actions";
+import { reEnrichProspectContacts } from "@/lib/discover/pipeline-action";
 import { cn, relativeTime } from "@/lib/utils";
 
 interface ProspectDetailProps {
@@ -583,6 +585,8 @@ function ResearchTab({
   const [deepResearchRaw, setDeepResearchRaw] = React.useState<string | null>(null);
   const [deepResearchExpanded, setDeepResearchExpanded] = React.useState(false);
   const [copyPromptDone, setCopyPromptDone] = React.useState(false);
+  const [enrichMessage, setEnrichMessage] = React.useState<{ tone: "ok" | "warn"; text: string } | null>(null);
+  const [enriching, startEnrich] = React.useTransition();
 
   if (researchTableMissing) {
     return (
@@ -698,10 +702,6 @@ function ResearchTab({
           result.emails_count > 0
             ? `${result.emails_count} email${result.emails_count === 1 ? "" : "s"} found`
             : null,
-          result.anymail_found ? "✓ verified contact from Anymail" : null,
-          result.hunter_emails_count > 0
-            ? `${result.hunter_emails_count} contact${result.hunter_emails_count === 1 ? "" : "s"} from Hunter`
-            : null,
           result.contact_insert_errors.length > 0
             ? `⚠ contact save failed: ${result.contact_insert_errors[0]}`
             : null,
@@ -712,20 +712,9 @@ function ResearchTab({
         });
         router.refresh();
       } else {
-        // Refresh so contacts, pain points, and status changes render.
-        const needsRefresh =
-          (result.hunter_emails_count && result.hunter_emails_count > 0) ||
-          result.anymail_found ||
-          result.pain_point_added ||
-          result.auto_archived;
-        if (needsRefresh) router.refresh();
-
-        setScrapeMessage({
-          tone: result.auto_archived ? "warn" : "warn",
-          text: result.auto_archived
-            ? `⚠ Lead auto-archived: ${result.error}`
-            : result.error,
-        });
+        // Refresh so pain points and status changes render.
+        if (result.pain_point_added) router.refresh();
+        setScrapeMessage({ tone: "warn", text: result.error });
       }
     });
   };
@@ -768,10 +757,30 @@ function ResearchTab({
     });
   };
 
+  const handleReEnrichContacts = () => {
+    setEnrichMessage(null);
+    startEnrich(async () => {
+      const result = await reEnrichProspectContacts(prospect.id);
+      if (!result.ok) {
+        setEnrichMessage({ tone: "warn", text: result.error });
+        return;
+      }
+      if (result.found) {
+        setEnrichMessage({
+          tone: "ok",
+          text: `Found: ${result.email} (${result.method})`,
+        });
+        router.refresh();
+      } else {
+        setEnrichMessage({ tone: "warn", text: "All tiers exhausted — no contact found." });
+      }
+    });
+  };
+
   return (
     <div className="flex max-w-3xl flex-col gap-6 p-4">
-      <div className="flex items-start justify-between gap-3 rounded-[var(--radius-lg)] bg-[var(--color-bg-800)] p-4 ring-1 ring-inset ring-[var(--color-border-default)]">
-        <div className="flex min-w-0 flex-col">
+      <div className="flex flex-wrap items-start justify-between gap-3 rounded-[var(--radius-lg)] bg-[var(--color-bg-800)] p-4 ring-1 ring-inset ring-[var(--color-border-default)]">
+        <div className="flex min-w-[160px] flex-1 flex-col">
           <span className="text-[11px] font-semibold uppercase tracking-wider text-[var(--color-fg-500)]">
             Auto research
           </span>
@@ -820,6 +829,32 @@ function ResearchTab({
             )}
             {researching ? "Researching…" : "Run structured research"}
           </Button>
+          <Button
+            type="button"
+            variant="secondary"
+            onClick={handleReEnrichContacts}
+            disabled={enriching || !canEdit || !prospect.domain}
+            title="Re-run SnapVerify → Anymail → Hunter contact waterfall for this prospect"
+          >
+            {enriching ? (
+              <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden />
+            ) : (
+              <UserCheck className="h-3.5 w-3.5" aria-hidden />
+            )}
+            {enriching ? "Finding contact…" : "Re-enrich contacts"}
+          </Button>
+          {enrichMessage ? (
+            <p
+              className={cn(
+                "text-[11px] italic",
+                enrichMessage.tone === "ok"
+                  ? "text-[var(--color-success-300)]"
+                  : "text-[var(--color-warning-300)]",
+              )}
+            >
+              {enrichMessage.text}
+            </p>
+          ) : null}
           <Button
             type="button"
             variant="secondary"

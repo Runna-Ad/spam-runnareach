@@ -180,12 +180,13 @@ export async function deepResearchProspect(
     return {
       pain_id: validId,
       pain_label: canonicalLabel,
-      // Use the real evidence quote from the source when Claude provided one.
-      // Fall back to the pain description as a last resort (better than nothing,
-      // but the pitch generator will recognise it's not a real quote since it
-      // won't match any scraped text). If null, the generator skips the quote.
-      evidence_quote: evidence_quote ?? label.slice(0, 240),
-      confidence: evidence_quote ? 0.7 : 0.5, // lower confidence when no real quote found
+      // Only keep real quotes from scraped source text.
+      // Recycling the pain label as a fake quote (old behaviour: label.slice(0,240))
+      // was a silent data-quality bug — fabricated "quotes" slipped through scoring
+      // and into pitches. Now: no quote → evidence_quote stays null, confidence drops.
+      // Pains with null evidence_quote are filtered at the scoring + pitch gate.
+      evidence_quote: evidence_quote ?? null,
+      confidence: evidence_quote ? 0.7 : 0.5, // no quote = lower confidence, filtered at gate
     };
   });
 

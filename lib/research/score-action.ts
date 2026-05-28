@@ -239,10 +239,25 @@ function normalizePainPoints(
   return raw.flatMap((entry) => {
     if (!entry || typeof entry !== "object") return [];
     const e = entry as Record<string, unknown>;
+
+    // ── Evidence-quote gate ───────────────────────────────────────────────
+    // Pains without a real evidence quote from scraped content are filtered
+    // before reaching the scoring rubric. This prevents Claude-inferred pains
+    // (no grounding in what the site actually says) from inflating the score.
+    //
+    // A "real" quote must:
+    //   1. Exist and be a non-empty string
+    //   2. Be ≥20 characters (rules out single-word placeholder strings)
+    //   3. Not be identical to the pain_label (the recycled-label anti-pattern:
+    //      evidence_quote = "checkout abandonment" when label = "checkout abandonment")
+    const quote = typeof e.evidence_quote === "string" ? e.evidence_quote.trim() : "";
+    const label = typeof e.pain_label === "string" ? e.pain_label.trim() : "";
+    if (quote.length < 20 || quote === label) return [];
+
     const out: Record<string, string> = {};
     if (typeof e.pain_id === "string") out.pain_id = e.pain_id;
-    if (typeof e.pain_label === "string") out.pain_label = e.pain_label;
-    if (typeof e.evidence_quote === "string") out.evidence_quote = e.evidence_quote;
+    if (label) out.pain_label = label;
+    out.evidence_quote = quote;
     if (typeof e.evidence_url === "string") out.evidence_url = e.evidence_url;
     return Object.keys(out).length > 0 ? [out] : [];
   }) as never;

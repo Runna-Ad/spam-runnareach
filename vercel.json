@@ -3,5 +3,15 @@
     "app/**": {
       "maxDuration": 60
     }
-  }
+  },
+  "crons": [
+    {
+      "path": "/api/warmup/engine",
+      "schedule": "*/30 * * * *"
+    },
+    {
+      "path": "/api/warmup/postmaster-sync",
+      "schedule": "0 8 * * *"
+    }
+  ]
 }

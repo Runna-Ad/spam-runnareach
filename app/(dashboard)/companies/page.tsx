@@ -1,7 +1,7 @@
 import { CompaniesPage } from "@/components/companies/companies-page";
 import { requireUser } from "@/lib/auth";
 import { listIcps } from "@/lib/icp/queries";
-import { listProspects } from "@/lib/discover/prospects-queries";
+import { listProspects, type ProspectSort } from "@/lib/discover/prospects-queries";
 
 export const dynamic = "force-dynamic";
 
@@ -37,7 +37,7 @@ function parseFilters(searchParams: Record<string, string | string[] | undefined
     status: status && VALID_STATUSES.has(status) ? status : "ALL",
     market: market && VALID_MARKETS.has(market) ? market : "ALL",
     icpId: icpId ?? "ALL",
-    sort: sort && VALID_SORTS.has(sort) ? sort : "newest",
+    sort: sort && VALID_SORTS.has(sort) ? sort : "score_desc",
     search: typeof search === "string" ? search.slice(0, 200) : "",
   };
 }
@@ -52,7 +52,7 @@ export default async function CompaniesRoute({
   const initial = parseFilters(sp);
 
   const [prospects, icps] = await Promise.all([
-    listProspects(user.tenantId, {}, "newest", 500),
+    listProspects(user.tenantId, {}, initial.sort as ProspectSort, 500),
     listIcps(user.tenantId),
   ]);
 
