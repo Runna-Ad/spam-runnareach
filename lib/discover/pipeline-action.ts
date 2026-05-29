@@ -435,7 +435,20 @@ export async function processSingleProspect(
     .limit(1)
     .returns<ContactRow[]>();
 
-  console.log(`[pipeline] contact gate ${name}: found=${validContacts?.length ?? 0} err=${contactGateErr?.message ?? "none"}`);
+  // Write contact gate result to audit_log so we can diagnose from DB
+  await writeAuditLog({
+    tenantId: user.tenantId,
+    actorId: user.id,
+    action: "prospect.scored",
+    entityType: "prospect",
+    entityId: prospectId,
+    metadata: {
+      kind: "contact_gate",
+      contacts_found: validContacts?.length ?? 0,
+      gate_error: contactGateErr?.message ?? null,
+      score,
+    },
+  });
 
   if (!validContacts || validContacts.length === 0) {
     await supabase
