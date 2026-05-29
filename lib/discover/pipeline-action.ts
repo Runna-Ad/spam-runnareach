@@ -417,17 +417,16 @@ export async function processSingleProspect(
   if (p?.domain && !snapVerifyFoundContact) {
     try {
       await enrichContactsForProspect(user.tenantId, prospectId, p.domain, p.company_name, supabase, true);
-    } catch {
-      // Non-fatal — gate check below will catch the no-contact case
+    } catch (err) {
+      console.error(`[pipeline] enrichContactsForProspect failed for ${name}:`, err);
     }
+  } else {
+    console.log(`[pipeline] skipping enrichContacts for ${name}: domain=${p?.domain} snapVerifyFound=${snapVerifyFoundContact}`);
   }
 
   // ── No-contact gate ───────────────────────────────────────────────────────
-  // A pitch with no send address is useless. If all three enrichment tiers
-  // (SnapVerify → Anymail → Hunter) came up empty, hold the prospect for
-  // manual review rather than generating an unsendable pitch.
   type ContactRow = { email: string };
-  const { data: validContacts } = await supabase
+  const { data: validContacts, error: contactGateErr } = await supabase
     .from("prospect_contacts")
     .select("email")
     .eq("prospect_id", prospectId)
@@ -435,6 +434,8 @@ export async function processSingleProspect(
     .not("email", "is", null)
     .limit(1)
     .returns<ContactRow[]>();
+
+  console.log(`[pipeline] contact gate ${name}: found=${validContacts?.length ?? 0} err=${contactGateErr?.message ?? "none"}`);
 
   if (!validContacts || validContacts.length === 0) {
     await supabase
