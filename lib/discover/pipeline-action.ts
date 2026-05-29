@@ -22,6 +22,7 @@
  */
 
 import { revalidatePath } from "next/cache";
+import { writeAuditLog } from "@/lib/audit/log";
 import { requireUser } from "@/lib/auth";
 import { createClient } from "@/lib/supabase/server";
 import { anymailFindDecisionMaker } from "@/lib/research/anymail-finder";
@@ -448,11 +449,10 @@ export async function processSingleProspect(
     return { prospect_id: prospectId, company_name: name, score, outcome: "needs_review" };
   }
 
+  let pitchError: string | null = null;
   try {
     const pitchResult = await generatePitch(prospectId);
     if (pitchResult.ok) {
-      // generatePitch only creates the pitch row (status=draft); we must
-      // transition the prospect to 'pitched' here.
       await supabase
         .from("prospects")
         .update({ status: "pitched", pitch_gate_passed: true, updated_at: new Date().toISOString() })
@@ -464,15 +464,29 @@ export async function processSingleProspect(
       revalidatePath("/pitches");
       return { prospect_id: prospectId, company_name: name, score, outcome: "pitched" };
     }
-  } catch {
-    // If pitch gen fails, still mark as needs_review rather than error
+    pitchError = pitchResult.error;
+  } catch (err) {
+    pitchError = err instanceof Error ? err.message : String(err);
   }
 
-  // Pitch generation failed — score passed but pitch couldn't be created
+  // Log pitch failure to audit_log so we can diagnose it
+  if (pitchError) {
+    console.error(`[pipeline] generatePitch failed for ${name} (${prospectId}): ${pitchError}`);
+    await writeAuditLog({
+      tenantId: user.tenantId,
+      actorId: user.id,
+      action: "prospect.scored",
+      entityType: "prospect",
+      entityId: prospectId,
+      metadata: { kind: "pitch_generation_failed", error: pitchError, score },
+    });
+  }
+
+  // Score passed but pitch couldn't be created — mark gate passed so UI shows correct state
   await supabase
     .from("prospects")
     .update({
-      pitch_gate_passed: true, // score passed
+      pitch_gate_passed: true,
       updated_at: new Date().toISOString(),
     })
     .eq("id", prospectId)
