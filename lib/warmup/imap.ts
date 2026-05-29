@@ -96,7 +96,30 @@ export async function checkMessageInbox(
       return result;
     }
 
-    // Try English spam folder name
+    // Check Gmail category tabs — cold-domain emails often land in Promotions, not Primary
+    const inboxLikeFolders = [
+      "[Gmail]/Category Promotions",
+      "[Gmail]/Category Updates",
+      "[Gmail]/Category Social",
+      "[Gmail]/Todas las conversaciones", // ES All Mail fallback
+    ];
+    for (const folder of inboxLikeFolders) {
+      try {
+        await client.mailboxOpen(folder);
+        const seqs = await client.search({ header: { "message-id": messageId } });
+        if (Array.isArray(seqs) && seqs.length > 0) {
+          // Landed in a category tab — counts as inbox-delivered (not spam)
+          result.foundInInbox = true;
+          // Move to Primary INBOX so future checks are consistent
+          try { await client.messageMove(seqs as number[], "INBOX"); } catch { /* best-effort */ }
+          return result;
+        }
+      } catch {
+        // Folder doesn't exist on this account — try next
+      }
+    }
+
+    // Check spam folders
     const spamFolders = ["[Gmail]/Spam", "[Gmail]/Correo no deseado"];
     for (const folder of spamFolders) {
       try {
@@ -111,6 +134,12 @@ export async function checkMessageInbox(
       } catch {
         // Folder doesn't exist — try next
       }
+    }
+
+    // If not found anywhere, return null so landed_in_inbox stays null (pending)
+    // rather than being incorrectly counted as spam
+    if (!result.foundInInbox && !result.foundInSpam) {
+      return null;
     }
   } catch (err) {
     console.error(`[warmup/imap] checkMessageInbox error for buddy ${buddy.id}:`, err);
