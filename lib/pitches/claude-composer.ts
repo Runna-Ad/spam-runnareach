@@ -31,7 +31,7 @@ import type {
 
 const responseSchema = z.object({
   subject: z.string().trim().min(4).max(120),
-  preview_text: z.string().trim().min(20).max(150),
+  preview_text: z.string().trim().min(20).max(500).transform((s) => s.slice(0, 150)),
   body: z.string().trim().min(80).max(2000),
   // pain_id can be a text slug like "abandoned_cart_loss" or a UUID — accept both.
   pain_id: z.string().nullable(),
