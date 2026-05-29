@@ -877,4 +877,69 @@ Then test: `curl -X POST https://ybbrpqzbedaxsmotgtkh.supabase.co/functions/v1/v
 - [ ] Rename "duplicate" counter → "filtered" in run history UI
 - [ ] Delete the 19 Alberta test prospects if they're just noise
 - [ ] UX/UI full audit (screen by screen)
-- [ ] Code reaper pass
+- [x] Code reaper pass (completed 2026-05-29 — see session wrap-up below)
+
+---
+
+## Session Wrap-Up — 2026-05-29
+
+### What shipped
+- ✅ Warmup engine live: Day 1 complete, pedro@runnareach.com, 5/5 emails sent to buddy inboxes
+- ✅ Postmaster Tools sync wired (daily cron, auto-pause on reputation drop)
+- ✅ Full code reap: 47 files, `as never` casts removed, typed routes, analytics dashboard, invite emails, ICP prospect counts, search debounce, stuck-run recovery, email prompt updated (7-step structure)
+- ✅ Pipeline restructured: SnapVerify moved to Pass 1 (free, all prospects), Anymail+Hunter strictly ≥70
+- ✅ Crawl-time Anymail/Hunter removed (was burning credits on unscored prospects — wrong design)
+- ✅ notable_clients tier filter applied (SMB prospects don't see Ford/La Comer)
+- ✅ Deployed: https://spam-runnareach.vercel.app (commit d254ebc)
+- ✅ Task 1C (language + market detection in scraper) — confirmed already done, marked complete
+
+### Critical failures logged to lessons.md
+1. Reaper removed active Hunter/Anymail as "dead code" without checking .env.local
+2. Crawl-time Anymail/Hunter was wrong design (credits burned pre-scoring) — now fixed
+3. Supabase migration ran against wrong project (SnapPad instead of S.P.A.M)
+4. Pipeline diagram documented a bug as intentional design
+
+### Next session — start here
+- [ ] Deploy `verify-email` Supabase edge function (see command in prior section)
+- [ ] Test SnapVerify in Pass 1 on 3 real prospects
+- [ ] Confirm warmup Day 2 fired correctly (check at 2pm UTC)
+- [ ] Run fresh full discovery run to confirm all sources fire post-reap
+- [ ] Delete/archive 19 Alberta test prospects
+
+---
+
+## SYSTEM: Multi-Project & State Confusion Prevention
+
+Problems this session exposed:
+- Claude ran a migration against SnapPad instead of S.P.A.M
+- Claude confused "the code does X" with "X is correct design"
+- Claude removed active integrations by assuming context instead of checking
+
+### Protocol — SESSION START CHECKLIST (mandatory, every session)
+Before touching any code:
+1. `cat .env.local | grep SUPABASE_URL` — confirm which Supabase project is active
+2. `git log --oneline -3` — confirm we're on the right repo/branch
+3. Check mission-control_3.html for the current project's: Vercel URL, Supabase ID, folder
+4. State out loud: "Working on: [project], Supabase: [id], Deploy: [url]"
+
+### Protocol — BEFORE REMOVING ANY CODE
+- Run: `grep -r "FUNCTION_NAME\|ENV_VAR" .env.local .env* lib/ app/` to confirm whether it's truly unused
+- If it's an API integration: check .env.local for the key FIRST. "No key = dead" is wrong.
+- If it's business logic: ask Pedro "this looks unused — is X still needed?" before deleting
+
+### Protocol — BEFORE RUNNING ANY SQL
+- Print the target Supabase project ref from `.env.local`
+- Confirm it matches the project in mission-control for the current task
+- S.P.A.M = `ybbrpqzbedaxsmotgtkh` | SnapPad = `brofoxamdozserkamudf`
+- If using Supabase MCP: check which project it's connected to (`list_projects`)
+
+### Protocol — PIPELINE DOCUMENTATION
+- "The code does X" is not the same as "X is correct"
+- If a pipeline step fires paid APIs without a quality gate → call it out as a suspected bug
+- Always read comments in the code — if a comment says "TODO" or looks wrong, flag it before documenting
+
+### Protocol — WHAT'S DONE VS IN PROGRESS
+- Tasks marked [x] in todo.md = done and shipped
+- Tasks marked [ ] = not done, even if discussed or partially implemented
+- If unsure: `git log --oneline --all | head -10` to see what commits exist
+- Never assume something is done because it was "worked on" in a prior session

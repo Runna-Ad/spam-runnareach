@@ -58,6 +58,35 @@ TAGS: #quality #research #pain-points #pitch
 
 ---
 
+[2026-05-29] LESSON: ⛔ BIG FAIL — Code reaper removed active Hunter/Anymail logic by assuming "no API key"
+ROOT CAUSE: The code reaper found Hunter and Anymail imports and calls, and judged them "dead code" because it didn't check `.env.local`. Both `HUNTER_API_KEY` and `ANYMAIL_FINDER_API_KEY` were set and working. The reaper removed the entire enrichment blocks from `scrape-action.ts` and `crawl-action.ts` without verifying env var existence first.
+WHY IT'S COSTLY: Pedro caught this in code review — the entire contact enrichment pipeline would have been silently broken in production. Score-gated enrichment at ≥70 (the core monetisation-preserving mechanism) would have fired nothing.
+RULE: Before removing ANY integration code, ALWAYS run `grep -r "ENV_VAR_NAME" .env.local .env* 2>/dev/null` to confirm whether keys exist. "I don't see it being used" is NOT the same as "it isn't configured". Dead-code determination requires verifying the full runtime context, not just static imports.
+TAGS: #big-fail #reaper #hunter #anymail #contacts #pipeline
+
+[2026-05-29] LESSON: ⛔ BIG FAIL — Crawl-time Anymail/Hunter was burning credits on ALL prospects (wrong design)
+ROOT CAUSE: `crawl-action.ts` had a block that ran Anymail → Hunter for EVERY newly discovered prospect immediately at crawl time, before any scoring. Score doesn't exist at crawl time so there was no gate. This meant every Yelp, DENUE, or Brave result (even ones that would score 20 and get suppressed) spent paid API credits on contact lookup.
+WHY IT'S COSTLY: Anymail and Hunter have credit-based billing. Running them on 100 raw prospects to keep 15 is ~85% credit waste. The correct design is SnapVerify (free) at Pass 1, then Anymail → Hunter only for score ≥70 in the pipeline.
+RULE: Paid enrichment APIs (Anymail, Hunter) must ONLY fire inside `enrichContactsForProspect()` which is called from `processSingleProspect()` after the score ≥70 gate is confirmed. SnapVerify (free) runs earlier. No paid tier runs at crawl time or before scoring. If you see Anymail/Hunter imports in crawl-action.ts — that's a bug.
+TAGS: #big-fail #credits #anymail #hunter #pipeline #architecture
+
+[2026-05-29] LESSON: ⛔ BIG FAIL — Ran Supabase migration against wrong project (SnapPad instead of S.P.A.M)
+ROOT CAUSE: The Supabase MCP was connected to `brofoxamdozserkamudf` (SnapPad) but S.P.A.M uses `ybbrpqzbedaxsmotgtkh`. Ran the full 0016_warmup_system.sql migration — 5 tables + 52 seed rows — into SnapPad. Had to manually drop all created tables from SnapPad and re-run in the correct project.
+WHY IT'S COSTLY: SnapPad is a live production app. Injecting warmup tables into it polluted the schema. Could have corrupted data if any table names collided.
+RULE: Before ANY Supabase SQL execution, confirm the active project ref matches the current task's project. Check `mission-control_3.html` or `.env.local` for `NEXT_PUBLIC_SUPABASE_URL` and verify it contains the correct project ID. S.P.A.M = `ybbrpqzbedaxsmotgtkh`. SnapPad = `brofoxamdozserkamudf`. These must never be swapped.
+TAGS: #big-fail #supabase #wrong-project #migration
+
+[2026-05-29] LESSON: Pipeline diagram presented incorrect Stage 1 enrichment as correct design
+ROOT CAUSE: When asked to map the full pipeline, described crawl-time Anymail/Hunter as intentional architecture ("runs immediately for every new prospect with a domain"). This was actually a bug in the code — not intentional design. The diagram normalised the bug rather than flagging it.
+RULE: When documenting pipeline logic, READ the actual code first and flag anything that looks architecturally wrong. "The code does X" is not the same as "X is correct". If a pipeline step fires paid APIs without a quality gate, that must be called out as a suspected bug, not documented as intended.
+TAGS: #pipeline #diagnosis #documentation
+
+[2026-05-29] PEDRO_OVERRIDE: SnapVerify should run in Pass 1 for all prospects, not just ≥70
+PEDRO'S APPROACH: Move SnapVerify to run right after Structured Research (Pass 1), before initial score. It's free, uses already-scraped data, and gives the score a contact signal.
+WHY IT WAS BETTER: SnapVerify is zero-cost. Running it early means: (1) the initial score reflects contact availability, (2) by the time a prospect reaches ≥70, we already know if free enrichment worked and can skip straight to Anymail/Hunter. No downside to running it early.
+RULE: Free enrichment (SnapVerify) runs in Pass 1 for every prospect with a domain. Paid enrichment (Anymail, Hunter) runs only at ≥70. Never conflate "runs early" with "runs expensively". Cheap things run eagerly; expensive things are gated.
+TAGS: #override #pipeline #snapverify #architecture
+
 [2026-05-26] LESSON: ⛔ BIG FAIL — Assumed API keys weren't configured without checking
 ROOT CAUSE: The discovery run returned results from Google Places only. Rather than verifying the actual Vercel env vars first, Claude assumed Yelp and Brave "weren't configured" and told Pedro so. In reality all keys (YELP_API_KEY, BRAVE_SEARCH_API_KEY, DENUE_API_KEY, HUNTER_API_KEY) had been set for 4+ days. The real root cause was sequential execution in runAllSources: each runCrawl call was doing Anymail+Hunter enrichment per prospect (~80s per source), so 3 keywords × 3 sources = 720s+ → Vercel 504 cut the run after only Google Places completed. Yelp and Brave never got their turn.
 WHY IT'S COSTLY: Pedro had to correct this explicitly. It wasted trust and time — he'd set up those keys himself and the false diagnosis implied his work was wrong.
