@@ -195,7 +195,14 @@ export async function composePitchWithClaude(
         ? "\n\nSi no eres la persona indicada para esto, te agradecería mucho que puedas reenviarle este mensaje a quien corresponda."
         : "\n\nIf you're not the right person for this, I'd really appreciate it if you could pass this along to whoever handles it."
       : "";
-  const finalBody = call.data.body + forwardingLine;
+  // Hard-strip em dashes regardless of Claude's compliance.
+  // Replace "— " with ", " and standalone "—" with " " to preserve flow.
+  const cleanBody = (call.data.body + forwardingLine)
+    .replace(/\s*—\s*/g, ", ")
+    .replace(/—/g, " ")
+    .replace(/ {2,}/g, " ")
+    .trim();
+  const finalBody = cleanBody;
 
   return {
     ok: true,
@@ -352,9 +359,11 @@ REQUIRED EMAIL STRUCTURE — follow this exactly, no additions, no reordering:
      with this setup", "well-run Meta retargeting averages 3-5x ROAS for this category."
    - Use solution_hints in the payload as a starting point, then go further using what
      you know about current trends, platforms, and what actually works for this industry.
-5. Case study bridge — ONLY if case_study_id is chosen. It's PROOF, not the pitch:
-   ONE sentence after the solution: "Did this for {client} — {metric}. Same profile."
-   If no case study fits well: SKIP entirely. The solution IS the credibility.
+5. Case study bridge — ONLY if case_study_id is chosen AND it has a real measurable result:
+   ONE sentence: "Did this for {client}, {metric}." (e.g. "Did this for Niki, +34% email revenue.")
+   The metric MUST be a number or percentage from the case's hero_metric or measurable_results.
+   NEVER describe what you did ("brand and digital creative") — only the OUTCOME for the client.
+   If the case has no numeric metric, set case_study_id=null and skip the bridge entirely.
 6. CTA — Inefficiency Hunter link (see voice rules for exact wording)
 7. Sign off: sender's first name, then full signature on the next line
 
