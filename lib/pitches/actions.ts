@@ -68,21 +68,26 @@ export type PitchActionResult = { ok: true } | { ok: false; error: string };
  * Generate a draft pitch for a prospect. Reads research + contacts +
  * case_studies, runs the heuristic composer, persists to pitches.
  *
- * Phase-2 swap: replace composePitchHeuristic with a Claude call
- * returning the same ComposedPitch shape.
+ * Can be called with pre-authenticated user + supabase (from pipeline)
+ * to avoid a second requireUser() call deep in a server action chain,
+ * which can fail when cookies() is restricted in nested contexts.
  */
 export async function generatePitch(
   prospectId: string,
+  injected?: {
+    user: import("@/lib/auth").CurrentUser;
+    supabase: Awaited<ReturnType<typeof import("@/lib/supabase/server").createClient>>;
+  },
 ): Promise<GeneratePitchResult> {
-  const user = await requireUser();
+  const user = injected?.user ?? await requireUser();
+  const supabase = injected?.supabase ?? await (await import("@/lib/supabase/server")).createClient();
+
   if (user.role === "viewer") {
     return { ok: false, error: "Viewers cannot generate pitches." };
   }
 
   const parsed = generateSchema.safeParse({ prospect_id: prospectId });
   if (!parsed.success) return { ok: false, error: "Invalid prospect id." };
-
-  const supabase = await createClient();
 
   // Load prospect + research in parallel — research fields feed directly into pitch quality.
   type ProspectRow = {

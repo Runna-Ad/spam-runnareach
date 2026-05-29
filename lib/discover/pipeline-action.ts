@@ -465,7 +465,10 @@ export async function processSingleProspect(
 
   let pitchError: string | null = null;
   try {
-    const pitchResult = await generatePitch(prospectId);
+    // Pass user + supabase to avoid a second requireUser() call inside
+    // generatePitch — cookies() can be restricted in nested server action
+    // contexts, causing silent redirect failures.
+    const pitchResult = await generatePitch(prospectId, { user, supabase });
     if (pitchResult.ok) {
       await supabase
         .from("prospects")
