@@ -849,35 +849,35 @@ Tech debt: `perPitchUsd` estimate uses cost_tracking "pitch" category rows as pr
 - [x] Anymail key refreshed in Vercel
 - [x] Deployed: https://spam-runnareach.vercel.app
 
-### Where things stand
-All sources (YP CA / Google Places / Yelp / Brave) will now complete on a full discovery run (~60s total vs 720s+ before).
-Pipeline: scrape → score → if ≥70: Anymail+Hunter → pitch → prune to top 30.
-19 Alberta test prospects still in DB (below 30 cap, untouched).
+### Where things stand (updated 2026-05-29)
+Full pipeline live and correct:
+  Pass 1: Scrape → Structured Research → **SnapVerify** (free, all prospects) → Initial Score
+  < 35: suppressed. ≥ 35 → Pass 2: Deep Research → Structured Research → Final Score
+  < 40: suppressed. 40–69: needs_review. ≥ 70: **Anymail → Hunter** → Pitch → Prune to top 30
 
-### Next session — start here
+All sources (YP CA / Google Places / Yelp / Brave / DENUE) complete in ~60s total.
+Warmup live: Day 1 sent 5/5 emails, pedro@runnareach.com.
+19 Alberta test prospects still in DB (below 30 cap).
 
-#### 🔴 One manual step required before testing SnapVerify:
-Deploy edge function via Supabase dashboard OR:
-```bash
-supabase login                              # get access token from app.supabase.com
-supabase link --project-ref ybbrpqzbedaxsmotgtkh
-supabase functions deploy verify-email     # deploys supabase/functions/verify-email/index.ts
-```
-Then test: `curl -X POST https://ybbrpqzbedaxsmotgtkh.supabase.co/functions/v1/verify-email -H "Content-Type: application/json" -d '{"emails":["pedro@rvsnappad.com"],"domain":"rvsnappad.com"}'`
-
-#### Backlog (priority order):
-- [x] SnapVerify Tier 1 — built: supabase/functions/verify-email/index.ts + lib/research/snap-contact.ts + rewired enrichContactsForProspect() waterfall (SnapVerify → Anymail → Hunter)
-- [ ] **Deploy verify-email edge function** (see command above — Pedro runs this)
+### Backlog (priority order):
+- [x] SnapVerify Tier 1 — built + wired into Pass 1 of pipeline
+- [x] notable_clients tier column — migration 0010_notable_clients_tier.sql applied ✓
+- [x] Language + market detection in scraper (Task 1C) — confirmed done ✓
+- [x] Code reaper — 47 files cleaned, deployed (commit d254ebc)
+- [ ] **Deploy verify-email edge function** (one manual step, Pedro runs):
+  ```bash
+  supabase login
+  supabase link --project-ref ybbrpqzbedaxsmotgtkh
+  supabase functions deploy verify-email
+  ```
 - [ ] Test SnapVerify end-to-end on 3 prospects (rvsnappad.com, adornboutique.ca, pieceonpeace.com)
-- [ ] Run a fresh full discovery run to confirm all sources fire (YP + GP + Yelp + Brave)
+- [ ] Run a fresh full discovery run to confirm all sources fire post-reap
 - [ ] Companies page — sort by match_score DESC (highest scored first, not discovery order)
 - [ ] Pain point quality audit — every pain must have a real evidence_quote, not AI-inferred
-- [ ] Notable clients tier column (migration 0010_notable_clients_tier.sql — Pedro runs in Supabase dashboard)
-- [ ] Inbox warming — pedro@runnareach.com (Warmbox or Lemwarm, ~4 weeks before live sends)
+- [ ] Inbox warming — pedro@runnareach.com (self-hosted warmup active, confirm Day 2+ firing)
 - [ ] Rename "duplicate" counter → "filtered" in run history UI
-- [ ] Delete the 19 Alberta test prospects if they're just noise
+- [ ] Delete/archive the 19 Alberta test prospects if they're just noise
 - [ ] UX/UI full audit (screen by screen)
-- [x] Code reaper pass (completed 2026-05-29 — see session wrap-up below)
 
 ---
 
@@ -899,12 +899,12 @@ Then test: `curl -X POST https://ybbrpqzbedaxsmotgtkh.supabase.co/functions/v1/v
 3. Supabase migration ran against wrong project (SnapPad instead of S.P.A.M)
 4. Pipeline diagram documented a bug as intentional design
 
-### Next session — start here
-- [ ] Deploy `verify-email` Supabase edge function (see command in prior section)
-- [ ] Test SnapVerify in Pass 1 on 3 real prospects
-- [ ] Confirm warmup Day 2 fired correctly (check at 2pm UTC)
-- [ ] Run fresh full discovery run to confirm all sources fire post-reap
-- [ ] Delete/archive 19 Alberta test prospects
+### Next session — start here (priority order)
+1. Deploy verify-email edge function (see Backlog above for exact commands)
+2. Confirm warmup Day 2 fired at 14:00 UTC — check /warmup dashboard
+3. Test SnapVerify on 3 real prospects once edge function is deployed
+4. Run fresh full discovery run (verify all sources fire: YP / GP / Yelp / Brave / DENUE)
+5. Pain point quality audit (evidence_quote must be real scraped text, not AI inference)
 
 ---
 
