@@ -1,24 +1,24 @@
 "use server";
 
 /**
- * Automated prospect pipeline — two-pass.
+ * Automated prospect pipeline.
  *
- * Pass 1 (fast, always runs):
- *   scrapeWebsite → runStructuredResearch → initial scoreProspect
- *   → if initial < 35: suppress immediately (not worth Brave/Claude cost)
+ * Pass 1 — structural gate (cheap, always runs):
+ *   scrapeWebsite (homepage + 4 sub-pages) → scoreProspect on structural signals
+ *   → if score < 20: suppress (wrong industry/geo/size — not worth deep research)
  *
- * Pass 2 (deep, only if initial ≥ 35 AND prospect has a URL):
- *   deepResearchProspect (Brave intel + Claude synthesis)
- *   → runStructuredResearch again (second pass on enriched data)
- *   → final scoreProspect
+ * Pass 2 — full enrichment (only if structural score ≥ 20):
+ *   deepResearchProspect (Brave people-intel + Claude synthesis)
+ *   → snapVerifyEnrich (founder names from deep research → SMTP probe)
+ *   → runStructuredResearch (pain extraction on ALL data: scrape + Brave)
+ *   → final scoreProspect (pain signal + contact signal both present)
  *
  * Triage on final score:
  *   < 40   → suppressed
- *   40–69  → needs_review (pitch_gate_passed=false)
- *   ≥ 70   → pitched (pitch auto-generated)
+ *   40–69  → needs_review
+ *   ≥ 70   → Anymail/Hunter → pitch auto-generated
  *
- * All steps are wrapped in try/catch so a failure in one step doesn't
- * block the rest of the batch.
+ * All steps are try/catch — one failure never blocks the rest of the batch.
  */
 
 import { revalidatePath } from "next/cache";
@@ -257,11 +257,12 @@ export async function processSingleProspect(
     return { prospect_id: prospectId, company_name: name, score: null, outcome: "suppressed" };
   }
 
-  // ── Pass 1: scrape + pain extraction + gate score ───────────────────────
+  // ── Pass 1: scrape + gate score (no pain extraction yet) ───────────────
   //
-  // Goal: get enough signal to decide if this prospect is worth spending
-  // on deep research (Brave + Claude). No SMTP probes yet — save SnapVerify
-  // for after deep research so it has the richest possible data to work with.
+  // Gate on cheap signals only: industry fit, geo, tech stack, size.
+  // Pain extraction runs AFTER deep research so it has maximum data to
+  // work with. Gate threshold is 20 (not 35) because pain_signal_pts
+  // (max 15) aren't present yet — we're gating on structural fit only.
 
   // Step 1: Scrape website (homepage + up to 4 sub-pages: About, Team, Contact…)
   try {
@@ -270,26 +271,24 @@ export async function processSingleProspect(
     // Continue — scoring can still run with whatever data exists
   }
 
-  // Step 2: Structured research — extract pain points from scraped content
-  try {
-    await runStructuredResearch(prospectId);
-  } catch {
-    // Continue
-  }
-
-  // Step 3: Gate score — suppress clearly bad prospects before spending on Brave/Claude
+  // Step 2: Gate score — structural fit only (industry, geo, tech, size).
+  // No pain points yet — those come after deep research.
   const initialScoreResult = await scoreProspect(prospectId);
   if (!initialScoreResult.ok) {
     return { prospect_id: prospectId, company_name: name, score: null, outcome: "error", error: initialScoreResult.error };
   }
   const initialScore = initialScoreResult.composite_score;
 
-  if (initialScore < 35) {
+  // Threshold is 20 (vs 35 later) — pain points aren't in the score yet,
+  // so we only suppress companies that are structurally wrong (wrong industry,
+  // wrong geo, wrong size). A boutique in Alberta with Shopify will score ~45
+  // on structural signals alone. Only truly irrelevant leads score below 20.
+  if (initialScore < 20) {
     await supabase
       .from("prospects")
       .update({
         status: "suppressed",
-        suppressed_reason: `Auto: initial score ${initialScore} below threshold`,
+        suppressed_reason: `Auto: structural score ${initialScore} below threshold (wrong industry/geo/size)`,
         suppressed_at: new Date().toISOString(),
         updated_at: new Date().toISOString(),
       })
@@ -299,34 +298,27 @@ export async function processSingleProspect(
     return { prospect_id: prospectId, company_name: name, score: initialScore, outcome: "suppressed" };
   }
 
-  // ── Pass 2: deep research + SnapVerify on enriched data ─────────────────
+  // ── Pass 2: deep research → SnapVerify → pain extraction → final score ──
   //
-  // SnapVerify runs AFTER deep research so it has Brave intel (founder names,
-  // press mentions) in addition to scraped content. This is the correct order:
-  // deep research finds "Justine Barber, Co-founder" → SnapVerify guesses
-  // justine@poppybarley.com → SMTP probes it → contact found.
+  // Everything runs on the richest possible data. Order matters:
+  // deep research first (Brave people-intel → founder names in notes)
+  // → SnapVerify (uses those names to guess + probe emails)
+  // → pain extraction (uses all data: scrape + Brave + sub-pages)
+  // → final score (has both pain signal AND contact signal)
 
   if (hasWebsite) {
-    // Step 4: Deep research — Brave people-intel + Claude synthesis → enriches
-    // notes with founder names, press mentions, LinkedIn signals.
+    // Step 3: Deep research — Brave people-intel + Claude synthesis.
+    // Enriches notes with founder names, press mentions, LinkedIn signals.
     try {
       await deepResearchProspect(prospectId);
     } catch {
       // Non-fatal — continue with scraped data
     }
-
-    // Step 5: Second structured research pass — picks up pains surfaced by
-    // deep research that weren't visible in the homepage scrape.
-    try {
-      await runStructuredResearch(prospectId);
-    } catch {
-      // Continue
-    }
   }
 
-  // Step 6: SnapVerify — now runs on the RICHEST available data:
+  // Step 4: SnapVerify — runs on RICHEST available data:
   // homepage + About/Team/Contact sub-pages (2000 chars each) + Brave intel.
-  // Free: no API credits. Zero cost on suppressed prospects (they never reach here).
+  // Free: no API credits. Suppressed prospects never reach here.
   let snapVerifyFoundContact = false;
   if (p?.domain) {
     try {
@@ -371,7 +363,16 @@ export async function processSingleProspect(
     }
   }
 
-  // Step 7: Final score — now reflects contact signal from SnapVerify
+  // Step 5: Pain extraction — runs ONCE on ALL available data:
+  // scrape (homepage + sub-pages) + deep research (Brave intel) combined.
+  // This produces the highest-quality pain points with real evidence quotes.
+  try {
+    await runStructuredResearch(prospectId);
+  } catch {
+    // Non-fatal — continue without pain points
+  }
+
+  // Step 6: Final score — has pain signal + contact signal + all research
   const scoreResult = await scoreProspect(prospectId);
   const score = scoreResult.ok ? scoreResult.composite_score : initialScore;
 
