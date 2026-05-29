@@ -4,6 +4,44 @@ Running log of mistakes, root causes, and rules to prevent recurrence. Newest at
 
 ---
 
+[2026-05-29] LESSON: ⛔ generatePitch silently failed when called from nested server action
+ROOT CAUSE: generatePitch called requireUser() → createClient() → cookies(). In Next.js,
+cookies() can be restricted inside nested server action chains (bulkRunPipeline → processSingleProspect → generatePitch). getUser() returned null, requireUser() called redirect('/sign-in') which throws a non-standard error — not instanceof Error. Our catch swallowed it, writeAuditLog also failed (no session), leaving pitch_gate_passed=false with zero trace.
+RULE: Never call requireUser() inside a function that will be called from within another server action. Accept user+supabase as optional parameters and use the caller's already-authenticated instances. Pattern: `async function generatePitch(id, injected?: { user, supabase })`.
+TAGS: #bug #nextjs #server-actions #auth #pitch
+
+[2026-05-29] LESSON: Claude composer Zod validation failed on preview_text length
+ROOT CAUSE: Zod schema had `max(150)` on preview_text. Claude occasionally returns longer strings. Hard max caused parse failure → full heuristic fallback for all pitches.
+RULE: For LLM output validation, use `.transform()` to clip rather than hard `.max()` that fails. Pattern: `z.string().max(500).transform(s => s.slice(0, 150))`. Hard max is only appropriate for DB constraints where the field will be truncated at insert anyway.
+TAGS: #bug #claude #zod #pitch
+
+[2026-05-29] LESSON: Em dash violation detector penalized score but didn't remove the dash
+ROOT CAUSE: detectViolations() counted em dashes and lowered quality_self_score but the dash was still in the final body string passed to the DB and sent to the prospect.
+RULE: For banned characters/patterns in LLM output, STRIP them at output time, not just penalize the score. Detection ≠ removal. Pattern: replace em dashes in finalBody before returning. Score penalty is secondary signal; the output must be clean regardless.
+TAGS: #bug #pitch #output-quality
+
+[2026-05-29] LESSON: Supabase MCP was connected to SnapPad project, not S.P.A.M
+ROOT CAUSE: MCP configured in Claude desktop app with SnapPad project ID. Every execute_sql attempt returned permission denied.
+RULE: Supabase MCP project is configured in Claude desktop app settings (not settings.json). When switching projects, update it there. S.P.A.M = ybbrpqzbedaxsmotgtkh, SnapPad = brofoxamdozserkamudf.
+TAGS: #supabase #mcp #project-confusion
+
+[2026-05-29] LESSON: Pipeline gate scored on structural signals only before pain extraction
+ROOT CAUSE: Pain extraction was running before deep research, giving Claude Haiku incomplete data. Pain points extracted from homepage-only content were generic and low-confidence.
+RULE: Pipeline order matters: scrape → gate score (structural only, threshold=10) → deep research → SnapVerify → pain extraction (ONCE, on all data) → final score. Never extract pain points before you have maximum data.
+TAGS: #pipeline #architecture #quality
+
+[2026-05-29] LESSON: SnapVerify couldn't find founders because scraper missed About page
+ROOT CAUSE: Shopify stores use /pages/our-story, /pages/about-us — not /about. KEY_PAGE_PATHS only matched /about pattern. The About page with founder bios was never scraped, SnapVerify had no names to work with.
+RULE: KEY_PAGE_PATHS must include Shopify /pages/* variants. Always check both standard (/about) and platform-specific (/pages/about-us, /pages/our-story) patterns. When adding a new platform, audit its URL conventions first.
+TAGS: #scraper #shopify #snapverify #contacts
+
+[2026-05-29] LESSON: IMAP "not found" was treated as spam
+ROOT CAUSE: checkMessageInbox returned {foundInInbox:false, foundInSpam:false} when email wasn't found. Engine wrote landed_in_inbox=false, counting it as spam. Warmup auto-paused at 100% spam rate on Day 1 even though emails actually landed in inbox (Pedro confirmed).
+RULE: IMAP "not found in inbox or spam" must return null (pending), not false (spam). Also check Gmail category folders (Promotions, Updates, Social) before declaring not found — warmup emails from cold domains land there first.
+TAGS: #warmup #imap #bug
+
+---
+
 [2026-05-28] LESSON: Handwritten Supabase types were missing fields causing widespread `as never` casts
 ROOT CAUSE: `lib/supabase/types.ts` was manually maintained and lagged behind actual schema. Missing fields: `sender_inboxes.Update` lacked all gmail token fields and sends_today; `pitches.Insert` lacked preview_text; `discovery_source`/`source` enums lacked `denue` and `yelp`; `prospect_research.Update` lacked `updated_at`; `pitches.Update` lacked sender/contact foreign keys.
 RULE: After any migration, immediately update `lib/supabase/types.ts` with new columns. Run `supabase gen types typescript` in a worktree to auto-generate. The `as never` cast is a red flag that a type gap exists — always fix the type, never paper over it.
