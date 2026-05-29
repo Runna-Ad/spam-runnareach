@@ -265,15 +265,20 @@ export async function deepResearchProspect(
   let contactFound: string | null = null;
   if (parsed.contactLine) {
     const { name, title } = parseContactLine(parsed.contactLine);
-    if (name || title) {
-      contactFound = [name, title].filter(Boolean).join(", ");
-      // Insert name+title contact (no email yet — Claude only gives name/title).
+    // Sanitize: reject guidance/suggestion text that Claude stuffs into title
+    // (e.g. "Not publicly listed; reach out to..." or "check LinkedIn for...")
+    const guidancePattern = /not publicly|reach out|check linkedin|via linkedin|target\s+\w+\s+director/i;
+    const cleanTitle = title && !guidancePattern.test(title) && title.length < 80 ? title : null;
+    // Only insert if we have a real name — no-name + no-email rows are useless
+    if (name) {
+      contactFound = [name, cleanTitle].filter(Boolean).join(", ");
+      // Insert name+title contact (no email yet — SnapVerify/Anymail/Hunter add email later).
       // Ignore duplicate errors (23505) — contact may already exist.
       const { error: contactErr } = await supabase.from("prospect_contacts").insert({
         tenant_id: user.tenantId,
         prospect_id: prospectId,
-        full_name: name ?? null,
-        role_title: title ?? null,
+        full_name: name,
+        role_title: cleanTitle,
         priority_rank: 2, // lower priority than confirmed email contacts
       });
       if (contactErr && contactErr.code !== "23505") {

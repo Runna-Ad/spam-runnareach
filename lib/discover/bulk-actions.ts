@@ -5,6 +5,7 @@ import { z } from "zod";
 import { writeAuditLog } from "@/lib/audit/log";
 import { requireUser } from "@/lib/auth";
 import { scoreProspect } from "@/lib/research/score-action";
+import { processSingleProspect } from "@/lib/discover/pipeline-action";
 import { createClient } from "@/lib/supabase/server";
 import type { Database } from "@/lib/supabase/types";
 
@@ -113,6 +114,40 @@ export async function bulkTransitionStatus(
   revalidatePath("/dashboard");
 
   return { ok: true, affected: count ?? parsed.data.prospect_ids.length, failed: 0 };
+}
+
+const bulkPipelineSchema = z.object({ prospect_ids: z.array(z.string().uuid()).min(1).max(20) });
+
+/**
+ * Run the full pipeline (scrape → research → score → enrich → pitch) on N prospects.
+ * Capped at 20 to avoid Vercel timeout — each prospect takes ~15–30s.
+ */
+export async function bulkRunPipeline(
+  input: z.input<typeof bulkPipelineSchema>,
+): Promise<BulkResult> {
+  const user = await requireUser();
+  if (user.role === "viewer") return { ok: false, error: "Viewers cannot run pipeline." };
+
+  const parsed = bulkPipelineSchema.safeParse(input);
+  if (!parsed.success) return { ok: false, error: parsed.error.issues[0]?.message ?? "Invalid input." };
+
+  const results = await Promise.all(parsed.data.prospect_ids.map((id) => processSingleProspect(id)));
+
+  const affected = results.filter((r) => r.outcome !== "error").length;
+  const failed = results.length - affected;
+  const firstErr = results.find((r) => r.outcome === "error");
+
+  revalidatePath("/companies");
+  revalidatePath("/funnel");
+  revalidatePath("/pitches");
+  revalidatePath("/dashboard");
+
+  return {
+    ok: true,
+    affected,
+    failed,
+    details: failed > 0 && firstErr ? `First error: ${firstErr.error ?? "unknown"}` : undefined,
+  };
 }
 
 /**

@@ -11,7 +11,7 @@ import { Chip } from "@/components/ui/chip";
 import { EmptyState } from "@/components/ui/empty-state";
 import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
-import { bulkScoreProspects, bulkTransitionStatus } from "@/lib/discover/bulk-actions";
+import { bulkRunPipeline, bulkScoreProspects, bulkTransitionStatus } from "@/lib/discover/bulk-actions";
 import type { Prospect } from "@/lib/discover/prospects-queries";
 import { useDebounce } from "@/lib/hooks";
 import { cn, relativeTime } from "@/lib/utils";
@@ -190,6 +190,31 @@ export function CompaniesPage({ prospects, icps, initialFilters }: CompaniesPage
         setBulkToast({ tone: "warn", text: res.error });
       }
       window.setTimeout(() => setBulkToast(null), 4000);
+    });
+  };
+
+  const bulkPipeline = () => {
+    if (selected.size === 0) return;
+    if (selected.size > 20) {
+      setBulkToast({ tone: "warn", text: "Pipeline caps at 20 prospects per batch." });
+      return;
+    }
+    setBulkToast(null);
+    const ids = Array.from(selected);
+    startBulk(async () => {
+      const res = await bulkRunPipeline({ prospect_ids: ids });
+      if (res.ok) {
+        const detail = res.failed > 0 ? ` (${res.failed} failed${res.details ? ` — ${res.details}` : ""})` : "";
+        setBulkToast({
+          tone: res.failed > 0 ? "warn" : "ok",
+          text: `Pipeline complete: ${res.affected} processed${detail}`,
+        });
+        setSelected(new Set());
+        router.refresh();
+      } else {
+        setBulkToast({ tone: "warn", text: res.error });
+      }
+      window.setTimeout(() => setBulkToast(null), 8000);
     });
   };
 
@@ -490,6 +515,21 @@ export function CompaniesPage({ prospects, icps, initialFilters }: CompaniesPage
             type="button"
             size="sm"
             variant="primary"
+            disabled={bulkPending || selected.size > 20}
+            onClick={bulkPipeline}
+            title={selected.size > 20 ? "Pipeline caps at 20 per batch" : "Run full pipeline: scrape → research → score → enrich → pitch"}
+          >
+            {bulkPending ? (
+              <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden />
+            ) : (
+              <ArrowRight className="h-3.5 w-3.5" aria-hidden />
+            )}
+            Run pipeline
+          </Button>
+          <Button
+            type="button"
+            size="sm"
+            variant="secondary"
             disabled={bulkPending || selected.size > 100}
             onClick={bulkScore}
             title={selected.size > 100 ? "Score caps at 100 per batch" : "Score selected against ICP rubric"}

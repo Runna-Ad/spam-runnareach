@@ -116,6 +116,17 @@ export async function scoreProspect(
     // Table missing — proceed with no research.
   }
 
+  // Load contact availability — whether we found a real email affects the score.
+  const { data: contacts } = await supabase
+    .from("prospect_contacts")
+    .select("email, selected_by")
+    .eq("tenant_id", user.tenantId)
+    .eq("prospect_id", parsed.data.prospect_id)
+    .not("email", "is", null)
+    .limit(1)
+    .returns<{ email: string; selected_by: string | null }[]>();
+  const hasVerifiedContact = (contacts ?? []).length > 0;
+
   const rubricProspect: RubricInputProspect = {
     industry: prospect.industry,
     city: prospect.city,
@@ -123,6 +134,7 @@ export async function scoreProspect(
     country_code: prospect.country_code,
     employee_size_estimate: prospect.employee_size_estimate,
     red_flags: prospect.red_flags ?? [],
+    has_verified_contact: hasVerifiedContact,
   };
   const rubricResearch: RubricInputResearch = research
     ? {

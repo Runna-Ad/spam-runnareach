@@ -1,0 +1,15 @@
+{
+  "hooks": {
+    "UserPromptSubmit": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash /Users/work/Projects/S.P.A.M/.claude/hooks/session-scan.sh"
+          }
+        ]
+      }
+    ]
+  }
+}

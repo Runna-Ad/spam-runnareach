@@ -39,6 +39,7 @@ export type RubricInputProspect = {
   country_code: string | null;
   employee_size_estimate: number | null;
   red_flags: string[];
+  has_verified_contact?: boolean; // true if prospect_contacts has a real email
 };
 
 export type RubricInputResearch = {
@@ -234,13 +235,17 @@ export function scoreWithHeuristic(
       : Math.min(pains.length, 1) * 4;              // 4 pts
 
   // ---- Contact discoverability (/10) -------------------------------------
-  // Stub: scraper writes contact emails into research.notes (next slice
-  // will move to a dedicated `prospect_contacts` table). For now, evidence
-  // URL count is a weak proxy.
+  // Primary signal: whether SnapVerify/Anymail/Hunter found a real email.
+  // Secondary signal: evidence URL count as a weak proxy when no contact yet.
   let contact_discoverability_pts = 0;
-  const evidenceCount = research?.evidence_urls?.length ?? 0;
-  if (evidenceCount >= 3) contact_discoverability_pts = MAX_PTS.contact_discoverability_pts;
-  else if (evidenceCount >= 1) contact_discoverability_pts = 5;
+  if (prospect.has_verified_contact) {
+    contact_discoverability_pts = MAX_PTS.contact_discoverability_pts; // 10 pts — email confirmed
+    reasoningParts.push("Verified contact email found → +10.");
+  } else {
+    const evidenceCount = research?.evidence_urls?.length ?? 0;
+    if (evidenceCount >= 3) contact_discoverability_pts = 6;
+    else if (evidenceCount >= 1) contact_discoverability_pts = 3;
+  }
 
   // ---- Red flag penalty (capped at -30) ----------------------------------
   const red_flag_penalty = Math.min(prospect.red_flags.length * 10, 30);
