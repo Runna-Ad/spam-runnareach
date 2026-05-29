@@ -257,28 +257,76 @@ export async function processSingleProspect(
     return { prospect_id: prospectId, company_name: name, score: null, outcome: "suppressed" };
   }
 
-  // ── Pass 1: fast enrichment ──────────────────────────────────────────────
+  // ── Pass 1: scrape + pain extraction + gate score ───────────────────────
+  //
+  // Goal: get enough signal to decide if this prospect is worth spending
+  // on deep research (Brave + Claude). No SMTP probes yet — save SnapVerify
+  // for after deep research so it has the richest possible data to work with.
 
-  // Step 1: Scrape website — failure is non-fatal
+  // Step 1: Scrape website (homepage + up to 4 sub-pages: About, Team, Contact…)
   try {
     await scrapeWebsite(prospectId);
   } catch {
     // Continue — scoring can still run with whatever data exists
   }
 
-  // Step 2: Structured research (pain point extraction) — non-fatal
+  // Step 2: Structured research — extract pain points from scraped content
   try {
     await runStructuredResearch(prospectId);
   } catch {
     // Continue
   }
 
-  // Step 3: SnapVerify — free contact enrichment, runs for every prospect
-  // with a domain. Uses already-scraped notes + what_they_do to extract
-  // named people and SMTP-probe guessed email addresses. Zero API credits.
-  // We track whether it found a contact so enrichContactsForProspect()
-  // can skip straight to Anymail/Hunter for ≥70 prospects instead of
-  // re-running SnapVerify.
+  // Step 3: Gate score — suppress clearly bad prospects before spending on Brave/Claude
+  const initialScoreResult = await scoreProspect(prospectId);
+  if (!initialScoreResult.ok) {
+    return { prospect_id: prospectId, company_name: name, score: null, outcome: "error", error: initialScoreResult.error };
+  }
+  const initialScore = initialScoreResult.composite_score;
+
+  if (initialScore < 35) {
+    await supabase
+      .from("prospects")
+      .update({
+        status: "suppressed",
+        suppressed_reason: `Auto: initial score ${initialScore} below threshold`,
+        suppressed_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      })
+      .eq("id", prospectId)
+      .eq("tenant_id", user.tenantId);
+    revalidatePath("/companies");
+    return { prospect_id: prospectId, company_name: name, score: initialScore, outcome: "suppressed" };
+  }
+
+  // ── Pass 2: deep research + SnapVerify on enriched data ─────────────────
+  //
+  // SnapVerify runs AFTER deep research so it has Brave intel (founder names,
+  // press mentions) in addition to scraped content. This is the correct order:
+  // deep research finds "Justine Barber, Co-founder" → SnapVerify guesses
+  // justine@poppybarley.com → SMTP probes it → contact found.
+
+  if (hasWebsite) {
+    // Step 4: Deep research — Brave people-intel + Claude synthesis → enriches
+    // notes with founder names, press mentions, LinkedIn signals.
+    try {
+      await deepResearchProspect(prospectId);
+    } catch {
+      // Non-fatal — continue with scraped data
+    }
+
+    // Step 5: Second structured research pass — picks up pains surfaced by
+    // deep research that weren't visible in the homepage scrape.
+    try {
+      await runStructuredResearch(prospectId);
+    } catch {
+      // Continue
+    }
+  }
+
+  // Step 6: SnapVerify — now runs on the RICHEST available data:
+  // homepage + About/Team/Contact sub-pages (2000 chars each) + Brave intel.
+  // Free: no API credits. Zero cost on suppressed prospects (they never reach here).
   let snapVerifyFoundContact = false;
   if (p?.domain) {
     try {
@@ -323,51 +371,7 @@ export async function processSingleProspect(
     }
   }
 
-  // Step 4: Initial score — if this fails entirely, mark as error
-  const initialScoreResult = await scoreProspect(prospectId);
-  if (!initialScoreResult.ok) {
-    return { prospect_id: prospectId, company_name: name, score: null, outcome: "error", error: initialScoreResult.error };
-  }
-  const initialScore = initialScoreResult.composite_score;
-
-  // Early suppress: not worth running Brave + Claude on a clearly bad prospect
-  if (initialScore < 35) {
-    await supabase
-      .from("prospects")
-      .update({
-        status: "suppressed",
-        suppressed_reason: `Auto: initial score ${initialScore} below threshold`,
-        suppressed_at: new Date().toISOString(),
-        updated_at: new Date().toISOString(),
-      })
-      .eq("id", prospectId)
-      .eq("tenant_id", user.tenantId);
-    revalidatePath("/companies");
-    return { prospect_id: prospectId, company_name: name, score: initialScore, outcome: "suppressed" };
-  }
-
-  // ── Pass 2: deep research (promising prospects with a URL) ───────────────
-
-  if (hasWebsite) {
-    // Step 4: Deep research — Brave intel + Claude synthesis → enriches
-    // what_they_do, pain_points, notes. Non-fatal: if it fails (no Brave key,
-    // Claude error) we fall through to triage on the initial score.
-    try {
-      await deepResearchProspect(prospectId);
-    } catch {
-      // Continue with initial score data
-    }
-
-    // Step 5: Second structured research pass — picks up any additional pains
-    // that deep research surfaced in what_they_do / notes. Non-fatal.
-    try {
-      await runStructuredResearch(prospectId);
-    } catch {
-      // Continue
-    }
-  }
-
-  // Step 6: Final score on fully enriched data
+  // Step 7: Final score — now reflects contact signal from SnapVerify
   const scoreResult = await scoreProspect(prospectId);
   const score = scoreResult.ok ? scoreResult.composite_score : initialScore;
 
@@ -406,9 +410,8 @@ export async function processSingleProspect(
   }
 
   // Score ≥ 70: run paid enrichment tiers (Anymail → Hunter).
-  // SnapVerify already ran in Pass 1 — skip it here to avoid double-spending
-  // SMTP probes. Only Anymail + Hunter fire for ≥70 prospects that SnapVerify
-  // couldn't resolve.
+  // SnapVerify already ran in Step 6 — skip it here to avoid double SMTP probes.
+  // Only Anymail + Hunter fire for ≥70 prospects that SnapVerify couldn't resolve.
   if (p?.domain && !snapVerifyFoundContact) {
     try {
       await enrichContactsForProspect(user.tenantId, prospectId, p.domain, p.company_name, supabase, true);

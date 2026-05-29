@@ -19,11 +19,11 @@ const MAX_HTML_BYTES = 4_000_000; // 4 MB hard cap — most pages are under 500 
 // Sub-page scraping constants
 const SUBPAGE_TIMEOUT_MS = 5_000;
 const SUBPAGE_RATE_LIMIT_MS = 500;
-const MAX_SUBPAGES = 3;
-const SUBPAGE_MAX_CHARS = 600;
+const MAX_SUBPAGES = 4;
+const SUBPAGE_MAX_CHARS = 2_000; // was 600 — too short to capture founder names/bios
 
 /** Priority order for which sub-pages to scrape (first MAX_SUBPAGES wins) */
-const SUBPAGE_PRIORITY = ["About", "Services", "Team", "Work", "Pricing", "Plans"];
+const SUBPAGE_PRIORITY = ["About", "Team", "Contact", "Services", "Work", "Pricing", "Plans"];
 
 export type SubPageExtract = {
   label: string;  // e.g. "About", "Services", "Team"
