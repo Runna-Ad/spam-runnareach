@@ -1,5 +1,7 @@
 "use client";
 
+import type { Route } from "next";
+
 import { ArrowRight, Building2, ExternalLink, Filter, Gauge, Loader2, Search, X } from "lucide-react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
@@ -11,6 +13,7 @@ import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
 import { bulkScoreProspects, bulkTransitionStatus } from "@/lib/discover/bulk-actions";
 import type { Prospect } from "@/lib/discover/prospects-queries";
+import { useDebounce } from "@/lib/hooks";
 import { cn, relativeTime } from "@/lib/utils";
 
 type SortOption = "newest" | "oldest" | "score_desc" | "score_asc" | "name";
@@ -62,6 +65,7 @@ export function CompaniesPage({ prospects, icps, initialFilters }: CompaniesPage
   const router = useRouter();
   const pathname = usePathname();
   const [search, setSearch] = React.useState(initialFilters?.search ?? "");
+  const debouncedSearch = useDebounce(search, 200);
   const [status, setStatus] = React.useState<string>(initialFilters?.status ?? "ALL");
   const [market, setMarket] = React.useState<string>(initialFilters?.market ?? "ALL");
   const [icpId, setIcpId] = React.useState<string>(initialFilters?.icpId ?? "ALL");
@@ -88,14 +92,14 @@ export function CompaniesPage({ prospects, icps, initialFilters }: CompaniesPage
     if (market !== "ALL") params.set("market", market);
     if (icpId !== "ALL") params.set("icp", icpId);
     if (sort !== "newest") params.set("sort", sort);
-    if (search.trim().length > 0) params.set("q", search.trim());
+    if (debouncedSearch.trim().length > 0) params.set("q", debouncedSearch.trim());
     const qs = params.toString();
     const next = qs ? `${pathname}?${qs}` : pathname;
     // Avoid pointless replaces — they cancel in-flight scrolls.
     if (typeof window !== "undefined" && window.location.pathname + window.location.search !== next) {
-      router.replace(next as never, { scroll: false });
+      router.replace(next as Route, { scroll: false });
     }
-  }, [status, market, icpId, sort, search, pathname, router]);
+  }, [status, market, icpId, sort, debouncedSearch, pathname, router]);
 
   const filtered = React.useMemo(() => {
     const term = search.trim().toLowerCase();
@@ -344,7 +348,7 @@ export function CompaniesPage({ prospects, icps, initialFilters }: CompaniesPage
                 return (
                 <tr
                   key={p.id}
-                  onClick={() => router.push(`/companies/${p.id}` as never)}
+                  onClick={() => router.push(`/companies/${p.id}` as Route)}
                   className={cn(
                     "border-b border-[var(--color-border-subtle)] cursor-pointer last:border-b-0",
                     isSelected ? "bg-[color-mix(in_oklab,var(--color-accent-300),transparent_92%)]" : "hover:bg-[var(--color-bg-800)]",
@@ -354,7 +358,7 @@ export function CompaniesPage({ prospects, icps, initialFilters }: CompaniesPage
                   onKeyDown={(e) => {
                     if (e.key === "Enter" || e.key === " ") {
                       e.preventDefault();
-                      router.push(`/companies/${p.id}` as never);
+                      router.push(`/companies/${p.id}` as Route);
                     }
                   }}
                   aria-label={`Open prospect ${p.company_name}`}

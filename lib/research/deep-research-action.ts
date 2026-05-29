@@ -238,13 +238,13 @@ export async function deepResearchProspect(
       .update({
         what_they_do: whatTheyDo ?? existing.what_they_do,
         notes: mergedNotes,
-        pain_points: painPoints as never,
+        pain_points: painPoints,
         tech_stack: mergedTech,
         research_method: "claude_assisted",
         last_scraped_at: new Date().toISOString(),
         last_edited_by_user_id: user.id,
         updated_at: new Date().toISOString(),
-      } as never)
+      })
       .eq("id", existing.id);
   } else {
     await supabase.from("prospect_research").insert({
@@ -252,13 +252,13 @@ export async function deepResearchProspect(
       prospect_id: prospectId,
       what_they_do: whatTheyDo,
       notes: mergedNotes,
-      pain_points: painPoints as never,
+      pain_points: painPoints,
       tech_stack: mergedTech,
       evidence_urls: [targetUrl],
       research_method: "claude_assisted",
       last_scraped_at: new Date().toISOString(),
       last_edited_by_user_id: user.id,
-    } as never);
+    });
   }
 
   // ── Step 10: Save contact if found ───────────────────────────────────────
@@ -275,7 +275,7 @@ export async function deepResearchProspect(
         full_name: name ?? null,
         role_title: title ?? null,
         priority_rank: 2, // lower priority than confirmed email contacts
-      } as never);
+      });
       if (contactErr && contactErr.code !== "23505") {
         console.warn("[deep-research] Could not save contact:", contactErr.message);
       }

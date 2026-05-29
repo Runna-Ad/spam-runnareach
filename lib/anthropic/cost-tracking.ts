@@ -42,7 +42,7 @@ export async function recordClaudeCall(input: CostRecordInput): Promise<void> {
         cache_read_input_tokens: input.usage.cache_read_input_tokens,
         cache_creation_input_tokens: input.usage.cache_creation_input_tokens,
       },
-    } as never);
+    });
     if (error) {
       console.warn(`[cost-tracking] insert failed: ${error.message}`);
     }

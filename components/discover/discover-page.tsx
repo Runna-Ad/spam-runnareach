@@ -2,6 +2,7 @@
 
 import {
   CheckCircle2,
+  Loader2,
   Lock,
   Play,
   Plus,
@@ -22,6 +23,7 @@ import {
 } from "@/lib/discover/source-meta";
 import type { DiscoveryRun } from "@/lib/discover/runs-queries";
 import { cn, relativeTime } from "@/lib/utils";
+import { closeStuckRuns } from "@/lib/discover/crawl-action";
 import { CsvUploadDrawer } from "./csv-upload-drawer";
 import { CrawlDrawer } from "./crawl-drawer";
 import { RunAllModal } from "./run-all-modal";
@@ -90,7 +92,7 @@ export function DiscoverPage({
           availableCrawlSources={availableCrawlSources}
           canManage={canManage}
         />
-        <RunHistorySection runs={runs} />
+        <RunHistorySection runs={runs} canManage={canManage} />
       </div>
 
       <CsvUploadDrawer open={uploadOpen} onOpenChange={setUploadOpen} icps={icps} />
@@ -250,16 +252,44 @@ function SourceCard({
   );
 }
 
-function RunHistorySection({ runs }: { runs: DiscoveryRun[] }) {
+function RunHistorySection({ runs, canManage }: { runs: DiscoveryRun[]; canManage: boolean }) {
+  const [closing, startClosing] = React.useTransition();
+  const stuckCount = runs.filter((r) => r.status === "running").length;
+
+  const handleCloseStuck = () => {
+    startClosing(async () => {
+      await closeStuckRuns();
+    });
+  };
+
   return (
     <section className="flex flex-col gap-3">
-      <div>
-        <h2 className="text-sm font-semibold tracking-tight text-[var(--color-fg-50)]">
-          Run history
-        </h2>
-        <p className="text-xs text-[var(--color-fg-500)]">
-          Every discovery run — manual or automated — is logged here.
-        </p>
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <h2 className="text-sm font-semibold tracking-tight text-[var(--color-fg-50)]">
+            Run history
+          </h2>
+          <p className="text-xs text-[var(--color-fg-500)]">
+            Every discovery run — manual or automated — is logged here.
+          </p>
+        </div>
+        {canManage && stuckCount > 0 && (
+          <Button
+            type="button"
+            size="sm"
+            variant="secondary"
+            onClick={handleCloseStuck}
+            disabled={closing}
+            title="Close runs stuck in 'running' for more than 15 minutes"
+          >
+            {closing ? (
+              <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden />
+            ) : (
+              <XCircle className="h-3.5 w-3.5" aria-hidden />
+            )}
+            {closing ? "Closing…" : `Close ${stuckCount} stuck run${stuckCount === 1 ? "" : "s"}`}
+          </Button>
+        )}
       </div>
       {runs.length === 0 ? (
         <EmptyState

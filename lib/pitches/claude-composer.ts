@@ -332,12 +332,16 @@ Wrong: 'Vi "Outdated website — no e-commerce functionality..."'
 Right (ES): "Revisé [company].com — sin checkout, sin ficha de producto real."
 Right (EN): "Checked [company].com — no product pages, no checkout path."
 
-REQUIRED EMAIL STRUCTURE — solution-first, ALWAYS:
-1. Salutation (see voice rules)
-2. Opening hook — one concrete, specific observation about THIS prospect's situation.
+REQUIRED EMAIL STRUCTURE — follow this exactly, no additions, no reordering:
+1. Salutation (see voice rules for format)
+2. One-liner intro — who is writing and why they're reaching out. Brief and warm, not a pitch.
+   EN: "Pedro from Runna here — we help independent retailers grow without burning their ad budget."
+   EN: "Quick note from Pedro at Runna — we work with Canadian ecommerce brands on exactly this."
+   Keep it to ONE sentence. This is the "who the hell is this person" moment. Required.
+3. Opening hook — one concrete, specific observation about THIS prospect's situation.
    Pull from: what_they_do, tech_stack, city, translated_pain. Be specific, not generic.
    "Checked your store — no cart recovery flow on Tiendanube" beats "Noticed an opportunity."
-3. Proposed solution — THIS is the core of the email. One to two sentences:
+4. Proposed solution — THIS is the core of the email. One to two sentences:
    - Name the SPECIFIC fix: "3-email cart recovery sequence + Meta dynamic retargeting",
      not "email marketing." "Mobile checkout redesign with A/B tested CTA placement",
      not "UX improvements."
@@ -348,11 +352,11 @@ REQUIRED EMAIL STRUCTURE — solution-first, ALWAYS:
      with this setup", "well-run Meta retargeting averages 3-5x ROAS for this category."
    - Use solution_hints in the payload as a starting point, then go further using what
      you know about current trends, platforms, and what actually works for this industry.
-4. Case study bridge — ONLY if case_study_id is chosen. It's PROOF, not the pitch:
+5. Case study bridge — ONLY if case_study_id is chosen. It's PROOF, not the pitch:
    ONE sentence after the solution: "Did this for {client} — {metric}. Same profile."
    If no case study fits well: SKIP entirely. The solution IS the credibility.
-5. CTA — Inefficiency Hunter link (see voice rules)
-6. Sign off: sender's first name, then full signature
+6. CTA — Inefficiency Hunter link (see voice rules for exact wording)
+7. Sign off: sender's first name, then full signature on the next line
 
 Quality bar: a prospect should read line 3 and think "that's exactly my problem and that's
 exactly what I need." Generic = fail. Specific, data-backed, tailored = win.
@@ -464,13 +468,20 @@ ${register}
 - Plain text only. No markdown, no links other than what we provide.
 - FORBIDDEN words: "abandonment", "funnel", "lead", "Meta Pixel", "WooCommerce",
   "Shopify", "retention automation", "default setup", any English anglicism.
-- CTA: link to the Inefficiency Hunter — 30-second diagnostic, zero friction, no email required.
-  Use the hunter_url from the payload. Format:
-  "👉 Tu número aquí: {hunter_url}"
-  or "👉 Ve el número de {company}: {hunter_url}"
-  or "👉 {hunter_url}" (if the sentence before already names the tool)
-  Always place the 👉 emoji before the link. No video offer, no call ask, no commitment language.
-- Sign off: sender's first name + agency name.`;
+- CTA: link to the Inefficiency Hunter — diagnóstico gratis de 30 segundos, sin registro.
+  Use the hunter_url from the payload. The CTA must explain what the tool IS — don't just drop a link.
+  Use a format like:
+  "👉 Revisa gratis en qué le está costando dinero a {company} — 30 segundos, sin datos: {hunter_url}"
+  or "👉 Auditoría gratis de {company} (30 segundos, sin compromiso): {hunter_url}"
+  or "👉 ¿Quieres ver dónde están las fugas? Diagnóstico gratuito: {hunter_url}"
+  Always place the 👉 emoji before the CTA sentence. No video, no call ask, no commitment language.
+- Salutation: "Hola {nombre}," — if no first name, use "Hola equipo de {empresa},"
+  NEVER use "Hola there," — critical failure. If no name at all, use "Hola," alone.
+- One-liner intro (required, step 2 of structure):
+  "Pedro de Runna — ayudamos a marcas independientes a crecer sin quemar presupuesto en ads."
+  or "Soy Pedro, de Runna — trabajamos con tiendas en línea en exactamente esto."
+  One sentence only. Warm and direct.
+- Sign off: sender's first name on one line, agency name on the next line.`;
 }
 
 function buildEnglishVoiceRules(): string {
@@ -481,16 +492,18 @@ Voice rules (Canadian market):
 - FORBIDDEN: "synergy", "best-in-class", "solutions", "thought leader", "circle back".
 - FORBIDDEN openings: "I hope this finds you well", "Quick question", "Just reaching out".
 - Use direct phrasing: "You're losing sales" not "There are conversion optimization opportunities".
-- Salutation: "Hi {first_name},"
-- CTA: link to the Inefficiency Hunter — 30-second diagnostic, zero friction, no email required.
-  Use the hunter_url from the payload. Format:
-  "👉 See {company}'s number: {hunter_url}"
-  or "👉 Your number is here: {hunter_url}"
-  or "👉 {hunter_url}" (if the sentence before already names the tool)
-  Always place the 👉 emoji before the link. No Loom, no video offer, no call ask.
+- Salutation: "Hi {first_name}," — if no first name is available, use "Hi {company} team,"
+  NEVER use "Hi there," — it's impersonal and reads as a mass blast.
+- CTA: link to the Inefficiency Hunter — a free 30-second store audit, no signup required.
+  Use the hunter_url from the payload. The CTA must explain what the tool IS — don't assume
+  they know what "your number" means. Use a format like:
+  "👉 See exactly where {company} is losing revenue — free 30-second audit, no signup: {hunter_url}"
+  or "👉 Run a free audit on {company}'s store (30 seconds, zero commitment): {hunter_url}"
+  or "👉 Curious what the leaks are? Free 30-second audit: {hunter_url}"
+  Always place the 👉 emoji before the CTA sentence. No Loom, no video offer, no call ask.
 - If the selected case study is a Canadian client (SnapPad, Niki, or DevFest Calgary),
   open the bridge with "We worked with {client}, a Canadian {category}..." — local proof lands harder.
-- Sign off: sender's first name + agency name.`;
+- Sign off: sender's first name on one line, agency name on the next line.`;
 }
 
 function buildNotableClientsTierContext(

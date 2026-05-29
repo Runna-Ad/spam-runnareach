@@ -41,15 +41,18 @@ export function UsersPage({
   const [inviteError, setInviteError] = React.useState<string | null>(null);
   const [inviteSending, startInvite] = React.useTransition();
   const [freshInviteUrl, setFreshInviteUrl] = React.useState<string | null>(null);
+  const [inviteEmailSent, setInviteEmailSent] = React.useState(false);
 
   const handleInvite = (e: React.FormEvent) => {
     e.preventDefault();
     setInviteError(null);
     setFreshInviteUrl(null);
+    setInviteEmailSent(false);
     startInvite(async () => {
       const result = await inviteTeammate({ email: inviteEmail, role: inviteRole });
       if (result.ok) {
         setFreshInviteUrl(`${baseUrl}/invite/${result.token}`);
+        setInviteEmailSent(result.emailSent);
         setInviteEmail("");
       } else {
         setInviteError(result.error);
@@ -65,8 +68,7 @@ export function UsersPage({
             Invite a teammate
           </h2>
           <p className="text-xs text-[var(--color-fg-500)]">
-            Invitations expire in 7 days. Email delivery isn't wired yet — copy the link and share
-            it manually.
+            Invitations expire in 7 days. An invite email is sent automatically via your connected Gmail inbox.
           </p>
         </div>
         {isAdmin ? (
@@ -110,7 +112,9 @@ export function UsersPage({
             {inviteError ? (
               <p className="text-xs text-[var(--color-danger-300)]">{inviteError}</p>
             ) : null}
-            {freshInviteUrl ? <InviteLinkBanner url={freshInviteUrl} /> : null}
+            {freshInviteUrl ? (
+              <InviteLinkBanner url={freshInviteUrl} emailSent={inviteEmailSent} />
+            ) : null}
           </form>
         ) : (
           <div className="rounded-[var(--radius-lg)] bg-[var(--color-bg-800)] p-4 ring-1 ring-inset ring-[var(--color-border-default)]">
@@ -185,7 +189,7 @@ export function UsersPage({
   );
 }
 
-function InviteLinkBanner({ url }: { url: string }) {
+function InviteLinkBanner({ url, emailSent }: { url: string; emailSent: boolean }) {
   const [copied, setCopied] = React.useState(false);
 
   const copy = () => {
@@ -205,7 +209,10 @@ function InviteLinkBanner({ url }: { url: string }) {
     >
       <Check className="h-4 w-4 shrink-0 text-[var(--color-success-300)]" aria-hidden />
       <div className="flex min-w-0 flex-1 flex-col">
-        <span className="text-xs font-medium text-[var(--color-success-300)]">Invitation created</span>
+        <span className="text-xs font-medium text-[var(--color-success-300)]">
+          Invitation created
+          {emailSent ? " · invite email sent" : " · copy link to share manually"}
+        </span>
         <code className="mt-0.5 truncate font-mono text-[11px] text-[var(--color-fg-300)]">
           {url}
         </code>

@@ -193,7 +193,7 @@ export async function processSingleProspect(
           domain: discovered.domain,
           red_flags: cleanFlags,
           updated_at: new Date().toISOString(),
-        } as never)
+        })
         .eq("id", prospectId)
         .eq("tenant_id", user.tenantId);
       hasWebsite = true;
@@ -214,7 +214,7 @@ export async function processSingleProspect(
           suppressed_reason: "Auto: no website and no ICP context",
           suppressed_at: new Date().toISOString(),
           updated_at: new Date().toISOString(),
-        } as never)
+        })
         .eq("id", prospectId)
         .eq("tenant_id", user.tenantId);
       revalidatePath("/companies");
@@ -231,7 +231,7 @@ export async function processSingleProspect(
             status: "pitched",
             pitch_gate_passed: true,
             updated_at: new Date().toISOString(),
-          } as never)
+          })
           .eq("id", prospectId)
           .eq("tenant_id", user.tenantId);
         revalidatePath("/companies");
@@ -250,7 +250,7 @@ export async function processSingleProspect(
         suppressed_reason: "Auto: no website, pitch generation failed",
         suppressed_at: new Date().toISOString(),
         updated_at: new Date().toISOString(),
-      } as never)
+      })
       .eq("id", prospectId)
       .eq("tenant_id", user.tenantId);
     revalidatePath("/companies");
@@ -273,7 +273,57 @@ export async function processSingleProspect(
     // Continue
   }
 
-  // Step 3: Initial score — if this fails entirely, mark as error
+  // Step 3: SnapVerify — free contact enrichment, runs for every prospect
+  // with a domain. Uses already-scraped notes + what_they_do to extract
+  // named people and SMTP-probe guessed email addresses. Zero API credits.
+  // We track whether it found a contact so enrichContactsForProspect()
+  // can skip straight to Anymail/Hunter for ≥70 prospects instead of
+  // re-running SnapVerify.
+  let snapVerifyFoundContact = false;
+  if (p?.domain) {
+    try {
+      type ResearchRow = { notes: string | null; what_they_do: string | null };
+      const { data: research } = await supabase
+        .from("prospect_research")
+        .select("notes, what_they_do")
+        .eq("prospect_id", prospectId)
+        .eq("tenant_id", user.tenantId)
+        .maybeSingle<ResearchRow>();
+
+      const snapResult = await snapVerifyEnrich(
+        prospectId,
+        p.domain,
+        research?.notes ?? null,
+        research?.what_they_do ?? null,
+        p.company_name,
+      );
+
+      if (snapResult.found) {
+        const priorityRank = snapResult.method === "smtp_verified" ? 1 : 2;
+        await supabase.from("prospect_contacts").insert({
+          tenant_id: user.tenantId,
+          prospect_id: prospectId,
+          email: snapResult.email,
+          full_name: snapResult.full_name ?? null,
+          role_title: snapResult.role_title ?? null,
+          email_is_role_based: false,
+          priority_rank: priorityRank,
+          selected_by:
+            snapResult.method === "smtp_verified"
+              ? "snapverify_smtp"
+              : snapResult.method === "google_workspace_guess"
+                ? "snapverify_google_guess"
+                : "snapverify_mx_heuristic",
+          selected_at: new Date().toISOString(),
+        });
+        snapVerifyFoundContact = true;
+      }
+    } catch {
+      // Non-fatal — pipeline continues without a contact
+    }
+  }
+
+  // Step 4: Initial score — if this fails entirely, mark as error
   const initialScoreResult = await scoreProspect(prospectId);
   if (!initialScoreResult.ok) {
     return { prospect_id: prospectId, company_name: name, score: null, outcome: "error", error: initialScoreResult.error };
@@ -289,7 +339,7 @@ export async function processSingleProspect(
         suppressed_reason: `Auto: initial score ${initialScore} below threshold`,
         suppressed_at: new Date().toISOString(),
         updated_at: new Date().toISOString(),
-      } as never)
+      })
       .eq("id", prospectId)
       .eq("tenant_id", user.tenantId);
     revalidatePath("/companies");
@@ -332,7 +382,7 @@ export async function processSingleProspect(
         suppressed_reason: `Auto: score ${score} below threshold`,
         suppressed_at: new Date().toISOString(),
         updated_at: new Date().toISOString(),
-      } as never)
+      })
       .eq("id", prospectId)
       .eq("tenant_id", user.tenantId);
 
@@ -347,7 +397,7 @@ export async function processSingleProspect(
       .update({
         pitch_gate_passed: false,
         updated_at: new Date().toISOString(),
-      } as never)
+      })
       .eq("id", prospectId)
       .eq("tenant_id", user.tenantId);
 
@@ -355,12 +405,13 @@ export async function processSingleProspect(
     return { prospect_id: prospectId, company_name: name, score, outcome: "needs_review" };
   }
 
-  // Score ≥ 70: enrich contacts then generate pitch
-  // Contact enrichment runs here — after scoring — so we only spend
-  // Anymail / Hunter credits on prospects that cleared the quality bar.
-  if (p?.domain) {
+  // Score ≥ 70: run paid enrichment tiers (Anymail → Hunter).
+  // SnapVerify already ran in Pass 1 — skip it here to avoid double-spending
+  // SMTP probes. Only Anymail + Hunter fire for ≥70 prospects that SnapVerify
+  // couldn't resolve.
+  if (p?.domain && !snapVerifyFoundContact) {
     try {
-      await enrichContactsForProspect(user.tenantId, prospectId, p.domain, p.company_name, supabase);
+      await enrichContactsForProspect(user.tenantId, prospectId, p.domain, p.company_name, supabase, true);
     } catch {
       // Non-fatal — gate check below will catch the no-contact case
     }
@@ -386,7 +437,7 @@ export async function processSingleProspect(
       .update({
         pitch_gate_passed: false,
         updated_at: new Date().toISOString(),
-      } as never)
+      })
       .eq("id", prospectId)
       .eq("tenant_id", user.tenantId);
     revalidatePath("/companies");
@@ -400,7 +451,7 @@ export async function processSingleProspect(
       // transition the prospect to 'pitched' here.
       await supabase
         .from("prospects")
-        .update({ status: "pitched", pitch_gate_passed: true, updated_at: new Date().toISOString() } as never)
+        .update({ status: "pitched", pitch_gate_passed: true, updated_at: new Date().toISOString() })
         .eq("id", prospectId)
         .eq("tenant_id", user.tenantId);
 
@@ -419,7 +470,7 @@ export async function processSingleProspect(
     .update({
       pitch_gate_passed: true, // score passed
       updated_at: new Date().toISOString(),
-    } as never)
+    })
     .eq("id", prospectId)
     .eq("tenant_id", user.tenantId);
 
@@ -481,16 +532,15 @@ export async function reEnrichProspectContacts(
 // ── Contact enrichment helper (score-gated, three-tier waterfall) ─────────────
 
 /**
- * Three-tier contact enrichment for a single prospect (score ≥ 70 only):
+ * Paid contact enrichment for a single prospect (score ≥ 70 only):
  *
- *   Tier 1 — SnapVerify (free): extracts named people from scraped site data,
- *             generates email guesses, SMTP-probes via Supabase edge function,
- *             or applies Google Workspace heuristic. Zero API credits.
+ *   When skipSnapVerify=false (default, e.g. re-enrich from UI):
+ *     Tier 1 — SnapVerify (free) → Tier 2 — Anymail → Tier 3 — Hunter
  *
- *   Tier 2 — Anymail Finder: verified decision-maker search. Costs credits.
- *             Only runs if SnapVerify found nothing.
- *
- *   Tier 3 — Hunter.io: domain-wide email sweep. Only runs if Anymail missed.
+ *   When skipSnapVerify=true (pipeline path — SnapVerify already ran in Pass 1):
+ *     Tier 2 — Anymail → Tier 3 — Hunter
+ *     Skipping SnapVerify avoids redundant SMTP probes on prospects it already
+ *     attempted without finding a contact.
  *
  * Short-circuits on first success — each tier preserves the next tier's credits.
  * Duplicate inserts (23505) are silently ignored.
@@ -501,45 +551,47 @@ async function enrichContactsForProspect(
   domain: string,
   companyName: string,
   supabase: Awaited<ReturnType<typeof createClient>>,
+  skipSnapVerify = false,
 ): Promise<void> {
-  // ── Fetch already-scraped research data (stored after scrape step) ────────
-  type ResearchRow = { notes: string | null; what_they_do: string | null };
-  const { data: research } = await supabase
-    .from("prospect_research")
-    .select("notes, what_they_do")
-    .eq("prospect_id", prospectId)
-    .eq("tenant_id", tenantId)
-    .maybeSingle<ResearchRow>();
+  if (!skipSnapVerify) {
+    // ── Tier 1: SnapVerify (only when not already run in Pass 1) ─────────────
+    type ResearchRow = { notes: string | null; what_they_do: string | null };
+    const { data: research } = await supabase
+      .from("prospect_research")
+      .select("notes, what_they_do")
+      .eq("prospect_id", prospectId)
+      .eq("tenant_id", tenantId)
+      .maybeSingle<ResearchRow>();
 
-  // ── Tier 1: SnapVerify ────────────────────────────────────────────────────
-  const snapResult = await snapVerifyEnrich(
-    prospectId,
-    domain,
-    research?.notes ?? null,
-    research?.what_they_do ?? null,
-    companyName,
-  );
+    const snapResult = await snapVerifyEnrich(
+      prospectId,
+      domain,
+      research?.notes ?? null,
+      research?.what_they_do ?? null,
+      companyName,
+    );
 
-  if (snapResult.found) {
-    const priorityRank = snapResult.method === "smtp_verified" ? 1 : 2;
-    await supabase.from("prospect_contacts").insert({
-      tenant_id: tenantId,
-      prospect_id: prospectId,
-      email: snapResult.email,
-      full_name: snapResult.full_name ?? null,
-      role_title: snapResult.role_title ?? null,
-      email_is_role_based: false,
-      priority_rank: priorityRank,
-      selected_by:
-        snapResult.method === "smtp_verified"
-          ? "snapverify_smtp"
-          : snapResult.method === "google_workspace_guess"
-            ? "snapverify_google_guess"
-            : "snapverify_mx_heuristic",
-      selected_at: new Date().toISOString(),
-    } as never);
-    // Short-circuit — SnapVerify found a personal email, skip paid tiers
-    return;
+    if (snapResult.found) {
+      const priorityRank = snapResult.method === "smtp_verified" ? 1 : 2;
+      await supabase.from("prospect_contacts").insert({
+        tenant_id: tenantId,
+        prospect_id: prospectId,
+        email: snapResult.email,
+        full_name: snapResult.full_name ?? null,
+        role_title: snapResult.role_title ?? null,
+        email_is_role_based: false,
+        priority_rank: priorityRank,
+        selected_by:
+          snapResult.method === "smtp_verified"
+            ? "snapverify_smtp"
+            : snapResult.method === "google_workspace_guess"
+              ? "snapverify_google_guess"
+              : "snapverify_mx_heuristic",
+        selected_at: new Date().toISOString(),
+      });
+      // Short-circuit — SnapVerify found a personal email, skip paid tiers
+      return;
+    }
   }
 
   // ── Tier 2: Anymail Finder ────────────────────────────────────────────────
@@ -557,7 +609,7 @@ async function enrichContactsForProspect(
       priority_rank: 1,
       selected_by: "anymail",
       selected_at: new Date().toISOString(),
-    } as never);
+    });
     return; // short-circuit — Anymail found someone, skip Hunter
   }
 
@@ -579,7 +631,7 @@ async function enrichContactsForProspect(
         priority_rank: rank,
         selected_by: "hunter",
         selected_at: new Date().toISOString(),
-      } as never);
+      });
     }
   }
 }

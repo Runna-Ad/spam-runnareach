@@ -164,7 +164,7 @@ export async function scoreProspect(
   const nowIso = new Date().toISOString();
   await supabase
     .from("scores")
-    .update({ superseded_at: nowIso } as never)
+    .update({ superseded_at: nowIso })
     .eq("tenant_id", user.tenantId)
     .eq("prospect_id", parsed.data.prospect_id)
     .is("superseded_at", null);
@@ -186,7 +186,7 @@ export async function scoreProspect(
     reasoning: result.reasoning,
     cost_usd, // $0 for heuristic, actual spend for Claude calls
     generated_at: nowIso,
-  } as never);
+  });
 
   if (insertErr) return { ok: false, error: `Could not save score: ${insertErr.message}` };
 
@@ -197,7 +197,7 @@ export async function scoreProspect(
       match_score: result.composite_score,
       research_quality_score: result.confidence,
       updated_at: nowIso,
-    } as never)
+    })
     .eq("id", parsed.data.prospect_id)
     .eq("tenant_id", user.tenantId);
 
@@ -235,7 +235,7 @@ export async function scoreProspect(
 function normalizePainPoints(
   raw: unknown,
 ): RubricInputResearch extends infer T ? (T extends { pain_points: infer P } ? P : never) : never {
-  if (!Array.isArray(raw)) return [] as never;
+  if (!Array.isArray(raw)) return [];
   return raw.flatMap((entry) => {
     if (!entry || typeof entry !== "object") return [];
     const e = entry as Record<string, unknown>;
@@ -260,5 +260,5 @@ function normalizePainPoints(
     out.evidence_quote = quote;
     if (typeof e.evidence_url === "string") out.evidence_url = e.evidence_url;
     return Object.keys(out).length > 0 ? [out] : [];
-  }) as never;
+  });
 }

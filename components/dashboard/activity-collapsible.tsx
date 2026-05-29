@@ -1,5 +1,6 @@
 "use client";
 
+import type { Route } from "next";
 import {
   Activity,
   Brain,
@@ -128,7 +129,7 @@ function ActivityRow({ entry }: { entry: TenantActivityEntry }) {
     return (
       <li>
         <Link
-          href={`/companies/${entry.prospect_id}` as never}
+          href={`/companies/${entry.prospect_id}` as Route}
           className="block rounded-[var(--radius-sm)] hover:bg-[var(--color-bg-700)]"
         >
           {inner}

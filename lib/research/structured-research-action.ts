@@ -225,7 +225,7 @@ export async function runStructuredResearch(
       .update({
         pain_points: mergedPains as unknown as object[],
         last_edited_by_user_id: user.id,
-      } as never)
+      })
       .eq("id", research.id);
     if (updErr) {
       return { ok: false, error: `Could not save pains: ${updErr.message}` };
@@ -251,7 +251,7 @@ export async function runStructuredResearch(
     // Use upsert via insert-then-handle-conflict.
     const { error: contactErr } = await supabase
       .from("prospect_contacts")
-      .insert(insertPayload as never);
+      .insert(insertPayload);
     if (contactErr) {
       // 23505 = unique violation (email already exists for this tenant);
       // that's fine — means we previously selected it.

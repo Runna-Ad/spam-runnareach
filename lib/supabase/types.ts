@@ -257,6 +257,15 @@ export type Database = {
           paused?: boolean;
           paused_reason?: string | null;
           user_id?: UUID | null;
+          gmail_access_token_encrypted?: string | null;
+          gmail_refresh_token_encrypted?: string | null;
+          gmail_token_expires_at?: Timestamptz | null;
+          warming_stage?: string;
+          sends_today?: number;
+          last_send_at?: Timestamptz | null;
+          last_reset_date?: string;
+          bounce_rate_7d?: number;
+          spam_rate_7d?: number;
           updated_at?: Timestamptz;
         };
         Relationships: NoRels;
@@ -302,6 +311,7 @@ export type Database = {
           raw_html_snapshot_url?: string | null;
           last_scraped_at?: Timestamptz | null;
           last_edited_by_user_id?: UUID | null;
+          updated_at?: Timestamptz;
         };
         Relationships: NoRels;
       };
@@ -319,7 +329,9 @@ export type Database = {
             | "linkedin"
             | "manual_upload"
             | "yellowpages_ca"
-            | "brave_search";
+            | "brave_search"
+            | "denue"
+            | "yelp";
           company_name: string;
           domain: string | null;
           website_url: string | null;
@@ -363,7 +375,9 @@ export type Database = {
             | "linkedin"
             | "manual_upload"
             | "yellowpages_ca"
-            | "brave_search";
+            | "brave_search"
+            | "denue"
+            | "yelp";
           company_name: string;
           domain?: string | null;
           website_url?: string | null;
@@ -424,7 +438,9 @@ export type Database = {
             | "linkedin"
             | "manual_upload"
             | "yellowpages_ca"
-            | "brave_search";
+            | "brave_search"
+            | "denue"
+            | "yelp";
           triggered_by: UUID | null;
           status: string;
           candidates_found: number;
@@ -448,7 +464,9 @@ export type Database = {
             | "linkedin"
             | "manual_upload"
             | "yellowpages_ca"
-            | "brave_search";
+            | "brave_search"
+            | "denue"
+            | "yelp";
           triggered_by?: UUID | null;
           status?: string;
           candidates_found?: number;
@@ -637,6 +655,7 @@ export type Database = {
           cost_usd?: number | null;
           token_count_in?: number | null;
           token_count_out?: number | null;
+          preview_text?: string | null;
         };
         Update: {
           subject?: string;
@@ -644,6 +663,12 @@ export type Database = {
           body_edited?: string | null;
           body_sent?: string | null;
           compliance_footer?: string | null;
+          sender_inbox_id?: UUID | null;
+          contact_id?: UUID | null;
+          prompt_variant_id?: UUID | null;
+          case_study_id?: UUID | null;
+          service_id?: UUID | null;
+          pain_id?: UUID | null;
           status?:
             | "draft"
             | "queued_for_approval"
@@ -665,6 +690,12 @@ export type Database = {
           quality_self_score?: number | null;
           auto_rejected?: boolean;
           auto_rejected_reason?: string | null;
+          cost_usd?: number | null;
+          token_count_in?: number | null;
+          token_count_out?: number | null;
+          gmail_thread_id?: string | null;
+          gmail_message_id?: string | null;
+          postmark_message_id?: string | null;
         };
         Relationships: NoRels;
       };
@@ -1062,6 +1093,58 @@ export type Database = {
         reasoning: string | null;
         reviewed_by: UUID | null;
         reviewed_at: Timestamptz | null;
+      }>;
+      Relationships: NoRels;
+    };
+    notable_clients: {
+      Row: {
+        id: UUID;
+        tenant_id: UUID;
+        name: string;
+        tier: "smb" | "mid_market" | "enterprise";
+        industry_tags: string[];
+        markets: string[];
+        relationship_description: string | null;
+        services_provided: string[];
+        key_result: string | null;
+        description_en: string | null;
+        description_es: string | null;
+        is_active: boolean;
+        sort_order: number;
+        created_at: Timestamptz;
+        updated_at: Timestamptz;
+      };
+      Insert: {
+        id?: UUID;
+        tenant_id: UUID;
+        name: string;
+        tier?: "smb" | "mid_market" | "enterprise";
+        industry_tags?: string[];
+        markets?: string[];
+        relationship_description?: string | null;
+        services_provided?: string[];
+        key_result?: string | null;
+        description_en?: string | null;
+        description_es?: string | null;
+        is_active?: boolean;
+        sort_order?: number;
+        created_at?: Timestamptz;
+        updated_at?: Timestamptz;
+      };
+      Update: Partial<{
+        tenant_id: UUID;
+        name: string;
+        tier: "smb" | "mid_market" | "enterprise";
+        industry_tags: string[];
+        markets: string[];
+        relationship_description: string | null;
+        services_provided: string[];
+        key_result: string | null;
+        description_en: string | null;
+        description_es: string | null;
+        is_active: boolean;
+        sort_order: number;
+        updated_at: Timestamptz;
       }>;
       Relationships: NoRels;
     };

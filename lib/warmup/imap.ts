@@ -184,7 +184,7 @@ export async function processIncomingWarmupEmails(
 
     const since = new Date(Date.now() - 24 * 60 * 60 * 1000);
     // imapflow: `seen: false` means unseen (unread)
-    const seqs = await client.search({ seen: false as never, from: warmupSenderEmail, since });
+    const seqs = await client.search({ seen: false, from: warmupSenderEmail, since });
 
     if (!Array.isArray(seqs) || seqs.length === 0) return 0;
 

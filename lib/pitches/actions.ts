@@ -373,7 +373,7 @@ export async function generatePitch(
 
   const { data: created, error: insertErr } = await supabase
     .from("pitches")
-    .insert(insertWithPreview as never)
+    .insert(insertWithPreview)
     .select("id")
     .single<{ id: string }>();
 
@@ -447,7 +447,7 @@ export async function savePitchEdit(
     .update({
       subject: parsed.data.subject,
       body_edited: parsed.data.body_edited,
-    } as never)
+    })
     .eq("id", parsed.data.pitch_id)
     .eq("tenant_id", user.tenantId);
 
@@ -509,7 +509,7 @@ export async function transitionPitchStatus(
 
   const { error } = await supabase
     .from("pitches")
-    .update(payload as never)
+    .update(payload)
     .eq("id", parsed.data.pitch_id)
     .eq("tenant_id", user.tenantId);
 

@@ -82,7 +82,7 @@ export async function bulkTransitionStatus(
 
   const { error, count } = await supabase
     .from("prospects")
-    .update(payload as never, { count: "exact" })
+    .update(payload, { count: "exact" })
     .in("id", parsed.data.prospect_ids)
     .eq("tenant_id", user.tenantId);
 

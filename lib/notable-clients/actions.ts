@@ -55,7 +55,7 @@ export async function upsertNotableClient(
   if (input.id) {
     const { error } = await supabase
       .from("notable_clients")
-      .update(payload as never)
+      .update(payload)
       .eq("id", input.id)
       .eq("tenant_id", user.tenantId);
 
@@ -66,7 +66,7 @@ export async function upsertNotableClient(
 
   const { data, error } = await supabase
     .from("notable_clients")
-    .insert({ ...payload } as never)
+    .insert({ ...payload })
     .select("id")
     .single<{ id: string }>();
 
@@ -90,7 +90,7 @@ export async function deactivateNotableClient(id: string): Promise<SimpleActionR
   const supabase = await createClient();
   const { error } = await supabase
     .from("notable_clients")
-    .update({ is_active: false, updated_at: new Date().toISOString() } as never)
+    .update({ is_active: false, updated_at: new Date().toISOString() })
     .eq("id", id)
     .eq("tenant_id", user.tenantId);
 

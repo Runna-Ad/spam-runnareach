@@ -1,9 +1,11 @@
 "use server";
 
 import { randomBytes } from "node:crypto";
+import { headers } from "next/headers";
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { requireUser } from "@/lib/auth";
+import { getAccessToken, sendGmailMessage } from "@/lib/gmail/client";
 import { createClient } from "@/lib/supabase/server";
 import { createServiceRoleClient } from "@/lib/supabase/service-role";
 
@@ -21,7 +23,7 @@ function isAllowedEmail(raw: string): boolean {
 }
 
 export type InviteResult =
-  | { ok: true; id: string; token: string }
+  | { ok: true; id: string; token: string; emailSent: boolean }
   | { ok: false; error: string };
 
 export type UserActionResult =
@@ -84,8 +86,75 @@ export async function inviteTeammate(input: {
   if (error) return { ok: false, error: `Could not create invitation: ${error.message}` };
   if (!data) return { ok: false, error: "Invitation insert returned no row." };
 
+  // ── Send invite email via the tenant's connected Gmail inbox ──────────────
+  // Fire-and-forget: a send failure never blocks the invite itself.
+  // The link is still returned to the UI so Pedro can share it manually.
+  let emailSent = false;
+  try {
+    // Derive the app URL from the incoming request host
+    const headersList = await headers();
+    const host = headersList.get("host") ?? "spam-runnareach.vercel.app";
+    const proto = host.includes("localhost") ? "http" : "https";
+    const inviteUrl = `${proto}://${host}/invite/${token}`;
+
+    // Look up the first active, Gmail-connected inbox for this tenant
+    type InboxRow = {
+      id: string;
+      email: string;
+      display_name: string;
+      gmail_refresh_token_encrypted: string | null;
+    };
+    const { data: inbox } = await admin
+      .from("sender_inboxes")
+      .select("id, email, display_name, gmail_refresh_token_encrypted")
+      .eq("tenant_id", user.tenantId)
+      .eq("paused", false)
+      .not("gmail_refresh_token_encrypted", "is", null)
+      .order("created_at", { ascending: true })
+      .limit(1)
+      .maybeSingle<InboxRow>();
+
+    if (inbox?.gmail_refresh_token_encrypted) {
+      const tokenResult = await getAccessToken(inbox.gmail_refresh_token_encrypted);
+      if (tokenResult.ok) {
+        const roleLabel =
+          parsed.data.role === "admin"
+            ? "Admin"
+            : parsed.data.role === "reviewer"
+              ? "Reviewer"
+              : "Viewer";
+
+        const sendResult = await sendGmailMessage({
+          accessToken: tokenResult.accessToken,
+          fromEmail: inbox.email,
+          fromName: inbox.display_name,
+          to: email,
+          subject: `You're invited to join Runna's outreach platform`,
+          body: [
+            `Hi there,`,
+            ``,
+            `${user.fullName ?? user.email} has invited you to join the Runna CA Opportunity Engine.`,
+            ``,
+            `Your role: ${roleLabel}`,
+            ``,
+            `Click the link below to set up your account (expires in 7 days):`,
+            ``,
+            inviteUrl,
+            ``,
+            `If you weren't expecting this invite, you can ignore this email.`,
+            ``,
+            `— The Runna team`,
+          ].join("\n"),
+        });
+        emailSent = sendResult.ok;
+      }
+    }
+  } catch {
+    // Non-fatal — invite was created, link is in the response
+  }
+
   revalidatePath("/settings/users");
-  return { ok: true, id: data.id, token };
+  return { ok: true, id: data.id, token, emailSent };
 }
 
 export async function revokeInvitation(id: string): Promise<UserActionResult> {
@@ -145,7 +214,7 @@ export async function changeMemberRole(input: {
 
   const { error } = await supabase
     .from("users")
-    .update({ role: parsed.data.role, updated_at: new Date().toISOString() } as never)
+    .update({ role: parsed.data.role, updated_at: new Date().toISOString() })
     .eq("id", parsed.data.userId)
     .eq("tenant_id", user.tenantId);
 

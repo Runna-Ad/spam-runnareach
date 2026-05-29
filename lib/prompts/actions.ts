@@ -36,14 +36,14 @@ export async function reviewProposal(proposalId: string, action: ReviewAction) {
 
       await supabase
         .from("prompt_variants")
-        .update({ status: newStatus, challenger_traffic_pct: trafficPct, promoted_at: now } as never)
+        .update({ status: newStatus, challenger_traffic_pct: trafficPct, promoted_at: now })
         .eq("id", proposal.proposed_variant_id);
 
       // Retire current champion only on full approve
       if (action === "approve" && proposal.current_variant_id) {
         await supabase
           .from("prompt_variants")
-          .update({ status: "retired", retired_at: now } as never)
+          .update({ status: "retired", retired_at: now })
           .eq("id", proposal.current_variant_id);
       }
     }
@@ -55,7 +55,7 @@ export async function reviewProposal(proposalId: string, action: ReviewAction) {
         status: proposalStatus,
         reviewed_by: user.id,
         reviewed_at: now,
-      } as never)
+      })
       .eq("id", proposalId);
   }
 
@@ -64,7 +64,7 @@ export async function reviewProposal(proposalId: string, action: ReviewAction) {
     if (proposal.proposed_variant_id) {
       await supabase
         .from("prompt_variants")
-        .update({ status: "retired", retired_at: now } as never)
+        .update({ status: "retired", retired_at: now })
         .eq("id", proposal.proposed_variant_id);
     }
 
@@ -74,7 +74,7 @@ export async function reviewProposal(proposalId: string, action: ReviewAction) {
         status: "rejected",
         reviewed_by: user.id,
         reviewed_at: now,
-      } as never)
+      })
       .eq("id", proposalId);
   }
 
@@ -91,14 +91,14 @@ export async function rollbackVariant(variantId: string, promptId: string) {
   // Retire current champion
   await supabase
     .from("prompt_variants")
-    .update({ status: "retired", retired_at: now } as never)
+    .update({ status: "retired", retired_at: now })
     .eq("prompt_id", promptId)
     .eq("status", "champion");
 
   // Promote selected variant to champion
   await supabase
     .from("prompt_variants")
-    .update({ status: "champion", promoted_at: now, retired_at: null } as never)
+    .update({ status: "champion", promoted_at: now, retired_at: null })
     .eq("id", variantId);
 
   revalidatePath("/learning");

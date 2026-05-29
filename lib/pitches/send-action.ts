@@ -109,7 +109,7 @@ export async function sendPitch(input: {
   // ── 3. Mark pitch as "sending" (optimistic lock) ───────────────────────────
   const { error: lockErr } = await supabase
     .from("pitches")
-    .update({ status: "sending" } as never)
+    .update({ status: "sending" })
     .eq("id", pitch_id)
     .eq("tenant_id", user.tenantId)
     .eq("status", "approved"); // only move if still approved (idempotency guard)
@@ -122,7 +122,7 @@ export async function sendPitch(input: {
     // Rollback status so user can retry after fixing creds
     await supabase
       .from("pitches")
-      .update({ status: "approved" } as never)
+      .update({ status: "approved" })
       .eq("id", pitch_id)
       .eq("tenant_id", user.tenantId);
     return { ok: false, error: `Gmail auth failed: ${tokenResult.error}` };
@@ -142,7 +142,7 @@ export async function sendPitch(input: {
     // Rollback so user can retry
     await supabase
       .from("pitches")
-      .update({ status: "approved" } as never)
+      .update({ status: "approved" })
       .eq("id", pitch_id)
       .eq("tenant_id", user.tenantId);
     return { ok: false, error: `Send failed: ${sendResult.error}` };
@@ -157,13 +157,13 @@ export async function sendPitch(input: {
       status: "sent",
       sent_at: now,
       sender_inbox_id: inbox_id,
-    } as never)
+    })
     .eq("id", pitch_id)
     .eq("tenant_id", user.tenantId);
 
   await supabase
     .from("sender_inboxes")
-    .update({ sends_today: inbox.sends_today + 1 } as never)
+    .update({ sends_today: inbox.sends_today + 1 })
     .eq("id", inbox_id)
     .eq("tenant_id", user.tenantId);
 

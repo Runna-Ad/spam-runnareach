@@ -1,5 +1,7 @@
 "use client";
 
+import type { Route } from "next";
+
 import {
   Activity,
   ArrowLeft,
@@ -939,7 +941,7 @@ function ResearchTab({
             <>
               {" "}
               <Link
-                href={"/pitches" as never}
+                href={"/pitches" as Route}
                 className="font-medium text-[var(--color-accent-300)] hover:underline"
               >
                 Open in /pitches →

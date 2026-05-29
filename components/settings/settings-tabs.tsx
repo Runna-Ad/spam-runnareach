@@ -22,7 +22,7 @@ export function SettingsTabs() {
         return (
           <Link
             key={t.href}
-            href={t.href as never}
+            href={t.href}
             className={cn(
               "inline-flex h-11 items-center gap-1.5 border-b-2 px-0.5 text-[11px] font-medium tracking-tight",
               "-mb-px transition-[color,border-color]",

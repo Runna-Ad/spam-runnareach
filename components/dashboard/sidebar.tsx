@@ -1,5 +1,6 @@
 "use client";
 
+import type { Route } from "next";
 import type { ReactNode } from "react";
 import Image from "next/image";
 import Link from "next/link";
@@ -70,7 +71,7 @@ export function Sidebar({ footerSlot }: SidebarProps) {
                 return (
                   <li key={item.href}>
                     <Link
-                      href={item.href as never}
+                      href={item.href as Route}
                       className={cn(
                         "relative flex h-8 items-center gap-2.5 rounded-[var(--radius-md)] px-2 text-sm",
                         "transition-colors duration-[var(--duration-fast)] ease-[var(--ease-standard)]",

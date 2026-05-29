@@ -74,7 +74,7 @@ export async function updateCaseStudy(
 
   const { error: updateError } = await supabase
     .from("case_studies")
-    .update(caseStudyPayload as never)
+    .update(caseStudyPayload)
     .eq("id", data.id)
     .eq("tenant_id", user.tenantId);
 
@@ -101,7 +101,7 @@ export async function updateCaseStudy(
     // Same typing quirk as update above.
     const { error: insertError } = await supabase
       .from("case_study_pain_tags")
-      .insert(rows as never);
+      .insert(rows);
 
     if (insertError) {
       return { ok: false, error: `Could not save pain tags: ${insertError.message}` };

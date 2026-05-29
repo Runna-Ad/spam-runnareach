@@ -10,6 +10,7 @@ import {
   UserCircle2,
   type LucideIcon,
 } from "lucide-react";
+import type { Route } from "next";
 import { useRouter } from "next/navigation";
 import * as React from "react";
 import { Kbd } from "@/components/ui/kbd";
@@ -87,7 +88,7 @@ export function CommandPalette({ open, onOpenChange }: CommandPaletteProps) {
     setLoading(true);
     loadPaletteItems()
       .then((items) => setDynamicItems(items))
-      .catch((err) => console.error("palette load failed", err))
+      .catch(() => { /* palette load failure is non-fatal; user sees empty dynamic results */ })
       .finally(() => setLoading(false));
   }, [open]);
 
@@ -104,7 +105,7 @@ export function CommandPalette({ open, onOpenChange }: CommandPaletteProps) {
 
   const handleSelect = (item: PaletteItem) => {
     onOpenChange(false);
-    router.push(item.href as never);
+    router.push(item.href as Route);
   };
 
   return (

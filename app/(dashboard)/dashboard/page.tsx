@@ -1,3 +1,4 @@
+import type { Route } from "next";
 import {
   ArrowRight,
   CheckCircle2,
@@ -174,7 +175,7 @@ export default async function TodayPage() {
               return (
                 <Link
                   key={s.key}
-                  href={`/companies?status=${s.key}` as never}
+                  href={`/companies?status=${s.key}` as Route}
                   style={
                     !empty
                       ? {
@@ -322,7 +323,7 @@ function StatTile({ label, value, icon: Icon, accent, href, subtitle }: StatTile
     return (
       // Typed-routes can't statically prove dynamic ?status=… params, so we
       // cast. Link still validates at runtime.
-      <Link href={href as never} className="group">
+      <Link href={href as Route} className="group">
         <Card
           className={cn(
             "transition-[box-shadow] group-hover:ring-[var(--color-border-strong)]",
@@ -353,7 +354,7 @@ function AttentionRowItem({ row }: { row: AttentionRow }) {
   return (
     <li>
       <Link
-        href={`/companies/${row.id}` as never}
+        href={`/companies/${row.id}` as Route}
         className={cn(
           "flex items-center gap-3 px-1 py-2.5 transition-colors",
           "hover:bg-[var(--color-bg-700)] rounded-[var(--radius-sm)]",
@@ -392,7 +393,7 @@ function RecentRow({ prospect }: { prospect: RecentProspect }) {
   return (
     <li>
       <Link
-        href={`/companies/${prospect.id}` as never}
+        href={`/companies/${prospect.id}` as Route}
         className="flex flex-col rounded-[var(--radius-sm)] px-1 py-1.5 hover:bg-[var(--color-bg-700)]"
       >
         <span className="flex items-center gap-1.5 text-sm text-[var(--color-fg-50)]">

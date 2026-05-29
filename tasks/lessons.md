@@ -4,6 +4,69 @@ Running log of mistakes, root causes, and rules to prevent recurrence. Newest at
 
 ---
 
+[2026-05-28] LESSON: Handwritten Supabase types were missing fields causing widespread `as never` casts
+ROOT CAUSE: `lib/supabase/types.ts` was manually maintained and lagged behind actual schema. Missing fields: `sender_inboxes.Update` lacked all gmail token fields and sends_today; `pitches.Insert` lacked preview_text; `discovery_source`/`source` enums lacked `denue` and `yelp`; `prospect_research.Update` lacked `updated_at`; `pitches.Update` lacked sender/contact foreign keys.
+RULE: After any migration, immediately update `lib/supabase/types.ts` with new columns. Run `supabase gen types typescript` in a worktree to auto-generate. The `as never` cast is a red flag that a type gap exists — always fix the type, never paper over it.
+TAGS: #types #supabase #typescript #architecture
+
+[2026-05-28] LESSON: React hooks (useState, useEffect) cannot be imported from files used by Server Components
+ROOT CAUSE: Added `useDebounce` hook to `lib/utils.ts` which is imported by Server Components. This caused "Ecmascript file had an error" at build time because hooks are client-only.
+RULE: Client-side React hooks must live in a file marked "use client" or in a dedicated `lib/hooks.ts` that is only imported from client components. Never put hooks in shared utility files.
+TAGS: #nextjs #react #server-components #bug
+
+[2026-05-28] LESSON: `} as never)` replacement pattern requires careful regex — '}' closes object, ')' closes method call
+ROOT CAUSE: When doing bulk replacement of `as never` casts, replacing `} as never)` with `}` dropped the `)` needed to close the Supabase method chain (`.insert()`/`.update()`).
+RULE: When removing `as never` casts from Supabase chains, replace `} as never)` with `})` — the `)` belongs to the builder method, not the cast.
+TAGS: #typescript #supabase #refactoring
+
+---
+
+[2026-05-28] LESSON: Generating pitches for prospects with no contact email is wasteful
+ROOT CAUSE: The pipeline was generating full pitches (Haiku + Sonnet call) even when all three enrichment tiers (SnapVerify → Anymail → Hunter) came back empty. The pitch would land in `status=pitched` but the UI would show "no contact — pick one manually". An unsendable pitch is a wasted credit and a misleading pipeline outcome.
+RULE: After contact enrichment, always gate on `prospect_contacts` having at least one non-null email before calling `generatePitch()`. If no email: `pitch_gate_passed=false`, return `needs_review`. Never auto-generate a pitch you can't send.
+TAGS: #pipeline #contacts #gate #credits
+
+[2026-05-28] LESSON: Brave people-intel queries can return wrong business (name collision)
+ROOT CAUSE: In Test A, Brave query `"Adorn Boutique" CEO OR founder` returned Nicole Whitesell — CEO of a Portland OR boutique also named "Adorn", not the Calgary one. Generic boutique names are common enough to collide. This means SnapVerify can insert a wrong person's first name as the email guess.
+RULE: Brave people-intel queries in snapVerifyEnrich should be scoped with the city/region when available. Improve query to: `"${companyName}" "${city}" CEO OR founder OR owner` and `"${companyName}" "${domain}" owner`. Also: when Haiku extracts people, it should cross-reference that the person is associated with THIS domain (not a homonym company). Short-term fix: add domain to the Brave query to narrow results.
+TAGS: #snapverify #brave #data-quality #false-positive
+
+[2026-05-28] LESSON: Old scraper inserted 7 garbage emails into prospect_contacts
+ROOT CAUSE: The original scraper blindly extracted any string matching an email pattern from scraped HTML — including placeholder emails (`example@email.com`, `john.doe@email.com`), phone-numbers concatenated with emails (`922-2281intheknow@...`), and href garbage (`0j1780-709-8242hello@bougierougeboutique.comfirst`). These are useless and pollute the contact table.
+RULE: The scraper email extraction regex must validate: (1) no leading digits/special chars in local part, (2) domain part matches a real TLD pattern, (3) not a known placeholder (example@, test@, john.doe@, abuse@). SnapVerify avoids this entirely by generating structured guesses (firstname@domain) rather than scraping raw strings. Consider a one-time cleanup migration to delete scraper contacts with malformed emails.
+TAGS: #scraper #data-quality #contacts #bug
+
+[2026-05-28] LESSON: Deno edge functions don't share tsconfig with Next.js
+ROOT CAUSE: `supabase/functions/` directory was included in the root tsconfig, so Deno-specific globals (Deno.connect, Deno.resolveDns, Deno.TcpConn) and Deno URL imports caused TS errors in `npx tsc --noEmit`.
+RULE: Always exclude `supabase/functions` from the root tsconfig.json `exclude` array. Deno edge functions have their own runtime types — they cannot be type-checked with Next.js tsconfig.
+TAGS: #supabase #deno #typescript #edgefunctions
+
+[2026-05-28] LESSON: Supabase CLI deploy requires `supabase login` first
+ROOT CAUSE: `supabase functions deploy` returned 403 because the CLI wasn't linked/authenticated. The Supabase MCP also lacks deploy permissions.
+RULE: Before any `supabase functions deploy` call, run `supabase login` and `supabase link --project-ref <ID>` first. Deploy edge functions manually — don't assume CLI auth persists across machines or sessions.
+TAGS: #supabase #deploy #cli
+
+[2026-05-28] LESSON: Email enrichment should be free-first, paid-last
+ROOT CAUSE: Previous architecture ran Anymail+Hunter for every ≥70 prospect, burning API credits even when named people were already visible in scraped site content.
+RULE: Three-tier waterfall for contact enrichment: (1) SnapVerify — free, uses scraped notes + Claude Haiku + SMTP edge function; (2) Anymail Finder — paid, verified decision-maker; (3) Hunter.io — paid, domain sweep. Short-circuit on first success. SnapVerify alone handles Google Workspace + Microsoft + SMTP-reachable domains.
+TAGS: #contacts #enrichment #cost #architecture
+
+[2026-05-26] LESSON: Pain points must be evidence-backed, not AI-inferred
+ROOT CAUSE: Structured research generates pain points (e.g. "no email capture", "cart abandonment") for most prospects regardless of whether the scraped content actually showed that signal. The AI infers from industry pattern rather than real source data — so every boutique ends up with the same 3 pains. This dilutes the pitch: if the pain isn't real and specific, the email reads generic.
+RULE: Every pain point in prospect_research MUST have a non-null, non-empty evidence_quote pulled from actual scraped content (website copy, about page, product page, etc.). Pains with no quote = AI assumption = should be filtered out before scoring or pitch generation. When auditing: check if evidence_quote is just a rephrased version of the pain label (that's also fabrication). Real evidence sounds like "Free shipping on orders over $75" or "Sign up for our newsletter" — not "likely uses email marketing."
+TAGS: #quality #research #pain-points #pitch
+
+---
+
+[2026-05-26] LESSON: ⛔ BIG FAIL — Assumed API keys weren't configured without checking
+ROOT CAUSE: The discovery run returned results from Google Places only. Rather than verifying the actual Vercel env vars first, Claude assumed Yelp and Brave "weren't configured" and told Pedro so. In reality all keys (YELP_API_KEY, BRAVE_SEARCH_API_KEY, DENUE_API_KEY, HUNTER_API_KEY) had been set for 4+ days. The real root cause was sequential execution in runAllSources: each runCrawl call was doing Anymail+Hunter enrichment per prospect (~80s per source), so 3 keywords × 3 sources = 720s+ → Vercel 504 cut the run after only Google Places completed. Yelp and Brave never got their turn.
+WHY IT'S COSTLY: Pedro had to correct this explicitly. It wasted trust and time — he'd set up those keys himself and the false diagnosis implied his work was wrong.
+RULE: BEFORE stating any integration "isn't configured" or "isn't set up", run `vercel env ls` (or equivalent) first. Never assume from symptoms alone. Always check the actual state.
+FIX APPLIED: Moved Anymail+Hunter from runCrawl (per-discovery) to processSingleProspect (per-pipeline, score-gated at ≥70). Each runCrawl is now ~5s instead of ~80s. Sequential execution now completes in ~50-100s for a typical run — well under 300s Vercel limit.
+TAGS: #bug #api #discovery #diagnosis #big-fail
+
+---
+
 [2026-05-25] LESSON: Playwright screenshots hit the login wall when using `npx playwright screenshot <url>` directly against a deployed app with auth.
 ROOT CAUSE: Playwright CLI has no session state — it starts a fresh unauthenticated browser every time.
 RULE: Always use the project's `scripts/screenshot-*.mjs` auth pattern (create Supabase session → inject cookie via `context.addCookies` or sign-in form fill → then navigate). Never use bare `npx playwright screenshot <url>` for authenticated pages.
@@ -290,4 +353,9 @@ TAGS: #bug #typescript #config
 [2026-05-25] LESSON: .returns<T>() before .maybeSingle() doesn't fix never — maybeSingle() overwrites the type
 ROOT CAUSE: In supabase-js, `.returns<T>()` overrides SELECT row type but `.maybeSingle()` wraps the result in its own narrowing. When the base table type is `never` (table not in schema types), `.returns<T>().maybeSingle()` still resolves data as `never`.
 RULE: For single-row queries on tables missing from types.ts, cast the raw result directly: `const r = rawData as unknown as MyType`. For list queries, `.returns<Row[]>()` at the END of the chain (before `.eq()` calls are already processed) works. Don't put `.returns<T>()` before terminal calls like `.maybeSingle()` or `.single()`.
+TAGS: #bug #typescript #supabase
+
+[2026-05-26] LESSON: Supabase select("col1, col2") returns `never` without .returns<T[]>()
+ROOT CAUSE: When querying columns via string select, TS infers the row shape from the Database type. Partial selects on tables with complex union types sometimes collapse to `never` due to how supabase-js generic inference works with Pick<>.
+RULE: Any query that processes `data` rows (not just head/count) needs `.returns<MyLocalType[]>()` as the last chain call. Define the local type inline above the query. This is idempotent — it doesn't affect runtime, only satisfies TS.
 TAGS: #bug #typescript #supabase

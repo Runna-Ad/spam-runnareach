@@ -1,5 +1,7 @@
 "use client";
 
+import type { Route } from "next";
+
 import {
   ArrowRight,
   CheckCircle2,
@@ -362,7 +364,7 @@ function PitchDetail({
             ) : null}
           </div>
           <Link
-            href={`/companies/${pitch.prospect_id}` as never}
+            href={`/companies/${pitch.prospect_id}` as Route}
             className="mt-2 inline-flex items-center gap-1 text-sm font-medium text-[var(--color-fg-50)] hover:text-[var(--color-accent-300)]"
           >
             {pitch.prospect_market ? (
@@ -422,6 +424,18 @@ function PitchDetail({
             {wordCount} words · plain text · target ~140 words
           </p>
         </div>
+
+        {/* Email preview — shows how the CTA renders as a button in the HTML email */}
+        {body.includes("👉") && (
+          <div className="flex flex-col gap-1.5">
+            <span className="text-[10px] font-medium uppercase tracking-wider text-[var(--color-fg-700)]">
+              Email preview
+            </span>
+            <div className="rounded-[var(--radius-md)] bg-white p-4 text-[13px] leading-relaxed text-[#1a1a1a] ring-1 ring-inset ring-[var(--color-border-default)]">
+              <EmailBodyPreview body={body} />
+            </div>
+          </div>
+        )}
       </div>
 
       {/* Action bar */}
@@ -593,3 +607,103 @@ function PitchDetail({
     </div>
   );
 }
+
+// ── Email body preview ────────────────────────────────────────────────────────
+
+/**
+ * Client-side mirror of buildHtmlBody() from lib/gmail/client.ts.
+ * Renders the plain-text pitch body as React JSX so the pitch editor can
+ * show exactly how the CTA line will look as a button in the recipient's inbox.
+ */
+function EmailBodyPreview({ body }: { body: string }) {
+  const lines = body.split("\n");
+
+  return (
+    <div style={{ fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif" }}>
+      {lines.map((line, i) => {
+        const trimmed = line.trim();
+
+        if (trimmed.startsWith("👉")) {
+          const withoutEmoji = trimmed.replace(/^👉\s*/, "");
+          const urlMatch = withoutEmoji.match(/https?:\/\/\S+$/);
+          const url = urlMatch ? urlMatch[0] : null;
+          const description = url
+            ? withoutEmoji.replace(url, "").replace(/[:\s—–-]+$/, "").trim()
+            : withoutEmoji;
+
+          if (url) {
+            const buttonText = deriveButtonLabel(description);
+            return (
+              <React.Fragment key={i}>
+                {description ? (
+                  <p style={{ margin: "16px 0 8px 0", fontSize: 13, color: "#1a1a1a" }}>
+                    {description}
+                  </p>
+                ) : null}
+                <p style={{ margin: "8px 0 16px 0" }}>
+                  <a
+                    href={url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    style={{
+                      display: "inline-block",
+                      padding: "11px 22px",
+                      backgroundColor: "#18181b",
+                      color: "#ffffff",
+                      textDecoration: "none",
+                      borderRadius: 6,
+                      fontSize: 14,
+                      fontWeight: 500,
+                      letterSpacing: "-0.01em",
+                    }}
+                  >
+                    {buttonText}
+                  </a>
+                </p>
+              </React.Fragment>
+            );
+          }
+
+          return (
+            <p key={i} style={{ margin: "8px 0", fontSize: 13, color: "#1a1a1a" }}>
+              {withoutEmoji}
+            </p>
+          );
+        }
+
+        if (trimmed === "") {
+          return <p key={i} style={{ margin: 0, lineHeight: 1.6 }}>&nbsp;</p>;
+        }
+
+        return (
+          <p key={i} style={{ margin: 0, lineHeight: 1.6, fontSize: 13, color: "#1a1a1a" }}>
+            {trimmed}
+          </p>
+        );
+      })}
+    </div>
+  );
+}
+
+function deriveButtonLabel(description: string): string {
+  const lower = description.toLowerCase();
+  if (
+    lower.includes("gratis") ||
+    lower.includes("diagnóstico") ||
+    lower.includes("auditoría") ||
+    lower.includes("auditoria") ||
+    lower.includes("fugas") ||
+    lower.includes("pierde") ||
+    lower.includes("número")
+  ) {
+    return "Ver diagnóstico gratis →";
+  }
+  if (lower.includes("audit") || lower.includes("leak") || lower.includes("losing")) {
+    return "Run free audit →";
+  }
+  if (lower.includes("number") || lower.includes("revenue")) {
+    return "See your store's number →";
+  }
+  return "Run free audit →";
+}
+

@@ -1,5 +1,7 @@
 "use client";
 
+import type { Route } from "next";
+
 import { ArrowRight, ExternalLink, GripVertical } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
@@ -332,7 +334,7 @@ function FunnelCardItem({
           ) : null}
           <div className="min-w-0 flex-1">
             <Link
-              href={`/companies/${card.id}` as never}
+              href={`/companies/${card.id}` as Route}
               onClick={(e) => e.stopPropagation()}
               className="flex items-center gap-1.5 text-sm text-[var(--color-fg-50)] hover:text-[var(--color-accent-300)]"
             >

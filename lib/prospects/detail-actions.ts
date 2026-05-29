@@ -88,7 +88,7 @@ export async function updateProspect(input: UpdateProspectInput): Promise<Detail
 
   const { error } = await supabase
     .from("prospects")
-    .update(payload as never)
+    .update(payload)
     .eq("id", parsed.data.id)
     .eq("tenant_id", user.tenantId);
 
@@ -168,7 +168,7 @@ export async function upsertResearch(input: UpsertResearchInput): Promise<Detail
         notes: parsed.data.notes,
         evidence_urls: parsed.data.evidence_urls,
         last_edited_by_user_id: user.id,
-      } as never)
+      })
       .eq("id", existing.id);
     if (error) return { ok: false, error: `Could not save research: ${error.message}` };
     await writeAuditLog({
@@ -192,7 +192,7 @@ export async function upsertResearch(input: UpsertResearchInput): Promise<Detail
         evidence_urls: parsed.data.evidence_urls,
         research_method: "manual",
         last_edited_by_user_id: user.id,
-      } as never)
+      })
       .select("id")
       .single<{ id: string }>();
     if (error) return { ok: false, error: `Could not create research: ${error.message}` };
@@ -218,7 +218,7 @@ export async function upsertResearch(input: UpsertResearchInput): Promise<Detail
   if (prospectRow?.status === "raw") {
     await supabase
       .from("prospects")
-      .update({ status: "researched", updated_at: new Date().toISOString() } as never)
+      .update({ status: "researched", updated_at: new Date().toISOString() })
       .eq("id", parsed.data.prospect_id)
       .eq("tenant_id", user.tenantId);
   }
@@ -266,7 +266,7 @@ export async function transitionStatus(
 
   const { error } = await supabase
     .from("prospects")
-    .update(payload as never)
+    .update(payload)
     .eq("id", parsed.data.id)
     .eq("tenant_id", user.tenantId);
 
@@ -335,7 +335,7 @@ export async function upsertManualContact(
     priority_rank: 1,
     selected_by: "manual",
     selected_at: new Date().toISOString(),
-  } as never);
+  });
 
   if (error && error.code !== "23505") {
     return { ok: false, error: `Could not save contact: ${error.message}` };

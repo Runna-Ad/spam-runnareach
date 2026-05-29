@@ -12,8 +12,6 @@ import { searchYellowPagesCA } from "./sources/yellowpages-ca";
 import { searchDenue, denueIsAvailable, deriveMexicoStateCode, MEXICO_STATE_CODES } from "./sources/denue";
 import { searchYelp, yelpIsAvailable } from "./sources/yelp";
 import { searchGooglePlaces, googlePlacesIsAvailable } from "./sources/google-places";
-import { anymailFindDecisionMaker } from "@/lib/research/anymail-finder";
-import { hunterDomainSearch } from "@/lib/research/hunter";
 
 // ── Input schema ──────────────────────────────────────────────────────────────
 
@@ -220,70 +218,10 @@ export async function runCrawl(input: CrawlInput): Promise<CrawlResult> {
     }
   }
 
-  // ── Contact enrichment — Anymail then Hunter (short-circuit) ─────────────
-  // Fires for every new prospect with a domain, regardless of score (score
-  // doesn't exist yet at crawl time). Anymail is tried first; Hunter only
-  // runs if Anymail returns no verified contact — preserves free-tier credits.
-  // Runs in parallel across prospects; individual failures are silent (no contact = no crash).
-  if (inserts.length > 0) {
-    // Fetch the IDs of just-inserted prospects so we can write contacts to them.
-    const domains = inserts.map((p) => p.domain).filter(Boolean) as string[];
-    const { data: newProspects } = await supabase
-      .from("prospects")
-      .select("id, domain")
-      .eq("tenant_id", user.tenantId)
-      .in("domain", domains)
-      .returns<{ id: string; domain: string }[]>();
-
-    if (newProspects && newProspects.length > 0) {
-      await Promise.allSettled(
-        newProspects.map(async (p) => {
-          if (!p.domain) return;
-
-          // Anymail first — verified decision-maker, priority_rank=1
-          const anymailResult = await anymailFindDecisionMaker(p.domain);
-          if (anymailResult.ok) {
-            const c = anymailResult.contact;
-            await supabase.from("prospect_contacts").insert({
-              tenant_id: user.tenantId,
-              prospect_id: p.id,
-              email: c.email,
-              full_name: c.full_name ?? null,
-              role_title: c.job_title ?? null,
-              linkedin_url: c.linkedin_url ?? null,
-              email_is_role_based: false,
-              priority_rank: 1,
-              selected_by: "anymail",
-              selected_at: new Date().toISOString(),
-            } as never);
-            return; // short-circuit — Anymail found someone, skip Hunter
-          }
-
-          // Hunter only if Anymail missed — domain sweep, priority_rank=2/3
-          const hunterResult = await hunterDomainSearch(p.domain);
-          if (hunterResult.ok && hunterResult.contacts.length > 0) {
-            for (const contact of hunterResult.contacts) {
-              const rank = contact.confidence >= 70 ? 2 : 3;
-              await supabase.from("prospect_contacts").insert({
-                tenant_id: user.tenantId,
-                prospect_id: p.id,
-                email: contact.email,
-                full_name:
-                  contact.first_name || contact.last_name
-                    ? [contact.first_name, contact.last_name].filter(Boolean).join(" ")
-                    : null,
-                role_title: contact.position ?? null,
-                email_is_role_based: false,
-                priority_rank: rank,
-                selected_by: "hunter",
-                selected_at: new Date().toISOString(),
-              } as never);
-            }
-          }
-        }),
-      );
-    }
-  }
+  // Contact enrichment (SnapVerify → Anymail → Hunter) is intentionally NOT
+  // run here. It only fires in pipeline-action.ts for prospects that score ≥70,
+  // preserving paid API credits (Anymail, Hunter) for leads that actually
+  // cleared the quality bar.
 
   // ── Close run ───────────────────────────────────────────────────────────
   await supabase
@@ -592,4 +530,24 @@ function getGooglePlacesBias(location: string | undefined): { lat: number; lng: 
   if (!location) return undefined;
   const padded = location.padStart(2, "0");
   return MX_STATE_GEO[padded] ?? MX_STATE_GEO[location];
+}
+
+/**
+ * Marks all discovery runs that are stuck in `status="running"` as "failed".
+ * Runs can get stuck when a crawl times out mid-flight (e.g. Vercel 60s limit).
+ * Call this from the UI to unblock the Discover page.
+ */
+export async function closeStuckRuns(): Promise<{ closed: number }> {
+  "use server";
+  const supabase = await createClient();
+  const { data } = await supabase
+    .from("discovery_runs")
+    .update({
+      status: "failed",
+      error_message: "Manually closed — run was stuck in 'running' state.",
+      completed_at: new Date().toISOString(),
+    })
+    .eq("status", "running")
+    .select("id");
+  return { closed: (data ?? []).length };
 }

@@ -798,9 +798,83 @@ After reaper → #5 Design God Mode (wait for Pedro) → #7 Analytics
 
 ### Still open:
 - [ ] ⏳ #7 Analytics — pitch funnel metrics, cost tracking, Claude vs template breakdown
-- [ ] ⏳ #1C — Language + market detection in scraper
+- [x] ⏳ #1C — Language + market detection in scraper (ALREADY DONE — detectLanguage + detectMarket in scraper.ts, write-back in scrape-action.ts)
 - [ ] Minor: "saales yoy" typo in SnapPad case study (must fix in DB directly)
 
 ### Next session — start here:
 Pick up with **#7 Analytics** (biggest remaining feature) or **#1C scraper** (smaller, self-contained).
 Run `npx tsc --noEmit` first to confirm baseline is still 0 errors.
+
+---
+
+## Session 2026-05-26 — Analytics (#7)
+
+### Completed
+- [x] Created `lib/analytics/queries.ts` — 6 server queries: pipeline counts, pitch stats, cost summary, daily spend (14d sparkline), reply intents, ICP leaderboard
+- [x] Built `app/(dashboard)/analytics/page.tsx` — replaced PhasePlaceholder with real data
+  - Top-line KPI strip (prospects, pitches sent, reply rate, deals won)
+  - Pipeline funnel (horizontal bars with stage colors + conversion rates strip)
+  - Pitch quality panel (avg quality score, auto-rejected %, Claude vs heuristic acceptance bar)
+  - AI spend panel (total + 30d, 14-day SVG sparkline, cost by category bars, per-pitch estimate)
+  - Reply signals panel (wants_meeting / wants_info / hard_no highlights + all intents bars)
+  - ICP leaderboard table (prospects / pitched / replied / won / reply rate per ICP)
+  - Per-category cost footer strip
+- [x] TS: 0 errors (was 0 baseline, still 0)
+- [x] Build: clean
+- [x] Deployed: https://spam-runnareach.vercel.app
+
+### Review
+What worked: Server component with parallel Promise.all for all 6 queries — fast initial load, no client JS bundle overhead. CSS-only bars + SVG sparkline = zero new dependencies. `.returns<T[]>()` pattern cleanly solves the Supabase `never` inference issue.
+What to improve later: Add date range selector (last 7d / 30d / all time) — currently all-time except sparkline. Could also add case-study leaderboard when pitch volume grows.
+Tech debt: `perPitchUsd` estimate uses cost_tracking "pitch" category rows as proxy for sent pitches — works for now but slightly off if pitches are drafted without sending.
+
+### Next priorities
+- [x] #1C — Language + market detection in scraper (already implemented)
+- [ ] Minor — "saales yoy" typo in SnapPad DB (direct DB fix)
+
+---
+
+## Session 2026-05-26 — Discovery Pipeline Overhaul + Pitch Quality
+
+### Completed
+- [x] EmailBodyPreview component — live CTA button preview in pitch editor (mirrors buildHtmlBody, React JSX)
+- [x] Gmail multipart/alternative — text/plain + text/html parts. 👉 CTA lines render as dark pill button to recipient
+- [x] Stuck runs UX — "Close N stuck runs" button in run history (closeStuckRuns marks >15min running → failed)
+- [x] Pitch voice fixes: (a) "Hi {first_name}" fallback → "Hi {company} team," never "Hi there,", (b) mandatory Runna one-liner intro as step 2, (c) CTA rewritten to explain Inefficiency Hunter tool
+- [x] Discovery pipeline overhaul:
+  - Removed Anymail+Hunter from runCrawl (was ~80s/source → Vercel 504 → Yelp/Brave never ran)
+  - Contact enrichment moved to processSingleProspect, score-gated ≥70 only
+  - pruneRunToTop30: after pipeline keep top 30 by match_score, hard-delete rest
+  - Scraper already auto-saves contact emails found on site (kept)
+- [x] Anymail key refreshed in Vercel
+- [x] Deployed: https://spam-runnareach.vercel.app
+
+### Where things stand
+All sources (YP CA / Google Places / Yelp / Brave) will now complete on a full discovery run (~60s total vs 720s+ before).
+Pipeline: scrape → score → if ≥70: Anymail+Hunter → pitch → prune to top 30.
+19 Alberta test prospects still in DB (below 30 cap, untouched).
+
+### Next session — start here
+
+#### 🔴 One manual step required before testing SnapVerify:
+Deploy edge function via Supabase dashboard OR:
+```bash
+supabase login                              # get access token from app.supabase.com
+supabase link --project-ref ybbrpqzbedaxsmotgtkh
+supabase functions deploy verify-email     # deploys supabase/functions/verify-email/index.ts
+```
+Then test: `curl -X POST https://ybbrpqzbedaxsmotgtkh.supabase.co/functions/v1/verify-email -H "Content-Type: application/json" -d '{"emails":["pedro@rvsnappad.com"],"domain":"rvsnappad.com"}'`
+
+#### Backlog (priority order):
+- [x] SnapVerify Tier 1 — built: supabase/functions/verify-email/index.ts + lib/research/snap-contact.ts + rewired enrichContactsForProspect() waterfall (SnapVerify → Anymail → Hunter)
+- [ ] **Deploy verify-email edge function** (see command above — Pedro runs this)
+- [ ] Test SnapVerify end-to-end on 3 prospects (rvsnappad.com, adornboutique.ca, pieceonpeace.com)
+- [ ] Run a fresh full discovery run to confirm all sources fire (YP + GP + Yelp + Brave)
+- [ ] Companies page — sort by match_score DESC (highest scored first, not discovery order)
+- [ ] Pain point quality audit — every pain must have a real evidence_quote, not AI-inferred
+- [ ] Notable clients tier column (migration 0010_notable_clients_tier.sql — Pedro runs in Supabase dashboard)
+- [ ] Inbox warming — pedro@runnareach.com (Warmbox or Lemwarm, ~4 weeks before live sends)
+- [ ] Rename "duplicate" counter → "filtered" in run history UI
+- [ ] Delete the 19 Alberta test prospects if they're just noise
+- [ ] UX/UI full audit (screen by screen)
+- [ ] Code reaper pass

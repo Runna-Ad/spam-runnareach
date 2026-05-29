@@ -34,7 +34,7 @@ import {
   DrawerTitle,
 } from "@/components/ui/drawer";
 import { runAllSources, previewRunAllSources, type RunAllPreview } from "@/lib/discover/run-all-action";
-import { getProspectIdsForRuns, processSingleProspect, type SinglePipelineResult } from "@/lib/discover/pipeline-action";
+import { getProspectIdsForRuns, getRawProspectIds, processSingleProspect, pruneRunToTop30, type SinglePipelineResult } from "@/lib/discover/pipeline-action";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -54,12 +54,15 @@ export function RunAllModal({ open, onOpenChange, icps }: RunAllModalProps) {
   const [preview, setPreview] = React.useState<RunAllPreview | null>(null);
   const [loadingPreview, setLoadingPreview] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
+  const [pendingRawCount, setPendingRawCount] = React.useState(0);
+  const [prunedStats, setPrunedStats] = React.useState<{ kept: number; deleted: number } | null>(null);
 
   // Discovery results
   const [discoverStats, setDiscoverStats] = React.useState<{
     new: number;
     dup: number;
     errors: string[];
+    partial?: boolean; // true when discovery timed out but some prospects were still inserted
   } | null>(null);
 
   // Pipeline results
@@ -73,14 +76,51 @@ export function RunAllModal({ open, onOpenChange, icps }: RunAllModalProps) {
     }
   }, [open, icps, selectedIcpId]);
 
-  // Load preview when ICP changes (pick step only)
+  // Load preview + raw count when ICP changes (pick step only)
   React.useEffect(() => {
     if (!selectedIcpId || step !== "pick") return;
     setLoadingPreview(true);
-    previewRunAllSources(selectedIcpId)
-      .then(setPreview)
-      .finally(() => setLoadingPreview(false));
+    setPendingRawCount(0);
+    Promise.all([
+      previewRunAllSources(selectedIcpId).then(setPreview),
+      getRawProspectIds(selectedIcpId).then((r) => setPendingRawCount(r.ok ? r.ids.length : 0)),
+    ]).finally(() => setLoadingPreview(false));
   }, [selectedIcpId, step]);
+
+  // Process only pending raw prospects without re-running discovery
+  const handleProcessPending = async () => {
+    if (!selectedIcpId) return;
+    setError(null);
+    setDiscoverStats(null);
+    setPipelineResults([]);
+    setPipelineTotal(0);
+    setStep("pipeline");
+
+    const rawResult = await getRawProspectIds(selectedIcpId);
+    if (!rawResult.ok || rawResult.ids.length === 0) {
+      setStep("done");
+      return;
+    }
+
+    const PIPELINE_CAP = 50;
+    const idsToProcess = rawResult.ids.slice(0, PIPELINE_CAP);
+    setPipelineTotal(idsToProcess.length);
+
+    const BATCH = 5;
+    for (let i = 0; i < idsToProcess.length; i += BATCH) {
+      const batch = idsToProcess.slice(i, i + BATCH);
+      const batchResults = await Promise.all(batch.map((id) => processSingleProspect(id)));
+      setPipelineResults((prev) => [...prev, ...batchResults]);
+    }
+
+    // Prune to top 30: keep the strongest prospects, delete the rest
+    const pruneResult = await pruneRunToTop30(idsToProcess);
+    if (pruneResult.ok && pruneResult.deleted > 0) {
+      setPrunedStats({ kept: pruneResult.kept, deleted: pruneResult.deleted });
+    }
+
+    setStep("done");
+  };
 
   // Reset everything and go back to pick (used by "Run Again" button)
   const handleReset = () => {
@@ -90,6 +130,7 @@ export function RunAllModal({ open, onOpenChange, icps }: RunAllModalProps) {
     setDiscoverStats(null);
     setPipelineResults([]);
     setPipelineTotal(0);
+    setPrunedStats(null);
   };
 
   const handleRun = async () => {
@@ -102,27 +143,56 @@ export function RunAllModal({ open, onOpenChange, icps }: RunAllModalProps) {
     setStep("discovering");
 
     // Step 1: Run all crawl sources
+    // NOTE: This can 504 on large runs (many keywords × sources).
+    // Even on timeout, prospects are often inserted server-side before the
+    // response is cut. We fall back to getRawProspectIds so the pipeline
+    // still runs on anything that was actually inserted.
+    let prospectIds: string[] = [];
     const discoverResult = await runAllSources(selectedIcpId);
+
     if (!discoverResult.ok) {
-      setError(discoverResult.error);
-      setStep("pick");
-      return;
+      // Discovery errored or timed out — check if any raw prospects were
+      // inserted anyway (common on 504: server kept running after client timeout).
+      const rawResult = await getRawProspectIds(selectedIcpId);
+      if (!rawResult.ok || rawResult.ids.length === 0) {
+        // Nothing was inserted — surface the error
+        setError(discoverResult.error);
+        setStep("pick");
+        return;
+      }
+      // Some prospects were inserted — run the pipeline on those
+      prospectIds = rawResult.ids;
+      setDiscoverStats({
+        new: rawResult.ids.length,
+        dup: 0,
+        errors: [discoverResult.error],
+        partial: true,
+      });
+    } else {
+      setDiscoverStats({
+        new: discoverResult.candidatesNew,
+        dup: discoverResult.candidatesDuplicate,
+        errors: discoverResult.errors,
+      });
+
+      if (discoverResult.candidatesNew === 0) {
+        setStep("done");
+        return;
+      }
+
+      // Step 2: Get new prospect IDs from the completed run
+      const idsResult = await getProspectIdsForRuns(discoverResult.runIds);
+      prospectIds = idsResult.ok ? idsResult.ids : [];
+
+      // If run-based lookup returned nothing, fall back to raw query
+      // (can happen if all prospects were already processed in a prior attempt)
+      if (prospectIds.length === 0) {
+        const rawResult = await getRawProspectIds(selectedIcpId);
+        prospectIds = rawResult.ok ? rawResult.ids : [];
+      }
     }
 
-    setDiscoverStats({
-      new: discoverResult.candidatesNew,
-      dup: discoverResult.candidatesDuplicate,
-      errors: discoverResult.errors,
-    });
-
-    if (discoverResult.candidatesNew === 0) {
-      setStep("done");
-      return;
-    }
-
-    // Step 2: Get new prospect IDs
-    const idsResult = await getProspectIdsForRuns(discoverResult.runIds);
-    if (!idsResult.ok || idsResult.ids.length === 0) {
+    if (prospectIds.length === 0) {
       setStep("done");
       return;
     }
@@ -130,7 +200,7 @@ export function RunAllModal({ open, onOpenChange, icps }: RunAllModalProps) {
     // Cap pipeline at 50 prospects per run — discovery stores all finds,
     // but we only scrape/score/triage this many to keep runs fast + cheap.
     const PIPELINE_CAP = 50;
-    const idsToProcess = idsResult.ids.slice(0, PIPELINE_CAP);
+    const idsToProcess = prospectIds.slice(0, PIPELINE_CAP);
 
     setPipelineTotal(idsToProcess.length);
     setStep("pipeline");
@@ -141,6 +211,12 @@ export function RunAllModal({ open, onOpenChange, icps }: RunAllModalProps) {
       const batch = idsToProcess.slice(i, i + BATCH);
       const batchResults = await Promise.all(batch.map((id) => processSingleProspect(id)));
       setPipelineResults((prev) => [...prev, ...batchResults]);
+    }
+
+    // Step 4: Prune to top 30 — keep the strongest, delete the rest
+    const pruneResult = await pruneRunToTop30(idsToProcess);
+    if (pruneResult.ok && pruneResult.deleted > 0) {
+      setPrunedStats({ kept: pruneResult.kept, deleted: pruneResult.deleted });
     }
 
     setStep("done");
@@ -169,6 +245,8 @@ export function RunAllModal({ open, onOpenChange, icps }: RunAllModalProps) {
                 preview={preview}
                 loadingPreview={loadingPreview}
                 error={error}
+                pendingRawCount={pendingRawCount}
+                onProcessPending={handleProcessPending}
               />
             )}
             {step === "discovering" && <DiscoveringStep stats={discoverStats} />}
@@ -182,6 +260,7 @@ export function RunAllModal({ open, onOpenChange, icps }: RunAllModalProps) {
               <DoneStep
                 discoverStats={discoverStats}
                 results={pipelineResults}
+                prunedStats={prunedStats}
               />
             )}
           </DrawerBody>
@@ -235,6 +314,8 @@ function PickStep({
   preview,
   loadingPreview,
   error,
+  pendingRawCount,
+  onProcessPending,
 }: {
   icps: { id: string; name: string; market: string }[];
   selectedIcpId: string;
@@ -242,6 +323,8 @@ function PickStep({
   preview: RunAllPreview | null;
   loadingPreview: boolean;
   error: string | null;
+  pendingRawCount: number;
+  onProcessPending: () => void;
 }) {
   return (
     <>
@@ -361,6 +444,22 @@ function PickStep({
         </div>
       )}
 
+      {pendingRawCount > 0 && (
+        <button
+          type="button"
+          onClick={onProcessPending}
+          className="flex items-center justify-between gap-3 w-full rounded-[var(--radius-md)] px-3 py-2.5 text-xs bg-[var(--color-warning-950)] ring-1 ring-inset ring-[var(--color-warning-800)] text-[var(--color-warning-300)] hover:bg-[var(--color-warning-900)] transition-colors"
+        >
+          <span className="flex items-center gap-1.5">
+            <TriangleAlert className="h-3.5 w-3.5 shrink-0" aria-hidden />
+            {pendingRawCount} raw prospect{pendingRawCount === 1 ? "" : "s"} waiting to be processed
+          </span>
+          <span className="font-medium underline underline-offset-2 shrink-0">
+            Run pipeline →
+          </span>
+        </button>
+      )}
+
       {error && (
         <p className="text-xs text-[var(--color-danger-300)]">
           <XCircle className="inline-block h-3.5 w-3.5 mr-1" aria-hidden />
@@ -371,22 +470,29 @@ function PickStep({
   );
 }
 
-function DiscoveringStep({ stats }: { stats: { new: number; dup: number; errors: string[] } | null }) {
+function DiscoveringStep({ stats }: { stats: { new: number; dup: number; errors: string[]; partial?: boolean } | null }) {
   return (
     <div className="flex flex-col items-center gap-3 py-4">
       <Loader2 className="h-6 w-6 animate-spin text-[var(--color-primary-400)]" aria-hidden />
       <p className="text-sm font-medium text-[var(--color-fg-200)]">Running discovery…</p>
       {stats ? (
-        <p className="text-xs text-[var(--color-fg-500)]">
-          Found{" "}
-          <span className="text-[var(--color-success-300)] font-medium">
-            +{stats.new} new
-          </span>{" "}
-          · {stats.dup} duplicates
-          {stats.errors.length > 0 && (
-            <span className="text-[var(--color-warning-300)]"> · {stats.errors.join("; ")}</span>
+        <div className="text-center space-y-1">
+          <p className="text-xs text-[var(--color-fg-500)]">
+            Found{" "}
+            <span className="text-[var(--color-success-300)] font-medium">
+              +{stats.new} new
+            </span>{" "}
+            · {stats.dup} duplicates
+          </p>
+          {stats.partial && (
+            <p className="text-xs text-[var(--color-warning-300)]">
+              Discovery timed out — running pipeline on inserted prospects
+            </p>
           )}
-        </p>
+          {!stats.partial && stats.errors.length > 0 && (
+            <p className="text-xs text-[var(--color-warning-300)]">{stats.errors.join("; ")}</p>
+          )}
+        </div>
       ) : (
         <p className="text-xs text-[var(--color-fg-600)]">Querying directories across all categories…</p>
       )}
@@ -453,9 +559,11 @@ function PipelineStep({
 function DoneStep({
   discoverStats,
   results,
+  prunedStats,
 }: {
-  discoverStats: { new: number; dup: number; errors: string[] } | null;
+  discoverStats: { new: number; dup: number; errors: string[]; partial?: boolean } | null;
   results: SinglePipelineResult[];
+  prunedStats: { kept: number; deleted: number } | null;
 }) {
   const pitched = results.filter((r) => r.outcome === "pitched").length;
   const websitePitch = results.filter((r) => r.outcome === "website_pitch").length;
@@ -472,13 +580,20 @@ function DoneStep({
 
       {discoverStats && (
         <div className="text-xs text-[var(--color-fg-400)] space-y-0.5">
-          <p>
-            Discovered{" "}
-            <span className="text-[var(--color-success-300)] font-medium">
-              +{discoverStats.new}
-            </span>{" "}
-            new prospects · {discoverStats.dup} duplicates skipped
-          </p>
+          {discoverStats.partial ? (
+            <p className="text-[var(--color-warning-300)]">
+              Discovery timed out — processed {discoverStats.new} prospects that were already inserted.
+              Run again to discover more.
+            </p>
+          ) : (
+            <p>
+              Discovered{" "}
+              <span className="text-[var(--color-success-300)] font-medium">
+                +{discoverStats.new}
+              </span>{" "}
+              new prospects · {discoverStats.dup} duplicates skipped
+            </p>
+          )}
           {discoverStats.new > 50 && (
             <p className="text-[var(--color-fg-600)]">
               Processed first 50 — run again to continue with the rest.
@@ -530,6 +645,12 @@ function DoneStep({
             />
           )}
         </div>
+      )}
+
+      {prunedStats && prunedStats.deleted > 0 && (
+        <p className="text-xs text-[var(--color-fg-600)]">
+          Kept top {prunedStats.kept} · deleted {prunedStats.deleted} low-scorers
+        </p>
       )}
 
       {results.length === 0 && discoverStats?.new === 0 && (

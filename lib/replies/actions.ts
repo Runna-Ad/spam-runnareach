@@ -151,7 +151,7 @@ export async function createManualReply(
 
   const { data: created, error } = await supabase
     .from("replies")
-    .insert(payload as never)
+    .insert(payload)
     .select("id")
     .single<{ id: string }>();
 
@@ -233,7 +233,7 @@ export async function overrideReplyIntent(
     .update({
       intent: parsed.data.intent,
       classified_at: new Date().toISOString(),
-    } as never)
+    })
     .eq("id", parsed.data.reply_id)
     .eq("tenant_id", user.tenantId);
 
@@ -267,7 +267,7 @@ export async function markReplyHandled(
     .update({
       handled_by: user.id,
       handled_at: new Date().toISOString(),
-    } as never)
+    })
     .eq("id", parsed.data.reply_id)
     .eq("tenant_id", user.tenantId);
 

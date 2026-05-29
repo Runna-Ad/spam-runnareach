@@ -193,7 +193,7 @@ export async function generateWebsitePitch(
       status: "draft",
       cost_usd: costUsd,
       variant_index: 1,
-    } as never)
+    })
     .select("id")
     .single<{ id: string }>();
 

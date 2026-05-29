@@ -89,7 +89,7 @@ export function IcpCard({ icp, onOpen }: IcpCardProps) {
         <span
           className={cn(
             "inline-flex items-center gap-1 text-[11px]",
-            icp.reachable_pool_count !== null
+            icp.prospect_count > 0 || icp.reachable_pool_count !== null
               ? "text-[var(--color-fg-500)]"
               : "text-[var(--color-fg-700)]",
           )}
@@ -97,7 +97,9 @@ export function IcpCard({ icp, onOpen }: IcpCardProps) {
           <Users className="h-3 w-3" aria-hidden />
           {icp.reachable_pool_count !== null
             ? `${icp.reachable_pool_count.toLocaleString()} in pool`
-            : "pool pending"}
+            : icp.prospect_count > 0
+              ? `${icp.prospect_count.toLocaleString()} prospect${icp.prospect_count === 1 ? "" : "s"}`
+              : "no prospects yet"}
         </span>
         <Chip tone={icp.is_active ? "success" : "neutral"}>
           {icp.is_active ? "active" : "archived"}

@@ -96,7 +96,7 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
 
   const { error: updateErr } = await supabase
     .from("sender_inboxes")
-    .update({ gmail_refresh_token_encrypted: encrypted } as never)
+    .update({ gmail_refresh_token_encrypted: encrypted })
     .eq("id", inboxId)
     .eq("tenant_id", user.tenantId);
 

@@ -1,5 +1,6 @@
 "use client";
 
+import type { Route } from "next";
 import {
   Calendar,
   CheckCircle2,
@@ -338,7 +339,7 @@ function ReplyDetail({
           </p>
           {reply.prospect_id && reply.prospect_name ? (
             <Link
-              href={`/companies/${reply.prospect_id}` as never}
+              href={`/companies/${reply.prospect_id}` as Route}
               className="mt-1 inline-flex items-center gap-1 text-[11px] text-[var(--color-accent-300)] hover:underline"
             >
               <span aria-hidden>{reply.prospect_market ? MARKET_FLAG[reply.prospect_market] : ""}</span>
