@@ -97,13 +97,16 @@ export async function deepResearchProspect(
     scrapedContext = parts.join("\n\n");
   }
 
-  // ── Step 2: Brave intel (3 targeted queries) ─────────────────────────────
+  // ── Step 2: Brave intel (4 targeted queries, including people-intel) ───────
   const braveSnippets: string[] = [];
+  const peopleSnippets: string[] = []; // kept separate so we can write to notes explicitly
   if (braveIsAvailable()) {
     const queries = [
       `"${prospect.company_name}" reviews`,
       `"${prospect.company_name}" problems OR complaints`,
       `"${prospect.company_name}" instagram OR linkedin`,
+      // People-intel: find founders/owners/decision-makers by name
+      `"${prospect.company_name}" founder OR owner OR CEO OR "co-founder" OR director`,
     ];
 
     for (const q of queries) {
@@ -111,7 +114,10 @@ export async function deepResearchProspect(
       if (r.ok) {
         for (const listing of r.listings.slice(0, 3)) {
           if (listing.description) {
-            braveSnippets.push(`[${listing.company_name}] ${listing.description}`);
+            const snippet = `[${listing.company_name}] ${listing.description}`;
+            braveSnippets.push(snippet);
+            // Flag people-intel snippets separately (last query)
+            if (q.includes("founder OR owner")) peopleSnippets.push(snippet);
           }
         }
       }
@@ -195,7 +201,29 @@ export async function deepResearchProspect(
     ? parsed.snapshot.slice(0, 500)
     : null;
 
+  // Build a structured people block so SnapVerify's Claude Haiku can reliably
+  // extract named decision-makers. Two sources:
+  //   1. The WHO TO CONTACT line Claude extracted from research
+  //   2. Raw people-intel Brave snippets (founder/CEO/owner search)
+  const peopleBlockLines: string[] = [];
+  if (parsed.contactLine) {
+    const { name, title } = parseContactLine(parsed.contactLine);
+    const guidancePattern = /not publicly|reach out|check linkedin|via linkedin/i;
+    if (name && !guidancePattern.test(parsed.contactLine)) {
+      peopleBlockLines.push(`Name: ${name}${title ? ` / Role: ${title}` : ""}`);
+    }
+  }
+  // Add any people-intel Brave snippets that mention a real name pattern
+  for (const snippet of peopleSnippets.slice(0, 3)) {
+    peopleBlockLines.push(snippet);
+  }
+  const peopleBlock =
+    peopleBlockLines.length > 0
+      ? `[Decision Makers — for contact enrichment]\n${peopleBlockLines.join("\n")}`
+      : null;
+
   const notesAddendum = [
+    peopleBlock,
     parsed.opportunities.length > 0
       ? `[Deep Research — Opportunities]\n${parsed.opportunities.join("\n")}`
       : null,

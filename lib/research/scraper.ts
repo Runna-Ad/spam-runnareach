@@ -508,15 +508,20 @@ function extractSocials($: cheerio.CheerioAPI, baseUrl: string): { platform: str
 }
 
 const KEY_PAGE_PATHS: Array<{ label: string; pattern: RegExp }> = [
-  { label: "About", pattern: /\/about(\/|$|\?)/i },
+  // Standard paths
+  { label: "About", pattern: /\/about(\/|$|\?|-us|-the|-company)/i },
+  { label: "Team", pattern: /\/(team|people|founders?|staff)(\/|$|\?)/i },
+  { label: "Contact", pattern: /\/contact(\/|$|\?)/i },
   { label: "Services", pattern: /\/services?(\/|$|\?)/i },
   { label: "Pricing", pattern: /\/pricing(\/|$|\?)/i },
   { label: "Plans", pattern: /\/plans?(\/|$|\?)/i },
   { label: "Case studies", pattern: /\/case-?studies?(\/|$|\?)/i },
   { label: "Work", pattern: /\/work(\/|$|\?)/i },
-  { label: "Contact", pattern: /\/contact(\/|$|\?)/i },
-  { label: "Team", pattern: /\/(team|people|founders?)(\/|$|\?)/i },
   { label: "Careers", pattern: /\/careers?(\/|$|\?)/i },
+  // Shopify /pages/* style paths — DTC brands almost never use /about directly
+  { label: "About", pattern: /\/pages\/(about|our-story|story|about-us|about-the-brand|who-we-are|la-marca|nuestra-historia|nosotros)(\/|$|\?)/i },
+  { label: "Team", pattern: /\/pages\/(team|meet-the-team|our-team|founders?|people)(\/|$|\?)/i },
+  { label: "Contact", pattern: /\/pages\/(contact|contacto|contact-us)(\/|$|\?)/i },
 ];
 
 function extractKeyPages(
