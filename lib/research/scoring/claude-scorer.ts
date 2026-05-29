@@ -10,6 +10,7 @@
  */
 
 import Anthropic from "@anthropic-ai/sdk";
+import { ANTHROPIC_HAIKU_MODEL } from "@/lib/anthropic/client";
 import {
   scoreWithHeuristic,
   type RubricInputIcp,
@@ -18,11 +19,11 @@ import {
   type RubricResult,
 } from "./rubric";
 
-const MODEL = "claude-3-5-haiku-20241022";
+const MODEL = ANTHROPIC_HAIKU_MODEL; // claude-haiku-4-5
 
-// Anthropic pricing as of 2025-04
-const INPUT_PRICE_PER_TOKEN = 0.0000008; // $0.80 / 1M
-const OUTPUT_PRICE_PER_TOKEN = 0.000004; // $4.00 / 1M
+// Anthropic pricing for claude-haiku-4-5
+const INPUT_PRICE_PER_TOKEN = 0.000001;  // $1.00 / 1M
+const OUTPUT_PRICE_PER_TOKEN = 0.000005; // $5.00 / 1M
 
 export type ClaudeScorerResult = RubricResult & {
   cost_usd: number;
