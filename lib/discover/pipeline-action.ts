@@ -5,7 +5,7 @@
  *
  * Pass 1 — structural gate (cheap, always runs):
  *   scrapeWebsite (homepage + 4 sub-pages) → scoreProspect on structural signals
- *   → if score < 20: suppress (wrong industry/geo/size — not worth deep research)
+ *   → if score < 10: suppress (sanity check — clearly wrong fit, e.g. wrong country)
  *
  * Pass 2 — full enrichment (only if structural score ≥ 20):
  *   deepResearchProspect (Brave people-intel + Claude synthesis)
@@ -279,16 +279,16 @@ export async function processSingleProspect(
   }
   const initialScore = initialScoreResult.composite_score;
 
-  // Threshold is 20 (vs 35 later) — pain points aren't in the score yet,
-  // so we only suppress companies that are structurally wrong (wrong industry,
-  // wrong geo, wrong size). A boutique in Alberta with Shopify will score ~45
-  // on structural signals alone. Only truly irrelevant leads score below 20.
-  if (initialScore < 20) {
+  // Sanity-check only — threshold is 10. Only suppresses structurally-wrong
+  // prospects (wrong country, completely off-industry). Everything else gets
+  // full deep research. At $0.023/prospect deep research is cheap enough that
+  // we'd rather over-research than under-research.
+  if (initialScore < 10) {
     await supabase
       .from("prospects")
       .update({
         status: "suppressed",
-        suppressed_reason: `Auto: structural score ${initialScore} below threshold (wrong industry/geo/size)`,
+        suppressed_reason: `Auto: structural score ${initialScore} — clearly wrong fit (industry/geo/size)`,
         suppressed_at: new Date().toISOString(),
         updated_at: new Date().toISOString(),
       })
