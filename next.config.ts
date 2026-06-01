@@ -19,10 +19,21 @@ const nextConfig: NextConfig = {
 };
 
 export default withSentryConfig(nextConfig, {
-  // Sentry project slug — set SENTRY_PROJECT + SENTRY_ORG env vars to enable source maps upload
-  silent: true,
-  // Disable source maps upload in local dev (no SENTRY_AUTH_TOKEN needed locally)
-  sourcemaps: { disable: process.env.NODE_ENV !== "production" },
-  // Don't auto-instrument — we call Sentry.init() manually in sentry.*.config.ts
-  autoInstrumentServerFunctions: false,
+  // Set SENTRY_ORG + SENTRY_PROJECT env vars (or fill in below) to enable source map upload
+  org: process.env.SENTRY_ORG,
+  project: process.env.SENTRY_PROJECT,
+
+  // Source map upload auth token — set SENTRY_AUTH_TOKEN in Vercel env vars (secret)
+  authToken: process.env.SENTRY_AUTH_TOKEN,
+
+  // Upload wider set of client files for better stack trace resolution
+  widenClientFileUpload: true,
+
+  // Proxy tunnel to bypass ad-blockers — creates /monitoring API route automatically
+  tunnelRoute: "/monitoring",
+
+  // Suppress non-CI build output
+  silent: !process.env.CI,
+
+  // NOTE: Tree-shaking options intentionally omitted — project uses Turbopack (webpack-only feature)
 });
