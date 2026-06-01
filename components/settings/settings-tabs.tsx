@@ -1,14 +1,16 @@
 "use client";
 
-import { Send, User, Users } from "lucide-react";
+import { Plug, Send, SlidersHorizontal, User, Users } from "lucide-react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { cn } from "@/lib/utils";
 
 const TABS = [
-  { href: "/settings/profile", label: "Profile", icon: User },
-  { href: "/settings/sending", label: "Sending", icon: Send },
-  { href: "/settings/users", label: "Users", icon: Users },
+  { href: "/settings/profile",      label: "Profile",      icon: User },
+  { href: "/settings/sending",      label: "Sending",      icon: Send },
+  { href: "/settings/users",        label: "Users",        icon: Users },
+  { href: "/settings/prompts",      label: "Prompts",      icon: SlidersHorizontal },
+  { href: "/settings/integrations", label: "Integrations", icon: Plug },
 ] as const;
 
 export function SettingsTabs() {

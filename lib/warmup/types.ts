@@ -123,9 +123,9 @@ export function getDailyTarget(currentDay: number): number {
 }
 
 export function getRampPhase(currentDay: number): string {
-  if (currentDay <= 7)  return "Week 1 — Warming (5/day)";
-  if (currentDay <= 14) return "Week 2 — Building (10/day)";
-  if (currentDay <= 21) return "Week 3 — Ramping (20/day)";
+  if (currentDay <= 7)  return "Week 1 — Warming (8/day)";
+  if (currentDay <= 14) return "Week 2 — Building (15/day)";
+  if (currentDay <= 21) return "Week 3 — Ramping (25/day)";
   if (currentDay <= 28) return "Week 4 — Full Ramp (40/day)";
   return "Maintenance (5/day)";
 }

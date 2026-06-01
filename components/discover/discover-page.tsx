@@ -335,7 +335,7 @@ function RunHistorySection({ runs, canManage }: { runs: DiscoveryRun[]; canManag
                     <td className="px-3 py-2 text-[11px] text-[var(--color-fg-300)]">
                       <span className="text-[var(--color-success-300)]">+{r.candidates_new}</span>
                       {" / "}
-                      <span className="text-[var(--color-fg-500)]">{r.candidates_duplicate} dup</span>
+                      <span className="text-[var(--color-fg-500)]">{r.candidates_duplicate} filtered</span>
                     </td>
                     <td className="px-3 py-2 text-[11px] text-[var(--color-fg-500)]">
                       {r.started_at ? relativeTime(r.started_at) : "—"}

@@ -1,12 +1,12 @@
-import { PhasePlaceholder } from "@/components/dashboard/phase-placeholder";
+import { requireUser } from "@/lib/auth";
+import { listPromptsWithChampions } from "@/lib/prompts/queries";
+import { PromptsPage } from "@/components/settings/prompts-page";
 
-export default function SettingsPromptsPage() {
-  return (
-    <PhasePlaceholder
-      route="/settings/prompts"
-      phase={2}
-      title="Prompts"
-      description="Prompt versions (research, scoring, pitch EN/ES, reply-classify, learning-proposal). Champion / challenger status, hit counts, rollback."
-    />
-  );
+export const dynamic = "force-dynamic";
+
+export default async function SettingsPromptsPage() {
+  const user = await requireUser();
+  const prompts = await listPromptsWithChampions(user.tenantId);
+
+  return <PromptsPage prompts={prompts} />;
 }
