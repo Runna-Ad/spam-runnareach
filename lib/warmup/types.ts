@@ -102,11 +102,12 @@ export type RampWeek = {
   dailyTarget: number;
 };
 
+// Ramp updated for 4 buddy accounts (~10 sends/buddy/day = 40/day safe cap)
 export const RAMP_SCHEDULE: readonly RampWeek[] = [
-  { weekStart: 1,  weekEnd: 7,  dailyTarget: 5  },
-  { weekStart: 8,  weekEnd: 14, dailyTarget: 10 },
-  { weekStart: 15, weekEnd: 21, dailyTarget: 20 },
-  { weekStart: 22, weekEnd: 28, dailyTarget: 40 },
+  { weekStart: 1,  weekEnd: 7,  dailyTarget: 5  },  // Week 1 — conservative start
+  { weekStart: 8,  weekEnd: 14, dailyTarget: 15 },  // Week 2 — ~4/buddy/day
+  { weekStart: 15, weekEnd: 21, dailyTarget: 25 },  // Week 3 — ~6/buddy/day
+  { weekStart: 22, weekEnd: 28, dailyTarget: 40 },  // Week 4 — ~10/buddy/day (cap)
   // Day 29+ → maintenance
 ] as const;
 
