@@ -26,7 +26,7 @@ import type {
   WarmupLogEntry,
   DomainHealth,
 } from "@/lib/warmup/types";
-import { getRampPhase, getDailyTarget } from "@/lib/warmup/types";
+import { getRampPhase, getDailyTarget, RAMP_SCHEDULE, MAINTENANCE_DAILY_TARGET } from "@/lib/warmup/types";
 import { analyzeSpamRate, buildAlerts } from "@/lib/warmup/intelligence";
 import { pauseWarmup, resumeWarmup, triggerEngineManually } from "./warmup-actions";
 
@@ -476,22 +476,27 @@ export function WarmupDashboard({
         <h2 className="font-semibold text-sm mb-3">Ramp Schedule</h2>
         <div className="flex gap-2 flex-wrap">
           {[
-            { label: "Week 1", target: 5, days: "1–7" },
-            { label: "Week 2", target: 10, days: "8–14" },
-            { label: "Week 3", target: 20, days: "15–21" },
-            { label: "Week 4", target: 40, days: "22–28" },
-            { label: "Maintenance", target: 5, days: "29+" },
+            ...RAMP_SCHEDULE.map((w, i) => ({
+              label: `Week ${i + 1}`,
+              target: w.dailyTarget,
+              days: `${w.weekStart}–${w.weekEnd}`,
+              weekStart: w.weekStart,
+              weekEnd: w.weekEnd,
+              isMaintenance: false,
+            })),
+            {
+              label: "Maintenance",
+              target: MAINTENANCE_DAILY_TARGET,
+              days: `${(RAMP_SCHEDULE[RAMP_SCHEDULE.length - 1]?.weekEnd ?? 28) + 1}+`,
+              weekStart: (RAMP_SCHEDULE[RAMP_SCHEDULE.length - 1]?.weekEnd ?? 28) + 1,
+              weekEnd: 9999,
+              isMaintenance: true,
+            },
           ].map((week) => {
-            const dayParts = week.days.split("–");
-            const dayStart = parseInt(dayParts[0] ?? "99");
-            const dayEnd = parseInt(dayParts[1] ?? "0");
-            const isActive =
-              week.label === "Maintenance"
-                ? config.current_day >= 29
-                : config.current_day >= dayStart && config.current_day <= dayEnd;
-            const isPast =
-              week.label !== "Maintenance" &&
-              config.current_day > dayEnd;
+            const dayStart = week.weekStart;
+            const dayEnd = week.weekEnd;
+            const isActive = config.current_day >= dayStart && config.current_day <= dayEnd;
+            const isPast = !week.isMaintenance && config.current_day > dayEnd;
 
             return (
               <div
