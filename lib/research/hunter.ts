@@ -8,6 +8,8 @@
  * Docs: https://hunter.io/api-documentation/v2#domain-search
  */
 
+import pRetry from "p-retry";
+
 const HUNTER_BASE = "https://api.hunter.io/v2";
 
 export type HunterContact = {
@@ -36,16 +38,25 @@ export async function hunterDomainSearch(domain: string): Promise<HunterDomainRe
 
   let res: Response;
   try {
-    const url = new URL(`${HUNTER_BASE}/domain-search`);
-    url.searchParams.set("domain", clean);
-    url.searchParams.set("type", "personal");
-    url.searchParams.set("limit", "10");
-    url.searchParams.set("api_key", key);
-    res = await fetch(url.toString(), {
-      method: "GET",
-      headers: { Accept: "application/json" },
-      signal: AbortSignal.timeout(8_000),
-    });
+    // Retry up to 2x on transient failures. Hunter quota errors (429) are retried with backoff.
+    res = await pRetry(
+      async () => {
+        const url = new URL(`${HUNTER_BASE}/domain-search`);
+        url.searchParams.set("domain", clean);
+        url.searchParams.set("type", "personal");
+        url.searchParams.set("limit", "10");
+        url.searchParams.set("api_key", key);
+        const r = await fetch(url.toString(), {
+          method: "GET",
+          headers: { Accept: "application/json" },
+          signal: AbortSignal.timeout(8_000),
+        });
+        // Retry on rate limit and server errors
+        if (r.status === 429 || r.status >= 500) throw new Error(`Hunter HTTP ${r.status}`);
+        return r;
+      },
+      { retries: 2, minTimeout: 1000, factor: 2 },
+    );
   } catch (err) {
     return { ok: false, error: `Network error: ${err instanceof Error ? err.message : String(err)}` };
   }

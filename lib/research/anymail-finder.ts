@@ -8,6 +8,8 @@
  * Docs: https://anymailfinder.com/email-finder-api/docs
  */
 
+import pRetry from "p-retry";
+
 const AMF_BASE = "https://api.anymailfinder.com/v5.1";
 
 // Role categories to try, in priority order.
@@ -41,19 +43,31 @@ export async function anymailFindDecisionMaker(domain: string): Promise<AnymailR
 
   let res: Response;
   try {
-    res = await fetch(`${AMF_BASE}/find-email/decision-maker`, {
-      method: "POST",
-      headers: {
-        "Authorization": `Bearer ${key}`,
-        "Content-Type": "application/json",
-        "Accept": "application/json",
+    // Retry up to 2x on transient failures (network, 5xx). Never retry 402/404 — those are
+    // definitive "not found" or "no credits" responses, not transient errors.
+    res = await pRetry(
+      async () => {
+        const r = await fetch(`${AMF_BASE}/find-email/decision-maker`, {
+          method: "POST",
+          headers: {
+            "Authorization": `Bearer ${key}`,
+            "Content-Type": "application/json",
+            "Accept": "application/json",
+          },
+          body: JSON.stringify({
+            domain: clean,
+            decision_maker_category: DECISION_MAKER_CATEGORIES,
+          }),
+          signal: AbortSignal.timeout(30_000),
+        });
+        // Don't retry on definitive soft failures
+        if (r.status === 404 || r.status === 402) return r;
+        // Retry on server errors
+        if (r.status >= 500) throw new Error(`Anymail Finder server error ${r.status}`);
+        return r;
       },
-      body: JSON.stringify({
-        domain: clean,
-        decision_maker_category: DECISION_MAKER_CATEGORIES,
-      }),
-      signal: AbortSignal.timeout(30_000),
-    });
+      { retries: 2, minTimeout: 800, factor: 2 },
+    );
   } catch (err) {
     return {
       ok: false,

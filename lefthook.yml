@@ -1,0 +1,14 @@
+# Lefthook pre-commit hooks — typecheck + lint run in parallel before every commit.
+# Catches TypeScript and ESLint errors before they reach Vercel.
+# Docs: https://lefthook.dev/configuration/
+
+pre-commit:
+  parallel: true
+  commands:
+    typecheck:
+      run: npx tsc --noEmit
+      fail_text: "TypeScript errors found — fix before committing"
+    lint:
+      glob: "*.{ts,tsx}"
+      run: npx eslint {staged_files}
+      fail_text: "ESLint errors found — fix before committing"
