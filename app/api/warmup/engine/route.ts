@@ -13,7 +13,8 @@
 // Auth: CRON_SECRET header (Vercel sends automatically for cron routes).
 // ─────────────────────────────────────────────────────────────────────────────
 
-import { NextRequest, NextResponse } from "next/server";
+import { type NextRequest, NextResponse } from "next/server";
+import * as Sentry from "@sentry/nextjs";
 import { createServiceRoleClient } from "@/lib/supabase/service-role";
 import { getAccessToken, sendGmailMessage } from "@/lib/gmail/client";
 import {
@@ -259,11 +260,24 @@ export async function GET(req: NextRequest) {
   const allResults: EngineTickResult[] = [];
 
   try {
-    const configs = await getAllActiveConfigs();
-    for (const config of configs) {
-      const result = await processConfig(config);
-      allResults.push(result);
-    }
+    await Sentry.withMonitor(
+      "warmup-engine",
+      async () => {
+        const configs = await getAllActiveConfigs();
+        for (const config of configs) {
+          const result = await processConfig(config);
+          allResults.push(result);
+        }
+      },
+      {
+        schedule: { type: "crontab", value: "0 14 * * *" },
+        checkinMargin: 5,    // 5 min grace before "missed"
+        maxRuntime: 10,      // 10 min before marking failed
+        timezone: "UTC",
+        failureIssueThreshold: 2,
+        recoveryThreshold: 1,
+      },
+    );
   } catch (err) {
     console.error("[warmup/engine] Fatal error:", err);
     return NextResponse.json(
