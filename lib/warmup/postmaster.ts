@@ -50,6 +50,7 @@ export async function fetchDomainStats(
 
     const res = await fetch(url, {
       headers: { Authorization: `Bearer ${accessToken}` },
+      signal: AbortSignal.timeout(10_000),
     });
 
     if (!res.ok) {
@@ -112,6 +113,7 @@ export async function listPostmasterDomains(
   try {
     const res = await fetch(`${POSTMASTER_BASE}/domains`, {
       headers: { Authorization: `Bearer ${accessToken}` },
+      signal: AbortSignal.timeout(10_000),
     });
 
     if (!res.ok) return [];

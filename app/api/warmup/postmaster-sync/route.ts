@@ -136,8 +136,8 @@ export async function GET(req: NextRequest) {
       },
       {
         schedule: { type: "crontab", value: "0 8 * * *" },
-        checkinMargin: 5,   // 5 min grace before "missed"
-        maxRuntime: 5,      // 5 min before marking failed
+        checkinMargin: 10,  // 10 min grace — Vercel crons can be delayed on Hobby plan
+        maxRuntime: 1,      // should complete in <30s — flag if it exceeds 1 min
         timezone: "UTC",
         failureIssueThreshold: 2,
         recoveryThreshold: 1,
