@@ -24,7 +24,6 @@ export default async function SettingsIntegrationsPage() {
     braveConfigured: Boolean(process.env.BRAVE_SEARCH_API_KEY),
     hunterConfigured: Boolean(process.env.HUNTER_API_KEY),
     anymailConfigured: Boolean(process.env.ANYMAIL_FINDER_API_KEY),
-    postmarkConfigured: Boolean(process.env.POSTMARK_SERVER_TOKEN),
   };
 
   return <IntegrationsPage status={status} />;

@@ -2,7 +2,7 @@
 
 import { Card, CardContent } from "@/components/ui/card";
 import { Chip } from "@/components/ui/chip";
-import { Bot, Database, Mail, Search, Send, Zap } from "lucide-react";
+import { Bot, Database, Mail, Search, Zap } from "lucide-react";
 
 export interface IntegrationStatus {
   gmailConnected: boolean;
@@ -11,7 +11,6 @@ export interface IntegrationStatus {
   braveConfigured: boolean;
   hunterConfigured: boolean;
   anymailConfigured: boolean;
-  postmarkConfigured: boolean;
 }
 
 interface IntegrationConfig {
@@ -70,14 +69,6 @@ export function IntegrationsPage({ status }: Props) {
       envVar: "ANYMAIL_FINDER_API_KEY",
       icon: <Zap className="size-5" />,
       connected: status.anymailConfigured,
-    },
-    {
-      id: "postmark",
-      name: "Postmark",
-      description: "Transactional emails (invites, notifications)",
-      envVar: "POSTMARK_SERVER_TOKEN",
-      icon: <Send className="size-5" />,
-      connected: status.postmarkConfigured,
     },
   ];
 
