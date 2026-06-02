@@ -20,7 +20,6 @@ import {
 } from "lucide-react";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { Chip } from "@/components/ui/chip";
 import type {
   WarmupConfig,
   WarmupLogEntry,
@@ -141,7 +140,7 @@ function LogRow({ entry }: { entry: WarmupLogEntry }) {
 export function WarmupDashboard({
   config,
   recentLog,
-  healthHistory,
+  healthHistory: _healthHistory,
   latestHealth,
 }: Props) {
   const [isPending, startTransition] = React.useTransition();
@@ -460,11 +459,8 @@ export function WarmupDashboard({
                 No Postmaster data yet.
               </p>
               <p className="text-xs text-neutral-400 mt-1">
-                Add the{" "}
-                <code className="bg-neutral-100 dark:bg-neutral-800 px-1 py-0.5 rounded text-xs">
-                  postmaster.readonly
-                </code>{" "}
-                scope to your Gmail connection and reconnect.
+                Google needs ~100 emails/day to Gmail before data appears.
+                Expected around Week 4 (Day 22+).
               </p>
             </div>
           )}
