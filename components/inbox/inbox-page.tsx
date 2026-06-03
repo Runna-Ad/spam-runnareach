@@ -4,6 +4,7 @@ import type { Route } from "next";
 import {
   Calendar,
   CheckCircle2,
+  Clock,
   Filter,
   Inbox as InboxIcon,
   Loader2,
@@ -12,8 +13,10 @@ import {
   Plus,
   ShieldX,
   Sparkles,
+  UserX,
   X,
 } from "lucide-react";
+import { toast } from "sonner";
 import * as React from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
@@ -38,6 +41,7 @@ import {
   markReplyHandled,
   overrideReplyIntent,
 } from "@/lib/replies/actions";
+import { handleReplyIntent } from "@/lib/replies/intent-actions";
 import type {
   ProspectOption,
   Reply,
@@ -288,6 +292,51 @@ function ReplyRow({
   );
 }
 
+// Intent-specific primary action config
+const INTENT_ACTION: Partial<Record<ReplyIntent, {
+  label: string;
+  icon: React.ComponentType<{ className?: string; "aria-hidden"?: boolean }>;
+  variant: "primary" | "danger" | "secondary";
+  successMsg: string;
+  requiresProspect: boolean;
+}>> = {
+  wants_meeting: {
+    label: "Mark as booked",
+    icon: Calendar,
+    variant: "primary",
+    successMsg: "Prospect marked as booked. Sequence paused.",
+    requiresProspect: true,
+  },
+  hard_no: {
+    label: "Suppress prospect",
+    icon: ShieldX,
+    variant: "danger",
+    successMsg: "Prospect suppressed with 180-day cooldown. Sequence paused.",
+    requiresProspect: true,
+  },
+  not_now: {
+    label: "Snooze 60 days",
+    icon: Clock,
+    variant: "secondary",
+    successMsg: "Prospect snoozed for 60 days. Sequence paused.",
+    requiresProspect: true,
+  },
+  wrong_person: {
+    label: "Flag wrong contact",
+    icon: UserX,
+    variant: "secondary",
+    successMsg: "Flagged as wrong contact. Prospect stays in pipeline.",
+    requiresProspect: true,
+  },
+  auto_reply: {
+    label: "Snooze 14 days",
+    icon: Clock,
+    variant: "secondary",
+    successMsg: "Follow-up snoozed 14 days for OOO.",
+    requiresProspect: false,
+  },
+};
+
 function ReplyDetail({
   reply,
   canEdit,
@@ -301,8 +350,10 @@ function ReplyDetail({
 }) {
   const [pendingIntent, startIntent] = React.useTransition();
   const [pendingHandle, startHandle] = React.useTransition();
+  const [pendingAction, startAction] = React.useTransition();
   const [error, setError] = React.useState<string | null>(null);
   const meta = INTENT_META[reply.intent];
+  const intentAction = INTENT_ACTION[reply.intent];
 
   const setIntent = (intent: ReplyIntent) => {
     setError(null);
@@ -319,6 +370,28 @@ function ReplyDetail({
       const res = await markReplyHandled({ reply_id: reply.id });
       if (res.ok) onChange();
       else setError(res.error);
+    });
+  };
+
+  const triggerIntentAction = () => {
+    if (!intentAction) return;
+    if (intentAction.requiresProspect && !reply.prospect_id) {
+      setError("Link this reply to a prospect first to use this action.");
+      return;
+    }
+    setError(null);
+    startAction(async () => {
+      const res = await handleReplyIntent(
+        reply.id,
+        reply.prospect_id ?? "",
+        reply.intent,
+      );
+      if (res.ok) {
+        toast.success(intentAction.successMsg);
+        onChange();
+      } else {
+        setError(res.error ?? "Action failed.");
+      }
     });
   };
 
@@ -367,6 +440,31 @@ function ReplyDetail({
 
       {canEdit ? (
         <div className="flex flex-col gap-3 border-t border-[var(--color-border-subtle)] pt-3">
+
+          {/* ── Intent-specific primary action ───────────────────────────── */}
+          {intentAction && !reply.handled_at ? (
+            <div className="rounded-[var(--radius-md)] bg-[var(--color-bg-700)] p-3">
+              <p className="mb-2 text-[10px] uppercase tracking-wider text-[var(--color-fg-500)]">
+                Suggested action
+              </p>
+              <Button
+                type="button"
+                variant={intentAction.variant}
+                onClick={triggerIntentAction}
+                disabled={pendingAction}
+                className="w-full justify-center"
+              >
+                {pendingAction ? (
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden />
+                ) : (
+                  <intentAction.icon className="h-3.5 w-3.5" aria-hidden />
+                )}
+                {intentAction.label}
+              </Button>
+            </div>
+          ) : null}
+
+          {/* ── Override intent ───────────────────────────────────────────── */}
           <div>
             <Label className="text-[10px] uppercase tracking-wider">Override intent</Label>
             <Select
@@ -382,9 +480,11 @@ function ReplyDetail({
               ))}
             </Select>
           </div>
+
+          {/* ── Mark handled ─────────────────────────────────────────────── */}
           <Button
             type="button"
-            variant="primary"
+            variant="secondary"
             onClick={handle}
             disabled={pendingHandle || Boolean(reply.handled_at)}
           >
@@ -397,6 +497,7 @@ function ReplyDetail({
               ? `Handled ${relativeTime(reply.handled_at)}${reply.handled_by_name ? ` by ${reply.handled_by_name}` : ""}`
               : "Mark handled"}
           </Button>
+
           {error ? <p className="text-[11px] text-[var(--color-danger-300)]">{error}</p> : null}
         </div>
       ) : null}
