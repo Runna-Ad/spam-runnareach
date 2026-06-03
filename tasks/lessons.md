@@ -4,6 +4,16 @@ Running log of mistakes, root causes, and rules to prevent recurrence. Newest at
 
 ---
 
+[2026-06-03] LESSON: Sentry cron monitor timeout — no AbortSignal on external API fetch calls
+ROOT CAUSE: postmaster-sync and warmup-engine both had fetch() calls with no timeout. If Google/Gmail API hung, the Vercel function hit its 60s hard kill AFTER withMonitor sent in_progress but BEFORE it could send ok. Sentry saw: in_progress → silence → timeout.
+RULE: Every external fetch() call must have AbortSignal.timeout(N). postmaster: 10s. IMAP connections: connectionTimeout 8s, greetingTimeout 5s, socketTimeout 12s. Also cap unbounded loops (IMAP checks) at a per-tick max.
+TAGS: #bug #sentry #cron #imap #timeout
+
+[2026-06-03] LESSON: Sentry checkinMargin too tight for Vercel Hobby crons
+ROOT CAUSE: checkinMargin: 5 min caused false "missed" alerts — Vercel Hobby crons can fire 20-30 min late.
+RULE: Always set checkinMargin: 30 for Vercel Hobby cron monitors. maxRuntime should match what the function SHOULD take, not the Vercel timeout ceiling.
+TAGS: #sentry #cron #vercel
+
 [2026-06-03] LESSON: GitHub Actions CI failed on first push — pre-existing lint errors + wrong Node.js version
 ROOT CAUSE 1: Lefthook only lints staged files ({staged_files}), so pre-existing unused imports and type errors across the whole codebase were never caught locally. CI runs `eslint .` on everything — 12 errors appeared on first push.
 RULE: Before connecting any project to GitHub for the first time, run `npm run lint` and `npm test` on the FULL codebase and fix all errors first. Don't rely on Lefthook alone — it only sees staged files.
