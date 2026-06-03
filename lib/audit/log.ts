@@ -13,7 +13,8 @@ export type AuditAction =
   | "prospect.scored"
   | "research.edited"
   | "research.created"
-  | "pitch.sent";
+  | "pitch.sent"
+  | "reply.intent_handled";
 
 export type AuditPayload = {
   tenantId: string;

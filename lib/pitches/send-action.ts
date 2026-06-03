@@ -157,6 +157,10 @@ export async function sendPitch(input: {
       status: "sent",
       sent_at: now,
       sender_inbox_id: inbox_id,
+      gmail_message_id: sendResult.gmailMessageId,
+      gmail_thread_id: sendResult.threadId ?? null,
+      sequence_step: 1,
+      next_followup_at: new Date(Date.now() + 3 * 24 * 60 * 60 * 1000).toISOString(),
     })
     .eq("id", pitch_id)
     .eq("tenant_id", user.tenantId);

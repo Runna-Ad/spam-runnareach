@@ -81,6 +81,18 @@ export type SendEmailInput = {
   body: string;
   /** Optional Reply-To (defaults to fromEmail). */
   replyTo?: string;
+  /**
+   * Gmail thread ID for in-reply-to threading.
+   * When set, the message is appended to the existing thread.
+   * Also set In-Reply-To and References headers using originalMessageId.
+   */
+  threadId?: string;
+  /**
+   * Gmail message ID of the message being replied to (the <...@mail.gmail.com> value).
+   * Used to set RFC 2822 In-Reply-To and References headers for proper threading.
+   * Required when threadId is provided for full client threading support.
+   */
+  originalMessageId?: string;
 };
 
 export type SendEmailResult =
@@ -91,13 +103,18 @@ export async function sendGmailMessage(input: SendEmailInput): Promise<SendEmail
   const raw = buildRfc2822(input);
   const encoded = Buffer.from(raw).toString("base64url");
 
+  // When replying in-thread, pass threadId to the Gmail API so the message is
+  // grouped with the original conversation.
+  const requestBody: { raw: string; threadId?: string } = { raw: encoded };
+  if (input.threadId) requestBody.threadId = input.threadId;
+
   const res = await fetch(GMAIL_SEND_URL, {
     method: "POST",
     headers: {
       Authorization: `Bearer ${input.accessToken}`,
       "Content-Type": "application/json",
     },
-    body: JSON.stringify({ raw: encoded }),
+    body: JSON.stringify(requestBody),
   });
 
   if (!res.ok) {
@@ -122,7 +139,7 @@ function buildRfc2822(input: SendEmailInput): string {
   const subject = encodeHeader(input.subject);
   const htmlBody = buildHtmlBody(input.body);
 
-  const headers = [
+  const headerLines = [
     `From: ${from}`,
     `To: ${input.to}`,
     `Reply-To: ${replyTo}`,
@@ -130,7 +147,15 @@ function buildRfc2822(input: SendEmailInput): string {
     `Date: ${date}`,
     `MIME-Version: 1.0`,
     `Content-Type: multipart/alternative; boundary="${MIME_BOUNDARY}"`,
-  ].join("\r\n");
+  ];
+
+  // RFC 2822 threading headers — required for proper threading in email clients
+  if (input.originalMessageId) {
+    headerLines.push(`In-Reply-To: <${input.originalMessageId}>`);
+    headerLines.push(`References: <${input.originalMessageId}>`);
+  }
+
+  const headers = headerLines.join("\r\n");
 
   const textPart = [
     `--${MIME_BOUNDARY}`,

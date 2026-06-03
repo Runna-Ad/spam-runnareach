@@ -623,6 +623,9 @@ export type Database = {
           gmail_message_id: string | null;
           postmark_message_id: string | null;
           parent_pitch_id: UUID | null;
+          sequence_step: number;
+          next_followup_at: string | null;
+          sequence_paused_at: string | null;
         };
         Insert: {
           id?: UUID;
@@ -700,6 +703,9 @@ export type Database = {
           gmail_thread_id?: string | null;
           gmail_message_id?: string | null;
           postmark_message_id?: string | null;
+          sequence_step?: number | null;
+          next_followup_at?: string | null;
+          sequence_paused_at?: string | null;
         };
         Relationships: NoRels;
       };
