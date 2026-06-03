@@ -331,7 +331,8 @@ export type Database = {
             | "yellowpages_ca"
             | "brave_search"
             | "denue"
-            | "yelp";
+            | "yelp"
+            | "hunter";
           company_name: string;
           domain: string | null;
           website_url: string | null;
@@ -377,7 +378,8 @@ export type Database = {
             | "yellowpages_ca"
             | "brave_search"
             | "denue"
-            | "yelp";
+            | "yelp"
+            | "hunter";
           company_name: string;
           domain?: string | null;
           website_url?: string | null;
@@ -440,7 +442,8 @@ export type Database = {
             | "yellowpages_ca"
             | "brave_search"
             | "denue"
-            | "yelp";
+            | "yelp"
+            | "hunter";
           triggered_by: UUID | null;
           status: string;
           candidates_found: number;
@@ -466,7 +469,8 @@ export type Database = {
             | "yellowpages_ca"
             | "brave_search"
             | "denue"
-            | "yelp";
+            | "yelp"
+            | "hunter";
           triggered_by?: UUID | null;
           status?: string;
           candidates_found?: number;
