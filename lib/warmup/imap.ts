@@ -45,9 +45,9 @@ function makeImapClient(
       pass: appPassword,
     },
     logger: false,
-    connectionTimeout: 15_000,
-    greetingTimeout: 10_000,
-    socketTimeout: 30_000,
+    connectionTimeout: 8_000,   // was 15s — cut to fail fast on hung connections
+    greetingTimeout: 5_000,    // was 10s
+    socketTimeout: 12_000,     // was 30s — single stuck socket was eating ~30s of the 60s budget
   });
 }
 

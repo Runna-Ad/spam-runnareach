@@ -105,7 +105,10 @@ async function processConfig(config: WarmupConfig): Promise<EngineTickResult> {
     }
 
     // ── Step 2: IMAP check of previous sends (landed in inbox vs spam?)
-    const pendingChecks = await getPendingInboxChecks(config.id);
+    // Cap at 4 per tick — each IMAP check takes ~8-12s worst case. 4 checks = ~48s max,
+    // leaving room for sending emails. Remaining checks carry over to the next day's tick.
+    const allPendingChecks = await getPendingInboxChecks(config.id);
+    const pendingChecks = allPendingChecks.slice(0, 4);
     const buddies = await getActiveBuddies();
 
     for (const log of pendingChecks) {
@@ -271,8 +274,8 @@ export async function GET(req: NextRequest) {
       },
       {
         schedule: { type: "crontab", value: "0 14 * * *" },
-        checkinMargin: 5,    // 5 min grace before "missed"
-        maxRuntime: 10,      // 10 min before marking failed
+        checkinMargin: 30,   // Vercel Hobby crons can fire 20-30 min late — wide grace window
+        maxRuntime: 3,       // should complete in <2 min — flag if stuck longer
         timezone: "UTC",
         failureIssueThreshold: 2,
         recoveryThreshold: 1,

@@ -3,6 +3,9 @@
     "app/**": {
       "maxDuration": 60
     },
+    "app/api/warmup/engine/route.ts": {
+      "maxDuration": 120
+    },
     "app/api/warmup/postmaster-sync/route.ts": {
       "maxDuration": 30
     }
