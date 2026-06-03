@@ -4,6 +4,16 @@ Running log of mistakes, root causes, and rules to prevent recurrence. Newest at
 
 ---
 
+[2026-06-03] LESSON: sendPitch never saved gmail_thread_id to pitches table
+ROOT CAUSE: sendGmailMessage returned threadId but sendPitch only wrote it to audit_log metadata, never to the pitches row. Without thread_id persisted, follow-up emails couldn't reply in the same Gmail thread.
+RULE: Whenever a Gmail send succeeds, always persist gmail_thread_id AND gmail_message_id to the pitch row immediately. Thread context is required for any downstream sequence/follow-up logic.
+TAGS: #bug #gmail #sequence #pitches
+
+[2026-06-03] LESSON: Follow-up email templates should be template-based, not Claude-generated
+ROOT CAUSE: N/A — proactive design decision.
+RULE: Follow-up emails (#2 and #3 in a sequence) should use string templates with variable substitution, not Claude. Reasons: (1) follow-ups must be SHORT (3-5 sentences), (2) Claude adds latency + cost where brevity wins, (3) templates are predictable and easily A/B tested. Only use Claude for the initial pitch where personalization depth matters.
+TAGS: #architecture #pitches #sequence
+
 [2026-06-03] LESSON: Sentry cron monitor timeout — no AbortSignal on external API fetch calls
 ROOT CAUSE: postmaster-sync and warmup-engine both had fetch() calls with no timeout. If Google/Gmail API hung, the Vercel function hit its 60s hard kill AFTER withMonitor sent in_progress but BEFORE it could send ok. Sentry saw: in_progress → silence → timeout.
 RULE: Every external fetch() call must have AbortSignal.timeout(N). postmaster: 10s. IMAP connections: connectionTimeout 8s, greetingTimeout 5s, socketTimeout 12s. Also cap unbounded loops (IMAP checks) at a per-tick max.
