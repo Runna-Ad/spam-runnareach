@@ -4,6 +4,23 @@ Running log of mistakes, root causes, and rules to prevent recurrence. Newest at
 
 ---
 
+[2026-06-03] LESSON: GitHub Actions CI failed on first push — pre-existing lint errors + wrong Node.js version
+ROOT CAUSE 1: Lefthook only lints staged files ({staged_files}), so pre-existing unused imports and type errors across the whole codebase were never caught locally. CI runs `eslint .` on everything — 12 errors appeared on first push.
+RULE: Before connecting any project to GitHub for the first time, run `npm run lint` and `npm test` on the FULL codebase and fix all errors first. Don't rely on Lefthook alone — it only sees staged files.
+TAGS: #ci #github #lint
+
+[2026-06-03] LESSON: Node.js 20 in GitHub Actions can't run TypeScript test files
+ROOT CAUSE: `node --test` on Node.js 20 can't resolve glob patterns for `.ts` files and has no built-in TypeScript support. Tests pass locally because dev machine runs Node.js 22+.
+RULE: Always use `node-version: 22` in GitHub Actions workflows for TypeScript projects. Add `--experimental-strip-types` to the node test command: `node --experimental-strip-types --test --test-reporter=spec 'tests/**/*.test.ts'`
+TAGS: #ci #github #nodejs #typescript
+
+[2026-06-03] LESSON: ESLint flags `process`/`console`/`fetch` as undefined in scripts/ directory
+ROOT CAUSE: ESLint treats .mjs files as browser environment by default. Node.js globals need to be explicitly declared.
+RULE: In eslint.config.mjs, add an override for `scripts/**/*.mjs` with `languageOptions: { globals: { process, console, URL, fetch } }`. Also add `.claude/**` to ignores to stop ESLint scanning Claude worktree files.
+TAGS: #ci #eslint #scripts
+
+---
+
 [2026-05-29] LESSON: ⛔ generatePitch silently failed when called from nested server action
 ROOT CAUSE: generatePitch called requireUser() → createClient() → cookies(). In Next.js,
 cookies() can be restricted inside nested server action chains (bulkRunPipeline → processSingleProspect → generatePitch). getUser() returned null, requireUser() called redirect('/sign-in') which throws a non-standard error — not instanceof Error. Our catch swallowed it, writeAuditLog also failed (no session), leaving pitch_gate_passed=false with zero trace.
