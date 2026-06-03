@@ -102,12 +102,12 @@ export type RampWeek = {
   dailyTarget: number;
 };
 
-// Ramp updated for 4 buddy accounts (~10 sends/buddy/day = 40/day safe cap)
+// Ramp updated for 5 buddy accounts (~10 sends/buddy/day = 50/day safe cap)
 export const RAMP_SCHEDULE: readonly RampWeek[] = [
-  { weekStart: 1,  weekEnd: 7,  dailyTarget: 8  },  // Week 1 — 2/buddy/day with 4 buddies
-  { weekStart: 8,  weekEnd: 14, dailyTarget: 15 },  // Week 2 — ~4/buddy/day
-  { weekStart: 15, weekEnd: 21, dailyTarget: 25 },  // Week 3 — ~6/buddy/day
-  { weekStart: 22, weekEnd: 28, dailyTarget: 40 },  // Week 4 — ~10/buddy/day (cap)
+  { weekStart: 1,  weekEnd: 7,  dailyTarget: 10 },  // Week 1 — 2/buddy/day with 5 buddies
+  { weekStart: 8,  weekEnd: 14, dailyTarget: 20 },  // Week 2 — ~4/buddy/day
+  { weekStart: 15, weekEnd: 21, dailyTarget: 30 },  // Week 3 — ~6/buddy/day
+  { weekStart: 22, weekEnd: 28, dailyTarget: 50 },  // Week 4 — ~10/buddy/day (cap)
   // Day 29+ → maintenance
 ] as const;
 
@@ -123,9 +123,9 @@ export function getDailyTarget(currentDay: number): number {
 }
 
 export function getRampPhase(currentDay: number): string {
-  if (currentDay <= 7)  return "Week 1 — Warming (8/day)";
-  if (currentDay <= 14) return "Week 2 — Building (15/day)";
-  if (currentDay <= 21) return "Week 3 — Ramping (25/day)";
-  if (currentDay <= 28) return "Week 4 — Full Ramp (40/day)";
+  if (currentDay <= 7)  return "Week 1 — Warming (10/day)";
+  if (currentDay <= 14) return "Week 2 — Building (20/day)";
+  if (currentDay <= 21) return "Week 3 — Ramping (30/day)";
+  if (currentDay <= 28) return "Week 4 — Full Ramp (50/day)";
   return "Maintenance (5/day)";
 }
