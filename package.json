@@ -10,7 +10,7 @@
     "typecheck": "tsc --noEmit",
     "lint": "eslint .",
     "format": "prettier --write .",
-    "test": "node --test --test-reporter=spec 'tests/**/*.test.ts'",
+    "test": "node --experimental-strip-types --test --test-reporter=spec 'tests/**/*.test.ts'",
     "db:types": "supabase gen types typescript --project-id ybbrpqzbedaxsmotgtkh > lib/supabase/database.types.ts"
   },
   "dependencies": {
