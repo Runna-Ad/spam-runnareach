@@ -18,7 +18,7 @@
  * internal enrichment tool called server-side only.
  */
 
-// @ts-ignore — Deno edge runtime types
+// @ts-expect-error — Deno edge runtime types
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 
 // ── Types ─────────────────────────────────────────────────────────────────────

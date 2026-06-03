@@ -6,12 +6,12 @@ import { claudeIsAvailable } from "@/lib/anthropic/client";
 import { isUnderDailyCap, recordClaudeCall } from "@/lib/anthropic/cost-tracking";
 import { writeAuditLog } from "@/lib/audit/log";
 import { requireUser } from "@/lib/auth";
+import type { CurrentUser } from "@/lib/auth";
 import { createClient } from "@/lib/supabase/server";
 import type { Database } from "@/lib/supabase/types";
-import { composePitchWithClaude, detectViolations } from "./claude-composer";
+import { composePitchWithClaude } from "./claude-composer";
 import { HUNTER_URL, renderIndustryTemplate } from "./industry-templates";
 import {
-  composePitchHeuristic,
   type ComposedPitch,
   type GeneratorInputContact,
   type GeneratorInputCaseStudy,
@@ -75,8 +75,8 @@ export type PitchActionResult = { ok: true } | { ok: false; error: string };
 export async function generatePitch(
   prospectId: string,
   injected?: {
-    user: import("@/lib/auth").CurrentUser;
-    supabase: Awaited<ReturnType<typeof import("@/lib/supabase/server").createClient>>;
+    user: CurrentUser;
+    supabase: Awaited<ReturnType<typeof createClient>>;
   },
 ): Promise<GeneratePitchResult> {
   const user = injected?.user ?? await requireUser();

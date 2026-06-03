@@ -106,7 +106,7 @@ function deriveBraveQuery(icp: {
  * Best single keyword to label industry on prospects (used when industry_label
  * is needed for a specific crawl that doesn't have a per-keyword label).
  */
-function deriveKeyword(icp: {
+function _deriveKeyword(icp: {
   search_keywords: string[];
   industry_tags: string[];
 }): string {

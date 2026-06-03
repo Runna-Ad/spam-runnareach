@@ -106,7 +106,7 @@ export function scoreWithHeuristic(
   let industry_fit_pts = 0;
   if (prospect.industry && icp?.industry_tags?.length) {
     const lower = prospect.industry.toLowerCase();
-    const tokens = lower.split(/[\s\-\/,]+/).filter((t) => t.length > 2);
+    const tokens = lower.split(/[\s\-/,]+/).filter((t) => t.length > 2);
     const hit = icp.industry_tags.find((t) => {
       const tLower = t.toLowerCase();
       // Direct substring match (handles "consumer goods" ⊂ "consumer goods")

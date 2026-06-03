@@ -27,7 +27,7 @@ const sql = readFileSync(
 // Supabase exposes a pg-meta query endpoint at /pg/query (REST shim around the
 // `query` RPC). Service-role auth + a JSON body of `{ query: <sql> }`.
 const projectRef = new URL(url).hostname.split(".")[0];
-const endpoint = `https://${projectRef}.supabase.co/rest/v1/rpc/exec`;
+const _endpoint = `https://${projectRef}.supabase.co/rest/v1/rpc/exec`;
 
 // Try the modern path first (pg_meta), fall back to a plain SQL POST against
 // /pg/query if it exists for the project. Newer Supabase deployments expose

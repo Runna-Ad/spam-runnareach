@@ -83,7 +83,7 @@ export async function reviewProposal(proposalId: string, action: ReviewAction) {
 }
 
 export async function rollbackVariant(variantId: string, promptId: string) {
-  const user = await requireUser();
+  const _user = await requireUser();
   const supabase = await createClient();
 
   const now = new Date().toISOString();

@@ -6,7 +6,7 @@ const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
 const TEST_EMAIL = process.env.TEST_EMAIL;
 const TEST_PASSWORD = process.env.TEST_PASSWORD;
 
-const supabase = createClient(url, serviceKey, { auth: { autoRefreshToken: false, persistSession: false } });
+const _supabase = createClient(url, serviceKey, { auth: { autoRefreshToken: false, persistSession: false } });
 
 const pages = [
   { path: "/dashboard", name: "dashboard" },

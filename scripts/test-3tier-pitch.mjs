@@ -68,17 +68,23 @@ if (ncErr) { fail("notable_clients load", ncErr.message); process.exit(1); }
 if (csErr) { fail("case_studies load", csErr.message); process.exit(1); }
 if (icpErr) { fail("icps load", icpErr.message); process.exit(1); }
 
-notableClients.length === 5
-  ? pass(`5 notable clients loaded`, notableClients.map(c => c.name).join(", "))
-  : fail(`Expected 5 notable clients, got ${notableClients.length}`);
+if (notableClients.length === 5) {
+  pass(`5 notable clients loaded`, notableClients.map(c => c.name).join(", "));
+} else {
+  fail(`Expected 5 notable clients, got ${notableClients.length}`);
+}
 
-caseStudies.length > 0
-  ? pass(`${caseStudies.length} case studies loaded`, caseStudies.map(c => c.client_name).join(", "))
-  : info("No case studies — Tier 1 will never fire (expected for a clean slate)");
+if (caseStudies.length > 0) {
+  pass(`${caseStudies.length} case studies loaded`, caseStudies.map(c => c.client_name).join(", "));
+} else {
+  info("No case studies — Tier 1 will never fire (expected for a clean slate)");
+}
 
-icps.length === 4
-  ? pass("4 ICPs loaded")
-  : fail(`Expected 4 ICPs, got ${icps.length}`);
+if (icps.length === 4) {
+  pass("4 ICPs loaded");
+} else {
+  fail(`Expected 4 ICPs, got ${icps.length}`);
+}
 
 // ── Test: 3-tier resolution ──────────────────────────────────────────────────
 

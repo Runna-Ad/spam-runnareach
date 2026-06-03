@@ -1,5 +1,4 @@
 import { Construction } from "lucide-react";
-import { Chip } from "@/components/ui/chip";
 import { EmptyState } from "@/components/ui/empty-state";
 
 interface PhasePlaceholderProps {
@@ -23,7 +22,7 @@ const PHASE_LABELS: Record<
 };
 
 export function PhasePlaceholder({ route, phase, title, description }: PhasePlaceholderProps) {
-  const meta = PHASE_LABELS[phase];
+  const _meta = PHASE_LABELS[phase];
 
   return (
     <div className="flex h-full flex-col">

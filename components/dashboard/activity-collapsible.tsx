@@ -10,7 +10,6 @@ import {
   Mail,
   Plus,
   ScanSearch,
-  Send,
 } from "lucide-react";
 import Link from "next/link";
 import * as React from "react";

@@ -1,5 +1,4 @@
 import {
-  BarChart3,
   BrainCircuit,
   DollarSign,
   MessageSquare,

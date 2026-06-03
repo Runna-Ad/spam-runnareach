@@ -5,7 +5,6 @@
 // Re-run any time the inline HTML below changes.
 
 import { chromium } from "playwright";
-import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 const html = String.raw`<!doctype html>

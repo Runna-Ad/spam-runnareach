@@ -5,7 +5,7 @@
  * and stores it on the sender_inbox row. Redirects back to settings/sending.
  */
 
-import { NextRequest, NextResponse } from "next/server";
+import { type NextRequest, NextResponse } from "next/server";
 import { requireUser } from "@/lib/auth";
 import { createClient } from "@/lib/supabase/server";
 import { encryptToken } from "@/lib/gmail/crypto";

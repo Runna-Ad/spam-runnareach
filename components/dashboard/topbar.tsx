@@ -1,6 +1,6 @@
 "use client";
 
-import { Command, Search } from "lucide-react";
+import { Search } from "lucide-react";
 import { useCommandPalette } from "@/components/command-palette/command-palette-provider";
 import { Kbd } from "@/components/ui/kbd";
 

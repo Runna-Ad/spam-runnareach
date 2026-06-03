@@ -21,7 +21,6 @@ import {
 } from "lucide-react";
 import * as React from "react";
 import { Button } from "@/components/ui/button";
-import { Chip } from "@/components/ui/chip";
 import { Select } from "@/components/ui/select";
 import {
   Drawer,

@@ -110,6 +110,7 @@ async function shoot() {
   // (the textarea below shows the scraped text once the new props mount).
   await page.waitForFunction(
     () => {
+      // eslint-disable-next-line no-undef
       const ta = document.querySelector('textarea');
       return ta && ta.value && ta.value.length > 30;
     },

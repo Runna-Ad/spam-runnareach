@@ -6,7 +6,7 @@
  * State param carries the inbox_id so the callback knows which row to update.
  */
 
-import { NextRequest, NextResponse } from "next/server";
+import { type NextRequest, NextResponse } from "next/server";
 import { requireUser } from "@/lib/auth";
 import { createClient } from "@/lib/supabase/server";
 

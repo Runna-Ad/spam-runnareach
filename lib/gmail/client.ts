@@ -256,6 +256,7 @@ function escapeHtml(text: string): string {
 
 /** Encode a header value as RFC 2047 UTF-8 base64 if it contains non-ASCII. */
 function encodeHeader(value: string): string {
+  // eslint-disable-next-line no-control-regex
   if (/^[\x00-\x7F]*$/.test(value)) return value; // pure ASCII — no encoding needed
   return `=?UTF-8?B?${Buffer.from(value, "utf8").toString("base64")}?=`;
 }
