@@ -21,6 +21,7 @@ import {
   getAllActiveConfigs,
   updateWarmupConfigDay,
   resetDailyCount,
+  incrementEmailsSentToday,
   getActiveBuddies,
   markBuddyUsed,
   getRandomTemplate,
@@ -218,12 +219,11 @@ async function processConfig(config: WarmupConfig): Promise<EngineTickResult> {
       }
     }
 
-    // ── Step 7: Update config counters
+    // ── Step 7: Update config counters (atomic increment — avoids race with concurrent runs)
+    // We use a SQL-level increment instead of read-modify-write so that a concurrent
+    // "Run now" click or cron duplicate-fire can't overwrite a valid count with 0.
     if (result.sent > 0 || buddyIndex !== config.last_buddy_index) {
-      await updateWarmupConfigDay(config.id, {
-        emails_sent_today: (config.emails_sent_today ?? 0) + result.sent,
-        last_buddy_index: buddyIndex,
-      });
+      await incrementEmailsSentToday(config.id, result.sent, buddyIndex);
     }
 
     // ── Step 8: Process incoming replies from buddies

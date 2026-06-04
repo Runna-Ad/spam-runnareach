@@ -64,6 +64,27 @@ export async function updateWarmupConfigDay(
     .eq("id", configId);
 }
 
+/**
+ * Atomically increments emails_sent_today using a SQL expression.
+ * Avoids the read-modify-write race condition where a concurrent run
+ * (e.g. manual "Run now" + cron duplicate) can overwrite a valid count with 0.
+ */
+export async function incrementEmailsSentToday(
+  configId: string,
+  count: number,
+  lastBuddyIndex: number,
+): Promise<void> {
+  const supabase = createServiceRoleClient() as AnySupabase;
+  // Use rpc to do an atomic increment — Supabase JS client doesn't support
+  // .update({ col: sql`col + N` }) directly, so we use raw SQL via rpc.
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  await (supabase as any).rpc("increment_warmup_sent_today", {
+    p_config_id: configId,
+    p_count: count,
+    p_last_buddy_index: lastBuddyIndex,
+  });
+}
+
 export async function resetDailyCount(configId: string): Promise<void> {
   const supabase = createServiceRoleClient() as AnySupabase;
   await supabase
