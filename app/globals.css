@@ -185,3 +185,20 @@ body {
 .runna-drawer-overlay[data-state="closed"] {
   animation: runna-fade-out var(--duration-standard) ease-out;
 }
+
+/* Modal (centered panel) */
+@keyframes runna-modal-in {
+  from { opacity: 0; transform: translate(-50%, -48%) scale(0.96); }
+  to   { opacity: 1; transform: translate(-50%, -50%) scale(1); }
+}
+@keyframes runna-modal-out {
+  from { opacity: 1; transform: translate(-50%, -50%) scale(1); }
+  to   { opacity: 0; transform: translate(-50%, -48%) scale(0.96); }
+}
+
+.runna-modal-content[data-state="open"] {
+  animation: runna-modal-in var(--duration-standard) var(--ease-standard);
+}
+.runna-modal-content[data-state="closed"] {
+  animation: runna-modal-out var(--duration-standard) ease-in;
+}

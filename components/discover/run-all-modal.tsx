@@ -19,6 +19,7 @@ import {
   TriangleAlert,
   XCircle,
 } from "lucide-react";
+import { AnimatePresence, motion } from "motion/react";
 import * as React from "react";
 import { Button } from "@/components/ui/button";
 import { Select } from "@/components/ui/select";
@@ -236,32 +237,69 @@ export function RunAllModal({ open, onOpenChange, icps }: RunAllModalProps) {
           </DrawerHeader>
 
           <DrawerBody className="flex flex-col gap-4">
-            {step === "pick" && (
-              <PickStep
-                icps={icps}
-                selectedIcpId={selectedIcpId}
-                onSelectIcp={setSelectedIcpId}
-                preview={preview}
-                loadingPreview={loadingPreview}
-                error={error}
-                pendingRawCount={pendingRawCount}
-                onProcessPending={handleProcessPending}
-              />
-            )}
-            {step === "discovering" && <DiscoveringStep stats={discoverStats} />}
-            {step === "pipeline" && (
-              <PipelineStep
-                results={pipelineResults}
-                total={pipelineTotal}
-              />
-            )}
-            {step === "done" && (
-              <DoneStep
-                discoverStats={discoverStats}
-                results={pipelineResults}
-                prunedStats={prunedStats}
-              />
-            )}
+            <AnimatePresence mode="wait">
+              {step === "pick" && (
+                <motion.div
+                  key="pick"
+                  initial={{ opacity: 0, y: 8 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  exit={{ opacity: 0, y: -4 }}
+                  transition={{ duration: 0.15, ease: "easeOut" }}
+                  className="flex flex-col gap-4"
+                >
+                  <PickStep
+                    icps={icps}
+                    selectedIcpId={selectedIcpId}
+                    onSelectIcp={setSelectedIcpId}
+                    preview={preview}
+                    loadingPreview={loadingPreview}
+                    error={error}
+                    pendingRawCount={pendingRawCount}
+                    onProcessPending={handleProcessPending}
+                  />
+                </motion.div>
+              )}
+              {step === "discovering" && (
+                <motion.div
+                  key="discovering"
+                  initial={{ opacity: 0, y: 8 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  exit={{ opacity: 0, y: -4 }}
+                  transition={{ duration: 0.15, ease: "easeOut" }}
+                >
+                  <DiscoveringStep stats={discoverStats} />
+                </motion.div>
+              )}
+              {step === "pipeline" && (
+                <motion.div
+                  key="pipeline"
+                  initial={{ opacity: 0, y: 8 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  exit={{ opacity: 0, y: -4 }}
+                  transition={{ duration: 0.15, ease: "easeOut" }}
+                >
+                  <PipelineStep
+                    results={pipelineResults}
+                    total={pipelineTotal}
+                  />
+                </motion.div>
+              )}
+              {step === "done" && (
+                <motion.div
+                  key="done"
+                  initial={{ opacity: 0, y: 8 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  exit={{ opacity: 0, y: -4 }}
+                  transition={{ duration: 0.15, ease: "easeOut" }}
+                >
+                  <DoneStep
+                    discoverStats={discoverStats}
+                    results={pipelineResults}
+                    prunedStats={prunedStats}
+                  />
+                </motion.div>
+              )}
+            </AnimatePresence>
           </DrawerBody>
 
           <DrawerFooter>

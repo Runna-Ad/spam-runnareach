@@ -40,6 +40,7 @@ export function ConfirmDialog({
         />
         <DialogPrimitive.Content
           className={cn(
+            "runna-modal-content",
             "fixed left-1/2 top-1/2 z-50 w-full max-w-sm -translate-x-1/2 -translate-y-1/2",
             "rounded-[var(--radius-xl)] bg-[var(--color-bg-800)] p-5",
             "ring-1 ring-inset ring-[var(--color-border-default)] shadow-[var(--shadow-floating)]",

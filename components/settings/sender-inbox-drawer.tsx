@@ -2,6 +2,7 @@
 
 import { Loader2, Mail, Trash2 } from "lucide-react";
 import * as React from "react";
+import { Controller, useForm } from "react-hook-form";
 import { Button } from "@/components/ui/button";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import {
@@ -56,15 +57,26 @@ const BLANK = (brandId: string): FormState => ({
 
 export function SenderInboxDrawer({ mode, brands, open, onOpenChange }: SenderInboxDrawerProps) {
   const firstBrand = brands[0]?.id ?? "";
-  const [state, setState] = React.useState<FormState>(() => BLANK(firstBrand));
-  const [error, setError] = React.useState<string | null>(null);
+  const [serverError, setServerError] = React.useState<string | null>(null);
   const [saving, startSaving] = React.useTransition();
   const [deleting, startDeleting] = React.useTransition();
   const [confirmDelete, setConfirmDelete] = React.useState(false);
 
+  const {
+    register,
+    control,
+    handleSubmit,
+    reset,
+    watch,
+    formState: { errors },
+  } = useForm<FormState>({
+    defaultValues: BLANK(firstBrand),
+  });
+
+  // Reset form when mode changes (create vs edit)
   React.useEffect(() => {
     if (mode?.kind === "edit") {
-      setState({
+      reset({
         brand_instance_id: mode.inbox.brand_instance_id,
         email: mode.inbox.email,
         display_name: mode.inbox.display_name,
@@ -74,47 +86,42 @@ export function SenderInboxDrawer({ mode, brands, open, onOpenChange }: SenderIn
         paused_reason: mode.inbox.paused_reason ?? "",
       });
     } else if (mode?.kind === "create") {
-      setState(BLANK(firstBrand));
+      reset(BLANK(firstBrand));
     }
-    setError(null);
-  }, [mode, firstBrand]);
+    setServerError(null);
+  }, [mode, firstBrand, reset]);
 
   if (!mode) return null;
 
   const isEdit = mode.kind === "edit";
-  const set = <K extends keyof FormState>(k: K, v: FormState[K]) =>
-    setState((s) => ({ ...s, [k]: v }));
+  const paused = watch("paused");
 
-  const handleSave = () => {
-    setError(null);
+  const onSubmit = (data: FormState) => {
+    setServerError(null);
     startSaving(async () => {
-      const dailyCap = Number.parseInt(state.daily_cap, 10);
-      if (!Number.isFinite(dailyCap) || dailyCap < 1) {
-        setError("Daily cap must be a positive integer.");
-        return;
-      }
+      const dailyCap = Number.parseInt(data.daily_cap, 10);
 
       const result = isEdit
         ? await updateSenderInbox({
             id: mode.inbox.id,
-            display_name: state.display_name,
-            linkedin_url: state.linkedin_url.trim() || null,
+            display_name: data.display_name,
+            linkedin_url: data.linkedin_url.trim() || null,
             daily_cap: dailyCap,
-            paused: state.paused,
-            paused_reason: state.paused_reason.trim() || null,
+            paused: data.paused,
+            paused_reason: data.paused_reason.trim() || null,
           })
         : await createSenderInbox({
-            brand_instance_id: state.brand_instance_id,
-            email: state.email,
-            display_name: state.display_name,
-            linkedin_url: state.linkedin_url.trim() || null,
+            brand_instance_id: data.brand_instance_id,
+            email: data.email,
+            display_name: data.display_name,
+            linkedin_url: data.linkedin_url.trim() || null,
             daily_cap: dailyCap,
           });
 
       if (result.ok) {
         onOpenChange(false);
       } else {
-        setError(result.error);
+        setServerError(result.error);
       }
     });
   };
@@ -127,7 +134,7 @@ export function SenderInboxDrawer({ mode, brands, open, onOpenChange }: SenderIn
         setConfirmDelete(false);
         onOpenChange(false);
       } else {
-        setError(result.error);
+        setServerError(result.error);
         setConfirmDelete(false);
       }
     });
@@ -147,127 +154,159 @@ export function SenderInboxDrawer({ mode, brands, open, onOpenChange }: SenderIn
           </DrawerHeader>
 
           <DrawerBody>
-            <div className="flex flex-col gap-6">
-              <Section title="Identity">
-                <Field label="Brand instance">
-                  <Select
-                    disabled={isEdit}
-                    value={state.brand_instance_id}
-                    onChange={(e) => set("brand_instance_id", e.target.value)}
-                  >
-                    {brands.map((b) => (
-                      <option key={b.id} value={b.id}>
-                        {b.display_name} · {b.primary_market}
-                      </option>
-                    ))}
-                  </Select>
-                </Field>
-                <Field label="Email address">
-                  <Input
-                    type="email"
-                    disabled={isEdit}
-                    value={state.email}
-                    onChange={(e) => set("email", e.target.value)}
-                    placeholder="pedro@runnareach.com"
-                  />
-                </Field>
-                <Field label="Display name">
-                  <Input
-                    value={state.display_name}
-                    onChange={(e) => set("display_name", e.target.value)}
-                    placeholder="Pedro De Velasco"
-                  />
-                </Field>
-                <Field label="LinkedIn URL">
-                  <Input
-                    type="url"
-                    value={state.linkedin_url}
-                    onChange={(e) => set("linkedin_url", e.target.value)}
-                    placeholder="https://linkedin.com/in/…"
-                  />
-                </Field>
-              </Section>
+            <form id="sender-inbox-form" onSubmit={handleSubmit(onSubmit)} noValidate>
+              <div className="flex flex-col gap-6">
+                <Section title="Identity">
+                  <Field label="Brand instance">
+                    <Controller
+                      control={control}
+                      name="brand_instance_id"
+                      render={({ field }) => (
+                        <Select disabled={isEdit} {...field}>
+                          {brands.map((b) => (
+                            <option key={b.id} value={b.id}>
+                              {b.display_name} · {b.primary_market}
+                            </option>
+                          ))}
+                        </Select>
+                      )}
+                    />
+                  </Field>
+                  <Field label="Email address">
+                    <Input
+                      type="email"
+                      disabled={isEdit}
+                      placeholder="pedro@runnareach.com"
+                      {...register("email", {
+                        required: "Email is required",
+                        pattern: {
+                          value: /^[^\s@]+@[^\s@]+\.[^\s@]+$/,
+                          message: "Enter a valid email address",
+                        },
+                      })}
+                    />
+                    {errors.email && (
+                      <p className="text-[11px] text-[var(--color-danger-300)]">
+                        {errors.email.message}
+                      </p>
+                    )}
+                  </Field>
+                  <Field label="Display name">
+                    <Input
+                      placeholder="Pedro De Velasco"
+                      {...register("display_name", {
+                        required: "Display name is required",
+                      })}
+                    />
+                    {errors.display_name && (
+                      <p className="text-[11px] text-[var(--color-danger-300)]">
+                        {errors.display_name.message}
+                      </p>
+                    )}
+                  </Field>
+                  <Field label="LinkedIn URL">
+                    <Input
+                      type="url"
+                      placeholder="https://linkedin.com/in/…"
+                      {...register("linkedin_url")}
+                    />
+                  </Field>
+                </Section>
 
-              <Section
-                title="Sending"
-                description="Daily cap is the hard maximum. Warming engine starts below and ramps."
-              >
-                <Field label="Daily cap">
-                  <Input
-                    type="number"
-                    inputMode="numeric"
-                    min={1}
-                    max={500}
-                    value={state.daily_cap}
-                    onChange={(e) => set("daily_cap", e.target.value)}
-                  />
-                </Field>
-                {isEdit ? (
-                  <>
-                    <Field label="Paused">
-                      <label className="inline-flex cursor-pointer items-center gap-2 text-sm text-[var(--color-fg-300)]">
-                        <input
-                          type="checkbox"
-                          checked={state.paused}
-                          onChange={(e) => set("paused", e.target.checked)}
-                          className="h-4 w-4 accent-[var(--color-accent-300)]"
-                        />
-                        Stop sending from this inbox
-                      </label>
-                    </Field>
-                    {state.paused ? (
-                      <Field label="Paused reason">
-                        <Input
-                          value={state.paused_reason}
-                          onChange={(e) => set("paused_reason", e.target.value)}
-                          placeholder="Bounce rate spike, manual hold, etc."
+                <Section
+                  title="Sending"
+                  description="Daily cap is the hard maximum. Warming engine starts below and ramps."
+                >
+                  <Field label="Daily cap">
+                    <Input
+                      type="number"
+                      inputMode="numeric"
+                      min={1}
+                      max={500}
+                      {...register("daily_cap", {
+                        required: "Daily cap is required",
+                        min: { value: 1, message: "Minimum is 1" },
+                        max: { value: 500, message: "Maximum is 500" },
+                      })}
+                    />
+                    {errors.daily_cap && (
+                      <p className="text-[11px] text-[var(--color-danger-300)]">
+                        {errors.daily_cap.message}
+                      </p>
+                    )}
+                  </Field>
+                  {isEdit ? (
+                    <>
+                      <Field label="Paused">
+                        <Controller
+                          control={control}
+                          name="paused"
+                          render={({ field }) => (
+                            <label className="inline-flex cursor-pointer items-center gap-2 text-sm text-[var(--color-fg-300)]">
+                              <input
+                                type="checkbox"
+                                checked={field.value}
+                                onChange={(e) => field.onChange(e.target.checked)}
+                                className="h-4 w-4 accent-[var(--color-accent-300)]"
+                              />
+                              Stop sending from this inbox
+                            </label>
+                          )}
                         />
                       </Field>
-                    ) : null}
-                  </>
-                ) : null}
-              </Section>
-
-              <Section
-                title="Gmail OAuth"
-                description="Connect this inbox to Gmail to actually send. Requires GOOGLE_CLIENT_ID + GOOGLE_CLIENT_SECRET in .env.local."
-              >
-                <div className="flex items-center gap-3 rounded-[var(--radius-md)] border border-dashed border-[var(--color-border-default)] bg-[var(--color-bg-900)] p-3">
-                  <Mail className="h-4 w-4 text-[var(--color-fg-500)]" aria-hidden />
-                  <div className="flex flex-1 flex-col">
-                    {isEdit && mode.inbox.gmail_connected ? (
-                      <span className="text-xs text-[var(--color-success-300)]">
-                        ✓ Gmail connected — inbox can send.
-                      </span>
-                    ) : (
-                      <span className="text-xs text-[var(--color-fg-500)]">
-                        {isEdit
-                          ? "Not connected. Click to authorise Gmail access for this inbox."
-                          : "Save the inbox first, then connect Gmail from the edit drawer."}
-                      </span>
-                    )}
-                  </div>
-                  {isEdit ? (
-                    <Button
-                      type="button"
-                      size="sm"
-                      variant={mode.inbox.gmail_connected ? "ghost" : "secondary"}
-                      onClick={() => {
-                        window.location.href = `/api/auth/google/connect?inbox_id=${mode.inbox.id}`;
-                      }}
-                    >
-                      {mode.inbox.gmail_connected ? "Reconnect Gmail" : "Connect Gmail"}
-                    </Button>
+                      {paused ? (
+                        <Field label="Paused reason">
+                          <Input
+                            placeholder="Bounce rate spike, manual hold, etc."
+                            {...register("paused_reason")}
+                          />
+                        </Field>
+                      ) : null}
+                    </>
                   ) : null}
-                </div>
-              </Section>
-            </div>
+                </Section>
+
+                <Section
+                  title="Gmail OAuth"
+                  description="Connect this inbox to Gmail to actually send. Requires GOOGLE_CLIENT_ID + GOOGLE_CLIENT_SECRET in .env.local."
+                >
+                  <div className="flex items-center gap-3 rounded-[var(--radius-md)] border border-dashed border-[var(--color-border-default)] bg-[var(--color-bg-900)] p-3">
+                    <Mail className="h-4 w-4 text-[var(--color-fg-500)]" aria-hidden />
+                    <div className="flex flex-1 flex-col">
+                      {isEdit && mode.inbox.gmail_connected ? (
+                        <span className="text-xs text-[var(--color-success-300)]">
+                          ✓ Gmail connected — inbox can send.
+                        </span>
+                      ) : (
+                        <span className="text-xs text-[var(--color-fg-500)]">
+                          {isEdit
+                            ? "Not connected. Click to authorise Gmail access for this inbox."
+                            : "Save the inbox first, then connect Gmail from the edit drawer."}
+                        </span>
+                      )}
+                    </div>
+                    {isEdit ? (
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant={mode.inbox.gmail_connected ? "ghost" : "secondary"}
+                        onClick={() => {
+                          window.location.href = `/api/auth/google/connect?inbox_id=${mode.inbox.id}`;
+                        }}
+                      >
+                        {mode.inbox.gmail_connected ? "Reconnect Gmail" : "Connect Gmail"}
+                      </Button>
+                    ) : null}
+                  </div>
+                </Section>
+              </div>
+            </form>
           </DrawerBody>
 
           <DrawerFooter>
-            {error ? (
+            {serverError ? (
               <p className="mr-auto max-w-xs truncate text-xs text-[var(--color-danger-300)]">
-                {error}
+                {serverError}
               </p>
             ) : null}
             {isEdit ? (
@@ -285,7 +324,12 @@ export function SenderInboxDrawer({ mode, brands, open, onOpenChange }: SenderIn
             <Button type="button" variant="ghost" onClick={() => onOpenChange(false)}>
               Cancel
             </Button>
-            <Button type="button" variant="primary" onClick={handleSave} disabled={saving}>
+            <Button
+              type="submit"
+              form="sender-inbox-form"
+              variant="primary"
+              disabled={saving}
+            >
               {saving ? <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden /> : null}
               {saving ? "Saving…" : isEdit ? "Save changes" : "Create inbox"}
             </Button>
