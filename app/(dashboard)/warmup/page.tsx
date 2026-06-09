@@ -5,6 +5,7 @@ import {
   getRecentLog,
   getDomainHealthHistory,
   getLatestDomainHealth,
+  getTotalSentCount,
 } from "@/lib/warmup/queries";
 
 export const dynamic = "force-dynamic";
@@ -14,7 +15,7 @@ export default async function WarmupPage() {
 
   const config = await getWarmupConfig(user.tenantId);
 
-  const [recentLog, healthHistory, latestHealth] = await Promise.all([
+  const [recentLog, healthHistory, latestHealth, totalSent] = await Promise.all([
     config ? getRecentLog(user.tenantId, 50) : Promise.resolve([]),
     config
       ? getDomainHealthHistory(
@@ -29,6 +30,7 @@ export default async function WarmupPage() {
           config.sending_email.split("@")[1] ?? "",
         )
       : Promise.resolve(null),
+    config ? getTotalSentCount(user.tenantId) : Promise.resolve(0),
   ]);
 
   return (
@@ -37,6 +39,7 @@ export default async function WarmupPage() {
       recentLog={recentLog}
       healthHistory={healthHistory}
       latestHealth={latestHealth}
+      totalSent={totalSent}
     />
   );
 }

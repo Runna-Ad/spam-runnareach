@@ -36,6 +36,7 @@ type Props = {
   recentLog: WarmupLogEntry[];
   healthHistory: DomainHealth[];
   latestHealth: DomainHealth | null;
+  totalSent: number;
 };
 
 // ── Reputation badge ──────────────────────────────────────────────────────────
@@ -142,6 +143,7 @@ export function WarmupDashboard({
   recentLog,
   healthHistory: _healthHistory,
   latestHealth,
+  totalSent,
 }: Props) {
   const [isPending, startTransition] = React.useTransition();
   const [message, setMessage] = React.useState<string | null>(null);
@@ -155,16 +157,16 @@ export function WarmupDashboard({
     : [];
 
   // Stats
-  const sentToday = config?.emails_sent_today ?? 0;
+  // Derive sentToday from log (always accurate — immune to counter race conditions
+  // and page-load timing vs cron-fire timing)
+  const todayUTC = new Date().toISOString().split("T")[0] ?? "";
+  const sentToday = recentLog.filter(
+    (l) =>
+      l.direction === "sent" &&
+      l.created_at.startsWith(todayUTC),
+  ).length;
   const targetToday = config ? getDailyTarget(config.current_day) : 5;
   const phase = config ? getRampPhase(config.current_day) : "—";
-
-  // Total sent this week from log
-  const weekAgo = Date.now() - 7 * 24 * 60 * 60 * 1000;
-  const sentThisWeek = recentLog.filter(
-    (l) =>
-      l.direction === "sent" && new Date(l.created_at).getTime() > weekAgo,
-  ).length;
 
   // Empty state
   if (!config) {
@@ -335,9 +337,9 @@ export function WarmupDashboard({
         <Card className="p-4">
           <div className="flex items-center gap-2 mb-1">
             <TrendingUp className="size-4 text-neutral-400" />
-            <span className="text-xs text-neutral-500">Sent this week</span>
+            <span className="text-xs text-neutral-500">Total sent</span>
           </div>
-          <p className="text-2xl font-bold">{sentThisWeek}</p>
+          <p className="text-2xl font-bold">{totalSent}</p>
         </Card>
         <Card className="p-4">
           <div className="flex items-center gap-2 mb-1">
