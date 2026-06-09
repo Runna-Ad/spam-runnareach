@@ -186,8 +186,9 @@ async function processConfig(config: WarmupConfig): Promise<EngineTickResult> {
         continue;
       }
 
-      // Small jitter (0–3s) to look organic
-      await new Promise((r) => setTimeout(r, Math.random() * 3000));
+      // Small jitter (0–1.5s) to look organic — was 3s but 20 sends × 3s avg
+      // was pushing close to the 120s maxDuration, causing last 2 sends to be cut off.
+      await new Promise((r) => setTimeout(r, Math.random() * 1500));
 
       const sendResult = await sendGmailMessage({
         accessToken: tokenResult.accessToken,
