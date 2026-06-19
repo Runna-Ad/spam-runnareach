@@ -22,6 +22,7 @@ import {
   updateWarmupConfigDay,
   resetDailyCount,
   incrementEmailsSentToday,
+  getSentTodayFromLog,
   getActiveBuddies,
   markBuddyUsed,
   getRandomTemplate,
@@ -147,7 +148,9 @@ async function processConfig(config: WarmupConfig): Promise<EngineTickResult> {
     }
 
     // ── Step 4: Compute how many to send this tick
-    const dayPlan = computeDayPlan({ ...config });
+    // Use log-derived count as the source of truth — immune to counter race conditions.
+    const sentTodayFromLog = await getSentTodayFromLog(config.id);
+    const dayPlan = computeDayPlan({ ...config, emails_sent_today: sentTodayFromLog });
     if (!dayPlan.shouldSend) {
       result.skipped_reason = `Daily target (${dayPlan.targetForToday}) already reached`;
       return result;

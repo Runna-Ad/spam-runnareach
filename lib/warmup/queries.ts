@@ -164,6 +164,18 @@ export async function getRecentLog(tenantId: string, limit = 50): Promise<Warmup
   return (data as WarmupLogEntry[]) ?? [];
 }
 
+export async function getSentTodayFromLog(configId: string): Promise<number> {
+  const supabase = createServiceRoleClient() as AnySupabase;
+  const todayUTC = new Date().toISOString().split("T")[0];
+  const { count } = await supabase
+    .from("warmup_log")
+    .select("*", { count: "exact", head: true })
+    .eq("config_id", configId)
+    .eq("direction", "sent")
+    .gte("created_at", `${todayUTC}T00:00:00Z`);
+  return count ?? 0;
+}
+
 export async function getTotalSentCount(tenantId: string): Promise<number> {
   const supabase = createServiceRoleClient() as AnySupabase;
   const { count } = await supabase
