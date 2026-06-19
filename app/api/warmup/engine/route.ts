@@ -78,6 +78,11 @@ async function getSendingInbox(
 // ── Engine tick for a single config ───────────────────────────────────────────
 
 async function processConfig(config: WarmupConfig): Promise<EngineTickResult> {
+  const tickStart = Date.now();
+  // Reserve 5s per remaining send + 5s buffer. Prevents IMAP checks from
+  // eating into the send window when daily target scales up to 50/day.
+  const sendDeadlineMs = (target: number) => tickStart + 115_000 - target * 5_000;
+
   const result: EngineTickResult = {
     config_id: config.id,
     sending_email: config.sending_email,
@@ -164,10 +169,16 @@ async function processConfig(config: WarmupConfig): Promise<EngineTickResult> {
     // ── Step 6: Send all remaining emails for today in one tick
     // (Cron fires once/day on Hobby tier — no burst risk, send the full daily target)
     const sendThisTick = dayPlan.remainingToday;
+    const deadline = sendDeadlineMs(sendThisTick);
     let buddyIndex = config.last_buddy_index;
 
     for (let i = 0; i < sendThisTick; i++) {
       if (buddies.length === 0) break;
+      // Stop if we're approaching the maxDuration ceiling
+      if (Date.now() > deadline) {
+        console.warn(`[warmup/engine] Send deadline reached after ${result.sent}/${sendThisTick} sends`);
+        break;
+      }
 
       buddyIndex = pickNextBuddyIndex(buddyIndex, buddies.length);
       const buddy = buddies[buddyIndex];
@@ -186,9 +197,8 @@ async function processConfig(config: WarmupConfig): Promise<EngineTickResult> {
         continue;
       }
 
-      // Small jitter (0–1.5s) to look organic — was 3s but 20 sends × 3s avg
-      // was pushing close to the 120s maxDuration, causing last 2 sends to be cut off.
-      await new Promise((r) => setTimeout(r, Math.random() * 1500));
+      // Jitter 0–500ms — enough to look organic, small enough to fit 50 sends in budget.
+      await new Promise((r) => setTimeout(r, Math.random() * 500));
 
       const sendResult = await sendGmailMessage({
         accessToken: tokenResult.accessToken,
