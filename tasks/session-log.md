@@ -480,3 +480,7 @@ and day boundaries. Newest entries at the bottom.
 
 - sender_inboxes.sends_today never reset (incremented in 3 places, no reset; last_reset_date column existed since 0001 but was unwired). Yesterday's count carried over.
 - New pure helper lib/pitches/daily-cap.ts (effectiveSendsToday + bumpSendsTodayPayload); wired into display query + manual send + drip cron + follow-up cron. Self-healing at UTC day boundary, no migration, no reset cron. Verified: panel shows 0/30.
+
+## 2026-06-23 (cont.) — fix pitch truncation (max_tokens)
+
+- generatePitch fell back to heuristic with "Unterminated string in JSON" — composer Stage-2 call was max_tokens:600, and the richer capability/CTA prompt pushed body+reasoning past it → truncated JSON. Raised to 1200 + 35s timeout. Verified live.

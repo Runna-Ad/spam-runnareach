@@ -4,6 +4,15 @@ Running log of mistakes, root causes, and rules to prevent recurrence. Newest at
 
 ---
 
+[2026-06-23] LESSON: pitch fell back to heuristic — "Unterminated string in JSON" — Claude's output was TRUNCATED at max_tokens
+SYMPTOM (Pedro, Wildcard Fitness): "Draft pitch ready (self-score 35%, heuristic). ... parse: JSON parse failed: Unterminated string in JSON at position 2165". The raw response was a valid-looking ```json {...} that just stopped mid-string.
+ROOT CAUSE: the Stage-2 composer call (lib/pitches/claude-composer.ts) had `max_tokens: 600`. Position ~2165 chars ≈ 600 tokens — the model hit the output cap and the JSON string was cut off before its closing quote → JSON.parse throws "Unterminated string" → structuredCall returns reason:"parse" → generatePitch falls back to the industry template. The earlier capability/CTA prompt work made the email body + the reasoning field longer, so 600 tokens (fine before) now overflows intermittently — depends on how verbose Claude is for a given prospect (Wildcard hit it, others didn't).
+FIX: raised max_tokens 600 → 1200 (body ≤2000 chars + preview + reasoning ≤800 + CTA easily exceed 600 tokens) and added timeoutMs: 35_000 to the composer call (a larger response takes longer; the 20s default risked a timeout→heuristic fallback). Both stay well under the 60s app/** Vercel budget. Verified live: rewrite composed a clean 1201-char body, ends cleanly, 👉 intact.
+RULE: when an LLM returns JSON, max_tokens must comfortably exceed the WORST-CASE serialized size of ALL fields (sum the schema's string maxes), not the typical case — an under-cap is a silent, intermittent truncation that looks like a parse bug. Re-check max_tokens whenever you make a structured-output prompt produce longer fields. Pair a bigger max_tokens with a bigger timeout (more tokens = more wall-clock).
+TAGS: #lesson #pitches #claude #max-tokens #json #truncation #fallback
+
+---
+
 [2026-06-23] LESSON: the pitch daily-send counter never reset — yesterday's sends carried over forever
 SYMPTOM (Pedro): "sent 3 yesterday, the send panel still shows 3/30 today — shouldn't it reset?"
 ROOT CAUSE: `sender_inboxes.sends_today` is incremented on every send in THREE places (lib/pitches/send-action.ts manual send, app/api/pitches/send-queue drip cron, app/api/pitches/follow-up cron) but was NEVER reset. The table has had a `last_reset_date` column since migration 0001 — clearly intended for a daily reset — but nothing ever read or wrote it. So the counter just accumulated since inbox creation.

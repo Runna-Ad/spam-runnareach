@@ -142,7 +142,15 @@ export async function composePitchWithClaude(
     model: ANTHROPIC_DEFAULT_MODEL,
     system,
     user,
-    max_tokens: 600,
+    // 1200 (was 600): the JSON carries body (≤2000 chars) + preview + a reasoning
+    // field (≤800) + the conversational CTA, so 600 truncated the string mid-body
+    // ("Unterminated string in JSON") and forced the heuristic fallback. Headroom
+    // here is cheap; an under-cap is a hard parse failure.
+    max_tokens: 1200,
+    // A larger response takes longer to generate — give it more than the 20s
+    // default so a slow generation doesn't time out into the heuristic. Stays
+    // well under the 60s Vercel function budget (this is the only Sonnet call).
+    timeoutMs: 35_000,
     schema: responseSchema,
   });
 
