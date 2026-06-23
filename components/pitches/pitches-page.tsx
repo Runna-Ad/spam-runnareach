@@ -698,22 +698,24 @@ function EmailBodyPreview({ body }: { body: string }) {
 
         if (trimmed.startsWith("👉")) {
           const withoutEmoji = trimmed.replace(/^👉\s*/, "");
-          const urlMatch = withoutEmoji.match(/https?:\/\/\S+$/);
-          const url = urlMatch ? urlMatch[0] : null;
-          const description = url
-            ? withoutEmoji.replace(url, "").replace(/[:\s—–-]+$/, "").trim()
-            : withoutEmoji;
+          // URL can sit mid-sentence now — match anywhere, strip trailing punctuation.
+          const rawMatch = withoutEmoji.match(/https?:\/\/\S+/);
+          const rawUrl = rawMatch ? rawMatch[0] : null;
+          const url = rawUrl ? rawUrl.replace(/[.,;:!?)\]]+$/, "") : null;
 
-          if (url) {
-            const buttonText = deriveButtonLabel(description);
+          if (rawUrl && url) {
+            const [beforeRaw = "", afterRaw = ""] = withoutEmoji.split(rawUrl);
+            const before = beforeRaw.replace(/[:\s—–-]+$/, "").trim();
+            const after = afterRaw.replace(/^[.,:\s—–-]+/, "").trim();
+            const buttonText = deriveButtonLabel(before || after);
             return (
               <React.Fragment key={i}>
-                {description ? (
+                {before ? (
                   <p style={{ margin: "16px 0 8px 0", fontSize: 13, color: "#1a1a1a" }}>
-                    {description}
+                    {before}
                   </p>
                 ) : null}
-                <p style={{ margin: "8px 0 16px 0" }}>
+                <p style={{ margin: "8px 0", fontSize: 13 }}>
                   <a
                     href={url}
                     target="_blank"
@@ -721,7 +723,7 @@ function EmailBodyPreview({ body }: { body: string }) {
                     style={{
                       display: "inline-block",
                       padding: "11px 22px",
-                      backgroundColor: "#18181b",
+                      backgroundColor: "#775cbf",
                       color: "#ffffff",
                       textDecoration: "none",
                       borderRadius: 6,
@@ -733,6 +735,11 @@ function EmailBodyPreview({ body }: { body: string }) {
                     {buttonText}
                   </a>
                 </p>
+                {after ? (
+                  <p style={{ margin: "8px 0 16px 0", fontSize: 13, color: "#1a1a1a", lineHeight: 1.6 }}>
+                    {after}
+                  </p>
+                ) : null}
               </React.Fragment>
             );
           }
@@ -771,12 +778,15 @@ function deriveButtonLabel(description: string): string {
   ) {
     return "Ver diagnóstico gratis →";
   }
+  if (lower.includes("see for yourself") || lower.includes("the data") || lower.includes("free tool") || lower.includes("free platform")) {
+    return "See it for yourself →";
+  }
   if (lower.includes("audit") || lower.includes("leak") || lower.includes("losing")) {
-    return "Run free audit →";
+    return "Run my free audit →";
   }
   if (lower.includes("number") || lower.includes("revenue")) {
     return "See your store's number →";
   }
-  return "Run free audit →";
+  return "Run my free audit →";
 }
 

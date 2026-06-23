@@ -429,3 +429,49 @@ and day boundaries. Newest entries at the bottom.
 - `forced_angle` on GeneratorInputs; composer bypasses Stage-1 case pick + injects a REWRITE DIRECTIVE.
 - Composer system prompt: injects RUNNA_CAPABILITIES + PROOF POLICY — capability-first, case studies optional/never forced, no fabricated specifics.
 - Verified live: pitch rewrote booking→AI-automation angle, no forced case. tsc/lint/build/155 tests green.
+
+## 2026-06-23 13:28
+**Shipped (recent commits):**
+  - feat(pitches): angle advisor rewrites pitches; composer leads with capability
+  - fix(ci): remove unused var in screenshot script + stale eslint-disable
+  - docs(session-log): log 2026-06-23 learning-loop + Gary + Phase 2a session
+  - feat(learning): advisory layer + Gary ICP wizard + Phase 2a outcome dashboard
+
+**Still open:**
+- [ ] Supabase: ANON + SERVICE_ROLE keys live (connection works — Phase 0 unblocked)
+- [ ] Anthropic API key + $100/mo limit
+- [ ] Google Cloud (Places API + Gmail API + OAuth consent + OAuth client + restricted Places key)
+- [ ] Name sender #1 Runna CA principal + buy both domains + add runnareach.com to Rünna Workspace + DNS (SPF/DKIM/DMARC)
+- [ ] Postmark or SES account
+- [ ] Cal.com account
+- [ ] Slack hot-lead webhook URL
+- [ ] CRON_SECRET + TOKEN_ENCRYPTION_KEY (`openssl rand -hex 32`)
+- [ ] ⏳ #7 Analytics — pitch funnel metrics, cost tracking, Claude vs template breakdown
+- [ ] ⏳ #7 Analytics — pitch funnel metrics, cost tracking, Claude vs template breakdown
+
+
+## 2026-06-23 14:09
+**Shipped (recent commits):**
+  - feat(pitches): angle advisor rewrites pitches; composer leads with capability
+  - fix(ci): remove unused var in screenshot script + stale eslint-disable
+  - docs(session-log): log 2026-06-23 learning-loop + Gary + Phase 2a session
+  - feat(learning): advisory layer + Gary ICP wizard + Phase 2a outcome dashboard
+
+**Still open:**
+- [ ] Supabase: ANON + SERVICE_ROLE keys live (connection works — Phase 0 unblocked)
+- [ ] Anthropic API key + $100/mo limit
+- [ ] Google Cloud (Places API + Gmail API + OAuth consent + OAuth client + restricted Places key)
+- [ ] Name sender #1 Runna CA principal + buy both domains + add runnareach.com to Rünna Workspace + DNS (SPF/DKIM/DMARC)
+- [ ] Postmark or SES account
+- [ ] Cal.com account
+- [ ] Slack hot-lead webhook URL
+- [ ] CRON_SECRET + TOKEN_ENCRYPTION_KEY (`openssl rand -hex 32`)
+- [ ] ⏳ #7 Analytics — pitch funnel metrics, cost tracking, Claude vs template breakdown
+- [ ] ⏳ #7 Analytics — pitch funnel metrics, cost tracking, Claude vs template breakdown
+
+
+## 2026-06-23 (cont.) — CTA rework: "it's the data, not me" + button-render fix
+
+- Composer CTA voice rules (EN+ES) rewritten: free self-serve platform, "don't take my word for it, take the data's", see for yourself, no strings, reach out only after if they want. Tailored to each email's pain; varied openings (philosophy + directions, not copy-paste examples).
+- Fixed the 👉→button parser in BOTH renderers (lib/gmail/client.ts buildHtmlBody + pitches-page EmailBodyPreview): URL was end-anchored, broke when CTA went conversational. Now matches URL anywhere, splits into lead-in → button → closer. Brand purple button, "See it for yourself →" label.
+- Verified live (local): button renders, copy flows around it. tsc/lint/build/155 tests green.

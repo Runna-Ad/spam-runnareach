@@ -200,17 +200,24 @@ function buildHtmlBody(plainText: string): string {
     // CTA line — render as button
     if (trimmed.startsWith("👉")) {
       const withoutEmoji = trimmed.replace(/^👉\s*/, "");
-      // Extract the URL (last token that starts with http)
-      const urlMatch = withoutEmoji.match(/https?:\/\/\S+$/);
-      const url = urlMatch ? urlMatch[0] : null;
-      const descriptionText = url ? withoutEmoji.replace(url, "").replace(/[:\s—–-]+$/, "").trim() : withoutEmoji;
+      // Extract the URL from ANYWHERE in the line (the CTA is now conversational,
+      // so the link sits mid-sentence with text after it). Strip trailing
+      // sentence punctuation that the greedy \S+ match swallows (e.g. the period
+      // after "...?market=ca.").
+      const rawMatch = withoutEmoji.match(/https?:\/\/\S+/);
+      const rawUrl = rawMatch ? rawMatch[0] : null;
+      const url = rawUrl ? rawUrl.replace(/[.,;:!?)\]]+$/, "") : null;
 
-      if (url) {
-        // Button text: use a short action phrase
-        const buttonText = deriveButtonText(descriptionText);
-        // Render: description text above (if any), then button
-        if (descriptionText) {
-          htmlLines.push(`<p style="margin: 16px 0 8px;">${escapeHtml(descriptionText)}</p>`);
+      if (rawUrl && url) {
+        // Split the line into lead-in (before the link) and closer (after it),
+        // so it renders: description → button → "reach out / no harm" closer.
+        const [beforeRaw = "", afterRaw = ""] = withoutEmoji.split(rawUrl);
+        const before = beforeRaw.replace(/[:\s—–-]+$/, "").trim();
+        const after = afterRaw.replace(/^[.,:\s—–-]+/, "").trim();
+        const buttonText = deriveButtonText(before || after);
+
+        if (before) {
+          htmlLines.push(`<p style="margin: 16px 0 8px;">${escapeHtml(before)}</p>`);
         }
         // Wrap the label in a <span> with its own color. Apple Mail (and some
         // dark-mode clients) override the text color on an <a> with their accent
@@ -227,6 +234,11 @@ function buildHtmlBody(plainText: string): string {
           `${escapeHtml(buttonText)}` +
           `</span></a></p>`,
         );
+        // The closing line (e.g. "See something worth fixing? Reach out. If not,
+        // no harm done.") renders under the button — keeps the low-pressure ask visible.
+        if (after) {
+          htmlLines.push(`<p style="margin: 8px 0 0; line-height: 1.6;">${escapeHtml(after)}</p>`);
+        }
       } else {
         // No URL found — render as plain line
         htmlLines.push(`<p style="margin: 8px 0;">${escapeHtml(withoutEmoji)}</p>`);
@@ -266,15 +278,18 @@ function deriveButtonText(description: string): string {
   if (lower.includes("fugas") || lower.includes("pierde") || lower.includes("número")) {
     return "Ver diagnóstico gratis →";
   }
-  // English
+  // English — lean into the self-serve "see for yourself, it's the data" framing.
+  if (lower.includes("see for yourself") || lower.includes("the data") || lower.includes("free tool") || lower.includes("free platform")) {
+    return "See it for yourself →";
+  }
   if (lower.includes("audit") || lower.includes("leak") || lower.includes("losing")) {
-    return "Run free audit →";
+    return "Run my free audit →";
   }
   if (lower.includes("number") || lower.includes("revenue")) {
     return "See your store's number →";
   }
   // Fallback
-  return "Run free audit →";
+  return "Run my free audit →";
 }
 
 function escapeHtml(text: string): string {

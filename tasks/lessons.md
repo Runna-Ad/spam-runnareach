@@ -4,6 +4,24 @@ Running log of mistakes, root causes, and rules to prevent recurrence. Newest at
 
 ---
 
+[2026-06-23] LESSON: changing the CTA copy broke the email button — the 👉→button parser assumed the URL was at the END of the line
+SYMPTOM (Pedro): after the new conversational CTA shipped, the email button disappeared and showed a raw URL instead.
+ROOT CAUSE: both CTA renderers — `buildHtmlBody` (lib/gmail/client.ts, the SENT email) and `EmailBodyPreview` (components/pitches/pitches-page.tsx, the on-screen preview) — extracted the link with an END-ANCHORED regex `/https?:\/\/\S+$/`. The old CTA put the URL last ("...audit, no signup: {url}"). The new conversational CTA puts the URL MID-sentence with text after it ("...no strings: {url}. See something worth fixing? Reach out..."), so the `$` match failed → no URL → fell through to rendering the raw line.
+FIX: match the URL ANYWHERE (`/https?:\/\/\S+/`), strip trailing sentence punctuation the greedy `\S+` swallows (the "." after "?market=ca"), then SPLIT the line at the URL into before/after and render: lead-in <p> → button → closer <p> (the "reach out / no harm done" line now sits under the button — nicer layout). Applied to BOTH renderers + synced the button-label helper (deriveButtonText / deriveButtonLabel) and the preview button colour to brand purple #775cbf.
+RULE: when you change a copy/prompt FORMAT, grep for every downstream parser that relied on the old shape. A 👉/URL→button convention had TWO implementations (sent email + preview) that must stay in sync — a format assumption (URL-at-end) silently breaks rendering when the copy evolves. Prefer "extract from anywhere + split" over end-anchored matches for human-authored lines.
+TAGS: #lesson #pitches #cta #email #html #parser #gmail #preview
+
+---
+
+[2026-06-23] LESSON: every pitch ended with the SAME CTA line — LLM was copying the first example format verbatim
+SYMPTOM (Pedro): every email closed with "See exactly where {company} is losing revenue, free 30-second audit, no signup" — identical, salesy, generic. He wanted it low-pressure + self-serve ("don't sell fluff — run the audit yourself, see for yourself, reach out only if you want, no harm done") AND tailored to what each specific pitch is about.
+ROOT CAUSE: the CTA section of claude-composer.ts gave 2-3 concrete "use a format like" examples. The model anchored hard on example #1 and reproduced it nearly verbatim every time — example formats in a prompt become de-facto templates.
+FIX: replaced the example formats with (1) a PHILOSOPHY (low-pressure, self-serve, "run it yourself and see", reply only if useful, no harm if not), (2) a mandate to WRITE FRESH and tailor the CTA to THE SPECIFIC PAIN this email leads with (so it varies by angle), (3) tone DIRECTIONS explicitly labelled "show the vibe, do NOT copy verbatim", and (4) an explicit "vary the OPENING — don't start every CTA the same way" nudge. Kept the mandatory leading 👉 (it's the marker lib/gmail/client.ts uses to render the CTA as the HTML email button — do NOT remove it). Applied to both EN + ES voice rules. Verified live: two rewrites produced different openings + pain-specific bodies.
+RULE: To get VARIED LLM copy, give philosophy + constraints + explicitly-labelled "directions", never concrete "use a format like X" examples — the model treats examples as templates and reproduces them. If a fixed token must stay for downstream parsing (like 👉 for the email-button renderer), say so in the prompt so creativity doesn't drop it.
+TAGS: #lesson #pitches #cta #llm-prompting #variety #claude
+
+---
+
 [2026-06-23] BUILD: Pitch angle advisor → POST-generation rewrite tool + composer formula fixed (capability-led, cases not forced)
 PEDRO'S DIRECTION: (1) the angle advisor was pre-generation + purely informational (did nothing) — it should fire AFTER the pitch exists, suggest angles, and on click REWRITE the pitch with the chosen angle. (2) Fix the generate-pitch formula to lead with Runna's strengths (AI, design, dashboards, automation, video) and stop forcing success cases.
 BUILT:

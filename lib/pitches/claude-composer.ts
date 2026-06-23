@@ -392,7 +392,7 @@ REQUIRED EMAIL STRUCTURE — follow this exactly, no additions, no reordering:
    - You MAY use the client's industry word (e.g. "fitness studio") and any descriptor
      that literally appears in result_description (e.g. "in a saturated market"), nothing more.
    - When in doubt, just write "Did this for {client}, {metric}." with no extra framing.
-6. CTA — Inefficiency Hunter link (see voice rules for exact wording)
+6. CTA — the Inefficiency Hunter: low-pressure, self-serve, written FRESH and tailored to THIS email's pain (see voice rules — "run it yourself and see, reach out only if you want")
 7. Sign off: sender's first name, then full signature on the next line
 
 Quality bar: a prospect should read line 3 and think "that's exactly my problem and that's
@@ -505,13 +505,24 @@ ${register}
 - Plain text only. No markdown, no links other than what we provide.
 - FORBIDDEN words: "abandonment", "funnel", "lead", "Meta Pixel", "WooCommerce",
   "Shopify", "retention automation", "default setup", any English anglicism.
-- CTA: link to the Inefficiency Hunter — diagnóstico gratis de 30 segundos, sin registro.
-  Use the hunter_url from the payload. The CTA must explain what the tool IS — don't just drop a link.
-  Use a format like:
-  "👉 Revisa gratis en qué le está costando dinero a {company} — 30 segundos, sin datos: {hunter_url}"
-  or "👉 Auditoría gratis de {company} (30 segundos, sin compromiso): {hunter_url}"
-  or "👉 ¿Quieres ver dónde están las fugas? Diagnóstico gratuito: {hunter_url}"
-  Always place the 👉 emoji before the CTA sentence. No video, no call ask, no commitment language.
+- CTA — el Inefficiency Hunter (hunter_url): diagnóstico gratis de ~30 segundos, sin registro.
+  FILOSOFÍA (este ES el mensaje — que quede clarísimo): el Inefficiency Hunter es una plataforma
+  GRATIS donde ELLOS auditan su PROPIA empresa y ven por sí mismos dónde está fallando o se puede
+  mejorar. Lo clave: la credibilidad viene de LOS DATOS, no de nosotros — no somos nosotros quienes lo
+  afirmamos, los números se lo muestran. Sin compromiso, sin registro, no es una llamada de ventas.
+  Primero lo ven con sus propios ojos; solo si quieren hablar después, nos contactan — y cero presión
+  si no. Seguro y generoso, nunca de vendedor.
+  ESCRIBE el CTA FRESCO CADA VEZ, ajustado al dolor/ángulo ESPECÍFICO de ESTE correo — nunca una línea
+  de plantilla. Debe transmitir TODO: (1) es una plataforma GRATIS que corren sobre su PROPIA empresa;
+  (2) van a VER por sí mismos, en los datos, dónde [el dolor de este correo] les está costando; (3) no
+  es que lo digamos nosotros — lo dicen los números; (4) sin compromiso, sin registro, ~30 segundos;
+  (5) incluir {hunter_url}; (6) que nos contacten DESPUÉS solo si quieren — si no, no pasa nada.
+  Direcciones de tono (NO copiar textual — muestran la VIBRA, varíala siempre):
+    "No me creas a mí, créele a los datos: corre {company} en nuestra herramienta gratis y mira tú mismo dónde [el dolor] te está costando. 30 segundos, sin registro, sin compromiso: {hunter_url}. ¿Ves algo que arreglar? Escríbeme. ¿No? No pasa nada."
+    "Prefiero que te lo muestren los números a decírtelo yo: {hunter_url} revisa gratis [el dolor] de {company} en unos 30 segundos, sin registro. Velo con tus propios ojos; si quieres hablar después, aquí estoy."
+  Varía sobre todo la ENTRADA — no empieces todos los CTA igual. Encuentra una forma fresca que vaya
+  con este correo, manteniendo el mensaje "lo dicen los datos, no yo; compruébalo tú mismo; gratis; sin compromiso".
+  Empieza siempre la línea del CTA con 👉 (se convierte en el botón del correo). Sin video, sin llamada, sin registro.
 - Salutation: "Hola {nombre}," — if no first name, use "Hola equipo de {empresa},"
   NEVER use "Hola there," — critical failure. If no name at all, use "Hola," alone.
 - One-liner intro (required, step 2 of structure):
@@ -531,13 +542,26 @@ Voice rules (Canadian market):
 - Use direct phrasing: "You're losing sales" not "There are conversion optimization opportunities".
 - Salutation: "Hi {first_name}," — if no first name is available, use "Hi {company} team,"
   NEVER use "Hi there," — it's impersonal and reads as a mass blast.
-- CTA: link to the Inefficiency Hunter — a free 30-second store audit, no signup required.
-  Use the hunter_url from the payload. The CTA must explain what the tool IS — don't assume
-  they know what "your number" means. Use a format like:
-  "👉 See exactly where {company} is losing revenue — free 30-second audit, no signup: {hunter_url}"
-  or "👉 Run a free audit on {company}'s store (30 seconds, zero commitment): {hunter_url}"
-  or "👉 Curious what the leaks are? Free 30-second audit: {hunter_url}"
-  Always place the 👉 emoji before the CTA sentence. No Loom, no video offer, no call ask.
+- CTA — the Inefficiency Hunter (hunter_url): a free ~30-second self-serve audit, no signup.
+  PHILOSOPHY (this is THE message — make it unmistakable): the Inefficiency Hunter is a FREE platform
+  where THEY audit their OWN company and see for themselves where it's lacking or could be improved.
+  The whole point is that the credibility comes from THE DATA, not from us — we're not the ones making
+  the claim, the numbers show it to them. No strings attached, no signup, not a sales call. They look
+  with their own eyes first; only if they want to talk afterward do they reach out — and zero pressure
+  if they don't. Confident and generous, never salesy.
+  WRITE THE CTA FRESH EVERY TIME, tailored to the SPECIFIC pain/angle THIS email leads with — never a
+  stock line, never the same wording twice. It must land ALL of: (1) it's a FREE platform they run on
+  their OWN company; (2) they'll SEE for themselves, in the data, where [this email's pain] is costing
+  them (manual admin → "how much time it's quietly eating"; checkout → "where mobile shoppers drop
+  off"; ad spend → "which dollars aren't pulling weight"); (3) it's not us saying it — the numbers do;
+  (4) no strings, no signup, ~30 seconds; (5) include {hunter_url}; (6) reach out AFTER only if they
+  want to — no harm if not.
+  Tone directions (do NOT copy verbatim — these show the VIBE, vary it every time):
+    "Don't take my word for it, take the data's — run {company} through our free tool and see for yourself where [the pain] is costing you. 30 seconds, no signup, no strings: {hunter_url}. See something worth fixing? Reach out. If not, no harm done."
+    "I'd rather the numbers show you than me tell you: {hunter_url} is a free check of {company}'s own [pain], about 30 seconds, no signup. See it with your own eyes first; if you want to talk after, I'm here."
+  Vary the OPENING especially — do not begin every CTA the same way. Find a fresh way in that fits
+  this email's tone while keeping the "it's the data, not me; see for yourself; free; no strings" message.
+  Always start the CTA line with 👉 (it renders as the email's button). No Loom, no video, no call ask, no signup.
 - If the selected case study is a Canadian client (SnapPad, Niki, or DevFest Calgary),
   open the bridge with "We worked with {client}, a Canadian {category}..." — local proof lands harder.
 - Sign off: sender's first name on one line, agency name on the next line.`;
@@ -690,7 +714,9 @@ PERSONALIZATION INSTRUCTIONS — use these fields when present:
 - prospect.market → adapt agency positioning: if market="CA", lean on Canadian portfolio and "Canadian-first" framing; if market="MX", lean on MX portfolio and regional understanding.
 
 hunter_url is the Inefficiency Hunter link — use it as the primary CTA (per voice rules above).
-One line with 👉 emoji, placed after the case-study bridge (or solution if no case), before sign-off.
+Make it low-pressure + self-serve ("run it yourself and see, reply only if it's useful, no harm if
+not") and write it FRESH, tailored to the pain you led with — never a stock line. One line starting
+with 👉, placed after the proof line (or solution if no case), before sign-off.
 Do NOT add any other links or video offers.
 
 Set contact_email to the non-role-based named contact's email; otherwise best fallback; null if none.
