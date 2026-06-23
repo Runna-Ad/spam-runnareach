@@ -475,3 +475,8 @@ and day boundaries. Newest entries at the bottom.
 - Composer CTA voice rules (EN+ES) rewritten: free self-serve platform, "don't take my word for it, take the data's", see for yourself, no strings, reach out only after if they want. Tailored to each email's pain; varied openings (philosophy + directions, not copy-paste examples).
 - Fixed the 👉→button parser in BOTH renderers (lib/gmail/client.ts buildHtmlBody + pitches-page EmailBodyPreview): URL was end-anchored, broke when CTA went conversational. Now matches URL anywhere, splits into lead-in → button → closer. Brand purple button, "See it for yourself →" label.
 - Verified live (local): button renders, copy flows around it. tsc/lint/build/155 tests green.
+
+## 2026-06-23 (cont.) — Daily send-cap counter now resets
+
+- sender_inboxes.sends_today never reset (incremented in 3 places, no reset; last_reset_date column existed since 0001 but was unwired). Yesterday's count carried over.
+- New pure helper lib/pitches/daily-cap.ts (effectiveSendsToday + bumpSendsTodayPayload); wired into display query + manual send + drip cron + follow-up cron. Self-healing at UTC day boundary, no migration, no reset cron. Verified: panel shows 0/30.

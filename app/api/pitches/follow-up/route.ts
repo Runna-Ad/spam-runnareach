@@ -27,6 +27,7 @@ import {
   type FollowupContext,
 } from "@/lib/pitches/followup-templates";
 import { composeFollowupWithClaude } from "@/lib/pitches/followup-composer";
+import { bumpSendsTodayPayload, effectiveSendsToday } from "@/lib/pitches/daily-cap";
 import { ANTHROPIC_DEFAULT_MODEL, claudeIsAvailable } from "@/lib/anthropic/client";
 import { isUnderDailyCap, recordClaudeCall } from "@/lib/anthropic/cost-tracking";
 
@@ -83,6 +84,7 @@ type InboxRow = {
   gmail_refresh_token_encrypted: string | null;
   paused: boolean;
   sends_today: number;
+  last_reset_date: string | null;
   daily_cap: number;
 };
 
@@ -212,7 +214,7 @@ async function processFollowup(pitch: DuePitchRow): Promise<FollowupResult> {
 
   const { data: inbox } = await supabase
     .from("sender_inboxes")
-    .select("id, email, display_name, gmail_refresh_token_encrypted, paused, sends_today, daily_cap")
+    .select("id, email, display_name, gmail_refresh_token_encrypted, paused, sends_today, last_reset_date, daily_cap")
     .eq("id", pitch.sender_inbox_id)
     .maybeSingle<InboxRow>();
 
@@ -225,8 +227,9 @@ async function processFollowup(pitch: DuePitchRow): Promise<FollowupResult> {
   if (!inbox.gmail_refresh_token_encrypted) {
     return { pitch_id: pitch.id, prospect: prospect.company_name, step: nextStep, status: "skipped", reason: "Inbox not connected to Gmail" };
   }
-  if (inbox.sends_today >= inbox.daily_cap) {
-    return { pitch_id: pitch.id, prospect: prospect.company_name, step: nextStep, status: "skipped", reason: `Daily cap reached (${inbox.sends_today}/${inbox.daily_cap})` };
+  const sentToday = effectiveSendsToday(inbox.sends_today, inbox.last_reset_date);
+  if (sentToday >= inbox.daily_cap) {
+    return { pitch_id: pitch.id, prospect: prospect.company_name, step: nextStep, status: "skipped", reason: `Daily cap reached (${sentToday}/${inbox.daily_cap})` };
   }
 
   // ── 6. Get access token ───────────────────────────────────────────────────
@@ -363,10 +366,10 @@ async function processFollowup(pitch: DuePitchRow): Promise<FollowupResult> {
       .eq("id", pitch.id);
   }
 
-  // ── 11. Increment inbox sends_today ──────────────────────────────────────
+  // ── 11. Increment inbox sends_today (resets at the UTC day boundary) ──────
   await supabase
     .from("sender_inboxes")
-    .update({ sends_today: inbox.sends_today + 1 })
+    .update(bumpSendsTodayPayload(inbox.sends_today, inbox.last_reset_date))
     .eq("id", inbox.id);
 
   // ── 12. Audit log ─────────────────────────────────────────────────────────

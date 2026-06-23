@@ -13,6 +13,7 @@
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { writeAuditLog } from "@/lib/audit/log";
+import { bumpSendsTodayPayload, effectiveSendsToday } from "@/lib/pitches/daily-cap";
 import { requireUser } from "@/lib/auth";
 import { getAccessToken, sendGmailMessage } from "@/lib/gmail/client";
 import { createClient } from "@/lib/supabase/server";
@@ -83,13 +84,14 @@ export async function sendPitch(input: {
     display_name: string;
     daily_cap: number;
     sends_today: number;
+    last_reset_date: string | null;
     paused: boolean;
     gmail_refresh_token_encrypted: string | null;
   };
 
   const { data: inbox, error: inboxErr } = await supabase
     .from("sender_inboxes")
-    .select("id, email, display_name, daily_cap, sends_today, paused, gmail_refresh_token_encrypted")
+    .select("id, email, display_name, daily_cap, sends_today, last_reset_date, paused, gmail_refresh_token_encrypted")
     .eq("id", inbox_id)
     .eq("tenant_id", user.tenantId)
     .maybeSingle<InboxRow>();
@@ -99,10 +101,13 @@ export async function sendPitch(input: {
   if (!inbox.gmail_refresh_token_encrypted) {
     return { ok: false, error: "Inbox is not connected to Gmail. Connect it first in Settings → Sending." };
   }
-  if (inbox.sends_today >= inbox.daily_cap) {
+  // Daily cap resets at the UTC day boundary — a stale last_reset_date means
+  // yesterday's count no longer applies.
+  const sentToday = effectiveSendsToday(inbox.sends_today, inbox.last_reset_date);
+  if (sentToday >= inbox.daily_cap) {
     return {
       ok: false,
-      error: `Daily cap reached (${inbox.sends_today}/${inbox.daily_cap}). Try another inbox or wait until tomorrow.`,
+      error: `Daily cap reached (${sentToday}/${inbox.daily_cap}). Try another inbox or wait until tomorrow.`,
     };
   }
 
@@ -167,7 +172,7 @@ export async function sendPitch(input: {
 
   await supabase
     .from("sender_inboxes")
-    .update({ sends_today: inbox.sends_today + 1 })
+    .update(bumpSendsTodayPayload(inbox.sends_today, inbox.last_reset_date))
     .eq("id", inbox_id)
     .eq("tenant_id", user.tenantId);
 

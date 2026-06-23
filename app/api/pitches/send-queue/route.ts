@@ -14,6 +14,7 @@
 import { type NextRequest, NextResponse } from "next/server";
 import { createServiceRoleClient } from "@/lib/supabase/service-role";
 import { getAccessToken, sendGmailMessage } from "@/lib/gmail/client";
+import { effectiveSendsToday, utcToday } from "@/lib/pitches/daily-cap";
 
 // Conservative drip. The cron runs daily (Hobby-tier limit), so this is the
 // cold-email volume PER DAY: a queue of N pitches goes out ~SEND_PER_TICK/day,
@@ -100,20 +101,22 @@ export async function GET(req: NextRequest) {
       if (!inbox) {
         const { data: row } = await supabase
           .from("sender_inboxes")
-          .select("id, email, display_name, daily_cap, sends_today, paused, gmail_refresh_token_encrypted")
+          .select("id, email, display_name, daily_cap, sends_today, last_reset_date, paused, gmail_refresh_token_encrypted")
           .eq("id", pitch.sender_inbox_id)
           .maybeSingle();
         if (!row) {
           results.push({ pitch_id: pitch.id, status: "skipped", reason: "Inbox not found" });
           continue;
         }
+        // Daily cap resets at the UTC day boundary — ignore yesterday's count.
+        const sentToday = effectiveSendsToday(row.sends_today ?? 0, row.last_reset_date);
         inbox = {
           email: row.email,
           display_name: row.display_name,
           token: row.gmail_refresh_token_encrypted,
           paused: row.paused,
-          sends_today: row.sends_today ?? 0,
-          remaining: Math.max(0, (row.daily_cap ?? 0) - (row.sends_today ?? 0)),
+          sends_today: sentToday,
+          remaining: Math.max(0, (row.daily_cap ?? 0) - sentToday),
         };
         inboxCache.set(pitch.sender_inbox_id, inbox);
       }
@@ -214,7 +217,7 @@ export async function GET(req: NextRequest) {
       inbox.remaining -= 1;
       await supabase
         .from("sender_inboxes")
-        .update({ sends_today: inbox.sends_today })
+        .update({ sends_today: inbox.sends_today, last_reset_date: utcToday() })
         .eq("id", pitch.sender_inbox_id);
 
       sentThisTick += 1;

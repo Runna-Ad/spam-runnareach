@@ -1,4 +1,5 @@
 import { createClient } from "@/lib/supabase/server";
+import { effectiveSendsToday } from "@/lib/pitches/daily-cap";
 
 export type WarmingStage = "not_started" | "warming" | "warm" | "paused" | "blocked";
 
@@ -45,6 +46,7 @@ export async function listSenderInboxes(tenantId: string): Promise<SenderInbox[]
     paused: boolean;
     paused_reason: string | null;
     gmail_refresh_token_encrypted: string | null;
+    last_reset_date: string | null;
     created_at: string;
     brand_instances: { display_name: string } | null;
     users: { full_name: string | null } | null;
@@ -56,7 +58,7 @@ export async function listSenderInboxes(tenantId: string): Promise<SenderInbox[]
       `
       id, tenant_id, brand_instance_id, user_id, email, display_name, linkedin_url,
       warming_stage, daily_cap, sends_today, paused, paused_reason,
-      gmail_refresh_token_encrypted, created_at,
+      gmail_refresh_token_encrypted, last_reset_date, created_at,
       brand_instances(display_name),
       users(full_name)
     `,
@@ -80,7 +82,8 @@ export async function listSenderInboxes(tenantId: string): Promise<SenderInbox[]
     linkedin_url: r.linkedin_url,
     warming_stage: r.warming_stage,
     daily_cap: r.daily_cap,
-    sends_today: r.sends_today,
+    // Reset daily: stored counter only counts if stamped today (UTC).
+    sends_today: effectiveSendsToday(r.sends_today, r.last_reset_date),
     paused: r.paused,
     paused_reason: r.paused_reason,
     gmail_connected: Boolean(r.gmail_refresh_token_encrypted),

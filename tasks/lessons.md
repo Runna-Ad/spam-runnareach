@@ -4,6 +4,16 @@ Running log of mistakes, root causes, and rules to prevent recurrence. Newest at
 
 ---
 
+[2026-06-23] LESSON: the pitch daily-send counter never reset — yesterday's sends carried over forever
+SYMPTOM (Pedro): "sent 3 yesterday, the send panel still shows 3/30 today — shouldn't it reset?"
+ROOT CAUSE: `sender_inboxes.sends_today` is incremented on every send in THREE places (lib/pitches/send-action.ts manual send, app/api/pitches/send-queue drip cron, app/api/pitches/follow-up cron) but was NEVER reset. The table has had a `last_reset_date` column since migration 0001 — clearly intended for a daily reset — but nothing ever read or wrote it. So the counter just accumulated since inbox creation.
+FIX (no migration, no reset cron — self-healing): new pure helper lib/pitches/daily-cap.ts — `effectiveSendsToday(sends_today, last_reset_date)` returns 0 when last_reset_date isn't today (UTC, matching the send crons), and `bumpSendsTodayPayload(...)` returns {sends_today: effective+1, last_reset_date: today, last_send_at: now}. Wired into all FOUR sites: the display query (lib/settings/sending-queries.ts listSenderInboxes), the manual send cap+increment, the drip cron, and the follow-up cron. The stale DB row self-corrects on the first read/send of a new day — no backfill needed. Verified live: panel now shows 0/30.
+WHY UTC: the send crons in vercel.json run on UTC, so the day boundary matches them. (Trade-off: resets ~6pm local for MX/CA — acceptable and consistent; revisit if Pedro wants local-midnight.)
+RULE: any "X today" counter MUST ship with its reset logic in the same change — a bare incrementing counter with no reset is a latent bug that only surfaces on day 2. Prefer self-healing (date-stamped effective count) over a reset cron (which can misfire). If a `last_reset_date`-style column already exists, it's a signal the reset was designed but never wired — wire it. And: N separate increment sites must share ONE reset helper or they drift.
+TAGS: #lesson #pitches #sending #daily-cap #counter #reset #warmup
+
+---
+
 [2026-06-23] LESSON: changing the CTA copy broke the email button — the 👉→button parser assumed the URL was at the END of the line
 SYMPTOM (Pedro): after the new conversational CTA shipped, the email button disappeared and showed a raw URL instead.
 ROOT CAUSE: both CTA renderers — `buildHtmlBody` (lib/gmail/client.ts, the SENT email) and `EmailBodyPreview` (components/pitches/pitches-page.tsx, the on-screen preview) — extracted the link with an END-ANCHORED regex `/https?:\/\/\S+$/`. The old CTA put the URL last ("...audit, no signup: {url}"). The new conversational CTA puts the URL MID-sentence with text after it ("...no strings: {url}. See something worth fixing? Reach out..."), so the `$` match failed → no URL → fell through to rendering the raw line.
