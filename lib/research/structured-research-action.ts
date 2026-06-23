@@ -7,6 +7,7 @@ import { isUnderDailyCap, recordClaudeCall } from "@/lib/anthropic/cost-tracking
 import { writeAuditLog } from "@/lib/audit/log";
 import { requireUser } from "@/lib/auth";
 import { createClient } from "@/lib/supabase/server";
+import { isRoleBasedEmail } from "@/lib/research/email-utils";
 import type { Database } from "@/lib/supabase/types";
 import { runResearchWithClaude } from "./claude-research";
 
@@ -382,28 +383,6 @@ function pickDecisionMakerEmail(notes: string): string | null {
 
   const nonRole = candidates.find((c) => !isRoleBasedEmail(c));
   return nonRole ?? candidates[0] ?? null;
-}
-
-function isRoleBasedEmail(email: string): boolean {
-  const local = email.split("@")[0];
-  if (!local) return true;
-  const lower = local.toLowerCase();
-  return [
-    "info",
-    "hello",
-    "contact",
-    "sales",
-    "support",
-    "admin",
-    "team",
-    "office",
-    "hi",
-    "hey",
-    "marketing",
-    "press",
-    "media",
-    "billing",
-  ].includes(lower);
 }
 
 function normalizePainPoints(raw: unknown): PainPoint[] {

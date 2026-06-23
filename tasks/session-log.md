@@ -484,3 +484,7 @@ and day boundaries. Newest entries at the bottom.
 ## 2026-06-23 (cont.) — fix pitch truncation (max_tokens)
 
 - generatePitch fell back to heuristic with "Unterminated string in JSON" — composer Stage-2 call was max_tokens:600, and the richer capability/CTA prompt pushed body+reasoning past it → truncated JSON. Raised to 1200 + 35s timeout. Verified live.
+
+## 2026-06-23 (cont.) — role-based contact detection fixed everywhere
+
+- info@-style contacts weren't flagged email_is_role_based → composer skipped the "please forward" line. Insert paths (enrich-contacts Anymail/Hunter/SnapVerify/catch-all, pipeline SnapVerify, manual add) hardcoded false. Now all call the canonical isRoleBasedEmail (broadened: +EN, +ES ventas/contacto/etc, +separator forms) and rank role inboxes at priority 5. Removed duplicate detector in structured-research-action. Safety net: generatePitch + rewrite re-derive role-based from the email so existing stale rows self-heal. Verified.

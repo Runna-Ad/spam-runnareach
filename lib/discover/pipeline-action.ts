@@ -26,6 +26,7 @@ import { writeAuditLog } from "@/lib/audit/log";
 import { requireUser } from "@/lib/auth";
 import { createClient } from "@/lib/supabase/server";
 import { snapVerifyEnrich } from "@/lib/research/snap-contact";
+import { isRoleBasedEmail } from "@/lib/research/email-utils";
 import { enrichContactsForProspect } from "@/lib/discover/enrich-contacts";
 import { scrapeWebsite } from "@/lib/research/scrape-action";
 import { runStructuredResearch } from "@/lib/research/structured-research-action";
@@ -346,8 +347,8 @@ export async function processSingleProspect(
           email: snapResult.email,
           full_name: snapResult.full_name ?? null,
           role_title: snapResult.role_title ?? null,
-          email_is_role_based: false,
-          priority_rank: 1,
+          email_is_role_based: isRoleBasedEmail(snapResult.email),
+          priority_rank: isRoleBasedEmail(snapResult.email) ? 5 : 1,
           selected_by: "snapverify_smtp",
           selected_at: new Date().toISOString(),
         });

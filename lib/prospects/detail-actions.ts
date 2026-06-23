@@ -5,6 +5,7 @@ import { z } from "zod";
 import { writeAuditLog } from "@/lib/audit/log";
 import { requireUser } from "@/lib/auth";
 import { createClient } from "@/lib/supabase/server";
+import { isRoleBasedEmail } from "@/lib/research/email-utils";
 import type { Database } from "@/lib/supabase/types";
 
 type ProspectUpdate = Database["public"]["Tables"]["prospects"]["Update"];
@@ -327,12 +328,14 @@ export async function upsertManualContact(
 
   const supabase = await createClient();
 
+  const manualEmail = parsed.data.email.toLowerCase();
+  const manualRoleBased = isRoleBasedEmail(manualEmail);
   const { error } = await supabase.from("prospect_contacts").insert({
     tenant_id: user.tenantId,
     prospect_id: parsed.data.prospect_id,
-    email: parsed.data.email.toLowerCase(),
-    email_is_role_based: false,
-    priority_rank: 1,
+    email: manualEmail,
+    email_is_role_based: manualRoleBased,
+    priority_rank: manualRoleBased ? 5 : 1,
     selected_by: "manual",
     selected_at: new Date().toISOString(),
   });

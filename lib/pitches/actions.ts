@@ -11,6 +11,7 @@ import { createClient } from "@/lib/supabase/server";
 import type { Database } from "@/lib/supabase/types";
 import { composePitchWithClaude } from "./claude-composer";
 import { hunterUrlForLanguage, renderIndustryTemplate } from "./industry-templates";
+import { isRoleBasedEmail } from "@/lib/research/email-utils";
 import {
   type ComposedPitch,
   type GeneratorInputContact,
@@ -144,7 +145,10 @@ export async function generatePitch(
   const contacts: GeneratorInputContact[] = (contactRows ?? []).map((c) => ({
     full_name: c.full_name,
     email: c.email,
-    email_is_role_based: c.email_is_role_based,
+    // Re-derive at pitch time as a safety net: legacy/enriched contacts may have
+    // a stale email_is_role_based=false (e.g. info@ from Hunter), and the composer
+    // uses this to add the "if you're not the right person, please forward" line.
+    email_is_role_based: c.email_is_role_based || (c.email ? isRoleBasedEmail(c.email) : false),
     role_title: c.role_title ?? null,
   }));
 
@@ -572,7 +576,7 @@ export async function rewritePitchWithAngle(
     prospect: { ...prospect, what_they_do: research?.what_they_do ?? null, tech_stack: research?.tech_stack ?? [] },
     pains: normalizePains(research?.pain_points ?? null),
     contacts: (contactRows ?? []).map((c) => ({
-      full_name: c.full_name, email: c.email, email_is_role_based: c.email_is_role_based, role_title: c.role_title ?? null,
+      full_name: c.full_name, email: c.email, email_is_role_based: c.email_is_role_based || (c.email ? isRoleBasedEmail(c.email) : false), role_title: c.role_title ?? null,
     })),
     case_studies: chosenCases,
     notable_clients: notableClientRows,

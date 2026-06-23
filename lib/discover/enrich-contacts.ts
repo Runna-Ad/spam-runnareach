@@ -6,6 +6,7 @@ import type { createClient } from "@/lib/supabase/server";
 import { anymailFindDecisionMaker } from "@/lib/research/anymail-finder";
 import { hunterDomainSearch } from "@/lib/research/hunter";
 import { snapVerifyEnrich } from "@/lib/research/snap-contact";
+import { isRoleBasedEmail } from "@/lib/research/email-utils";
 
 /**
  * Contact enrichment for a single prospect (call only for score ≥ 70):
@@ -57,8 +58,8 @@ export async function enrichContactsForProspect(
         email: snapResult.email,
         full_name: snapResult.full_name ?? null,
         role_title: snapResult.role_title ?? null,
-        email_is_role_based: false,
-        priority_rank: 1,
+        email_is_role_based: isRoleBasedEmail(snapResult.email),
+        priority_rank: isRoleBasedEmail(snapResult.email) ? 5 : 1,
         selected_by: "snapverify_smtp",
         selected_at: new Date().toISOString(),
       });
@@ -72,6 +73,7 @@ export async function enrichContactsForProspect(
   const anymailResult = await anymailFindDecisionMaker(domain);
   if (anymailResult.ok) {
     const c = anymailResult.contact;
+    const roleBased = isRoleBasedEmail(c.email);
     await supabase.from("prospect_contacts").insert({
       tenant_id: tenantId,
       prospect_id: prospectId,
@@ -79,8 +81,9 @@ export async function enrichContactsForProspect(
       full_name: c.full_name ?? null,
       role_title: c.job_title ?? null,
       linkedin_url: c.linkedin_url ?? null,
-      email_is_role_based: false,
-      priority_rank: 1,
+      email_is_role_based: roleBased,
+      // A role inbox (info@, sales@) ranks below any personal address.
+      priority_rank: roleBased ? 5 : 1,
       selected_by: "anymail",
       selected_at: new Date().toISOString(),
     });
@@ -91,7 +94,10 @@ export async function enrichContactsForProspect(
   const hunterResult = await hunterDomainSearch(domain);
   if (hunterResult.ok && hunterResult.contacts.length > 0) {
     for (const contact of hunterResult.contacts) {
-      const rank = contact.confidence >= 70 ? 2 : 3;
+      const roleBased = isRoleBasedEmail(contact.email);
+      // Hunter's domain sweep often returns info@/contact@ — rank those below
+      // any personal hit so a real decision-maker is preferred when present.
+      const rank = roleBased ? 5 : contact.confidence >= 70 ? 2 : 3;
       await supabase.from("prospect_contacts").insert({
         tenant_id: tenantId,
         prospect_id: prospectId,
@@ -101,7 +107,7 @@ export async function enrichContactsForProspect(
             ? [contact.first_name, contact.last_name].filter(Boolean).join(" ")
             : null,
         role_title: contact.position ?? null,
-        email_is_role_based: false,
+        email_is_role_based: roleBased,
         priority_rank: rank,
         selected_by: "hunter",
         selected_at: new Date().toISOString(),
@@ -123,7 +129,7 @@ export async function enrichContactsForProspect(
       email: catchAllGuess.email,
       full_name: catchAllGuess.full_name,
       role_title: catchAllGuess.role_title,
-      email_is_role_based: false,
+      email_is_role_based: isRoleBasedEmail(catchAllGuess.email),
       priority_rank: 4,
       selected_by: "snapverify_catchall_guess",
       selected_at: new Date().toISOString(),
