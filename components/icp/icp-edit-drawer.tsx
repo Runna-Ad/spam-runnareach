@@ -474,7 +474,6 @@ export function IcpEditDrawer({
         </DrawerHeader>
 
         <DrawerBody>
-          {/* eslint-disable-next-line @typescript-eslint/no-misused-promises */}
           <form id="icp-form" onSubmit={handleSubmit(onSubmit)}>
             <div className="flex flex-col gap-6">
               <Section title="Identity">

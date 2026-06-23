@@ -60,7 +60,6 @@ console.log("→ /pitches — angle advisor…");
 await page.goto(`${BASE}/pitches`);
 await page.waitForLoadState("networkidle");
 await page.waitForTimeout(500);
-const firstPitch = page.locator("main button, main a").filter({ hasText: /./ });
 // Click the first pitch row (rows render prospect name + subject).
 const pitchRow = page.locator('[class*="cursor-pointer"]').first();
 try {
