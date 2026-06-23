@@ -52,7 +52,7 @@ export async function resumeWarmup(
 // ── Manual engine trigger ─────────────────────────────────────────────────────
 
 export async function triggerEngineManually(): Promise<
-  { ok: true; sent: number } | { ok: false; error: string }
+  { ok: true; sent: number; reasons: string[] } | { ok: false; error: string }
 > {
   const user = await requireUser();
   if (user.role === "viewer") return { ok: false, error: "Viewers cannot trigger engine." };
@@ -79,12 +79,17 @@ export async function triggerEngineManually(): Promise<
 
     const json = (await res.json()) as {
       ok: boolean;
-      results?: Array<{ sent: number }>;
+      results?: Array<{ sent: number; sending_email?: string; skipped_reason?: string }>;
     };
 
     const totalSent = json.results?.reduce((sum, r) => sum + (r.sent ?? 0), 0) ?? 0;
+    // Surface per-config skip reasons so a "sent 0" result is never a silent mystery.
+    const reasons =
+      json.results
+        ?.filter((r) => r.sent === 0 && r.skipped_reason)
+        .map((r) => `${r.sending_email ?? "config"}: ${r.skipped_reason}`) ?? [];
     revalidatePath("/warmup");
-    return { ok: true, sent: totalSent };
+    return { ok: true, sent: totalSent, reasons };
   } catch (err) {
     return { ok: false, error: `Fetch failed: ${err instanceof Error ? err.message : String(err)}` };
   }

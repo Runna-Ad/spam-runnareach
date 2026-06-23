@@ -135,10 +135,16 @@ function parseListings(html: string, location: string): YPListing[] {
   const $ = cheerio.load(html);
   const out: YPListing[] = [];
 
-  // YP uses several container patterns across versions:
+  // YP uses several container patterns across versions. Current (2026-06) markup
+  // wraps each result in `div.listing__content__wrapper` (holds name + the
+  // website/phone action menu + address). Older patterns kept as fallbacks so a
+  // future template tweak degrades gracefully. NOTE: selectors must not nest
+  // (e.g. don't add both a wrapper and its child) or listings get double-counted.
+  // `div.listing__content` is intentionally excluded — it is the PARENT of
+  // `listing__content__wrapper`, so including both double-counts every listing.
   const containers = $(
     [
-      "div.listing__content",
+      "div.listing__content__wrapper",
       "div[class*='OrganicListing']",
       "article.listing",
       "div[class*='listing'][data-listing-id]",
@@ -169,6 +175,8 @@ function parseListings(html: string, location: string): YPListing[] {
 
 function extractName($: cheerio.CheerioAPI, el: AnyNode): string | null {
   const selectors = [
+    "a.listing__name--link",
+    ".jsListingName",
     "a.listing__name",
     "h3.listing__name",
     "a[class*='businessName']",
@@ -183,13 +191,23 @@ function extractName($: cheerio.CheerioAPI, el: AnyNode): string | null {
   return null;
 }
 
+// Resolve relative YP hrefs (e.g. "/gourl/...") against the site origin so
+// `new URL()` can parse them.
+const YP_ORIGIN = "https://www.yellowpages.ca";
+
 function extractWebsite($: cheerio.CheerioAPI, el: AnyNode): string | null {
-  // YP wraps external links with a redirect URL containing the real dest
-  const externalLink = $(el)
-    .find("a[href]")
+  // Current (2026-06) markup: the website CTA lives in
+  //   <li class="mlr__item--website"><a href="/gourl/{hash}?redirect=<encoded>">
+  // The real destination is the URL-encoded `redirect` query param. Older
+  // templates used `websiteUrl=` / `/goto/` or a bare external link — all
+  // handled below so the scraper survives either version.
+  const candidate = $(el)
+    .find("li.mlr__item--website a[href], a[href*='/gourl/'], a[href]")
     .filter((_, a) => {
       const href = $(a).attr("href") ?? "";
       return (
+        href.includes("/gourl/") ||
+        href.includes("redirect=") ||
         href.includes("websiteUrl=") ||
         href.includes("/goto/") ||
         (href.startsWith("http") && !href.includes("yellowpages.ca"))
@@ -197,25 +215,33 @@ function extractWebsite($: cheerio.CheerioAPI, el: AnyNode): string | null {
     })
     .first();
 
-  const raw = externalLink.attr("href") ?? null;
+  const raw = candidate.attr("href") ?? null;
   if (!raw) return null;
 
   try {
-    const u = new URL(raw);
-    // Unwrap YP redirect
+    // Resolve relative ("/gourl/...") and absolute hrefs alike.
+    const u = new URL(raw, YP_ORIGIN);
+    // Unwrap YP redirect — `redirect` is the current param, the others legacy.
     const dest =
+      u.searchParams.get("redirect") ??
       u.searchParams.get("websiteUrl") ??
       u.searchParams.get("url") ??
-      (raw.includes("yellowpages.ca") ? null : raw);
+      (u.hostname.includes("yellowpages.ca") ? null : raw);
     if (!dest) return null;
     const clean = new URL(dest.startsWith("http") ? dest : `https://${dest}`);
+    // Drop YP's own domain — those are profile links, not business sites.
+    if (clean.hostname.includes("yellowpages.ca")) return null;
     return `https://${clean.hostname}`;
   } catch {
-    return raw.startsWith("http") ? raw : null;
+    return raw.startsWith("http") && !raw.includes("yellowpages.ca") ? raw : null;
   }
 }
 
 function extractPhone($: cheerio.CheerioAPI, el: AnyNode): string | null {
+  // Current markup exposes the number in a `data-phone` attribute.
+  const dataPhone = $(el).find("[data-phone]").first().attr("data-phone");
+  if (dataPhone?.trim()) return dataPhone.trim();
+
   const selectors = [
     "[class*='phone']",
     "[class*='Phone']",

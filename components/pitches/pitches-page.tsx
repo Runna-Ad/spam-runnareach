@@ -28,7 +28,8 @@ import {
   savePitchEdit,
   transitionPitchStatus,
 } from "@/lib/pitches/actions";
-import { sendPitch } from "@/lib/pitches/send-action";
+import { sendPitch, queueApprovedForSend } from "@/lib/pitches/send-action";
+import { PitchAngleAdvisor } from "@/components/pitches/pitch-angle-advisor";
 import type { PitchListRow, PitchStatus } from "@/lib/pitches/queries";
 import type { SenderInbox } from "@/lib/settings/sending-queries";
 import { cn, relativeTime } from "@/lib/utils";
@@ -81,6 +82,35 @@ export function PitchesPage({ pitches, counts, canEdit, inboxes }: PitchesPagePr
     [pitches, selectedId],
   );
 
+  // Default send-from inbox for bulk queueing: first connected, non-paused one.
+  const sendInbox = React.useMemo(
+    () => inboxes.find((i) => i.gmail_connected && !i.paused) ?? null,
+    [inboxes],
+  );
+  const [queuing, startQueue] = React.useTransition();
+  const [queueMsg, setQueueMsg] = React.useState<{ tone: "ok" | "warn"; text: string } | null>(null);
+
+  const handleQueueAll = () => {
+    if (!sendInbox) return;
+    setQueueMsg(null);
+    startQueue(async () => {
+      const res = await queueApprovedForSend({ inbox_id: sendInbox.id });
+      if (res.ok) {
+        setQueueMsg({
+          tone: res.queued > 0 ? "ok" : "warn",
+          text:
+            res.queued > 0
+              ? `Queued ${res.queued} pitch${res.queued === 1 ? "" : "es"} — drips out ~6/day from ${sendInbox.email}`
+              : "No approved pitches with a contact to queue.",
+        });
+        router.refresh();
+      } else {
+        setQueueMsg({ tone: "warn", text: res.error });
+      }
+      window.setTimeout(() => setQueueMsg(null), 7000);
+    });
+  };
+
   return (
     <div className="flex h-full flex-col">
       <header className="flex h-11 shrink-0 items-center gap-3 border-b border-[var(--color-border-subtle)] px-4">
@@ -97,6 +127,35 @@ export function PitchesPage({ pitches, counts, canEdit, inboxes }: PitchesPagePr
           · {counts.approved} approved · {counts.sent} sent
         </span>
         <div className="ml-auto flex items-center gap-2">
+          {queueMsg ? (
+            <span
+              className={cn(
+                "rounded-[var(--radius-sm)] px-2 py-1 text-[11px]",
+                queueMsg.tone === "ok"
+                  ? "bg-[color-mix(in_oklab,var(--color-success-500),transparent_85%)] text-[var(--color-success-300)]"
+                  : "bg-[color-mix(in_oklab,var(--color-warning-500),transparent_85%)] text-[var(--color-warning-300)]",
+              )}
+            >
+              {queueMsg.text}
+            </span>
+          ) : null}
+          {canEdit && counts.approved > 0 && sendInbox ? (
+            <Button
+              type="button"
+              size="sm"
+              variant="primary"
+              onClick={handleQueueAll}
+              disabled={queuing}
+              title={`Queue all ${counts.approved} approved pitches to drip-send from ${sendInbox.email}`}
+            >
+              {queuing ? (
+                <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden />
+              ) : (
+                <Send className="h-3.5 w-3.5" aria-hidden />
+              )}
+              Queue {counts.approved} for send
+            </Button>
+          ) : null}
           <Filter className="h-3.5 w-3.5 text-[var(--color-fg-700)]" aria-hidden />
           <Select
             value={filter}
@@ -395,6 +454,9 @@ function PitchDetail({
         </div>
       </div>
 
+      {/* Pitch angle advisor — guidance only, does not change this pitch */}
+      <PitchAngleAdvisor prospectId={pitch.prospect_id} compact />
+
       {/* Editable subject + body */}
       <div className="flex flex-col gap-3 rounded-[var(--radius-lg)] bg-[var(--color-bg-800)] p-4 ring-1 ring-inset ring-[var(--color-border-default)]">
         <div className="flex flex-col gap-1.5">
@@ -597,11 +659,12 @@ function PitchDetail({
           <Sparkles className="mr-1 inline-block h-3 w-3" aria-hidden /> How was this composed?
         </summary>
         <p className="mt-2">
-          Heuristic generator picks the first evidenced pain, scores case studies by
-          industry match + pain strength, picks the best non-role-based contact, and
-          slots into a {pitch.prospect_language === "es" ? "Spanish" : "English"} 5-line
-          template. Phase 2 swaps in a Claude call returning the same shape — copy
-          will improve, structure stays.
+          Claude (Sonnet) composes the {pitch.prospect_language === "es" ? "Spanish" : "English"}{" "}
+          copy: it picks the best-evidenced pain and a size/industry-matched case study,
+          then writes the email against Runna&apos;s voice rules. Facts are constrained to
+          the prospect&apos;s scraped data and the case study&apos;s real metrics — it must
+          not invent attributes. If Claude is unavailable, it falls back to a deterministic
+          industry template with the same structure.
         </p>
       </details>
     </div>

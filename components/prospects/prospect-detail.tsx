@@ -52,6 +52,7 @@ import { runStructuredResearch } from "@/lib/research/structured-research-action
 import { deepResearchProspect } from "@/lib/research/deep-research-action";
 import { buildDeepResearchPrompt } from "@/lib/research/deep-research-prompt";
 import { generatePitch } from "@/lib/pitches/actions";
+import { PitchAngleAdvisor } from "@/components/pitches/pitch-angle-advisor";
 import { reEnrichProspectContacts } from "@/lib/discover/pipeline-action";
 import { cn, relativeTime } from "@/lib/utils";
 
@@ -590,6 +591,17 @@ function ResearchTab({
   const [enrichMessage, setEnrichMessage] = React.useState<{ tone: "ok" | "warn"; text: string } | null>(null);
   const [enriching, startEnrich] = React.useTransition();
 
+  // ── Phase-completion flags — derived from already-loaded data ──────────────
+  // Drive the button labels ("Run X" vs "Re-run X") + a subtle done marker so
+  // you can tell whether clicking re-runs a phase or runs it for the first time.
+  const scrapeDone = !!research?.last_scraped_at;
+  const deepResearchDone = research?.research_method === "claude_assisted";
+  const structuredResearchDone =
+    (research?.pain_points?.length ?? 0) > 0 &&
+    !!research?.pain_points?.some((p) => p.pain_id || p.evidence_quote);
+  const scoreDone = prospect.match_score != null;
+  const contactsDone = !!topContactEmail;
+
   if (researchTableMissing) {
     return (
       <div className="m-4 rounded-[var(--radius-lg)] border border-dashed border-[var(--color-border-default)] bg-[var(--color-bg-900)] p-6">
@@ -815,7 +827,10 @@ function ResearchTab({
             ) : (
               <ScanSearch className="h-3.5 w-3.5" aria-hidden />
             )}
-            {scraping ? "Scraping…" : "Scrape website"}
+            {scraping ? "Scraping…" : scrapeDone ? "Re-scrape website" : "Scrape website"}
+            {scrapeDone && !scraping ? (
+              <span className="ml-auto text-[10px] text-[var(--color-success-300)]" title="Already run">✓</span>
+            ) : null}
           </Button>
           <Button
             type="button"
@@ -829,7 +844,10 @@ function ResearchTab({
             ) : (
               <Brain className="h-3.5 w-3.5" aria-hidden />
             )}
-            {researching ? "Researching…" : "Run structured research"}
+            {researching ? "Researching…" : structuredResearchDone ? "Re-run structured research" : "Run structured research"}
+            {structuredResearchDone && !researching ? (
+              <span className="ml-auto text-[10px] text-[var(--color-success-300)]" title="Already run">✓</span>
+            ) : null}
           </Button>
           <Button
             type="button"
@@ -844,6 +862,9 @@ function ResearchTab({
               <UserCheck className="h-3.5 w-3.5" aria-hidden />
             )}
             {enriching ? "Finding contact…" : "Re-enrich contacts"}
+            {contactsDone && !enriching ? (
+              <span className="ml-auto text-[10px] text-[var(--color-success-300)]" title="Contact found">✓</span>
+            ) : null}
           </Button>
           {enrichMessage ? (
             <p
@@ -869,7 +890,10 @@ function ResearchTab({
             ) : (
               <Gauge className="h-3.5 w-3.5" aria-hidden />
             )}
-            {scoring ? "Scoring…" : "Score prospect"}
+            {scoring ? "Scoring…" : scoreDone ? "Re-score prospect" : "Score prospect"}
+            {scoreDone && !scoring ? (
+              <span className="ml-auto text-[10px] text-[var(--color-success-300)]" title="Already scored">✓</span>
+            ) : null}
           </Button>
           <div className="flex items-stretch gap-1">
             <Button
@@ -885,7 +909,10 @@ function ResearchTab({
               ) : (
                 <Sparkles className="h-3.5 w-3.5" aria-hidden />
               )}
-              {deepResearching ? "Researching…" : "Deep Research"}
+              {deepResearching ? "Researching…" : deepResearchDone ? "Re-run Deep Research" : "Deep Research"}
+              {deepResearchDone && !deepResearching ? (
+                <span className="ml-auto text-[10px] text-[var(--color-success-300)]" title="Already run">✓</span>
+              ) : null}
             </Button>
             <Button
               type="button"
@@ -902,6 +929,7 @@ function ResearchTab({
               )}
             </Button>
           </div>
+          <PitchAngleAdvisor prospectId={prospect.id} />
           {topContactEmail && topContactIsRoleBased ? (
             <p className="text-[11px] text-[var(--color-warning-300)]">
               ⚠ Role-based email ({topContactEmail}) — pitch will include a forwarding ask. Add a personal email in Overview for better results.

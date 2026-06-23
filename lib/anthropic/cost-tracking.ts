@@ -5,7 +5,7 @@ export type CostRecordInput = {
   tenantId: string;
   model: string;
   /** What we used Claude for. */
-  entity_type: "research" | "scoring" | "pitch" | "reply_classify" | "icp_suggest";
+  entity_type: "research" | "scoring" | "pitch" | "reply_classify" | "reply_draft" | "icp_suggest";
   entity_id: string | null;
   usage: ClaudeUsage;
   /** Free-form metadata — model-specific stuff like prompt_variant_id. */

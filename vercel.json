@@ -11,6 +11,15 @@
     },
     "app/api/pitches/follow-up/route.ts": {
       "maxDuration": 120
+    },
+    "app/api/pitches/send-queue/route.ts": {
+      "maxDuration": 120
+    },
+    "app/api/replies/poll/route.ts": {
+      "maxDuration": 120
+    },
+    "app/api/warmup/dmarc-sync/route.ts": {
+      "maxDuration": 120
     }
   },
   "crons": [
@@ -23,8 +32,20 @@
       "schedule": "0 8 * * *"
     },
     {
+      "path": "/api/pitches/send-queue",
+      "schedule": "0 15 * * *"
+    },
+    {
       "path": "/api/pitches/follow-up",
       "schedule": "0 16 * * *"
+    },
+    {
+      "path": "/api/replies/poll",
+      "schedule": "0 13 * * *"
+    },
+    {
+      "path": "/api/warmup/dmarc-sync",
+      "schedule": "0 9 * * *"
     }
   ]
 }

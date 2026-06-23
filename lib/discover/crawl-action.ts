@@ -12,11 +12,12 @@ import { searchYellowPagesCA } from "./sources/yellowpages-ca";
 import { searchDenue, denueIsAvailable, deriveMexicoStateCode, MEXICO_STATE_CODES } from "./sources/denue";
 import { searchYelp, yelpIsAvailable } from "./sources/yelp";
 import { searchGooglePlaces, googlePlacesIsAvailable } from "./sources/google-places";
+import { searchWithClaude, claudeSearchIsAvailable, type ClaudeSearchIcp } from "./sources/claude-search";
 
 // ── Input schema ──────────────────────────────────────────────────────────────
 
 const crawlSchema = z.object({
-  source: z.enum(["yellowpages_ca", "brave_search", "denue", "yelp", "google_places"]),
+  source: z.enum(["yellowpages_ca", "brave_search", "denue", "yelp", "google_places", "claude_search"]),
   keyword: z.string().trim().min(1).max(200),
   /** Province name for YP ("Alberta"), or omit for Brave (uses market) */
   location: z.string().trim().max(200).optional(),
@@ -38,7 +39,7 @@ export type CrawlResult =
   | {
       ok: true;
       run_id: string;
-      source: "yellowpages_ca" | "brave_search" | "denue" | "yelp" | "google_places";
+      source: "yellowpages_ca" | "brave_search" | "denue" | "yelp" | "google_places" | "claude_search";
       candidates_found: number;
       candidates_new: number;
       candidates_duplicate: number;
@@ -84,6 +85,20 @@ export async function runCrawl(input: CrawlInput): Promise<CrawlResult> {
     };
   }
 
+  // ── For AI Search: load ICP context so Claude can judge fit ─────────────
+  let icpContext: ClaudeSearchIcp | null = null;
+  if (source === "claude_search" && icp_id) {
+    const { data: icpRow } = await supabase
+      .from("icps")
+      .select(
+        "name, industry_tags, business_types, geo_regions, employee_size_min, employee_size_max, excluded_keywords",
+      )
+      .eq("id", icp_id)
+      .eq("tenant_id", user.tenantId)
+      .maybeSingle<ClaudeSearchIcp>();
+    icpContext = icpRow ?? null;
+  }
+
   // ── Fetch raw listings from source ──────────────────────────────────────
   const rawListings = await fetchFromSource({
     source,
@@ -91,6 +106,7 @@ export async function runCrawl(input: CrawlInput): Promise<CrawlResult> {
     location,
     market,
     pages,
+    icp: icpContext,
   });
 
   if (!rawListings.ok) {
@@ -282,11 +298,12 @@ type FetchSourceResult =
   | { ok: false; error: string };
 
 async function fetchFromSource(opts: {
-  source: "yellowpages_ca" | "brave_search" | "denue" | "yelp" | "google_places";
+  source: "yellowpages_ca" | "brave_search" | "denue" | "yelp" | "google_places" | "claude_search";
   keyword: string;
   location: string | undefined;
   market: "CA" | "MX" | "US" | "LATAM";
   pages: number;
+  icp?: ClaudeSearchIcp | null;
 }): Promise<FetchSourceResult> {
   if (opts.source === "yellowpages_ca") {
     const loc = opts.location ?? "Canada";
@@ -395,6 +412,40 @@ async function fetchFromSource(opts: {
         domain: l.domain,
         city: l.city,
         region: l.state_code,
+      })),
+    };
+  }
+
+  if (opts.source === "claude_search") {
+    if (!claudeSearchIsAvailable()) {
+      return {
+        ok: false,
+        error: "AI Search not configured — requires ANTHROPIC_API_KEY + BRAVE_SEARCH_API_KEY in .env.local",
+      };
+    }
+    const country =
+      opts.market === "MX" ? "MX"
+      : opts.market === "US" ? "US"
+      : "CA";
+    const result = await searchWithClaude({
+      brief: opts.keyword,
+      location: opts.location ?? "Canada",
+      country,
+      icp: opts.icp ?? null,
+      target: 15,
+    });
+    if (!result.ok) return { ok: false, error: result.error };
+    console.log(
+      `[claude-search] ${result.listings.length} businesses from ${result.searches_run} searches ($${result.cost_usd.toFixed(4)})`,
+    );
+    return {
+      ok: true,
+      listings: result.listings.map((l) => ({
+        company_name: l.company_name,
+        website_url: l.website_url,
+        domain: l.domain,
+        city: l.city,
+        region: l.region,
       })),
     };
   }

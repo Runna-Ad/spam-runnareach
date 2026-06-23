@@ -15,10 +15,11 @@ export type DiscoverySource =
   | "yellowpages_ca"
   | "brave_search"
   | "denue"
+  | "claude_search"
   | "yelp";
 
 /** Sources that support the keyword-based crawl drawer */
-export const CRAWLABLE_SOURCES = ["yellowpages_ca", "brave_search", "denue", "yelp", "google_places"] as const;
+export const CRAWLABLE_SOURCES = ["claude_search", "yellowpages_ca", "brave_search", "denue", "google_places"] as const;
 export type CrawlableSource = (typeof CRAWLABLE_SOURCES)[number];
 
 export const SOURCE_META: Record<
@@ -30,6 +31,13 @@ export const SOURCE_META: Record<
     description: "Import a CSV of companies you already know about.",
     available: true,
     blockedOn: null,
+  },
+  claude_search: {
+    label: "AI Search (Claude)",
+    description:
+      "Claude researches the live web (via Brave) against your ICP — reads each result, filters out directories and off-ICP businesses, and returns a tight list of real fits. Smarter & narrower than raw keyword search.",
+    available: false, // toggled to true at runtime when both keys are present
+    blockedOn: "Requires ANTHROPIC_API_KEY + BRAVE_SEARCH_API_KEY in .env.local.",
   },
   yellowpages_ca: {
     label: "Yellow Pages CA",

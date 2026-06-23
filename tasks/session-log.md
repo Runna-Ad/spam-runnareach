@@ -370,3 +370,18 @@ and day boundaries. Newest entries at the bottom.
 **Pinned + spawned (dedicated sessions):** reply funnel; learning loop Phase 1 (advisory).
 **Lessons:** 14 per-fix + 1 session retrospective logged in lessons.md (newest at top).
 **Note:** working tree has this session's deployed code + the two spawned sessions' WIP, intermixed on main — only the learnings docs were committed.
+
+## 2026-06-23 10:07
+
+**Still open:**
+- [ ] Supabase: ANON + SERVICE_ROLE keys live (connection works — Phase 0 unblocked)
+- [ ] Anthropic API key + $100/mo limit
+- [ ] Google Cloud (Places API + Gmail API + OAuth consent + OAuth client + restricted Places key)
+- [ ] Name sender #1 Runna CA principal + buy both domains + add runnareach.com to Rünna Workspace + DNS (SPF/DKIM/DMARC)
+- [ ] Postmark or SES account
+- [ ] Cal.com account
+- [ ] Slack hot-lead webhook URL
+- [ ] CRON_SECRET + TOKEN_ENCRYPTION_KEY (`openssl rand -hex 32`)
+- [ ] ⏳ #7 Analytics — pitch funnel metrics, cost tracking, Claude vs template breakdown
+- [ ] ⏳ #7 Analytics — pitch funnel metrics, cost tracking, Claude vs template breakdown
+

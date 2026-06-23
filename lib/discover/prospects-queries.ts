@@ -16,6 +16,17 @@ export type Prospect = {
   icp_id: string | null;
   icp_name: string | null;
   created_at: string;
+  /**
+   * Most actionable pitch state for this prospect, if any pitch exists:
+   * "queued_for_approval" (needs review) > "approved" (ready) > "sent". Null
+   * if no pitch or only drafts. Lets /companies flag what's awaiting approval
+   * without conflating it with the prospect's funnel status.
+   */
+  pitch_status: "queued_for_approval" | "approved" | "sent" | null;
+  /** True if at least one contact with an email is attached — i.e. reachable. */
+  has_contact: boolean;
+  /** True when the ONLY emailed contact(s) are unverified catch-all guesses. */
+  contact_is_guess: boolean;
 };
 
 export type ProspectFilters = {
@@ -51,6 +62,8 @@ export async function listProspects(
     icp_id: string | null;
     created_at: string;
     icps: { name: string } | null;
+    pitches: { status: string }[] | null;
+    prospect_contacts: { email: string | null; selected_by: string | null }[] | null;
   };
 
   let query = supabase
@@ -59,7 +72,7 @@ export async function listProspects(
       `
       id, company_name, domain, website_url, industry, city, region, market,
       status, match_score, red_flags, discovery_source, icp_id, created_at,
-      icps(name)
+      icps(name), pitches(status), prospect_contacts(email, selected_by)
     `,
     )
     .eq("tenant_id", tenantId)
@@ -114,7 +127,28 @@ export async function listProspects(
     icp_id: r.icp_id,
     icp_name: r.icps?.name ?? null,
     created_at: r.created_at,
+    pitch_status: derivePitchStatus(r.pitches),
+    has_contact: (r.prospect_contacts ?? []).some((c) => !!c.email),
+    contact_is_guess: (() => {
+      const emailed = (r.prospect_contacts ?? []).filter((c) => !!c.email);
+      return (
+        emailed.length > 0 &&
+        emailed.every((c) => c.selected_by === "snapverify_catchall_guess")
+      );
+    })(),
   }));
+}
+
+/** Pick the most actionable pitch state across a prospect's pitches. */
+function derivePitchStatus(
+  pitches: { status: string }[] | null,
+): "queued_for_approval" | "approved" | "sent" | null {
+  if (!pitches || pitches.length === 0) return null;
+  const statuses = new Set(pitches.map((p) => p.status));
+  if (statuses.has("queued_for_approval")) return "queued_for_approval";
+  if (statuses.has("approved")) return "approved";
+  if (statuses.has("sent")) return "sent";
+  return null;
 }
 
 export async function countProspects(tenantId: string): Promise<number> {

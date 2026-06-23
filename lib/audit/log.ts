@@ -11,16 +11,21 @@ export type AuditAction =
   | "prospect.status_changed"
   | "prospect.scraped"
   | "prospect.scored"
+  | "prospect.deleted"
   | "research.edited"
   | "research.created"
   | "pitch.sent"
-  | "reply.intent_handled";
+  | "reply.intent_handled"
+  | "reply.imported"
+  | "reply.drafted"
+  | "reply.sent"
+  | "prospect.archived_no_meeting";
 
 export type AuditPayload = {
   tenantId: string;
   actorId: string | null;
   action: AuditAction;
-  entityType: "prospect" | "research" | "icp" | "case_study" | "pitch";
+  entityType: "prospect" | "research" | "icp" | "case_study" | "pitch" | "reply";
   entityId: string;
   metadata?: Record<string, unknown>;
 };

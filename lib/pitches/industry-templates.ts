@@ -14,6 +14,17 @@ import type { ComposedPitch, GeneratorInputs } from "./generator.ts";
 
 export const HUNTER_URL = "https://runna-hunter.vercel.app/";
 
+/**
+ * The Inefficiency Hunter is one app that toggles between the Canadian and
+ * Mexican market in-page; it reads a `?market=` param to pre-select on load.
+ * Build the CTA so an English pitch lands the prospect on the Canadian version
+ * and a Spanish pitch on the Mexican one (the app's default).
+ */
+export function hunterUrlForLanguage(language: "en" | "es" | null | undefined): string {
+  const market = language === "en" ? "ca" : "mx";
+  return `${HUNTER_URL}?market=${market}`;
+}
+
 // ── Industry keyword matching ─────────────────────────────────────────────────
 // Prospect.industry is free-text (e.g. "DTC coffee", "Retail fashion", "real estate").
 // Matching is first-keyword-wins; "other" is always the fallback.

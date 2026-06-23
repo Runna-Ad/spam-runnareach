@@ -67,6 +67,7 @@ export async function scoreProspect(
     icp_id: string | null;
     icps: {
       industry_tags: string[];
+      business_types: string[];
       geo_regions: string[];
       employee_size_min: number | null;
       employee_size_max: number | null;
@@ -80,7 +81,7 @@ export async function scoreProspect(
       `
       id, industry, city, region, country_code, employee_size_estimate,
       red_flags, icp_id,
-      icps(industry_tags, geo_regions, employee_size_min, employee_size_max,
+      icps(industry_tags, business_types, geo_regions, employee_size_min, employee_size_max,
            search_keywords, excluded_keywords)
     `,
     )
@@ -147,6 +148,7 @@ export async function scoreProspect(
   const rubricIcp: RubricInputIcp = prospect.icps
     ? {
         industry_tags: prospect.icps.industry_tags ?? [],
+        business_types: prospect.icps.business_types ?? [],
         geo_regions: prospect.icps.geo_regions ?? [],
         employee_size_min: prospect.icps.employee_size_min,
         employee_size_max: prospect.icps.employee_size_max,

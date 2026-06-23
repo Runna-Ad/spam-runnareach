@@ -364,6 +364,15 @@ REQUIRED EMAIL STRUCTURE — follow this exactly, no additions, no reordering:
    The metric MUST be a number or percentage from the case's hero_metric or measurable_results.
    NEVER describe what you did ("brand and digital creative") — only the OUTCOME for the client.
    If the case has no numeric metric, set case_study_id=null and skip the bridge entirely.
+   ⛔ FACTUAL INTEGRITY — DO NOT FABRICATE ATTRIBUTES OF THE CLIENT:
+   - State ONLY facts present in the case payload (client_name, industry, the metric).
+   - NEVER invent or imply the client's country, nationality, city, or location. The
+     payload contains NO geography for case-study clients — so phrases like "a Canadian
+     fitness studio", "a local Calgary brand", or any nationality claim are LIES. Do not
+     write them, even to make the case feel more relevant to the prospect's market.
+   - You MAY use the client's industry word (e.g. "fitness studio") and any descriptor
+     that literally appears in result_description (e.g. "in a saturated market"), nothing more.
+   - When in doubt, just write "Did this for {client}, {metric}." with no extra framing.
 6. CTA — Inefficiency Hunter link (see voice rules for exact wording)
 7. Sign off: sender's first name, then full signature on the next line
 

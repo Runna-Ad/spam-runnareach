@@ -11,6 +11,9 @@ export type FunnelCard = {
   industry: string | null;
   created_at: string;
   updated_at: string;
+  /** True if any pitch for this prospect was actually sent — drives the
+   * derived "Sent" column (sent is a pitch state, not a prospect status). */
+  pitch_sent: boolean;
 };
 
 /**
@@ -20,7 +23,10 @@ export type FunnelCard = {
  */
 export async function listFunnelCards(tenantId: string): Promise<FunnelCard[]> {
   const supabase = await createClient();
-  type Row = Omit<FunnelCard, "icp_name"> & { icps: { name: string } | null };
+  type Row = Omit<FunnelCard, "icp_name" | "pitch_sent"> & {
+    icps: { name: string } | null;
+    pitches: { status: string }[] | null;
+  };
 
   const { data, error } = await supabase
     .from("prospects")
@@ -28,7 +34,7 @@ export async function listFunnelCards(tenantId: string): Promise<FunnelCard[]> {
       `
       id, company_name, domain, market, status, match_score,
       industry, created_at, updated_at,
-      icps(name)
+      icps(name), pitches(status)
     `,
     )
     .eq("tenant_id", tenantId)
@@ -48,5 +54,6 @@ export async function listFunnelCards(tenantId: string): Promise<FunnelCard[]> {
     created_at: r.created_at,
     updated_at: r.updated_at,
     icp_name: r.icps?.name ?? null,
+    pitch_sent: (r.pitches ?? []).some((p) => p.status === "sent"),
   }));
 }

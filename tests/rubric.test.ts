@@ -24,6 +24,7 @@ function baseProspect(overrides: Partial<RubricInputProspect> = {}): RubricInput
 function baseIcp(overrides: Partial<NonNullable<RubricInputIcp>> = {}): RubricInputIcp {
   return {
     industry_tags: ["coffee", "DTC"],
+    business_types: ["dtc_ecommerce"],
     geo_regions: ["Alberta", "British Columbia"],
     employee_size_min: 5,
     employee_size_max: 50,

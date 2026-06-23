@@ -27,6 +27,8 @@ import type {
 } from "@/lib/warmup/types";
 import { getRampPhase, getDailyTarget, RAMP_SCHEDULE, MAINTENANCE_DAILY_TARGET } from "@/lib/warmup/types";
 import { analyzeSpamRate, buildAlerts } from "@/lib/warmup/intelligence";
+import type { DeliverabilityHealth } from "@/lib/warmup/deliverability";
+import type { DmarcSummary } from "@/lib/warmup/dmarc-summary";
 import { pauseWarmup, resumeWarmup, triggerEngineManually } from "./warmup-actions";
 
 // ── Props ──────────────────────────────────────────────────────────────────────
@@ -37,7 +39,137 @@ type Props = {
   healthHistory: DomainHealth[];
   latestHealth: DomainHealth | null;
   totalSent: number;
+  deliverability: DeliverabilityHealth | null;
+  dmarc: DmarcSummary | null;
 };
+
+// ── Deliverability Health panel (low-volume, works from email #1) ─────────────
+
+function CheckRow({
+  label,
+  check,
+}: {
+  label: string;
+  check: { status: "pass" | "warn" | "fail" | "unknown"; detail: string };
+}) {
+  const dot =
+    check.status === "pass"
+      ? "bg-green-500"
+      : check.status === "warn"
+        ? "bg-yellow-500"
+        : check.status === "fail"
+          ? "bg-red-500"
+          : "bg-neutral-400";
+  return (
+    <div className="flex items-center gap-2 py-1.5">
+      <span className={`size-2 shrink-0 rounded-full ${dot}`} aria-hidden />
+      <span className="w-16 shrink-0 text-xs font-medium text-neutral-300">{label}</span>
+      <span className="text-xs text-neutral-500">{check.detail}</span>
+    </div>
+  );
+}
+
+// ── DMARC aggregate-report panel (low-volume spoofing/abuse signal) ───────────
+
+function DmarcPanel({ dmarc }: { dmarc: DmarcSummary }) {
+  if (dmarc.reports === 0) {
+    return (
+      <div className="rounded-lg border border-neutral-200 dark:border-neutral-800 p-3">
+        <div className="mb-1 text-xs font-medium text-neutral-400">
+          DMARC aggregate reports
+        </div>
+        <p className="text-xs text-neutral-500">
+          No reports yet. Mailbox providers send daily once they see mail from
+          your domain — they land in pedro@runnareach.com and sync automatically.
+        </p>
+      </div>
+    );
+  }
+
+  const pct = dmarc.pass_rate === null ? null : Math.round(dmarc.pass_rate * 100);
+  const passColor =
+    pct === null
+      ? "text-neutral-400"
+      : pct >= 95
+        ? "text-green-600"
+        : pct >= 80
+          ? "text-yellow-600"
+          : "text-red-500";
+
+  const hasAbuse = dmarc.failed_alignment.length > 0 || dmarc.non_google.length > 0;
+
+  return (
+    <div className="rounded-lg border border-neutral-200 dark:border-neutral-800 p-3 space-y-2">
+      <div className="flex items-center justify-between">
+        <span className="text-xs font-medium text-neutral-400">
+          DMARC alignment (reports, {dmarc.window_days}d)
+        </span>
+        <span className={`text-xs font-semibold ${passColor}`}>
+          {pct === null ? "—" : `${pct}% pass`}
+        </span>
+      </div>
+      <p className="text-[10px] text-neutral-500">
+        {dmarc.aligned_pass_messages.toLocaleString()} of{" "}
+        {dmarc.total_messages.toLocaleString()} reported messages aligned ·{" "}
+        {dmarc.reports} report{dmarc.reports === 1 ? "" : "s"}
+      </p>
+
+      {!hasAbuse && (
+        <div className="flex items-center gap-2 pt-1">
+          <CheckCircle2 className="size-3.5 text-green-500 shrink-0" />
+          <span className="text-xs text-neutral-500">
+            No unauthorized sending sources detected.
+          </span>
+        </div>
+      )}
+
+      {dmarc.failed_alignment.length > 0 && (
+        <DmarcFlagList
+          title="Failed SPF + DKIM alignment (possible spoofing)"
+          sources={dmarc.failed_alignment}
+        />
+      )}
+
+      {dmarc.non_google.length > 0 && (
+        <DmarcFlagList
+          title="Sending sources outside Google's ranges (not your sender)"
+          sources={dmarc.non_google}
+        />
+      )}
+    </div>
+  );
+}
+
+function DmarcFlagList({
+  title,
+  sources,
+}: {
+  title: string;
+  sources: DmarcSummary["failed_alignment"];
+}) {
+  return (
+    <div className="pt-1.5 border-t border-neutral-100 dark:border-neutral-800">
+      <div className="mb-1 flex items-center gap-1.5">
+        <AlertTriangle className="size-3 text-red-500 shrink-0" />
+        <span className="text-[11px] font-medium text-red-500">{title}</span>
+      </div>
+      <div className="space-y-0.5">
+        {sources.map((s) => (
+          <div
+            key={s.source_ip}
+            className="flex items-center justify-between text-[11px] text-neutral-500"
+          >
+            <span className="font-mono truncate">{s.source_ip}</span>
+            <span className="shrink-0 ml-2">
+              {s.message_count.toLocaleString()} msg
+              {s.header_from ? ` · ${s.header_from}` : ""}
+            </span>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
 
 // ── Reputation badge ──────────────────────────────────────────────────────────
 
@@ -86,6 +218,114 @@ function InboxRateGauge({ rate }: { rate: number | null }) {
       </div>
     </div>
   );
+}
+
+// ── Ring gauge (compact circular percentage) ──────────────────────────────────
+
+function RingGauge({
+  pct,
+  color,
+  label,
+  size = 56,
+}: {
+  pct: number;
+  color: string;
+  label?: string;
+  size?: number;
+}) {
+  const stroke = 6;
+  const r = (size - stroke) / 2;
+  const circ = 2 * Math.PI * r;
+  const clamped = Math.max(0, Math.min(100, pct));
+  const dash = (clamped / 100) * circ;
+  return (
+    <div className="relative shrink-0" style={{ width: size, height: size }}>
+      <svg width={size} height={size} className="-rotate-90">
+        <circle
+          cx={size / 2}
+          cy={size / 2}
+          r={r}
+          fill="none"
+          strokeWidth={stroke}
+          className="stroke-neutral-200 dark:stroke-neutral-800"
+        />
+        <circle
+          cx={size / 2}
+          cy={size / 2}
+          r={r}
+          fill="none"
+          strokeWidth={stroke}
+          stroke={color}
+          strokeLinecap="round"
+          strokeDasharray={`${dash} ${circ - dash}`}
+          style={{ transition: "stroke-dasharray 0.6s ease" }}
+        />
+      </svg>
+      <div className="absolute inset-0 flex flex-col items-center justify-center leading-none">
+        <span className="text-sm font-bold">{Math.round(clamped)}%</span>
+        {label ? <span className="text-[8px] text-neutral-400 mt-0.5">{label}</span> : null}
+      </div>
+    </div>
+  );
+}
+
+// ── Derived domain health (used when Postmaster reputation is still UNKNOWN) ───
+// At low volume Postmaster gives nothing, so we grade the domain from the
+// signals we DO have: DMARC alignment pass rate + live DNS auth (SPF/DKIM/DMARC)
+// + domain blocklist status. Honest, available from email #1.
+
+type DerivedHealth = {
+  grade: "STRONG" | "GOOD" | "FAIR" | "AT RISK";
+  score: number; // 0..1
+  color: string;
+  basis: string;
+};
+
+const STATUS_WEIGHT: Record<string, number> = { pass: 1, warn: 0.5, fail: 0, unknown: 0.5 };
+
+function deriveDomainHealth(
+  dmarc: DmarcSummary | null,
+  deliverability: DeliverabilityHealth | null,
+): DerivedHealth | null {
+  const parts: number[] = [];
+  let basisCount = 0;
+
+  if (deliverability) {
+    parts.push(STATUS_WEIGHT[deliverability.spf.status] ?? 0.5);
+    parts.push(STATUS_WEIGHT[deliverability.dkim.status] ?? 0.5);
+    parts.push(STATUS_WEIGHT[deliverability.dmarc.status] ?? 0.5);
+    // Blocklist is pass/fail and heavily weighted (a listing tanks the domain).
+    parts.push(deliverability.blocklist.status === "fail" ? 0 : 1);
+    basisCount += 4;
+  }
+  if (dmarc && dmarc.total_messages > 0 && dmarc.pass_rate !== null) {
+    // DMARC alignment pass rate, double-weighted (it's the strongest real signal).
+    parts.push(dmarc.pass_rate, dmarc.pass_rate);
+    basisCount += 1;
+    // Any unauthorized source is a hard penalty.
+    if (dmarc.failed_alignment.length > 0) parts.push(0);
+  }
+
+  if (parts.length === 0) return null;
+  const score = parts.reduce((a, b) => a + b, 0) / parts.length;
+
+  const grade: DerivedHealth["grade"] =
+    score >= 0.9 ? "STRONG" : score >= 0.75 ? "GOOD" : score >= 0.55 ? "FAIR" : "AT RISK";
+  const color =
+    grade === "STRONG"
+      ? "#22c55e"
+      : grade === "GOOD"
+        ? "#84cc16"
+        : grade === "FAIR"
+          ? "#eab308"
+          : "#ef4444";
+
+  const basisBits: string[] = [];
+  if (dmarc && dmarc.total_messages > 0) basisBits.push("DMARC");
+  if (deliverability) basisBits.push("DNS auth");
+  const basis = basisCount > 0 ? `from ${basisBits.join(" + ")}` : "";
+
+  return { grade, score, color, basis };
 }
 
 // ── Log entry row ─────────────────────────────────────────────────────────────
@@ -144,12 +384,37 @@ export function WarmupDashboard({
   healthHistory: _healthHistory,
   latestHealth,
   totalSent,
+  deliverability,
+  dmarc,
 }: Props) {
   const [isPending, startTransition] = React.useTransition();
   const [message, setMessage] = React.useState<string | null>(null);
 
   // Spam analysis from log
   const spamAnalysis = analyzeSpamRate(recentLog);
+
+  // ── Low-volume fallbacks for the top cards ──────────────────────────────────
+  // IMAP inbox-placement + Postmaster reputation stay blank until high volume,
+  // so fall back to the DMARC + DNS signals we already have today.
+  const hasImapRate = spamAnalysis.inboxRate !== null;
+  const dmarcPct =
+    dmarc && dmarc.pass_rate !== null ? Math.round(dmarc.pass_rate * 100) : null;
+  // Inbox-rate card: real IMAP rate if we have it, else DMARC auth pass rate.
+  const inboxPct = hasImapRate
+    ? Math.round((spamAnalysis.inboxRate ?? 0) * 100)
+    : dmarcPct;
+  const inboxColor =
+    inboxPct === null
+      ? "#a3a3a3"
+      : inboxPct >= 90
+        ? "#22c55e"
+        : inboxPct >= 70
+          ? "#eab308"
+          : "#ef4444";
+  const postmasterRep = latestHealth?.domain_reputation ?? null;
+  const hasPostmasterRep =
+    postmasterRep !== null && postmasterRep !== "REPUTATION_CATEGORY_UNSPECIFIED";
+  const derivedHealth = hasPostmasterRep ? null : deriveDomainHealth(dmarc, deliverability);
 
   // Alerts
   const alerts = config
@@ -235,7 +500,10 @@ export function WarmupDashboard({
       const result = await triggerEngineManually();
       setMessage(
         result.ok
-          ? `Engine tick complete — sent ${result.sent ?? 0} email(s).`
+          ? `Engine tick complete — sent ${result.sent ?? 0} email(s).` +
+              (result.sent === 0 && result.reasons.length > 0
+                ? ` (${result.reasons.join("; ")})`
+                : "")
           : `Error: ${result.error}`,
       );
     });
@@ -346,10 +614,13 @@ export function WarmupDashboard({
             <Inbox className="size-4 text-neutral-400" />
             <span className="text-xs text-neutral-500">Inbox rate</span>
           </div>
-          {spamAnalysis.inboxRate !== null ? (
-            <p className="text-2xl font-bold">
-              {Math.round(spamAnalysis.inboxRate * 100)}%
-            </p>
+          {inboxPct !== null ? (
+            <div className="flex items-center gap-3 mt-1">
+              <RingGauge pct={inboxPct} color={inboxColor} />
+              <span className="text-[11px] text-neutral-400 leading-tight whitespace-pre-line">
+                {hasImapRate ? "Inbox vs spam\n(seed mail)" : "DMARC-authenticated\ndelivery"}
+              </span>
+            </div>
           ) : (
             <p className="text-sm text-neutral-400 mt-1">Not enough data</p>
           )}
@@ -359,9 +630,41 @@ export function WarmupDashboard({
             <Shield className="size-4 text-neutral-400" />
             <span className="text-xs text-neutral-500">Domain rep</span>
           </div>
-          <p className="text-2xl font-bold">
-            <ReputationBadge value={latestHealth?.domain_reputation ?? null} />
-          </p>
+          {hasPostmasterRep ? (
+            <p className="text-2xl font-bold">
+              <ReputationBadge value={postmasterRep} />
+            </p>
+          ) : derivedHealth ? (
+            <div className="mt-1 space-y-1.5">
+              <div className="flex items-center gap-2">
+                <span
+                  className="size-2.5 shrink-0 rounded-full"
+                  style={{ backgroundColor: derivedHealth.color }}
+                  aria-hidden
+                />
+                <span
+                  className="text-xl font-bold leading-none"
+                  style={{ color: derivedHealth.color }}
+                >
+                  {derivedHealth.grade}
+                </span>
+              </div>
+              <div className="h-1.5 w-full rounded-full bg-neutral-100 dark:bg-neutral-800 overflow-hidden">
+                <div
+                  className="h-full rounded-full"
+                  style={{
+                    width: `${Math.round(derivedHealth.score * 100)}%`,
+                    backgroundColor: derivedHealth.color,
+                  }}
+                />
+              </div>
+              <span className="text-[10px] text-neutral-400">{derivedHealth.basis}</span>
+            </div>
+          ) : (
+            <p className="text-2xl font-bold">
+              <ReputationBadge value={null} />
+            </p>
+          )}
         </Card>
       </div>
 
@@ -389,6 +692,25 @@ export function WarmupDashboard({
 
           {/* Inbox gauge */}
           <InboxRateGauge rate={spamAnalysis.inboxRate} />
+
+          {/* Live DNS checks — work from email #1, unlike Postmaster */}
+          {deliverability ? (
+            <div className="rounded-lg border border-neutral-200 dark:border-neutral-800 p-3">
+              <div className="mb-1 flex items-center justify-between">
+                <span className="text-xs font-medium text-neutral-400">
+                  Auth &amp; reputation (live DNS)
+                </span>
+                <span className="text-[10px] text-neutral-500">{deliverability.domain}</span>
+              </div>
+              <CheckRow label="SPF" check={deliverability.spf} />
+              <CheckRow label="DKIM" check={deliverability.dkim} />
+              <CheckRow label="DMARC" check={deliverability.dmarc} />
+              <CheckRow label="Blocklist" check={deliverability.blocklist} />
+            </div>
+          ) : null}
+
+          {/* DMARC aggregate reports — in-house ingestion, works at low volume */}
+          {dmarc ? <DmarcPanel dmarc={dmarc} /> : null}
 
           {latestHealth ? (
             <div className="space-y-3">

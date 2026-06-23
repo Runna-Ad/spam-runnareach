@@ -455,10 +455,28 @@ function extractContactEmails(html: string, $: cheerio.CheerioAPI): string[] {
   return Array.from(found).filter((e) => !e.includes("@2x.") && !e.includes("@3x.") && !isMonitoringEmail(e));
 }
 
+// Template/demo placeholder addresses that litter website starter themes.
+// "user@domain.com", "you@example.com", "name@company.com" are NOT real contacts.
+const PLACEHOLDER_EMAIL_DOMAINS = new Set([
+  "domain.com", "example.com", "example.org", "example.net", "yourdomain.com",
+  "yourcompany.com", "yoursite.com", "mydomain.com", "mysite.com", "sample.com",
+  "sitename.com", "email.com", "test.com", "company.com", "acme.com",
+]);
+const PLACEHOLDER_EMAIL_LOCALS = new Set([
+  "user", "you", "youremail", "yourname", "name", "example", "firstname",
+  "lastname", "john.doe", "jane.doe", "email",
+]);
+
 function isValidEmail(email: string): boolean {
   // Basic shape + reject internal placeholders
   if (!/^[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}$/i.test(email)) return false;
   if (email.endsWith(".png") || email.endsWith(".jpg") || email.endsWith(".svg")) return false;
+  const [local, domain] = email.toLowerCase().split("@");
+  if (!local || !domain) return false;
+  if (PLACEHOLDER_EMAIL_DOMAINS.has(domain)) return false;
+  if (PLACEHOLDER_EMAIL_LOCALS.has(local) && /(example|domain|company|site|yourname)/.test(domain)) {
+    return false;
+  }
   return true;
 }
 

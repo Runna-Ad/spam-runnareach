@@ -30,7 +30,13 @@ import { RunAllModal } from "./run-all-modal";
 
 interface DiscoverPageProps {
   runs: DiscoveryRun[];
-  icps: { id: string; name: string; market: "CA" | "MX" | "US" | "LATAM" }[];
+  icps: {
+    id: string;
+    name: string;
+    market: "CA" | "MX" | "US" | "LATAM";
+    search_keywords: string[];
+    geo_regions: string[];
+  }[];
   canManage: boolean;
   /** Server-resolved: which crawl sources have their API key set */
   availableCrawlSources: CrawlableSource[];

@@ -2,6 +2,7 @@
 
 import type { Route } from "next";
 import {
+  Archive,
   Calendar,
   CheckCircle2,
   Clock,
@@ -11,6 +12,7 @@ import {
   MailQuestion,
   MessageSquare,
   Plus,
+  Send,
   ShieldX,
   Sparkles,
   UserX,
@@ -42,6 +44,7 @@ import {
   overrideReplyIntent,
 } from "@/lib/replies/actions";
 import { handleReplyIntent } from "@/lib/replies/intent-actions";
+import { approveAndSendReply, archiveNoMeeting } from "@/lib/replies/send-reply-action";
 import type {
   ProspectOption,
   Reply,
@@ -72,12 +75,12 @@ const MARKET_FLAG: Record<"CA" | "MX" | "US" | "LATAM", string> = {
 interface InboxPageProps {
   replies: Reply[];
   prospects: ProspectOption[];
-  counts: { total: number; unclassified: number; hot: number; unhandled: number };
+  counts: { total: number; unclassified: number; hot: number; unhandled: number; drafts: number };
   migrationMissing: boolean;
   canEdit: boolean;
 }
 
-type FilterValue = "ALL" | "unhandled" | "hot" | ReplyIntent;
+type FilterValue = "ALL" | "unhandled" | "hot" | "drafts" | ReplyIntent;
 
 export function InboxPage({
   replies,
@@ -96,6 +99,8 @@ export function InboxPage({
     if (filter === "unhandled") return replies.filter((r) => !r.handled_at);
     if (filter === "hot")
       return replies.filter((r) => r.urgency === "hot" || r.intent === "wants_meeting");
+    if (filter === "drafts")
+      return replies.filter((r) => r.draft_status === "pending");
     return replies.filter((r) => r.intent === filter);
   }, [replies, filter]);
 
@@ -134,6 +139,14 @@ export function InboxPage({
             {counts.unhandled} unhandled
           </span>
           {counts.unclassified > 0 ? ` · ${counts.unclassified} unclassified` : ""}
+          {counts.drafts > 0 ? (
+            <>
+              {" · "}
+              <span className="font-medium text-[var(--color-accent-300)]">
+                {counts.drafts} draft{counts.drafts === 1 ? "" : "s"} to review
+              </span>
+            </>
+          ) : null}
         </span>
         <div className="ml-auto flex items-center gap-2">
           <Filter className="h-3.5 w-3.5 text-[var(--color-fg-700)]" aria-hidden />
@@ -143,6 +156,7 @@ export function InboxPage({
             className="h-8 max-w-[180px] py-0 text-xs"
           >
             <option value="unhandled">Unhandled</option>
+            <option value="drafts">Drafts to review</option>
             <option value="hot">Hot · meeting requests</option>
             <option value="ALL">All</option>
             <option value="wants_meeting">Wants meeting</option>
@@ -441,6 +455,9 @@ function ReplyDetail({
       {canEdit ? (
         <div className="flex flex-col gap-3 border-t border-[var(--color-border-subtle)] pt-3">
 
+          {/* ── Reply-funnel draft review ─────────────────────────────────── */}
+          <DraftReview reply={reply} onChange={onChange} />
+
           {/* ── Intent-specific primary action ───────────────────────────── */}
           {intentAction && !reply.handled_at ? (
             <div className="rounded-[var(--radius-md)] bg-[var(--color-bg-700)] p-3">
@@ -501,6 +518,170 @@ function ReplyDetail({
           {error ? <p className="text-[11px] text-[var(--color-danger-300)]">{error}</p> : null}
         </div>
       ) : null}
+    </div>
+  );
+}
+
+const MAX_REPLY_ATTEMPTS = 3;
+
+/**
+ * Reply-funnel draft review block. Shows the auto-drafted response, lets Pedro
+ * edit + approve-send it in-thread, enforces the 3-reply cap, and offers an
+ * "archive — no meeting" action that captures a learning.
+ */
+function DraftReview({
+  reply,
+  onChange,
+}: {
+  reply: Reply;
+  onChange: () => void;
+}) {
+  const [subject, setSubject] = React.useState(reply.draft_subject ?? reply.subject ?? "");
+  const [body, setBody] = React.useState(reply.draft_body ?? "");
+  const [error, setError] = React.useState<string | null>(null);
+  const [sending, startSend] = React.useTransition();
+  const [archiving, startArchive] = React.useTransition();
+
+  // Re-sync when a different reply is selected.
+  React.useEffect(() => {
+    setSubject(reply.draft_subject ?? reply.subject ?? "");
+    setBody(reply.draft_body ?? "");
+    setError(null);
+  }, [reply.id, reply.draft_subject, reply.draft_body, reply.subject]);
+
+  const attempts = reply.prospect_reply_attempts;
+  const capReached = attempts >= MAX_REPLY_ATTEMPTS;
+  const alreadyArchived = reply.prospect_status === "archived_no_meeting";
+  const alreadyBooked = reply.prospect_status === "booked";
+  const sent = reply.draft_status === "sent";
+  const hasDraft = Boolean(reply.draft_body) || reply.draft_status === "pending";
+
+  const send = () => {
+    setError(null);
+    startSend(async () => {
+      const res = await approveAndSendReply({
+        reply_id: reply.id,
+        edited_body: body.trim() || undefined,
+        edited_subject: subject.trim() || undefined,
+      });
+      if (res.ok) {
+        toast.success(`Reply ${res.action}`);
+        onChange();
+      } else {
+        setError(res.error);
+      }
+    });
+  };
+
+  const archive = () => {
+    if (!reply.prospect_id) {
+      setError("Link this reply to a prospect first.");
+      return;
+    }
+    setError(null);
+    startArchive(async () => {
+      const res = await archiveNoMeeting({
+        prospect_id: reply.prospect_id!,
+        reply_id: reply.id,
+      });
+      if (res.ok) {
+        toast.success("Prospect archived — learning captured.");
+        onChange();
+      } else {
+        setError(res.error ?? "Archive failed.");
+      }
+    });
+  };
+
+  if (alreadyArchived) {
+    return (
+      <div className="rounded-[var(--radius-md)] bg-[var(--color-bg-700)] p-3 text-[11px] text-[var(--color-fg-500)]">
+        <Archive className="mr-1 inline h-3 w-3" aria-hidden /> Prospect archived — no meeting booked.
+      </div>
+    );
+  }
+
+  if (sent) {
+    return (
+      <div className="rounded-[var(--radius-md)] bg-[var(--color-bg-700)] p-3 text-[11px] text-[var(--color-success-300)]">
+        <CheckCircle2 className="mr-1 inline h-3 w-3" aria-hidden /> Reply sent
+        {reply.draft_sent_at ? ` ${relativeTime(reply.draft_sent_at)}` : ""}. Reply {attempts}/
+        {MAX_REPLY_ATTEMPTS} used.
+      </div>
+    );
+  }
+
+  if (!hasDraft) return null;
+
+  return (
+    <div className="rounded-[var(--radius-md)] bg-[var(--color-bg-700)] p-3">
+      <div className="mb-2 flex items-center justify-between">
+        <p className="text-[10px] uppercase tracking-wider text-[var(--color-accent-300)]">
+          Drafted reply · review &amp; send
+        </p>
+        <span className="text-[10px] text-[var(--color-fg-500)]">
+          reply {attempts}/{MAX_REPLY_ATTEMPTS}
+        </span>
+      </div>
+
+      {alreadyBooked ? (
+        <p className="mb-2 text-[11px] text-[var(--color-success-300)]">
+          This prospect is already marked as booked.
+        </p>
+      ) : null}
+
+      {capReached ? (
+        <p className="mb-2 text-[11px] text-[var(--color-warning-300)]">
+          3-reply cap reached. Book the meeting or archive this prospect below.
+        </p>
+      ) : (
+        <div className="flex flex-col gap-2">
+          <Input
+            value={subject}
+            onChange={(e) => setSubject(e.target.value)}
+            className="h-8 text-xs"
+            placeholder="Re: subject"
+          />
+          <Textarea
+            value={body}
+            onChange={(e) => setBody(e.target.value)}
+            rows={8}
+            className="text-xs"
+            placeholder="Your reply…"
+          />
+          <Button
+            type="button"
+            variant="primary"
+            onClick={send}
+            disabled={sending || !body.trim()}
+            className="w-full justify-center"
+          >
+            {sending ? (
+              <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden />
+            ) : (
+              <Send className="h-3.5 w-3.5" aria-hidden />
+            )}
+            Approve &amp; send reply
+          </Button>
+        </div>
+      )}
+
+      <Button
+        type="button"
+        variant="ghost"
+        onClick={archive}
+        disabled={archiving}
+        className="mt-2 w-full justify-center text-[var(--color-fg-500)]"
+      >
+        {archiving ? (
+          <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden />
+        ) : (
+          <Archive className="h-3.5 w-3.5" aria-hidden />
+        )}
+        Archive — no meeting
+      </Button>
+
+      {error ? <p className="mt-2 text-[11px] text-[var(--color-danger-300)]">{error}</p> : null}
     </div>
   );
 }

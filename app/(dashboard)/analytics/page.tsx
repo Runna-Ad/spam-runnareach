@@ -1,6 +1,7 @@
 import {
   BrainCircuit,
   DollarSign,
+  FlaskConical,
   MessageSquare,
   TrendingUp,
   Users,
@@ -14,6 +15,12 @@ import {
   getPitchStats,
   getReplyIntents,
 } from "@/lib/analytics/queries";
+import {
+  getOutcomeInsights,
+  type OutcomeConfidence,
+  type OutcomeDimension,
+  type OutcomeInsights,
+} from "@/lib/analytics/outcomes";
 
 export const dynamic = "force-dynamic";
 
@@ -253,10 +260,201 @@ const COST_CAT_COLOR: Record<string, string> = {
 // Page
 // ---------------------------------------------------------------------------
 
+// ---------------------------------------------------------------------------
+// Outcome learning (Phase 2a — observation only)
+// ---------------------------------------------------------------------------
+
+const CONFIDENCE_META: Record<
+  OutcomeConfidence,
+  { label: string; color: string }
+> = {
+  actionable: { label: "actionable", color: "var(--color-success-300)" },
+  emerging: { label: "emerging", color: "var(--color-brand-gold)" },
+  insufficient: { label: "n<5", color: "var(--color-fg-700)" },
+};
+
+function ConfidenceBadge({ confidence }: { confidence: OutcomeConfidence }) {
+  const m = CONFIDENCE_META[confidence];
+  return (
+    <span
+      className="rounded-sm px-1.5 py-0.5 text-[9px] font-medium uppercase tracking-wider"
+      style={{
+        color: m.color,
+        background: `color-mix(in oklab, ${m.color}, transparent 88%)`,
+      }}
+    >
+      {m.label}
+    </span>
+  );
+}
+
+function DimensionTable({ dim }: { dim: OutcomeDimension }) {
+  const rows = dim.rows.slice(0, 6);
+  const extra = dim.rows.length - rows.length;
+
+  return (
+    <div
+      className="flex flex-col gap-2 rounded-lg p-4"
+      style={{
+        background: "var(--color-bg-800)",
+        border: "1px solid var(--color-border-subtle)",
+      }}
+    >
+      <span
+        className="text-[11px] font-medium uppercase tracking-wider"
+        style={{ color: "var(--color-fg-500)" }}
+      >
+        {dim.label}
+      </span>
+      {rows.length === 0 ? (
+        <p className="py-3 text-xs" style={{ color: "var(--color-fg-700)" }}>
+          No data on this dimension yet.
+        </p>
+      ) : (
+        <table className="w-full text-xs">
+          <thead>
+            <tr style={{ borderBottom: "1px solid var(--color-border-subtle)" }}>
+              {["", "Sent", "Repl", "Rate", ""].map((h, i) => (
+                <th
+                  key={i}
+                  className="pb-1 text-right text-[10px] font-medium uppercase tracking-wider first:text-left"
+                  style={{ color: "var(--color-fg-700)" }}
+                >
+                  {h}
+                </th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((r) => (
+              <tr
+                key={r.key}
+                className="border-b last:border-0"
+                style={{ borderColor: "var(--color-border-subtle)" }}
+              >
+                <td className="py-1.5 pr-2">
+                  <span
+                    className="block max-w-[140px] truncate"
+                    style={{ color: "var(--color-fg-200)" }}
+                    title={`${r.label} · ${fmt(r.prospects)} prospects`}
+                  >
+                    {r.label || "—"}
+                  </span>
+                </td>
+                <td className="py-1.5 text-right tabular-nums" style={{ color: "var(--color-fg-300)" }}>
+                  {fmt(r.sent)}
+                </td>
+                <td className="py-1.5 text-right tabular-nums" style={{ color: "var(--color-fg-300)" }}>
+                  {fmt(r.replied)}
+                </td>
+                <td
+                  className="py-1.5 text-right tabular-nums"
+                  style={{
+                    color:
+                      r.confidence === "insufficient"
+                        ? "var(--color-fg-700)"
+                        : r.replyRate !== null && r.replyRate > 0.1
+                          ? "var(--color-success-300)"
+                          : "var(--color-fg-300)",
+                  }}
+                >
+                  {/* Don't show a rate we can't trust — gate on confidence. */}
+                  {r.confidence === "insufficient" || r.replyRate === null
+                    ? "—"
+                    : pct(r.replied, r.sent)}
+                </td>
+                <td className="py-1.5 pl-2 text-right">
+                  <ConfidenceBadge confidence={r.confidence} />
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+      {extra > 0 && (
+        <span className="text-[10px]" style={{ color: "var(--color-fg-700)" }}>
+          +{extra} more
+        </span>
+      )}
+    </div>
+  );
+}
+
+function OutcomeLearning({ insights }: { insights: OutcomeInsights }) {
+  return (
+    <section
+      className="flex flex-col gap-4 rounded-xl p-5"
+      style={{
+        background: "var(--color-bg-800)",
+        border: "1px solid var(--color-border-subtle)",
+      }}
+    >
+      <SectionHeader icon={FlaskConical} title="Outcome learning" />
+
+      {/* Honest framing — this is observation, not auto-tuning. */}
+      <div
+        className="flex flex-col gap-1 rounded-lg p-3 text-[11px]"
+        style={{
+          background: "color-mix(in oklab, var(--color-brand-gold), transparent 92%)",
+          border: "1px solid color-mix(in oklab, var(--color-brand-gold), transparent 75%)",
+          color: "var(--color-fg-300)",
+        }}
+      >
+        <span style={{ color: "var(--color-brand-gold)" }}>
+          Phase 2a · observation only
+        </span>
+        <span>
+          Nothing here changes targeting or scoring. Reply rates stay hidden (“—”)
+          until a segment has ≥5 sends (<strong>emerging</strong>) and are only
+          dependable at ≥20 (<strong>actionable</strong>). Statistical reweighting
+          (Phase 2b) is gated on this volume — it waits until the numbers are real.
+        </span>
+      </div>
+
+      {/* Global outcome totals */}
+      <div className="grid grid-cols-3 gap-3">
+        <StatCard label="Sent" value={fmt(insights.totalSent)} sub="pitches shipped" />
+        <StatCard
+          label="Replied"
+          value={fmt(insights.totalReplied)}
+          sub={pct(insights.totalReplied, insights.totalSent) + " of sent"}
+          accent="var(--color-brand-gold)"
+        />
+        <StatCard
+          label="Booked"
+          value={fmt(insights.totalBooked)}
+          sub={pct(insights.totalBooked, insights.totalSent) + " of sent"}
+          accent="var(--color-success-300)"
+        />
+      </div>
+
+      {!insights.hasReadableData && (
+        <p
+          className="rounded-lg px-3 py-2 text-xs"
+          style={{
+            background: "var(--color-bg-900)",
+            color: "var(--color-fg-500)",
+          }}
+        >
+          Not enough outcomes yet to read any segment ({fmt(insights.totalSent)}{" "}
+          sent so far). As pitches send and replies land, these tables light up —
+          this is the data flywheel starting, exactly as designed.
+        </p>
+      )}
+
+      <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3">
+        {insights.dimensions.map((dim) => (
+          <DimensionTable key={dim.key} dim={dim} />
+        ))}
+      </div>
+    </section>
+  );
+}
+
 export default async function AnalyticsPage() {
   const user = await requireUser();
 
-  const [pipeline, pitchStats, costSummary, dailySpend, replyIntents, icpRows] =
+  const [pipeline, pitchStats, costSummary, dailySpend, replyIntents, icpRows, outcomes] =
     await Promise.all([
       getPipelineCounts(user.tenantId),
       getPitchStats(user.tenantId),
@@ -264,6 +462,7 @@ export default async function AnalyticsPage() {
       getDailySpend(user.tenantId),
       getReplyIntents(user.tenantId),
       getIcpLeaderboard(user.tenantId),
+      getOutcomeInsights(user.tenantId),
     ]);
 
   const totalProspects = pipeline.reduce((a, s) => a + s.count, 0);
@@ -721,6 +920,9 @@ export default async function AnalyticsPage() {
             )}
           </section>
         </div>
+
+        {/* ── Outcome learning (Phase 2a — observation only) ── */}
+        <OutcomeLearning insights={outcomes} />
 
         {/* ── Row 4: ICP leaderboard ── */}
         <section

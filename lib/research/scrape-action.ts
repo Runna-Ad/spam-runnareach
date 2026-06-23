@@ -7,8 +7,6 @@ import { requireUser } from "@/lib/auth";
 import { createClient } from "@/lib/supabase/server";
 import { scrapeSite, type SubPageExtract } from "./scraper";
 import { isRoleBasedEmail } from "./email-utils";
-import { hunterDomainSearch } from "./hunter";
-import { anymailFindDecisionMaker } from "./anymail-finder";
 
 const inputSchema = z.object({
   prospect_id: z.string().uuid(),
@@ -20,18 +18,12 @@ export type ScrapeWebsiteResult =
       tech_count: number;
       emails_count: number;
       what_they_do_set: boolean;
-      hunter_emails_count: number;
-      anymail_found: boolean;
       contact_insert_errors: string[];
     }
   | {
       ok: false;
       error: string;
-      hunter_emails_count?: number;
-      anymail_found?: boolean;
-      /** True when we automatically archived the lead (site dead + no contacts found). */
-      auto_archived?: boolean;
-      /** True when site was unreachable but contacts were found via Hunter/Anymail. */
+      /** True when a "website unreachable" pain point was recorded on the prospect. */
       pain_point_added?: boolean;
     };
 
@@ -169,93 +161,16 @@ export async function scrapeWebsite(prospectId: string): Promise<ScrapeWebsiteRe
       painMergeOk = !insertErr;
     }
 
-    // Try Anymail first, Hunter only if Anymail misses — preserves free-tier credits.
-    // Score gate (≥ 80) still applies: dead website on a low scorer is a dead end.
-    const domain = prospect.domain ?? null;
-    const isHighValue = (prospect.match_score ?? 0) >= 80;
-    let hunterCount = 0;
-    let anymailFound = false;
-
-    if (domain && isHighValue) {
-      // Anymail first — verified decision-maker, rank=1
-      const anymailResult = await anymailFindDecisionMaker(domain);
-      if (anymailResult.ok) {
-        const c = anymailResult.contact;
-        const { error: insertErr } = await supabase.from("prospect_contacts").insert({
-          tenant_id: user.tenantId,
-          prospect_id: parsed.data.prospect_id,
-          email: c.email,
-          full_name: c.full_name ?? null,
-          role_title: c.job_title ?? null,
-          linkedin_url: c.linkedin_url ?? null,
-          email_is_role_based: false,
-          priority_rank: 1,
-          selected_by: "anymail",
-          selected_at: new Date().toISOString(),
-        } as never);
-        if (!insertErr || insertErr.code === "23505") anymailFound = true;
-      }
-
-      // Hunter only if Anymail didn't find a verified contact — saves credits
-      if (!anymailFound) {
-        const hunterResult = await hunterDomainSearch(domain);
-        if (hunterResult.ok && hunterResult.contacts.length > 0) {
-          for (const contact of hunterResult.contacts) {
-            const rank = contact.confidence >= 70 ? 2 : 3;
-            const { error: insertErr } = await supabase.from("prospect_contacts").insert({
-              tenant_id: user.tenantId,
-              prospect_id: parsed.data.prospect_id,
-              email: contact.email,
-              full_name:
-                contact.first_name || contact.last_name
-                  ? [contact.first_name, contact.last_name].filter(Boolean).join(" ")
-                  : null,
-              role_title: contact.position ?? null,
-              email_is_role_based: false,
-              priority_rank: rank,
-              selected_by: "hunter",
-              selected_at: new Date().toISOString(),
-            } as never);
-            if (!insertErr || insertErr.code === "23505") hunterCount++;
-          }
-        }
-      }
-    }
-
-    // No contacts + low score, OR no contacts + high score but nothing found
-    // → auto-archive. No website, no email = dead lead.
-    if (!anymailFound && hunterCount === 0) {
-      await supabase
-        .from("prospects")
-        .update({ status: "no_match", updated_at: new Date().toISOString() } as never)
-        .eq("id", parsed.data.prospect_id)
-        .eq("tenant_id", user.tenantId);
-
-      revalidatePath(`/companies/${parsed.data.prospect_id}`);
-      return {
-        ok: false,
-        error: isHighValue
-          ? `${scrapeMsg} No contacts found via Hunter or Anymail. Lead auto-archived.`
-          : `${scrapeMsg} Score below 80 — lead auto-archived without spending credits.`,
-        hunter_emails_count: 0,
-        anymail_found: false,
-        auto_archived: true,
-        pain_point_added: painMergeOk,
-      };
-    }
-
-    // Contacts found — keep the lead alive with the pain point logged.
-    const contactParts = [
-      anymailFound ? "1 verified contact via Anymail" : null,
-      hunterCount > 0 ? `${hunterCount} contact${hunterCount === 1 ? "" : "s"} via Hunter` : null,
-    ].filter(Boolean).join(", ");
-
+    // Contact enrichment is deliberately NOT run here. Paid enrichment
+    // (Anymail/Hunter) is score-gated and owned by the waterfall in
+    // lib/discover/enrich-contacts.ts (pipeline + bulk re-score). Scrape
+    // never sets status — the pipeline/score triage owns status transitions.
     revalidatePath(`/companies/${parsed.data.prospect_id}`);
     return {
       ok: false,
-      error: `${scrapeMsg} Found ${contactParts} — "website unreachable" added as a pain point.`,
-      hunter_emails_count: hunterCount,
-      anymail_found: anymailFound,
+      error: painMergeOk
+        ? `${scrapeMsg} Logged "website unreachable" as a pain point.`
+        : scrapeMsg,
       pain_point_added: painMergeOk,
     };
   }
@@ -349,60 +264,10 @@ export async function scrapeWebsite(prospectId: string): Promise<ScrapeWebsiteRe
     }
   }
 
-  // If the scraper found no personal emails, enrich via Anymail then Hunter (short-circuit).
-  // Score gate (≥ 80) applies here too — preserve free-tier credits.
-  const scrapedPersonalCount = site.contact_emails.filter((e) => !isRoleBasedEmail(e)).length;
-  let hunterEmailsCount = 0;
-  let anymailFound = false;
-  const qualifiesForEnrichment = (prospect.match_score ?? 0) >= 80;
-
-  if (scrapedPersonalCount === 0 && qualifiesForEnrichment) {
-    const domain = prospect.domain ?? site.final_url.replace(/^https?:\/\//, "").split("/")[0];
-
-    // Anymail first — verified decision-maker email, rank=1 (beats everything)
-    const anymailResult = await anymailFindDecisionMaker(domain ?? "");
-    if (anymailResult.ok) {
-      const c = anymailResult.contact;
-      const { error } = await supabase.from("prospect_contacts").insert({
-        tenant_id: user.tenantId,
-        prospect_id: parsed.data.prospect_id,
-        email: c.email,
-        full_name: c.full_name ?? null,
-        role_title: c.job_title ?? null,
-        linkedin_url: c.linkedin_url ?? null,
-        email_is_role_based: false,
-        priority_rank: 1,
-        selected_by: "anymail",
-        selected_at: new Date().toISOString(),
-      } as never);
-      if (!error || error.code === "23505") anymailFound = true;
-    }
-
-    // Hunter only if Anymail didn't find a verified contact — saves credits
-    if (!anymailFound) {
-      const hunterResult = await hunterDomainSearch(domain ?? "");
-      if (hunterResult.ok && hunterResult.contacts.length > 0) {
-        for (const contact of hunterResult.contacts) {
-          const rank = contact.confidence >= 70 ? 2 : 3;
-          const { error } = await supabase.from("prospect_contacts").insert({
-            tenant_id: user.tenantId,
-            prospect_id: parsed.data.prospect_id,
-            email: contact.email,
-            full_name:
-              contact.first_name || contact.last_name
-                ? [contact.first_name, contact.last_name].filter(Boolean).join(" ")
-                : null,
-            role_title: contact.position ?? null,
-            email_is_role_based: false,
-            priority_rank: rank,
-            selected_by: "hunter",
-            selected_at: new Date().toISOString(),
-          } as never);
-          if (!error || error.code === "23505") hunterEmailsCount++;
-        }
-      }
-    }
-  }
+  // Contact enrichment is deliberately NOT run here. Paid enrichment
+  // (Anymail/Hunter) is score-gated and owned by the waterfall in
+  // lib/discover/enrich-contacts.ts (pipeline + bulk re-score). Scrape only
+  // records on-site contacts (above) into prospect_contacts.
 
   // Auto-fill language + market on the prospect if currently null.
   // Never overwrites a human-set value — only fills the gap.
@@ -437,8 +302,6 @@ export async function scrapeWebsite(prospectId: string): Promise<ScrapeWebsiteRe
       final_url: site.final_url,
       tech_count: mergedTechStack.length,
       emails_count: site.contact_emails.length,
-      hunter_emails_count: hunterEmailsCount,
-      anymail_found: anymailFound,
       key_pages: site.key_pages.length,
       sub_pages_scraped: site.sub_page_extracts.length,
       contact_insert_errors: contactInsertErrors.length > 0 ? contactInsertErrors : undefined,
@@ -452,8 +315,6 @@ export async function scrapeWebsite(prospectId: string): Promise<ScrapeWebsiteRe
     tech_count: mergedTechStack.length,
     emails_count: site.contact_emails.length,
     what_they_do_set: Boolean(whatTheyDo),
-    hunter_emails_count: hunterEmailsCount,
-    anymail_found: anymailFound,
     contact_insert_errors: contactInsertErrors,
   };
 }

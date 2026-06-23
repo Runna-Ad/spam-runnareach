@@ -12,9 +12,11 @@ import { transitionStatus } from "@/lib/prospects/detail-actions";
 import { cn, relativeTime } from "@/lib/utils";
 
 const COLUMNS: { key: ColStatus; label: string; tone: "neutral" | "info" | "success" | "danger" | "warning" }[] = [
+  { key: "suppressed", label: "Suppressed", tone: "warning" },
   { key: "raw", label: "Raw", tone: "neutral" },
   { key: "researched", label: "Researched", tone: "info" },
   { key: "pitched", label: "Pitched", tone: "info" },
+  { key: "sent", label: "Sent", tone: "success" },
   { key: "replied", label: "Replied", tone: "info" },
   { key: "booked", label: "Booked", tone: "success" },
   { key: "won", label: "Won", tone: "success" },
@@ -22,15 +24,20 @@ const COLUMNS: { key: ColStatus; label: string; tone: "neutral" | "info" | "succ
 ];
 
 type ColStatus =
+  | "suppressed"
   | "raw"
   | "researched"
   | "pitched"
+  | "sent"
   | "replied"
   | "booked"
   | "won"
   | "lost";
 
 const TERMINAL_STATUSES: Set<ColStatus> = new Set(["won", "lost"]);
+// "Sent" is a DERIVED column (driven by whether a pitch was actually sent, not
+// a prospect status) — you can't manually drop a card into it.
+const NON_DROPPABLE: Set<ColStatus> = new Set(["sent"]);
 
 const MARKET_FLAG: Record<"CA" | "MX" | "US" | "LATAM", string> = {
   CA: "🇨🇦",
@@ -57,21 +64,27 @@ export function FunnelBoard({ cards, canEdit }: FunnelBoardProps) {
     setState(cards);
   }, [cards]);
 
-  // Group cards by status. Cards with statuses outside our 7 columns
-  // (e.g. 'suppressed') are dropped — they live in /companies, not the
-  // active funnel.
+  // Group cards into columns. A "pitched" prospect whose pitch was actually
+  // sent moves to the derived "Sent" column. Statuses outside our columns
+  // (e.g. 'no_match') are dropped.
   const grouped = React.useMemo(() => {
     const out: Record<ColStatus, FunnelCard[]> = {
+      suppressed: [],
       raw: [],
       researched: [],
       pitched: [],
+      sent: [],
       replied: [],
       booked: [],
       won: [],
       lost: [],
     };
     for (const c of state) {
-      if (c.status in out) out[c.status as ColStatus].push(c);
+      if (c.status === "pitched" && c.pitch_sent) {
+        out.sent.push(c);
+      } else if (c.status in out) {
+        out[c.status as ColStatus].push(c);
+      }
     }
     return out;
   }, [state]);
@@ -84,6 +97,15 @@ export function FunnelBoard({ cards, canEdit }: FunnelBoardProps) {
     const card = state.find((c) => c.id === id);
     if (!card) return;
     if (card.status === target) return;
+
+    if (NON_DROPPABLE.has(target)) {
+      setToast({
+        tone: "warn",
+        text: `"Sent" is set automatically when a pitch is sent — it's not a manual stage.`,
+      });
+      window.setTimeout(() => setToast(null), 4000);
+      return;
+    }
 
     if (TERMINAL_STATUSES.has(target)) {
       setToast({
@@ -99,7 +121,8 @@ export function FunnelBoard({ cards, canEdit }: FunnelBoardProps) {
     setState((s) => s.map((c) => (c.id === id ? { ...c, status: target } : c)));
 
     React.startTransition(async () => {
-      const res = await transitionStatus({ id, next_status: target });
+      // `target` is never "sent" here — NON_DROPPABLE guards it above.
+      const res = await transitionStatus({ id, next_status: target as Exclude<ColStatus, "sent"> });
       if (!res.ok) {
         // Revert + surface the server's reason.
         setState((s) => s.map((c) => (c.id === id ? { ...c, status: previous } : c)));
@@ -258,8 +281,10 @@ export function FunnelBoard({ cards, canEdit }: FunnelBoardProps) {
                   {items.length === 0 ? (
                     <p className="px-1 py-4 text-[10px] text-[var(--color-fg-700)] leading-relaxed">
                       {col.key === "raw" && "Prospects land here from Discover."}
+                      {col.key === "suppressed" && "Low-fit or archived prospects land here."}
                       {col.key === "researched" && "Run research from a prospect page."}
                       {col.key === "pitched" && "Generate a pitch from a prospect page."}
+                      {col.key === "sent" && "Pitches appear here once they're sent."}
                       {col.key === "replied" && "Mark a reply from the Inbox."}
                       {col.key === "booked" && "Set from the prospect page."}
                       {col.key === "won" && "Set from the prospect page."}

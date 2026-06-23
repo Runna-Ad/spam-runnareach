@@ -6,6 +6,7 @@ import { writeAuditLog } from "@/lib/audit/log";
 import { requireUser } from "@/lib/auth";
 import { scoreProspect } from "@/lib/research/score-action";
 import { processSingleProspect } from "@/lib/discover/pipeline-action";
+import { enrichContactsForProspect } from "@/lib/discover/enrich-contacts";
 import { createClient } from "@/lib/supabase/server";
 import type { Database } from "@/lib/supabase/types";
 
@@ -116,6 +117,106 @@ export async function bulkTransitionStatus(
   return { ok: true, affected: count ?? parsed.data.prospect_ids.length, failed: 0 };
 }
 
+const bulkDeleteSchema = z.object({
+  prospect_ids: z.array(z.string().uuid()).min(1).max(500),
+});
+
+/**
+ * Hard-delete N prospects. Cascades to research, scores, pitches, and contacts
+ * (all FKs are `on delete cascade`). Prospects that have a booked opportunity
+ * are protected by `opportunities.prospect_id on delete restrict` — we detect
+ * those up front and skip them rather than letting the whole batch fail, so a
+ * stray won deal can never be wiped by a bulk cleanup.
+ *
+ * This is the UI replacement for hand-running `DELETE FROM prospects` in SQL.
+ */
+export async function bulkDeleteProspects(
+  input: z.input<typeof bulkDeleteSchema>,
+): Promise<BulkResult> {
+  const user = await requireUser();
+  if (user.role === "viewer") {
+    return { ok: false, error: "Viewers cannot delete prospects." };
+  }
+
+  const parsed = bulkDeleteSchema.safeParse(input);
+  if (!parsed.success) {
+    return { ok: false, error: parsed.error.issues[0]?.message ?? "Invalid input." };
+  }
+
+  const supabase = await createClient();
+  const ids = parsed.data.prospect_ids;
+
+  // Protect prospects that became real opportunities (booked deals).
+  // `opportunities` isn't in the generated Supabase types yet, so this one
+  // query is cast to bypass inference (same pattern as lib/warmup/queries.ts).
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const { data: oppRows } = await (supabase as any)
+    .from("opportunities")
+    .select("prospect_id")
+    .in("prospect_id", ids)
+    .eq("tenant_id", user.tenantId);
+  const protectedIds = new Set(
+    ((oppRows ?? []) as Array<{ prospect_id: string }>).map((r) => r.prospect_id),
+  );
+  const deletableIds = ids.filter((id) => !protectedIds.has(id));
+
+  if (deletableIds.length === 0) {
+    return {
+      ok: false,
+      error: "All selected prospects have booked opportunities and can't be deleted.",
+    };
+  }
+
+  // Capture names for the audit trail before the rows vanish.
+  const { data: nameRows } = await supabase
+    .from("prospects")
+    .select("id, company_name")
+    .in("id", deletableIds)
+    .eq("tenant_id", user.tenantId);
+  const nameById = new Map(
+    ((nameRows ?? []) as Array<{ id: string; company_name: string }>).map((r) => [
+      r.id,
+      r.company_name,
+    ]),
+  );
+
+  const { error, count } = await supabase
+    .from("prospects")
+    .delete({ count: "exact" })
+    .in("id", deletableIds)
+    .eq("tenant_id", user.tenantId);
+
+  if (error) return { ok: false, error: `Could not delete: ${error.message}` };
+
+  await Promise.all(
+    deletableIds.map((id) =>
+      writeAuditLog({
+        tenantId: user.tenantId,
+        actorId: user.id,
+        action: "prospect.deleted",
+        entityType: "prospect",
+        entityId: id,
+        metadata: { company_name: nameById.get(id) ?? null, via: "bulk" },
+      }),
+    ),
+  );
+
+  revalidatePath("/companies");
+  revalidatePath("/funnel");
+  revalidatePath("/dashboard");
+
+  const skipped = protectedIds.size;
+  return {
+    ok: true,
+    affected: count ?? deletableIds.length,
+    failed: skipped,
+    details:
+      skipped > 0
+        ? `${skipped} skipped (booked opportunity — can't delete)`
+        : undefined,
+  };
+}
+
 const bulkPipelineSchema = z.object({ prospect_ids: z.array(z.string().uuid()).min(1).max(20) });
 
 /**
@@ -171,23 +272,211 @@ export async function bulkScoreProspects(
     return { ok: false, error: parsed.error.issues[0]?.message ?? "Invalid input." };
   }
 
-  const results = await Promise.all(
-    parsed.data.prospect_ids.map((id) => scoreProspect(id)),
-  );
+  const ids = parsed.data.prospect_ids;
+  const results = await Promise.all(ids.map((id) => scoreProspect(id)));
 
   const affected = results.filter((r) => r.ok).length;
   const failed = results.length - affected;
   const firstErr = results.find((r) => !r.ok);
 
+  // ── Symmetric re-score triage ─────────────────────────────────────────────
+  // Mirror the pipeline's gate so bulk re-scoring keeps statuses honest:
+  //   score < 40  → suppress (only from early funnel states)
+  //   score ≥ 40 AND auto-suppressed before → un-suppress back to "researched"
+  // We only ever touch raw/researched/auto-suppressed rows — never a manually
+  // suppressed prospect or one a human advanced (pitched/replied/booked/won/lost).
+  const scoreById = new Map<string, number>();
+  ids.forEach((id, i) => {
+    const r = results[i];
+    if (r?.ok) scoreById.set(id, r.composite_score);
+  });
+
+  const supabase = await createClient();
+  const nowIso = new Date().toISOString();
+  type StatusRow = { id: string; status: string; suppressed_reason: string | null };
+  const { data: statusRows } = await supabase
+    .from("prospects")
+    .select("id, status, suppressed_reason")
+    .in("id", [...scoreById.keys()])
+    .eq("tenant_id", user.tenantId)
+    .returns<StatusRow[]>();
+
+  const toSuppress: string[] = [];
+  const toRestore: string[] = [];
+  for (const row of statusRows ?? []) {
+    const score = scoreById.get(row.id);
+    if (score === undefined) continue;
+    if (score < 40 && (row.status === "raw" || row.status === "researched")) {
+      toSuppress.push(row.id);
+    } else if (
+      score >= 40 &&
+      ((row.status === "suppressed" && (row.suppressed_reason ?? "").startsWith("Auto:")) ||
+        row.status === "no_match")
+    ) {
+      // Reactivate a parked prospect that now clears the bar (auto-suppressed
+      // under an old score, or no_match-archived by the legacy scrape path).
+      toRestore.push(row.id);
+    }
+  }
+
+  if (toSuppress.length > 0) {
+    await supabase
+      .from("prospects")
+      .update({
+        status: "suppressed",
+        suppressed_reason: "Auto: re-score below threshold",
+        suppressed_at: nowIso,
+        updated_at: nowIso,
+      })
+      .in("id", toSuppress)
+      .eq("tenant_id", user.tenantId);
+  }
+  if (toRestore.length > 0) {
+    // Restore to "researched" (scored, not yet pitched) and clear the auto-suppress.
+    await supabase
+      .from("prospects")
+      .update({
+        status: "researched",
+        suppressed_reason: null,
+        suppressed_at: null,
+        updated_at: nowIso,
+      })
+      .in("id", toRestore)
+      .eq("tenant_id", user.tenantId);
+  }
+
+  await Promise.all(
+    [...toSuppress, ...toRestore].map((id) =>
+      writeAuditLog({
+        tenantId: user.tenantId,
+        actorId: user.id,
+        action: "prospect.status_changed",
+        entityType: "prospect",
+        entityId: id,
+        metadata: {
+          via: "bulk_rescore",
+          to: toSuppress.includes(id) ? "suppressed" : "researched",
+          score: scoreById.get(id) ?? null,
+        },
+      }),
+    ),
+  );
+
+  // ── Contact enrichment for high scorers (≥70) ─────────────────────────────
+  // A high fit score is worthless without someone to email. For every ≥70
+  // prospect that has no contact yet, run the waterfall (SnapVerify → Anymail →
+  // Hunter), then mark pitch-readiness: a contact was found → pitch_gate_passed,
+  // still nothing after all tiers → flagged not-ready. Keeps the fit score
+  // honest while ensuring "≥70 + ready" actually means reachable.
+  let enrichedCount = 0;
+  let noContactCount = 0;
+  const HIGH_SCORE = 70;
+  const highIds = [...scoreById.entries()]
+    .filter(([, s]) => s >= HIGH_SCORE)
+    .map(([id]) => id);
+
+  if (highIds.length > 0) {
+    type CRow = { prospect_id: string; email_is_role_based: boolean | null };
+    const loadContacts = async (ids: string[]) =>
+      (
+        await supabase
+          .from("prospect_contacts")
+          .select("prospect_id, email_is_role_based")
+          .in("prospect_id", ids)
+          .eq("tenant_id", user.tenantId)
+          .not("email", "is", null)
+          .returns<CRow[]>()
+      ).data ?? [];
+
+    const before = await loadContacts(highIds);
+    const hasAnyEmail = new Set(before.map((r) => r.prospect_id));
+    // A PERSONAL email is a real decision-maker target. A role-based-only
+    // contact (info@, support@) still needs enrichment to find a person.
+    const hasPersonal = new Set(
+      before.filter((r) => !r.email_is_role_based).map((r) => r.prospect_id),
+    );
+    const missing = highIds.filter((id) => !hasPersonal.has(id));
+
+    if (missing.length > 0) {
+      type PRow = { id: string; domain: string | null; company_name: string };
+      const { data: pRows } = await supabase
+        .from("prospects")
+        .select("id, domain, company_name")
+        .in("id", missing)
+        .eq("tenant_id", user.tenantId)
+        .returns<PRow[]>();
+
+      // Run the (paid) waterfall in small parallel chunks to respect API rate
+      // limits and stay within the server-action time budget.
+      const CHUNK = 4;
+      const enrichable = (pRows ?? []).filter((p) => p.domain);
+      for (let i = 0; i < enrichable.length; i += CHUNK) {
+        await Promise.all(
+          enrichable.slice(i, i + CHUNK).map((p) =>
+            enrichContactsForProspect(
+              user.tenantId,
+              p.id,
+              p.domain as string,
+              p.company_name,
+              supabase,
+              false,
+            ).catch((err) => {
+              console.error(`[bulkScore] enrich failed for ${p.id}:`, err);
+            }),
+          ),
+        );
+      }
+
+      // Re-check the previously-missing prospects.
+      const after = await loadContacts(missing);
+      after.forEach((r) => {
+        hasAnyEmail.add(r.prospect_id);
+        if (!r.email_is_role_based) hasPersonal.add(r.prospect_id);
+      });
+      enrichedCount = missing.filter((id) => hasPersonal.has(id)).length;
+      noContactCount = missing.filter((id) => !hasAnyEmail.has(id)).length;
+    }
+
+    // Pitch-readiness gate: a ≥70 prospect with ANY valid email (personal OR
+    // role-based — both deliverable) is ready; no email at all → flagged.
+    const ready = highIds.filter((id) => hasAnyEmail.has(id));
+    const notReady = highIds.filter((id) => !hasAnyEmail.has(id));
+    if (ready.length > 0) {
+      await supabase
+        .from("prospects")
+        .update({ pitch_gate_passed: true, updated_at: nowIso })
+        .in("id", ready)
+        .eq("tenant_id", user.tenantId);
+    }
+    if (notReady.length > 0) {
+      await supabase
+        .from("prospects")
+        .update({ pitch_gate_passed: false, updated_at: nowIso })
+        .in("id", notReady)
+        .eq("tenant_id", user.tenantId);
+    }
+  }
+
   revalidatePath("/companies");
   revalidatePath("/funnel");
   revalidatePath("/dashboard");
+
+  const triageNote = [
+    toSuppress.length > 0 ? `${toSuppress.length} suppressed (<40)` : null,
+    toRestore.length > 0 ? `${toRestore.length} restored (≥40)` : null,
+    enrichedCount > 0 ? `${enrichedCount} decision-maker${enrichedCount === 1 ? "" : "s"} found` : null,
+    noContactCount > 0 ? `${noContactCount} still unreachable` : null,
+  ]
+    .filter(Boolean)
+    .join(", ");
 
   return {
     ok: true,
     affected,
     failed,
     details:
-      failed > 0 && firstErr && !firstErr.ok ? `First error: ${firstErr.error}` : undefined,
+      failed > 0 && firstErr && !firstErr.ok
+        ? `First error: ${firstErr.error}`
+        : triageNote || undefined,
   };
 }

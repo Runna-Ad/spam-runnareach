@@ -1,6 +1,6 @@
 "use client";
 
-import { Globe, Loader2, Search } from "lucide-react";
+import { Globe, Loader2, Search, Sparkles } from "lucide-react";
 import * as React from "react";
 import { Controller, useForm } from "react-hook-form";
 import { Button } from "@/components/ui/button";
@@ -78,7 +78,13 @@ interface CrawlDrawerProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   source: CrawlableSource;
-  icps: { id: string; name: string; market: Market }[];
+  icps: {
+    id: string;
+    name: string;
+    market: Market;
+    search_keywords: string[];
+    geo_regions: string[];
+  }[];
 }
 
 // ── Component ─────────────────────────────────────────────────────────────────
@@ -91,8 +97,8 @@ export function CrawlDrawer({
 }: CrawlDrawerProps) {
   const isYP = source === "yellowpages_ca";
   const isDenue = source === "denue";
-  const isYelp = source === "yelp";
   const isGoogle = source === "google_places";
+  const isClaude = source === "claude_search";
 
   const [result, setResult] = React.useState<CrawlResult | null>(null);
   const [running, startRun] = React.useTransition();
@@ -104,6 +110,7 @@ export function CrawlDrawer({
     reset,
     watch,
     setValue,
+    getValues,
     formState: { errors },
   } = useForm<CrawlFormValues>({
     defaultValues: {
@@ -131,9 +138,9 @@ export function CrawlDrawer({
     }
   }, [open, isDenue, reset]);
 
-  // For Yelp + Google Places: auto-update location when market changes
+  // For Google Places + AI Search: auto-update location when market changes
   React.useEffect(() => {
-    if (isYelp || isGoogle) {
+    if (isGoogle || isClaude) {
       setValue(
         "location",
         market === "MX" ? "Mexico"
@@ -141,7 +148,38 @@ export function CrawlDrawer({
         : "Canada",
       );
     }
-  }, [isYelp, isGoogle, market, setValue]);
+  }, [isGoogle, isClaude, market, setValue]);
+
+  // Smart prefill: when an ICP is selected, seed the keyword + location from
+  // the ICP's own targeting fields — but only into still-default fields so we
+  // never clobber what the user already typed. Pure data, no AI call.
+  const selectedIcpId = watch("icpId");
+  const [prefilledNote, setPrefilledNote] = React.useState<string | null>(null);
+  React.useEffect(() => {
+    if (!selectedIcpId) {
+      setPrefilledNote(null);
+      return;
+    }
+    const icp = icps.find((i) => i.id === selectedIcpId);
+    if (!icp) return;
+
+    const DEFAULT_LOCATIONS = new Set(["", "0", "Canada", "Mexico", "United States"]);
+    const filled: string[] = [];
+
+    const kw = icp.search_keywords[0];
+    if (kw && !getValues("keyword").trim()) {
+      setValue("keyword", kw, { shouldValidate: true });
+      filled.push("keyword");
+    }
+    // geo_regions hold province/region names ("Alberta") — valid for YP's
+    // province dropdown and for Google/AI free-text location alike.
+    const geo = icp.geo_regions[0];
+    if (geo && DEFAULT_LOCATIONS.has(getValues("location"))) {
+      setValue("location", geo);
+      filled.push("location");
+    }
+    setPrefilledNote(filled.length > 0 ? `Prefilled ${filled.join(" + ")} from ICP` : null);
+  }, [selectedIcpId, icps, getValues, setValue]);
 
   const onSubmit = (data: CrawlFormValues) => {
     setResult(null);
@@ -150,7 +188,7 @@ export function CrawlDrawer({
         source,
         keyword: data.keyword.trim() || "0",
         location:
-          isYP || isDenue || isYelp || isGoogle ? data.location : undefined,
+          isYP || isDenue || isGoogle || isClaude ? data.location : undefined,
         market: isYP ? "CA" : isDenue ? "MX" : data.market,
         pages: Number(data.pages),
         icp_id: data.icpId || null,
@@ -162,8 +200,8 @@ export function CrawlDrawer({
   const sourceLabel =
     isYP ? "Yellow Pages CA"
     : isDenue ? "DENUE México"
-    : isYelp ? "Yelp Fusion"
     : isGoogle ? "Google Places"
+    : isClaude ? "AI Search"
     : "Brave Search";
 
   const keyword = watch("keyword");
@@ -182,10 +220,10 @@ export function CrawlDrawer({
               ? "Scrapes yellowpages.ca for matching businesses. Free — no API key needed."
               : isDenue
                 ? "Queries INEGI's national business registry — ~5M Mexican businesses, free API."
-                : isYelp
-                  ? "Searches Yelp's business directory across CA, MX & US. 500 free calls/day. Great for finding SMBs without websites."
-                  : isGoogle
-                    ? "Searches Google's full business index — returns website URL directly. ~7,000 free calls/month."
+                : isGoogle
+                  ? "Searches Google's full business index — returns website URL directly. ~7,000 free calls/month."
+                  : isClaude
+                    ? "Claude researches the live web against your ICP — reads each result, filters out directories & off-ICP businesses, returns a tight list of real fits. ~$0.01–0.05 per run."
                     : "Keyword search via Brave Search API. 2,000 free queries/month."}
           </DrawerDescription>
         </DrawerHeader>
@@ -195,7 +233,7 @@ export function CrawlDrawer({
             {/* Keyword */}
             <div className="flex flex-col gap-1.5">
               <Label htmlFor="crawl-keyword">
-                {isDenue ? "Búsqueda (opcional)" : "Keyword *"}
+                {isDenue ? "Búsqueda (opcional)" : isClaude ? "Brief *" : "Keyword *"}
               </Label>
               <Input
                 id="crawl-keyword"
@@ -204,10 +242,10 @@ export function CrawlDrawer({
                     ? 'e.g. "pet food"'
                     : isDenue
                       ? 'SCIAN code (e.g. "46", "5411") or name (e.g. "restaurante")'
-                      : isYelp
-                        ? 'e.g. "web design", "restaurants", "pet grooming"'
-                        : isGoogle
-                          ? 'e.g. "clothing boutique", "pet store", "furniture"'
+                      : isGoogle
+                        ? 'e.g. "clothing boutique", "pet store", "furniture"'
+                        : isClaude
+                          ? 'e.g. "boutique fitness studios targeting youth athletes"'
                           : 'e.g. "pet food" shopify canada'
                 }
                 {...register("keyword", {
@@ -228,10 +266,10 @@ export function CrawlDrawer({
                   ? "Matches the YP search field — use plain English like a customer would."
                   : isDenue
                     ? "Enter a SCIAN sector code (46 = retail, 54 = professional services) or leave blank to search all industries in the selected state."
-                    : isYelp
-                      ? "Yelp category or business type — plain English. Returns up to 50 results sorted by popularity."
-                      : isGoogle
-                        ? "Business type or industry — location is appended automatically. Returns up to 20 results with website URLs."
+                    : isGoogle
+                      ? "Business type or industry — location is appended automatically. Returns up to 20 results with website URLs."
+                      : isClaude
+                        ? "Describe who you're looking for in plain English. Assign an ICP below and Claude uses its full profile to judge fit. Returns ~15 vetted businesses."
                         : "Full Brave query string — supports site:, \" \", and other operators."}
               </p>
             </div>
@@ -294,19 +332,19 @@ export function CrawlDrawer({
               </div>
             )}
 
-            {/* Location — Yelp / Google free-text (city, province, or country) */}
-            {(isYelp || isGoogle) && (
+            {/* Location — Google Places / AI Search free-text (city, province, or country) */}
+            {(isGoogle || isClaude) && (
               <div className="flex flex-col gap-1.5">
                 <Label htmlFor="crawl-location-text">Location</Label>
                 <Input
                   id="crawl-location-text"
-                  placeholder='e.g. "Alberta, Canada", "Ciudad de México", "Toronto, ON"'
+                  placeholder='e.g. "Calgary, AB", "Alberta, Canada", "Toronto, ON"'
                   {...register("location")}
                 />
                 <p className="text-[11px] text-[var(--color-fg-500)]">
-                  {isGoogle
-                    ? "Appended to your keyword query — be as specific or broad as you like."
-                    : "City, province, state, or country — Yelp geocodes this automatically."}
+                  {isClaude
+                    ? "Where to look — a city is sharper than a whole province."
+                    : "Appended to your keyword query — be as specific or broad as you like."}
                 </p>
               </div>
             )}
@@ -348,6 +386,12 @@ export function CrawlDrawer({
                   </Select>
                 )}
               />
+              {prefilledNote ? (
+                <p className="flex items-center gap-1 text-[11px] text-[var(--color-accent-300)]">
+                  <Sparkles className="h-3 w-3" aria-hidden />
+                  {prefilledNote}
+                </p>
+              ) : null}
             </div>
 
             {/* Result */}

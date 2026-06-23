@@ -26,6 +26,9 @@ import {
   buildFollowup2,
   type FollowupContext,
 } from "@/lib/pitches/followup-templates";
+import { composeFollowupWithClaude } from "@/lib/pitches/followup-composer";
+import { ANTHROPIC_DEFAULT_MODEL, claudeIsAvailable } from "@/lib/anthropic/client";
+import { isUnderDailyCap, recordClaudeCall } from "@/lib/anthropic/cost-tracking";
 
 // ── Auth guard ─────────────────────────────────────────────────────────────────
 
@@ -56,6 +59,9 @@ type ProspectRow = {
   id: string;
   company_name: string;
   market: string;
+  industry: string | null;
+  city: string | null;
+  language: string | null;
 };
 
 type ContactRow = {
@@ -65,7 +71,9 @@ type ContactRow = {
 };
 
 type ResearchRow = {
-  pain_points: Array<{ pain_code: string; quote?: string }> | null;
+  pain_points: Array<{ pain_code?: string; quote?: string; evidence_quote?: string }> | null;
+  what_they_do: string | null;
+  tech_stack: string[] | null;
 };
 
 type InboxRow = {
@@ -103,7 +111,7 @@ async function processFollowup(pitch: DuePitchRow): Promise<FollowupResult> {
   // ── 1. Load prospect ──────────────────────────────────────────────────────
   const { data: prospect } = await supabase
     .from("prospects")
-    .select("id, company_name, market")
+    .select("id, company_name, market, industry, city, language")
     .eq("id", pitch.prospect_id)
     .maybeSingle<ProspectRow>();
 
@@ -135,14 +143,17 @@ async function processFollowup(pitch: DuePitchRow): Promise<FollowupResult> {
     return { pitch_id: pitch.id, prospect: prospect.company_name, step: nextStep, status: "skipped", reason: "No contact email" };
   }
 
-  // ── 3. Load research for pain summary ─────────────────────────────────────
+  // ── 3. Load research for pain summary + AI personalisation context ────────
   let painSummary: string | null = null;
+  let evidenceQuote: string | null = null;
+  let whatTheyDo: string | null = null;
+  let techStack: string[] = [];
 
   // research table not yet in generated types — cast to any for raw access
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const { data: research } = await (supabase as any)
     .from("research")
-    .select("pain_points")
+    .select("pain_points, what_they_do, tech_stack")
     .eq("prospect_id", pitch.prospect_id)
     .is("superseded_at", null)
     .order("generated_at", { ascending: false })
@@ -150,13 +161,25 @@ async function processFollowup(pitch: DuePitchRow): Promise<FollowupResult> {
     .maybeSingle() as { data: ResearchRow | null };
 
   if (research?.pain_points && research.pain_points.length > 0) {
-    // Use the quote from the first pain point as a one-liner, if available
     const firstPain = research.pain_points[0];
-    if (firstPain?.quote) {
+    const quote = firstPain?.evidence_quote ?? firstPain?.quote ?? null;
+    if (quote) {
+      evidenceQuote = quote;
       // Trim to a concise phrase — max 80 chars
-      painSummary = firstPain.quote.slice(0, 80).replace(/\.$/, "");
+      painSummary = quote.slice(0, 80).replace(/\.$/, "");
     }
   }
+  whatTheyDo = research?.what_they_do ?? null;
+  techStack = research?.tech_stack ?? [];
+
+  // Load the original pitch body so the follow-up can avoid repeating it.
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const { data: originalPitch } = await (supabase as any)
+    .from("pitches")
+    .select("body_original, body_sent")
+    .eq("id", pitch.id)
+    .maybeSingle() as { data: { body_original: string | null; body_sent: string | null } | null };
+  const originalBody = originalPitch?.body_sent ?? originalPitch?.body_original ?? null;
 
   // ── 4. Load hunter scan value for this prospect's website ─────────────────
   let hunterValue: number | null = null;
@@ -222,7 +245,57 @@ async function processFollowup(pitch: DuePitchRow): Promise<FollowupResult> {
     market: resolveMarket(prospect.market),
   };
 
+  // Deterministic template — the always-available fallback.
   const template = nextStep === 2 ? buildFollowup1(ctx) : buildFollowup2(ctx);
+
+  // ── 7b. AI composer (smart, personalised) with template fallback ──────────
+  let email = template;
+  let composedBy: "claude" | "template" = "template";
+  if (claudeIsAvailable()) {
+    const cap = await isUnderDailyCap(pitch.tenant_id);
+    if (cap.under) {
+      const ai = await composeFollowupWithClaude({
+        step: nextStep as 2 | 3,
+        companyName: prospect.company_name,
+        contactFirstName,
+        language: prospect.language === "es" ? "es" : "en",
+        market: resolveMarket(prospect.market),
+        industry: prospect.industry,
+        city: prospect.city,
+        originalSubject: pitch.subject,
+        originalBody,
+        painSummary,
+        evidenceQuote,
+        whatTheyDo,
+        techStack,
+        hunterValue,
+        senderFirstName: inbox.display_name.trim().split(/\s+/)[0] || "Pedro",
+        agencyName: "Runna",
+      });
+      if (ai.ok) {
+        email = { subject: ai.followup.subject, body: ai.followup.body };
+        composedBy = "claude";
+        await recordClaudeCall({
+          tenantId: pitch.tenant_id,
+          model: ai.model,
+          entity_type: "pitch",
+          entity_id: pitch.id,
+          usage: ai.usage,
+          metadata: { kind: "followup", step: nextStep, prospect_id: pitch.prospect_id },
+        });
+      } else if (ai.usage) {
+        // Parse/timeout failures can still cost tokens — keep the cap honest.
+        await recordClaudeCall({
+          tenantId: pitch.tenant_id,
+          model: ANTHROPIC_DEFAULT_MODEL,
+          entity_type: "pitch",
+          entity_id: pitch.id,
+          usage: ai.usage,
+          metadata: { kind: "followup", step: nextStep, fallback_reason: ai.reason },
+        });
+      }
+    }
+  }
 
   // ── 8. Send via Gmail in original thread ─────────────────────────────────
   const sendResult = await sendGmailMessage({
@@ -230,8 +303,8 @@ async function processFollowup(pitch: DuePitchRow): Promise<FollowupResult> {
     fromEmail: inbox.email,
     fromName: inbox.display_name,
     to: contactEmail,
-    subject: template.subject,
-    body: template.body,
+    subject: email.subject,
+    body: email.body,
     threadId: pitch.gmail_thread_id ?? undefined,
     originalMessageId: pitch.gmail_message_id ?? undefined,
   });
@@ -256,9 +329,9 @@ async function processFollowup(pitch: DuePitchRow): Promise<FollowupResult> {
       case_study_id: pitch.case_study_id,
       service_id: pitch.service_id,
       pain_id: pitch.pain_id,
-      subject: template.subject,
-      body_original: template.body,
-      body_sent: template.body,
+      subject: email.subject,
+      body_original: email.body,
+      body_sent: email.body,
       status: "sent",
       sent_at: now,
       parent_pitch_id: pitch.id,
@@ -311,6 +384,7 @@ async function processFollowup(pitch: DuePitchRow): Promise<FollowupResult> {
       to_email: contactEmail,
       gmail_message_id: sendResult.gmailMessageId,
       gmail_thread_id: pitch.gmail_thread_id,
+      composed_by: composedBy,
     },
   });
 

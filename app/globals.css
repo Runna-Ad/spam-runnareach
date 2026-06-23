@@ -43,8 +43,8 @@
   --color-danger-300: #de5a5f;        /* runna-pink */
   --color-danger-500: #c2464a;
 
-  --color-info-300: #8b5cf6;
-  --color-info-500: #7c3aed;
+  --color-info-300: #38bdf8;   /* sky/neon-blue — was violet #8b5cf6, too close to accent purple */
+  --color-info-500: #0ea5e9;
 
   /* Borders — inset rings at low alpha of the purple, no drop shadows */
   --color-border-subtle: rgb(119 92 191 / 0.12);

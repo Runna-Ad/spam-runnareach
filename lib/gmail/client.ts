@@ -212,14 +212,20 @@ function buildHtmlBody(plainText: string): string {
         if (descriptionText) {
           htmlLines.push(`<p style="margin: 16px 0 8px;">${escapeHtml(descriptionText)}</p>`);
         }
+        // Wrap the label in a <span> with its own color. Apple Mail (and some
+        // dark-mode clients) override the text color on an <a> with their accent
+        // blue and add an underline — the inner span with explicit color +
+        // text-decoration:none keeps the button white-on-dark everywhere.
         htmlLines.push(
-          `<p style="margin: 8px 0 16px;">` +
+          `<p style="margin: 16px 0;">` +
           `<a href="${escapeHtml(url)}" ` +
-          `style="display: inline-block; padding: 11px 22px; background-color: #18181b; ` +
-          `color: #ffffff; text-decoration: none; border-radius: 6px; font-size: 14px; ` +
-          `font-weight: 500; letter-spacing: -0.01em; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;">` +
+          `style="display: inline-block; background-color: #775cbf; border-radius: 8px; ` +
+          `text-decoration: none;">` +
+          `<span style="display: inline-block; padding: 13px 26px; color: #ffffff; ` +
+          `text-decoration: none; font-size: 15px; font-weight: 600; letter-spacing: -0.01em; ` +
+          `font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif;">` +
           `${escapeHtml(buttonText)}` +
-          `</a></p>`,
+          `</span></a></p>`,
         );
       } else {
         // No URL found — render as plain line

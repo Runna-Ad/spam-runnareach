@@ -4,8 +4,8 @@ import { listIcps } from "@/lib/icp/queries";
 import { listDiscoveryRuns } from "@/lib/discover/runs-queries";
 import { braveIsAvailable } from "@/lib/discover/sources/brave-search";
 import { denueIsAvailable } from "@/lib/discover/sources/denue";
-import { yelpIsAvailable } from "@/lib/discover/sources/yelp";
 import { googlePlacesIsAvailable } from "@/lib/discover/sources/google-places";
+import { claudeSearchIsAvailable } from "@/lib/discover/sources/claude-search";
 import type { CrawlableSource } from "@/lib/discover/source-meta";
 
 export const dynamic = "force-dynamic";
@@ -20,11 +20,11 @@ export default async function DiscoverRoute() {
 
   // Resolve which crawl sources have credentials at runtime
   const availableCrawlSources: CrawlableSource[] = [
+    ...(claudeSearchIsAvailable() ? (["claude_search"] as CrawlableSource[]) : []),
     "yellowpages_ca", // always available — no key needed
     ...(braveIsAvailable() ? (["brave_search"] as CrawlableSource[]) : []),
     ...(denueIsAvailable() ? (["denue"] as CrawlableSource[]) : []),
-    ...(yelpIsAvailable() ? (["yelp"] as CrawlableSource[]) : []),
-    ...(googlePlacesIsAvailable() ? (["google_places"] as CrawlableSource[]) : []),
+...(googlePlacesIsAvailable() ? (["google_places"] as CrawlableSource[]) : []),
   ];
 
   return (
@@ -32,7 +32,13 @@ export default async function DiscoverRoute() {
       runs={runs}
       icps={icps
         .filter((i) => i.is_active)
-        .map((i) => ({ id: i.id, name: i.name, market: i.market }))}
+        .map((i) => ({
+          id: i.id,
+          name: i.name,
+          market: i.market,
+          search_keywords: i.search_keywords,
+          geo_regions: i.geo_regions,
+        }))}
       canManage={user.role !== "viewer"}
       availableCrawlSources={availableCrawlSources}
     />

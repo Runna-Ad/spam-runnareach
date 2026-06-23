@@ -80,6 +80,7 @@ function buildPrompt(
 ): string {
   const icpBlock = icp
     ? `Industry tags: ${icp.industry_tags.join(", ") || "any"}
+Business types (the kinds of business this ICP targets — a prospect matching one of these is a FIT, even if it sells services): ${icp.business_types.join(", ") || "any"}
 Geo regions: ${icp.geo_regions.join(", ") || "any"}
 Employee size: ${icp.employee_size_min ?? 0}–${icp.employee_size_max ?? "∞"}
 Search keywords: ${icp.search_keywords.join(", ") || "none"}
@@ -98,24 +99,24 @@ Pain points documented: ${research.pain_points.length}
 Evidence URLs: ${research.evidence_urls.length}`
     : "No research data yet.";
 
-  return `You are scoring a B2B sales prospect for Runna, a digital marketing agency specializing in email marketing, paid media, and growth for ecommerce/DTC brands in Canada and Mexico.
+  return `You are scoring a B2B sales prospect for Runna, a digital marketing agency. Runna sells marketing services to SMBs: websites, booking apps, social media management, video/ad creative, email marketing, paid media, and marketing automation. Runna's customers are businesses that NEED those services — both product brands (DTC/ecommerce) AND service businesses (fitness studios, gyms, clinics, salons, restaurants, hospitality, local services). Operating market: Canada and Mexico.
 
-CRITICAL RULE — COMPETITOR / SERVICE PROVIDER DETECTION:
-If the prospect is a web development agency, digital marketing agency, SEO firm, design studio, software consultancy, or any other B2B service provider (i.e. they sell services TO businesses rather than selling products TO consumers), they are a COMPETITOR or at minimum a zero-fit prospect. In that case:
-- Set industry_fit_pts = 0, service_match_pts = 0
-- Set composite_score ≤ 10 regardless of other signals
-- Note this explicitly in reasoning
+CRITICAL RULE — EXCLUDE ONLY COMPETITORS AND ALREADY-SERVED BUSINESSES:
+Hard-reject (set industry_fit_pts = 0, service_match_pts = 0, composite_score ≤ 10, and say so in reasoning) ONLY when the prospect is one of:
+  (a) A Runna COMPETITOR — a marketing/digital/creative/branding/advertising agency, SEO firm, web-development shop, or growth/marketing consultancy (i.e. they SELL marketing/creative/dev services to other businesses).
+  (b) ALREADY SERVED — clear evidence they already have a dedicated marketing/creative agency handling their marketing.
+Do NOT hard-reject a business merely because it "sells services." A fitness studio, clinic, restaurant, or salon sells services to consumers but is a PERFECT Runna customer — it needs websites, booking, social, ads, and email. Score these normally on fit + pain.
 
-PROSPECT TYPES THAT SCORE WELL: DTC product brands, online retailers, consumer goods companies, subscription box services, physical stores with ecommerce, food/beverage brands, apparel brands, beauty/cosmetics, home goods, pet products, sporting goods, etc.
+PROSPECT TYPES THAT SCORE WELL: DTC/product brands AND consumer-facing service businesses — fitness studios, gyms, yoga/pilates, clinics, dental/med-spa, salons, restaurants, cafes, hospitality, local services, etc. Anything with a real marketing surface and a decision-maker to reach.
 
 Score the prospect against the ICP using this rubric. Return ONLY valid JSON — no markdown, no explanation outside the JSON.
 
 RUBRIC DIMENSIONS (max points):
-- industry_fit_pts (max 20): ICP industry match — 0 if they're a service provider/agency
+- industry_fit_pts (max 20): Match to the ICP's industry_tags AND business_types. A consumer-facing service business that matches the ICP's targeted types is a fit — do NOT zero it for being a service business. 0 only for competitors/agencies (see CRITICAL RULE) or a genuinely off-ICP industry.
 - size_fit_pts (max 15): Employee count within ICP band
 - digital_maturity_pts (max 15): Sophistication of their marketing tech stack
 - pain_signal_pts (max 15): Documented pain points with evidence
-- service_match_pts (max 10): Fit with email / paid media / growth services — 0 if they sell services not products
+- service_match_pts (max 10): How well Runna's services (websites, booking apps, social, video/ad creative, email, paid media, automation) fit this prospect's marketing needs. Most SMBs with any marketing surface score moderate-to-high here. 0 ONLY for competitors or a business with no marketing surface at all — NOT for "sells services instead of products".
 - contact_discoverability_pts (max 10): Ease of finding decision-maker contact
 - geo_fit_pts (max 15): Prospect in ICP's target geography
 - red_flag_penalty: −10 per red flag, max −30 total

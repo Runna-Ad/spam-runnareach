@@ -29,6 +29,14 @@ export type Reply = {
   handled_by: string | null;
   handled_at: string | null;
   handled_by_name: string | null;
+  // Reply-funnel draft review
+  draft_body: string | null;
+  draft_subject: string | null;
+  draft_status: string | null;
+  draft_sent_at: string | null;
+  // Prospect funnel state (for the 3-reply cap + archive UI)
+  prospect_status: string | null;
+  prospect_reply_attempts: number;
 };
 
 const REPLIES_TABLE_MISSING = "REPLIES_TABLE_MISSING";
@@ -48,10 +56,21 @@ function isMigrationMissingError(err: { code?: string; message?: string } | null
  */
 export async function listReplies(tenantId: string): Promise<Reply[]> {
   const supabase = await createClient();
-  type Row = Omit<Reply, "prospect_name" | "prospect_market" | "handled_by_name"> & {
+  type Row = Omit<
+    Reply,
+    | "prospect_name"
+    | "prospect_market"
+    | "handled_by_name"
+    | "draft_body"
+    | "prospect_status"
+    | "prospect_reply_attempts"
+  > & {
+    auto_draft_body: string | null;
     prospects: {
       company_name: string;
       market: "CA" | "MX" | "US" | "LATAM";
+      status: string | null;
+      reply_attempts: number | null;
     } | null;
     handled_user: { full_name: string | null } | null;
   };
@@ -63,7 +82,8 @@ export async function listReplies(tenantId: string): Promise<Reply[]> {
       id, prospect_id, pitch_id, from_email, subject, body_text,
       received_at, intent, urgency, sentiment, classified_at,
       handled_by, handled_at,
-      prospects(company_name, market),
+      auto_draft_body, draft_subject, draft_status, draft_sent_at,
+      prospects(company_name, market, status, reply_attempts),
       handled_user:users!replies_handled_by_fkey(full_name)
     `,
     )
@@ -94,6 +114,12 @@ export async function listReplies(tenantId: string): Promise<Reply[]> {
     handled_by: r.handled_by,
     handled_at: r.handled_at,
     handled_by_name: r.handled_user?.full_name ?? null,
+    draft_body: r.auto_draft_body ?? null,
+    draft_subject: r.draft_subject ?? null,
+    draft_status: r.draft_status ?? null,
+    draft_sent_at: r.draft_sent_at ?? null,
+    prospect_status: r.prospects?.status ?? null,
+    prospect_reply_attempts: r.prospects?.reply_attempts ?? 0,
   }));
 }
 
@@ -128,24 +154,25 @@ export async function listProspectsForPicker(
  */
 export async function getInboxCounts(
   tenantId: string,
-): Promise<{ total: number; unclassified: number; hot: number; unhandled: number }> {
+): Promise<{ total: number; unclassified: number; hot: number; unhandled: number; drafts: number }> {
   const supabase = await createClient();
 
   type Row = {
     intent: ReplyIntent;
     urgency: ReplyUrgency;
     handled_at: string | null;
+    draft_status: string | null;
   };
 
   const { data, error } = await supabase
     .from("replies")
-    .select("intent, urgency, handled_at")
+    .select("intent, urgency, handled_at, draft_status")
     .eq("tenant_id", tenantId)
     .returns<Row[]>();
 
   if (error) {
     if (isMigrationMissingError(error)) {
-      return { total: 0, unclassified: 0, hot: 0, unhandled: 0 };
+      return { total: 0, unclassified: 0, hot: 0, unhandled: 0, drafts: 0 };
     }
     throw new Error(`Failed to count replies: ${error.message}`);
   }
@@ -156,6 +183,7 @@ export async function getInboxCounts(
     unclassified: rows.filter((r) => r.intent === "unclassified").length,
     hot: rows.filter((r) => r.urgency === "hot" || r.intent === "wants_meeting").length,
     unhandled: rows.filter((r) => !r.handled_at).length,
+    drafts: rows.filter((r) => r.draft_status === "pending").length,
   };
 }
 

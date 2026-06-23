@@ -10,7 +10,7 @@ import type { CurrentUser } from "@/lib/auth";
 import { createClient } from "@/lib/supabase/server";
 import type { Database } from "@/lib/supabase/types";
 import { composePitchWithClaude } from "./claude-composer";
-import { HUNTER_URL, renderIndustryTemplate } from "./industry-templates";
+import { hunterUrlForLanguage, renderIndustryTemplate } from "./industry-templates";
 import {
   type ComposedPitch,
   type GeneratorInputContact,
@@ -279,7 +279,8 @@ export async function generatePitch(
       full_name: user.fullName,
       tenant_display_name: user.tenantDisplayName,
     },
-    deep_pitch_url: HUNTER_URL, // Inefficiency Hunter — the primary CTA for all pitches.
+    // Inefficiency Hunter CTA — language picks the market: en → Canada, es → Mexico.
+    deep_pitch_url: hunterUrlForLanguage(prospect.language),
   };
 
   // ── PHASE 2: try Claude first, fall back to heuristic ─────────────────
@@ -416,7 +417,25 @@ export async function generatePitch(
     },
   });
 
+  // Advance the prospect to "pitched" so the funnel/list reflect reality.
+  // Guarded to pre-pitch states only (raw/researched) via the WHERE filter, so
+  // regenerating a pitch never downgrades a replied/booked/won/lost prospect.
+  // The pipeline sets this too; doing it here makes the MANUAL "Generate pitch"
+  // button consistent with the automated path.
+  await supabase
+    .from("prospects")
+    .update({
+      status: "pitched",
+      pitch_gate_passed: true,
+      updated_at: new Date().toISOString(),
+    })
+    .eq("id", parsed.data.prospect_id)
+    .eq("tenant_id", user.tenantId)
+    .in("status", ["raw", "researched"]);
+
   revalidatePath("/pitches");
+  revalidatePath("/companies");
+  revalidatePath("/funnel");
   revalidatePath(`/companies/${parsed.data.prospect_id}`);
 
   return {

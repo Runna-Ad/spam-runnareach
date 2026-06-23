@@ -51,6 +51,7 @@ export type RubricInputResearch = {
 
 export type RubricInputIcp = {
   industry_tags: string[];
+  business_types: string[];
   geo_regions: string[];
   employee_size_min: number | null;
   employee_size_max: number | null;

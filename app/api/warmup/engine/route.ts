@@ -80,9 +80,16 @@ async function getSendingInbox(
 
 async function processConfig(config: WarmupConfig): Promise<EngineTickResult> {
   const tickStart = Date.now();
-  // Reserve 5s per remaining send + 5s buffer. Prevents IMAP checks from
-  // eating into the send window when daily target scales up to 50/day.
-  const sendDeadlineMs = (target: number) => tickStart + 115_000 - target * 5_000;
+  // Fixed wall-clock budget for the send loop. The route's maxDuration is 120s;
+  // we stop INITIATING new sends at 105s so the in-flight send (~1s) completes
+  // and step 8 (reply processing) still has a few seconds before the ceiling.
+  //
+  // ⚠️ Must NOT scale down with the daily target. The previous formula
+  // `tickStart + 115_000 - target * 5_000` reserved 5s PER send, so at 50/day
+  // it reserved 250s against a 115s budget → deadline went NEGATIVE → the loop
+  // broke before the first send ("deadline reached after 0/50 sends"). It only
+  // worked at ≤20/day where the term stayed positive. See lessons 2026-06-22.
+  const SEND_DEADLINE_MS = tickStart + 105_000;
 
   const result: EngineTickResult = {
     config_id: config.id,
@@ -172,7 +179,7 @@ async function processConfig(config: WarmupConfig): Promise<EngineTickResult> {
     // ── Step 6: Send all remaining emails for today in one tick
     // (Cron fires once/day on Hobby tier — no burst risk, send the full daily target)
     const sendThisTick = dayPlan.remainingToday;
-    const deadline = sendDeadlineMs(sendThisTick);
+    const deadline = SEND_DEADLINE_MS;
     let buddyIndex = config.last_buddy_index;
 
     for (let i = 0; i < sendThisTick; i++) {

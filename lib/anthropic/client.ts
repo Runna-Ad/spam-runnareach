@@ -38,7 +38,7 @@ let _testClient: Anthropic | null = null;
 // Fresh client per call — Vercel serverless functions are stateless and
 // a cached singleton can hold stale TCP connections from prior invocations,
 // causing "Connection error" on warm starts.
-export function getClient(): Anthropic {
+export function getClient(timeoutMs: number = DEFAULT_TIMEOUT_MS): Anthropic {
   if (_testClient) return _testClient;
   // Trim so a trailing newline (common in copy-paste or env var tooling) never
   // causes "is not a legal HTTP header value" — that error was the real root cause
@@ -47,7 +47,7 @@ export function getClient(): Anthropic {
   if (!apiKey) throw new Error("ANTHROPIC_API_KEY not set");
   return new Anthropic({
     apiKey,
-    timeout: DEFAULT_TIMEOUT_MS,
+    timeout: timeoutMs,
     maxRetries: DEFAULT_MAX_RETRIES,
     httpAgent: NO_KEEPALIVE_AGENT,
   });
@@ -102,6 +102,13 @@ export type StructuredCallInput<T> = {
   max_tokens: number;
   /** Zod schema the JSON response must conform to. */
   schema: z.ZodType<T>;
+  /**
+   * Optional per-call client timeout (ms). Defaults to 20s. Bump it for
+   * longer single-call generations (e.g. the Gary ICP wizard runs one Sonnet
+   * call with a large grounding prompt) — keep it under the Vercel function
+   * maxDuration so the action still returns.
+   */
+  timeoutMs?: number;
 };
 
 export type StructuredCallResult<T> =
@@ -125,7 +132,7 @@ export async function structuredCall<T>(
   input: StructuredCallInput<T>,
 ): Promise<StructuredCallResult<T>> {
   const model = input.model ?? ANTHROPIC_DEFAULT_MODEL;
-  const client = getClient();
+  const client = getClient(input.timeoutMs);
 
   const system =
     input.system +

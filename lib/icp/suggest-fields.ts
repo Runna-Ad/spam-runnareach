@@ -24,6 +24,12 @@ import {
 
 export type SuggestInput = {
   name: string;
+  /**
+   * Optional free-text description of the ideal customer (e.g. "boutique
+   * fitness studios in Alberta that sell branded merch online"). When set,
+   * it's the primary signal for suggestions and seeds a suggested name.
+   */
+  description?: string;
   market: "CA" | "MX" | "US" | "LATAM";
   language: "en" | "es";
   /** Values already on the form — we won't propose anything already there. */
@@ -38,6 +44,8 @@ export type SuggestInput = {
 };
 
 export type SuggestOutput = {
+  /** Suggested ICP name — only populated when generating from a description. */
+  name: string | null;
   industry_tags: string[];
   business_types: string[];
   geo_regions: string[];
@@ -65,7 +73,9 @@ export type SuggestOutput = {
  * map the response into SuggestOutput.
  */
 export function suggestIcpFields(input: SuggestInput): SuggestOutput {
-  const lowerName = input.name.toLowerCase();
+  // Scan name + description together so a free-text brief drives suggestions
+  // through the exact same token matching the name already uses.
+  const lowerName = `${input.name} ${input.description ?? ""}`.toLowerCase();
   const reasoning: string[] = [];
   const existingLower = (k: keyof SuggestInput["existing"]) =>
     new Set(input.existing[k].map((v) => v.toLowerCase()));
@@ -189,7 +199,22 @@ export function suggestIcpFields(input: SuggestInput): SuggestOutput {
     reasoning.push(`Search keywords seeded from industry tags + name`);
   }
 
+  // Derive a name only when generating from a description and the user hasn't
+  // typed one — title-case the first geo + first industry tag for a sensible
+  // default (e.g. "Alberta Fitness"). Claude does this far better; this is the
+  // heuristic fallback.
+  let name: string | null = null;
+  if (!input.name.trim() && input.description?.trim()) {
+    const titleCase = (s: string) =>
+      s.replace(/(^|\s|-)\w/g, (c) => c.toUpperCase()).replace(/_/g, " ");
+    const parts = [geo_regions[0], industry_tags[0] ?? business_types_clean[0]]
+      .filter(Boolean)
+      .map((s) => titleCase(s as string));
+    name = parts.length > 0 ? parts.join(" ") : null;
+  }
+
   return {
+    name,
     industry_tags,
     business_types: business_types_clean,
     geo_regions,

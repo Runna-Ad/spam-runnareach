@@ -25,9 +25,8 @@ import { revalidatePath } from "next/cache";
 import { writeAuditLog } from "@/lib/audit/log";
 import { requireUser } from "@/lib/auth";
 import { createClient } from "@/lib/supabase/server";
-import { anymailFindDecisionMaker } from "@/lib/research/anymail-finder";
-import { hunterDomainSearch } from "@/lib/research/hunter";
 import { snapVerifyEnrich } from "@/lib/research/snap-contact";
+import { enrichContactsForProspect } from "@/lib/discover/enrich-contacts";
 import { scrapeWebsite } from "@/lib/research/scrape-action";
 import { runStructuredResearch } from "@/lib/research/structured-research-action";
 import { deepResearchProspect } from "@/lib/research/deep-research-action";
@@ -340,7 +339,7 @@ export async function processSingleProspect(
       );
 
       if (snapResult.found) {
-        const priorityRank = snapResult.method === "smtp_verified" ? 1 : 2;
+        // SMTP-verified personal email (the only thing SnapVerify "finds" now).
         await supabase.from("prospect_contacts").insert({
           tenant_id: user.tenantId,
           prospect_id: prospectId,
@@ -348,13 +347,8 @@ export async function processSingleProspect(
           full_name: snapResult.full_name ?? null,
           role_title: snapResult.role_title ?? null,
           email_is_role_based: false,
-          priority_rank: priorityRank,
-          selected_by:
-            snapResult.method === "smtp_verified"
-              ? "snapverify_smtp"
-              : snapResult.method === "google_workspace_guess"
-                ? "snapverify_google_guess"
-                : "snapverify_mx_heuristic",
+          priority_rank: 1,
+          selected_by: "snapverify_smtp",
           selected_at: new Date().toISOString(),
         });
         snapVerifyFoundContact = true;
@@ -397,10 +391,16 @@ export async function processSingleProspect(
   }
 
   if (score < 70) {
-    // Needs review — mark pitch_gate_passed=false so badge shows
+    // Needs review — mark pitch_gate_passed=false. If the prospect was parked
+    // (auto-suppressed or no_match under an earlier score) but now clears the
+    // bar, reactivate it to "researched" so it's not stuck out of view.
+    const reactivate = p?.status === "suppressed" || p?.status === "no_match";
     await supabase
       .from("prospects")
       .update({
+        ...(reactivate
+          ? { status: "researched", suppressed_reason: null, suppressed_at: null }
+          : {}),
         pitch_gate_passed: false,
         updated_at: new Date().toISOString(),
       })
@@ -411,12 +411,13 @@ export async function processSingleProspect(
     return { prospect_id: prospectId, company_name: name, score, outcome: "needs_review" };
   }
 
-  // Score ≥ 70: run paid enrichment tiers (Anymail → Hunter).
-  // SnapVerify already ran in Step 6 — skip it here to avoid double SMTP probes.
-  // Only Anymail + Hunter fire for ≥70 prospects that SnapVerify couldn't resolve.
+  // Score ≥ 70 with no verified contact yet: run the full waterfall
+  // (SnapVerify 3-pass → Anymail → Hunter → catch-all-safe guess). We pass
+  // skipSnapVerify=false so SnapVerify re-runs here and can surface the
+  // catch-all best-guess as a last resort — Pass-1's run only inserts verified.
   if (p?.domain && !snapVerifyFoundContact) {
     try {
-      await enrichContactsForProspect(user.tenantId, prospectId, p.domain, p.company_name, supabase, true);
+      await enrichContactsForProspect(user.tenantId, prospectId, p.domain, p.company_name, supabase, false);
     } catch (err) {
       console.error(`[pipeline] enrichContactsForProspect failed for ${name}:`, err);
     }
@@ -451,9 +452,14 @@ export async function processSingleProspect(
   });
 
   if (!validContacts || validContacts.length === 0) {
+    // ≥70 but unreachable — needs review. Reactivate if it was parked.
+    const reactivate = p?.status === "suppressed" || p?.status === "no_match";
     await supabase
       .from("prospects")
       .update({
+        ...(reactivate
+          ? { status: "researched", suppressed_reason: null, suppressed_at: null }
+          : {}),
         pitch_gate_passed: false,
         updated_at: new Date().toISOString(),
       })
@@ -499,10 +505,15 @@ export async function processSingleProspect(
     });
   }
 
-  // Score passed but pitch couldn't be created — mark gate passed so UI shows correct state
+  // Score passed but pitch couldn't be created — mark gate passed so UI shows
+  // correct state, and reactivate if the prospect was parked.
+  const reactivate = p?.status === "suppressed" || p?.status === "no_match";
   await supabase
     .from("prospects")
     .update({
+      ...(reactivate
+        ? { status: "researched", suppressed_reason: null, suppressed_at: null }
+        : {}),
       pitch_gate_passed: true,
       updated_at: new Date().toISOString(),
     })
@@ -562,113 +573,6 @@ export async function reEnrichProspectContacts(
     return { ok: true, found: true, email: best.email, method: best.selected_by };
   }
   return { ok: true, found: false };
-}
-
-// ── Contact enrichment helper (score-gated, three-tier waterfall) ─────────────
-
-/**
- * Paid contact enrichment for a single prospect (score ≥ 70 only):
- *
- *   When skipSnapVerify=false (default, e.g. re-enrich from UI):
- *     Tier 1 — SnapVerify (free) → Tier 2 — Anymail → Tier 3 — Hunter
- *
- *   When skipSnapVerify=true (pipeline path — SnapVerify already ran in Pass 1):
- *     Tier 2 — Anymail → Tier 3 — Hunter
- *     Skipping SnapVerify avoids redundant SMTP probes on prospects it already
- *     attempted without finding a contact.
- *
- * Short-circuits on first success — each tier preserves the next tier's credits.
- * Duplicate inserts (23505) are silently ignored.
- */
-async function enrichContactsForProspect(
-  tenantId: string,
-  prospectId: string,
-  domain: string,
-  companyName: string,
-  supabase: Awaited<ReturnType<typeof createClient>>,
-  skipSnapVerify = false,
-): Promise<void> {
-  if (!skipSnapVerify) {
-    // ── Tier 1: SnapVerify (only when not already run in Pass 1) ─────────────
-    type ResearchRow = { notes: string | null; what_they_do: string | null };
-    const { data: research } = await supabase
-      .from("prospect_research")
-      .select("notes, what_they_do")
-      .eq("prospect_id", prospectId)
-      .eq("tenant_id", tenantId)
-      .maybeSingle<ResearchRow>();
-
-    const snapResult = await snapVerifyEnrich(
-      prospectId,
-      domain,
-      research?.notes ?? null,
-      research?.what_they_do ?? null,
-      companyName,
-    );
-
-    if (snapResult.found) {
-      const priorityRank = snapResult.method === "smtp_verified" ? 1 : 2;
-      await supabase.from("prospect_contacts").insert({
-        tenant_id: tenantId,
-        prospect_id: prospectId,
-        email: snapResult.email,
-        full_name: snapResult.full_name ?? null,
-        role_title: snapResult.role_title ?? null,
-        email_is_role_based: false,
-        priority_rank: priorityRank,
-        selected_by:
-          snapResult.method === "smtp_verified"
-            ? "snapverify_smtp"
-            : snapResult.method === "google_workspace_guess"
-              ? "snapverify_google_guess"
-              : "snapverify_mx_heuristic",
-        selected_at: new Date().toISOString(),
-      });
-      // Short-circuit — SnapVerify found a personal email, skip paid tiers
-      return;
-    }
-  }
-
-  // ── Tier 2: Anymail Finder ────────────────────────────────────────────────
-  const anymailResult = await anymailFindDecisionMaker(domain);
-  if (anymailResult.ok) {
-    const c = anymailResult.contact;
-    await supabase.from("prospect_contacts").insert({
-      tenant_id: tenantId,
-      prospect_id: prospectId,
-      email: c.email,
-      full_name: c.full_name ?? null,
-      role_title: c.job_title ?? null,
-      linkedin_url: c.linkedin_url ?? null,
-      email_is_role_based: false,
-      priority_rank: 1,
-      selected_by: "anymail",
-      selected_at: new Date().toISOString(),
-    });
-    return; // short-circuit — Anymail found someone, skip Hunter
-  }
-
-  // ── Tier 3: Hunter.io ─────────────────────────────────────────────────────
-  const hunterResult = await hunterDomainSearch(domain);
-  if (hunterResult.ok && hunterResult.contacts.length > 0) {
-    for (const contact of hunterResult.contacts) {
-      const rank = contact.confidence >= 70 ? 2 : 3;
-      await supabase.from("prospect_contacts").insert({
-        tenant_id: tenantId,
-        prospect_id: prospectId,
-        email: contact.email,
-        full_name:
-          contact.first_name || contact.last_name
-            ? [contact.first_name, contact.last_name].filter(Boolean).join(" ")
-            : null,
-        role_title: contact.position ?? null,
-        email_is_role_based: false,
-        priority_rank: rank,
-        selected_by: "hunter",
-        selected_at: new Date().toISOString(),
-      });
-    }
-  }
 }
 
 // ── Prune run to top 30 ────────────────────────────────────────────────────────

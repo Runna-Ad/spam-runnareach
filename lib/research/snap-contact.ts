@@ -32,9 +32,18 @@ export type SnapVerifyResult =
       full_name: string | null;
       role_title: string | null;
       confidence: number;
-      method: "smtp_verified" | "google_workspace_guess" | "mx_heuristic";
+      // Only SMTP-verified results are treated as "found" now. Unverified
+      // pattern guesses on non-catch-all domains are NOT inserted (bounce risk).
+      method: "smtp_verified";
     }
-  | { found: false; reason: string };
+  | {
+      found: false;
+      reason: string;
+      // Present only when the domain is CATCH-ALL: a best firstname@domain guess
+      // the waterfall may use as a last resort. Catch-all servers accept all
+      // mail, so this can't hard-bounce — safe to keep, flagged as a guess.
+      catchAllGuess?: { email: string; full_name: string | null; role_title: string | null };
+    };
 
 type EmailVerifyResult = {
   email: string;
@@ -198,7 +207,7 @@ async function callVerifyEdgeFunction(
         apikey: anonKey,
       },
       body: JSON.stringify({ emails, domain }),
-      signal: AbortSignal.timeout(20_000), // 20s total budget
+      signal: AbortSignal.timeout(8_000), // short per-pass budget — we run up to 3 passes
     });
 
     if (!res.ok) {
@@ -319,8 +328,20 @@ export async function snapVerifyEnrich(
     return { found: false, reason: "Could not derive email guesses from person names" };
   }
 
-  // Step 3: Call edge function
-  const edgeResult = await callVerifyEdgeFunction(allGuesses, domain);
+  // Step 3: Call edge function — up to 3 passes to ride out greylisting and
+  // transient SMTP errors (servers commonly answer "450 try later" on the first
+  // probe). Stop early once we get a usable answer.
+  let edgeResult = await callVerifyEdgeFunction(allGuesses, domain);
+  for (let pass = 2; pass <= 3; pass++) {
+    const inconclusive =
+      !edgeResult ||
+      (!edgeResult.is_catch_all &&
+        !edgeResult.port25_blocked &&
+        !edgeResult.results.some((r) => r.verdict === "valid"));
+    if (!inconclusive) break;
+    await new Promise((r) => setTimeout(r, 1_200)); // brief pause for greylisting
+    edgeResult = await callVerifyEdgeFunction(allGuesses, domain);
+  }
 
   // Step 4: Try SMTP-verified result first
   if (edgeResult && !edgeResult.port25_blocked && !edgeResult.is_catch_all) {
@@ -343,13 +364,20 @@ export async function snapVerifyEnrich(
     }
   }
 
-  // Step 5: Google Workspace heuristic
-  // Trigger when: provider=google OR (provider=unknown AND port25_blocked)
+  // No clean SMTP-valid result. We deliberately DO NOT insert an unverified
+  // guess on a normal domain — a hard bounce on a wrong address hurts the warmed
+  // sending domain more than a missing contact helps. Returning found:false lets
+  // the waterfall fall through to Anymail + Hunter (verified finders).
+  //
+  // EXCEPTION — catch-all domains: their server ACCEPTS every address, so a
+  // firstname@domain guess physically cannot hard-bounce. We surface it as a
+  // `catchAllGuess` for the waterfall to use as a LAST resort (after Anymail +
+  // Hunter), clearly flagged as a guess.
   const provider = edgeResult?.provider ?? "unknown";
-  const port25Blocked = edgeResult?.port25_blocked ?? true; // assume blocked if edge fn failed
+  const port25Blocked = edgeResult?.port25_blocked ?? true;
 
-  if (provider === "google" || (provider === "unknown" && port25Blocked)) {
-    const guess = googleWorkspaceGuess(people, domain);
+  if (edgeResult?.is_catch_all) {
+    const guess = googleWorkspaceGuess(people, domain); // firstname@domain, senior person
     if (guess) {
       const matchedPerson = people.find((p) =>
         guess.email.startsWith(
@@ -357,39 +385,19 @@ export async function snapVerifyEnrich(
         ),
       );
       return {
-        found: true,
-        email: guess.email,
-        full_name: matchedPerson?.full_name ?? null,
-        role_title: matchedPerson?.role_title ?? null,
-        confidence: guess.confidence,
-        method: "google_workspace_guess",
-      };
-    }
-  }
-
-  // Step 6: Microsoft heuristic — they block port 25 too but catch-all is less reliable.
-  // We still try firstname@ at lower confidence.
-  if (provider === "microsoft") {
-    const guess = googleWorkspaceGuess(people, domain); // same logic, different label
-    if (guess) {
-      const matchedPerson = people.find((p) =>
-        guess.email.startsWith(
-          (p.full_name.split(" ")[0] ?? "").toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, ""),
-        ),
-      );
-      return {
-        found: true,
-        email: guess.email,
-        full_name: matchedPerson?.full_name ?? null,
-        role_title: matchedPerson?.role_title ?? null,
-        confidence: 55, // lower than Google — Microsoft RCPT is less predictable
-        method: "mx_heuristic",
+        found: false,
+        reason: `Catch-all domain (${provider}) — no per-mailbox verification possible; surfacing best guess`,
+        catchAllGuess: {
+          email: guess.email,
+          full_name: matchedPerson?.full_name ?? null,
+          role_title: matchedPerson?.role_title ?? null,
+        },
       };
     }
   }
 
   return {
     found: false,
-    reason: `Provider=${provider}, port25_blocked=${port25Blocked}, catch_all=${edgeResult?.is_catch_all ?? false}, no valid SMTP result`,
+    reason: `Provider=${provider}, port25_blocked=${port25Blocked}, catch_all=${edgeResult?.is_catch_all ?? false}, no verified email — deferring to paid verified finders`,
   };
 }

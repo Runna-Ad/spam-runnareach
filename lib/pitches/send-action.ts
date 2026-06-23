@@ -45,7 +45,7 @@ export async function sendPitch(input: {
     id: string;
     status: string;
     subject: string;
-    body: string | null;
+    body_original: string | null;
     body_edited: string | null;
     preview_text: string | null;
     prospect_id: string;
@@ -56,7 +56,7 @@ export async function sendPitch(input: {
   const { data: pitch, error: pitchErr } = await supabase
     .from("pitches")
     .select(
-      `id, status, subject, body, body_edited, preview_text,
+      `id, status, subject, body_original, body_edited, preview_text,
        prospect_id, contact_id,
        prospect_contacts:contact_id(email, full_name)`,
     )
@@ -73,7 +73,7 @@ export async function sendPitch(input: {
   const toName = pitch.prospect_contacts?.full_name ?? null;
   if (!toEmail) return { ok: false, error: "No contact email on this pitch." };
 
-  const body = pitch.body_edited ?? pitch.body ?? "";
+  const body = pitch.body_edited ?? pitch.body_original ?? "";
   if (!body.trim()) return { ok: false, error: "Pitch body is empty." };
 
   // ── 2. Load inbox (must belong to tenant, not paused, Gmail connected) ─────
@@ -188,4 +188,67 @@ export async function sendPitch(input: {
   revalidatePath("/pitches");
 
   return { ok: true, gmailMessageId: sendResult.gmailMessageId };
+}
+
+// ── Bulk queue for drip-send ────────────────────────────────────────────────
+
+const queueSchema = z.object({ inbox_id: z.string().uuid() });
+
+/**
+ * Queue every approved pitch (with a contact) for drip-sending from `inbox_id`.
+ * We set scheduled_send_at = now so the send-queue cron picks them up, then the
+ * cron drips a few per tick respecting the inbox's daily cap — protecting the
+ * warmed domain's reputation instead of bursting all at once. Status stays
+ * "approved" until the cron actually sends each one.
+ */
+export async function queueApprovedForSend(input: {
+  inbox_id: string;
+}): Promise<{ ok: true; queued: number } | { ok: false; error: string }> {
+  const user = await requireUser().catch(() => null);
+  if (!user) return { ok: false, error: "Not authenticated." };
+  if (user.role === "viewer") return { ok: false, error: "Not authorised." };
+
+  const parsed = queueSchema.safeParse(input);
+  if (!parsed.success) return { ok: false, error: "Invalid input." };
+  const { inbox_id } = parsed.data;
+
+  const supabase = await createClient();
+
+  type InboxRow = { id: string; paused: boolean; gmail_refresh_token_encrypted: string | null };
+  const { data: inbox } = await supabase
+    .from("sender_inboxes")
+    .select("id, paused, gmail_refresh_token_encrypted")
+    .eq("id", inbox_id)
+    .eq("tenant_id", user.tenantId)
+    .maybeSingle<InboxRow>();
+  if (!inbox) return { ok: false, error: "Inbox not found." };
+  if (inbox.paused) return { ok: false, error: "Inbox is paused." };
+  if (!inbox.gmail_refresh_token_encrypted) {
+    return { ok: false, error: "Inbox is not connected to Gmail. Connect it in Settings → Sending." };
+  }
+
+  // Approved pitches that have a contact and aren't already queued.
+  const { data: pitches } = await supabase
+    .from("pitches")
+    .select("id")
+    .eq("tenant_id", user.tenantId)
+    .eq("status", "approved")
+    .is("scheduled_send_at", null)
+    .not("contact_id", "is", null)
+    .returns<{ id: string }[]>();
+
+  const ids = (pitches ?? []).map((p) => p.id);
+  if (ids.length === 0) return { ok: true, queued: 0 };
+
+  const now = new Date().toISOString();
+  const { error } = await supabase
+    .from("pitches")
+    .update({ scheduled_send_at: now, sender_inbox_id: inbox_id, queued_at: now })
+    .in("id", ids)
+    .eq("tenant_id", user.tenantId);
+  if (error) return { ok: false, error: `Could not queue: ${error.message}` };
+
+  revalidatePath("/pitches");
+  revalidatePath("/companies");
+  return { ok: true, queued: ids.length };
 }

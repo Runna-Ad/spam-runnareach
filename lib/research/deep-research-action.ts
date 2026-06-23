@@ -65,10 +65,11 @@ export async function deepResearchProspect(
     company_name: string;
     website_url: string | null;
     domain: string | null;
+    status: string;
   };
   const { data: prospect, error: pErr } = await supabase
     .from("prospects")
-    .select("id, company_name, website_url, domain")
+    .select("id, company_name, website_url, domain, status")
     .eq("id", prospectId)
     .eq("tenant_id", user.tenantId)
     .maybeSingle<ProspectRow>();
@@ -321,6 +322,26 @@ export async function deepResearchProspect(
 
   const outcome =
     score >= 70 ? "pitched_ready" : score >= 40 ? "needs_review" : "low_score";
+
+  // ── Step 12: Apply the same triage as the full pipeline ───────────────────
+  // A standalone deep-research re-score must honor the <40 → suppress gate, just
+  // like processSingleProspect does. Otherwise a prospect that drops to e.g. 28
+  // here stays visible in the active list with a failing score. We only suppress
+  // (never un-suppress or downgrade a manually-advanced status) — and only from
+  // the early funnel states, so we don't yank a replied/booked/won prospect.
+  const SUPPRESSIBLE = new Set(["raw", "researched", "needs_review"]);
+  if (score < 40 && SUPPRESSIBLE.has(prospect.status)) {
+    await supabase
+      .from("prospects")
+      .update({
+        status: "suppressed",
+        suppressed_reason: `Auto: deep-research score ${score} below threshold`,
+        suppressed_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      })
+      .eq("id", prospectId)
+      .eq("tenant_id", user.tenantId);
+  }
 
   revalidatePath(`/companies/${prospectId}`);
   revalidatePath("/companies");

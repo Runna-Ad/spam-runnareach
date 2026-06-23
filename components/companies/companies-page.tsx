@@ -2,7 +2,7 @@
 
 import type { Route } from "next";
 
-import { ArrowRight, Building2, ExternalLink, Filter, Gauge, Loader2, Search, X } from "lucide-react";
+import { ArrowRight, Building2, ExternalLink, Filter, Gauge, Loader2, Search, Trash2, X } from "lucide-react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import * as React from "react";
@@ -11,7 +11,8 @@ import { Chip } from "@/components/ui/chip";
 import { EmptyState } from "@/components/ui/empty-state";
 import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
-import { bulkRunPipeline, bulkScoreProspects, bulkTransitionStatus } from "@/lib/discover/bulk-actions";
+import { ConfirmDialog } from "@/components/ui/confirm-dialog";
+import { bulkDeleteProspects, bulkRunPipeline, bulkScoreProspects, bulkTransitionStatus } from "@/lib/discover/bulk-actions";
 import type { Prospect } from "@/lib/discover/prospects-queries";
 import { useDebounce } from "@/lib/hooks";
 import { cn, relativeTime } from "@/lib/utils";
@@ -43,15 +44,15 @@ const STATUS_OPTIONS: string[] = [
   "suppressed",
 ];
 
-const STATUS_TONE: Record<string, "info" | "neutral" | "success" | "danger" | "warning"> = {
-  raw: "neutral",
-  researched: "info",
-  pitched: "info",
-  replied: "info",
-  meeting_booked: "success",
-  won: "success",
-  lost: "danger",
-  suppressed: "warning",
+const STATUS_TONE: Record<string, "info" | "neutral" | "success" | "danger" | "warning" | "accent"> = {
+  raw: "neutral",       // grey — untouched
+  researched: "info",   // blue — analyzed
+  pitched: "accent",    // purple — outreach drafted/sent (distinct from researched)
+  replied: "success",   // green — they responded
+  booked: "success",    // green — meeting booked (key was wrongly "meeting_booked")
+  won: "success",       // green — closed
+  lost: "danger",       // red
+  suppressed: "warning",// amber — manually hidden
 };
 
 const MARKET_FLAG: Record<"CA" | "MX" | "US" | "LATAM", string> = {
@@ -78,6 +79,7 @@ export function CompaniesPage({ prospects, icps, initialFilters }: CompaniesPage
   const [selected, setSelected] = React.useState<Set<string>>(new Set());
   const [bulkPending, startBulk] = React.useTransition();
   const [bulkToast, setBulkToast] = React.useState<{ tone: "ok" | "warn"; text: string } | null>(null);
+  const [confirmDeleteOpen, setConfirmDeleteOpen] = React.useState(false);
 
   React.useEffect(() => {
     setSelected(new Set());
@@ -103,7 +105,33 @@ export function CompaniesPage({ prospects, icps, initialFilters }: CompaniesPage
 
   const filtered = React.useMemo(() => {
     const term = search.trim().toLowerCase();
+    // "Needs contact" = a scored, still-active prospect we couldn't reach (no
+    // email). NOT a bad fit, so it isn't suppressed; it's a separate
+    // manual-outreach worklist (LinkedIn / site form) + a learning signal, kept
+    // out of the ideal pitch-ready flow. Any score qualifies — score-sort inside
+    // the tab to prioritise the strong fits. Only early-funnel statuses (raw /
+    // researched) — once pitched/replied a prospect is past the contact stage.
+    const isNeedsContact = (p: Prospect) =>
+      !p.has_contact &&
+      p.match_score != null &&
+      (p.status === "raw" || p.status === "researched") &&
+      p.pitch_status !== "sent";
+
     const out = prospects.filter((p) => {
+      if (status === "needs_contact") return isNeedsContact(p);
+
+      // Default "All" view = active working list. Keep out (a) suppressed/archived,
+      // (b) pitches already SENT, and (c) the "needs contact" worklist — all of
+      // which just dirty the ideal flow. Each is reachable via its own filter/view.
+      if (
+        status === "ALL" &&
+        (p.status === "suppressed" ||
+          p.status === "no_match" ||
+          p.pitch_status === "sent" ||
+          isNeedsContact(p))
+      ) {
+        return false;
+      }
       if (status !== "ALL" && p.status !== status) return false;
       if (market !== "ALL" && p.market !== market) return false;
       if (icpId !== "ALL" && p.icp_id !== icpId) return false;
@@ -229,7 +257,9 @@ export function CompaniesPage({ prospects, icps, initialFilters }: CompaniesPage
     startBulk(async () => {
       const res = await bulkScoreProspects({ prospect_ids: ids });
       if (res.ok) {
-        const detail = res.failed > 0 ? ` (${res.failed} failed${res.details ? ` — ${res.details}` : ""})` : "";
+        const detail = res.failed > 0
+          ? ` (${res.failed} failed${res.details ? ` — ${res.details}` : ""})`
+          : res.details ? ` — ${res.details}` : "";
         setBulkToast({
           tone: res.failed > 0 ? "warn" : "ok",
           text: `Scored ${res.affected} prospect${res.affected === 1 ? "" : "s"}${detail}`,
@@ -240,6 +270,28 @@ export function CompaniesPage({ prospects, icps, initialFilters }: CompaniesPage
         setBulkToast({ tone: "warn", text: res.error });
       }
       window.setTimeout(() => setBulkToast(null), 5000);
+    });
+  };
+
+  const bulkDelete = () => {
+    if (selected.size === 0) return;
+    setBulkToast(null);
+    const ids = Array.from(selected);
+    startBulk(async () => {
+      const res = await bulkDeleteProspects({ prospect_ids: ids });
+      setConfirmDeleteOpen(false);
+      if (res.ok) {
+        const detail = res.failed > 0 && res.details ? ` — ${res.details}` : "";
+        setBulkToast({
+          tone: res.failed > 0 ? "warn" : "ok",
+          text: `Deleted ${res.affected} prospect${res.affected === 1 ? "" : "s"}${detail}`,
+        });
+        setSelected(new Set());
+        router.refresh();
+      } else {
+        setBulkToast({ tone: "warn", text: res.error });
+      }
+      window.setTimeout(() => setBulkToast(null), 6000);
     });
   };
 
@@ -277,6 +329,7 @@ export function CompaniesPage({ prospects, icps, initialFilters }: CompaniesPage
           className="h-8 max-w-[140px] py-0 text-xs"
         >
           <option value="ALL">All statuses</option>
+          <option value="needs_contact">Needs contact</option>
           {STATUS_OPTIONS.map((s) => (
             <option key={s} value={s}>
               {s}
@@ -437,7 +490,29 @@ export function CompaniesPage({ prospects, icps, initialFilters }: CompaniesPage
                     {[p.city, p.region].filter(Boolean).join(", ") || "—"}
                   </td>
                   <td className="px-4 py-2">
-                    <Chip tone={STATUS_TONE[p.status] ?? "neutral"}>{p.status}</Chip>
+                    <div className="flex flex-wrap items-center gap-1">
+                      <Chip tone={STATUS_TONE[p.status] ?? "neutral"}>{p.status}</Chip>
+                      {p.pitch_status === "queued_for_approval" ? (
+                        <Chip tone="warning">queued</Chip>
+                      ) : p.pitch_status === "approved" ? (
+                        <Chip tone="success">approved</Chip>
+                      ) : p.pitch_status === "sent" ? (
+                        <Chip tone="success" title="Pitch email was sent">sent</Chip>
+                      ) : null}
+                      {/* Reachability gate: a scored, active prospect with no email
+                          can't be pitched — surface it so high fits don't look ready. */}
+                      {!p.has_contact &&
+                      p.match_score != null &&
+                      p.status !== "suppressed" ? (
+                        <Chip tone="danger" title="No contact email — can't be pitched until one is found">
+                          no contact
+                        </Chip>
+                      ) : p.contact_is_guess ? (
+                        <Chip tone="warning" title="Only contact is an unverified catch-all guess (firstname@domain) — won't bounce, but unconfirmed">
+                          guess
+                        </Chip>
+                      ) : null}
+                    </div>
                   </td>
                   <td className="px-4 py-2 text-[11px] text-[var(--color-fg-300)]">
                     {p.match_score !== null ? p.match_score : "—"}
@@ -541,6 +616,19 @@ export function CompaniesPage({ prospects, icps, initialFilters }: CompaniesPage
             )}
             Score selected
           </Button>
+          <span className="mx-1 h-4 w-px bg-[var(--color-border-default)]" aria-hidden />
+          <Button
+            type="button"
+            size="sm"
+            variant="ghost"
+            disabled={bulkPending}
+            onClick={() => setConfirmDeleteOpen(true)}
+            title="Permanently delete selected prospects"
+            className="text-[var(--color-danger-300)] hover:bg-[color-mix(in_oklab,var(--color-danger-500),transparent_88%)]"
+          >
+            <Trash2 className="h-3.5 w-3.5" aria-hidden />
+            Delete
+          </Button>
           {bulkToast ? (
             <span
               className={cn(
@@ -555,6 +643,17 @@ export function CompaniesPage({ prospects, icps, initialFilters }: CompaniesPage
           ) : null}
         </div>
       ) : null}
+
+      <ConfirmDialog
+        open={confirmDeleteOpen}
+        onOpenChange={setConfirmDeleteOpen}
+        title={`Delete ${selected.size} prospect${selected.size === 1 ? "" : "s"}?`}
+        description="This permanently removes the selected prospects and all their research, scores, pitches, and contacts. This can't be undone. Prospects with a booked opportunity are skipped automatically."
+        confirmLabel={`Delete ${selected.size}`}
+        variant="danger"
+        pending={bulkPending}
+        onConfirm={bulkDelete}
+      />
     </div>
   );
 }

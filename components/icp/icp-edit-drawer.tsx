@@ -1,6 +1,15 @@
 "use client";
 
-import { Archive, ArchiveRestore, Loader2, MapPin, Sparkles, Users } from "lucide-react";
+import {
+  Archive,
+  ArchiveRestore,
+  FlaskConical,
+  Loader2,
+  MapPin,
+  Plus,
+  Sparkles,
+  Users,
+} from "lucide-react";
 import * as React from "react";
 import { Controller, useForm } from "react-hook-form";
 import { Button } from "@/components/ui/button";
@@ -18,6 +27,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select } from "@/components/ui/select";
 import { TagInput, type TagSuggestionGroup } from "@/components/ui/tag-input";
+import { Textarea } from "@/components/ui/textarea";
 import { createIcp, softDeleteIcp, updateIcp } from "@/lib/icp/actions";
 import {
   BUSINESS_TYPES,
@@ -29,7 +39,10 @@ import {
 } from "@/lib/icp/option-sources";
 import type { Icp, IcpLanguage, IcpMarket } from "@/lib/icp/queries";
 import type { IcpSuggestionLists } from "@/lib/icp/suggestions";
-import { suggestIcpFieldsAction } from "@/lib/icp/suggest-action";
+import { refineIcpFromEvidenceAction, suggestIcpFieldsAction } from "@/lib/icp/suggest-action";
+import type { IcpProposed, IcpRefinement } from "@/lib/icp/refine-types";
+import { GaryWizard } from "./gary-wizard";
+import type { GaryProposedIcp } from "@/lib/icp/gary-types";
 import { cn } from "@/lib/utils";
 
 export type IcpDrawerMode =
@@ -173,6 +186,10 @@ export function IcpEditDrawer({
   const [archiving, startArchiving] = React.useTransition();
   const [suggesting, setSuggesting] = React.useState(false);
   const [suggestNote, setSuggestNote] = React.useState<string | null>(null);
+  const [description, setDescription] = React.useState("");
+  const [refining, setRefining] = React.useState(false);
+  const [refinement, setRefinement] = React.useState<IcpRefinement | null>(null);
+  const [garyApplied, setGaryApplied] = React.useState(false);
 
   // Reset the form whenever the mode changes (create vs. edit)
   React.useEffect(() => {
@@ -183,6 +200,9 @@ export function IcpEditDrawer({
     }
     setServerError(null);
     setSuggestNote(null);
+    setDescription("");
+    setRefinement(null);
+    setGaryApplied(false);
   }, [mode, reset]);
 
   if (!mode) return null;
@@ -231,6 +251,7 @@ export function IcpEditDrawer({
     try {
       const out = await suggestIcpFieldsAction({
         name: current.name,
+        description: description.trim() || undefined,
         market: current.market,
         language: current.language,
         existing: {
@@ -242,6 +263,10 @@ export function IcpEditDrawer({
           excluded_keywords: current.excluded_keywords,
         },
       });
+
+      // If generating from a description and no name is set yet, adopt the
+      // suggested name so the whole ICP comes from one plain-English prompt.
+      if (out.name && !current.name.trim()) setValue("name", out.name);
 
       setValue("industry_tags", dedupe([...current.industry_tags, ...out.industry_tags]));
       setValue("business_types", dedupe([...current.business_types, ...out.business_types]));
@@ -261,6 +286,84 @@ export function IcpEditDrawer({
     } finally {
       setSuggesting(false);
     }
+  };
+
+  /** Populate the whole form from a Gary proposal (review-only; never auto-saves). */
+  const applyGaryProposal = (icp: GaryProposedIcp) => {
+    setValue("name", icp.name);
+    setValue("market", icp.market);
+    setValue("language", icp.language);
+    setValue("industry_tags", dedupe(icp.industry_tags));
+    setValue("business_types", dedupe(icp.business_types));
+    setValue("geo_regions", dedupe(icp.geo_regions));
+    setValue("google_places_types", dedupe(icp.google_places_types));
+    setValue("search_keywords", dedupe(icp.search_keywords));
+    setValue("excluded_keywords", dedupe(icp.excluded_keywords));
+    setValue("employee_size_min", icp.employee_size_min ?? "");
+    setValue("employee_size_max", icp.employee_size_max ?? "");
+    setValue("revenue_min_usd", icp.revenue_min_usd ?? "");
+    setValue("revenue_max_usd", icp.revenue_max_usd ?? "");
+    setGaryApplied(true);
+  };
+
+  const handleRefine = async () => {
+    if (mode?.kind !== "edit") return;
+    setRefining(true);
+    setRefinement(null);
+    try {
+      const out = await refineIcpFromEvidenceAction(mode.icp.id);
+      setRefinement(out);
+    } catch {
+      setRefinement({
+        ok: false,
+        evidence: {
+          prospectCount: 0,
+          researchedCount: 0,
+          avgScore: null,
+          topPains: [],
+          topTech: [],
+          industriesPresent: [],
+          whatTheyDoSamples: [],
+          scoreReasoningSamples: [],
+          runnaStrength: { caseStudyIndustries: [], coveredPains: [], services: [] },
+        },
+        proposed: {
+          industry_tags: [],
+          business_types: [],
+          search_keywords: [],
+          excluded_keywords: [],
+          employee_size_min: null,
+          employee_size_max: null,
+        },
+        fieldRationales: {},
+        summary: "Refinement failed — please try again.",
+        method: "insufficient_data",
+        note: "",
+      });
+    } finally {
+      setRefining(false);
+    }
+  };
+
+  /** Merge a proposed array field into current form values (additive, deduped). */
+  const applyArrayField = (
+    field: "industry_tags" | "business_types" | "search_keywords" | "excluded_keywords",
+    values: string[],
+  ) => {
+    setValue(field, dedupe([...getValues(field), ...values]));
+    setRefinement((prev) =>
+      prev ? { ...prev, proposed: { ...prev.proposed, [field]: [] } } : prev,
+    );
+  };
+
+  const applySizeField = (
+    field: "employee_size_min" | "employee_size_max",
+    value: string | null,
+  ) => {
+    if (value) setValue(field, value);
+    setRefinement((prev) =>
+      prev ? { ...prev, proposed: { ...prev.proposed, [field]: null } } : prev,
+    );
   };
 
   const handleArchive = () => {
@@ -288,34 +391,85 @@ export function IcpEditDrawer({
               ? `Edit targeting for this ICP. Used by Discovery to size the reachable pool and by the pitch generator to match case studies.`
               : "Define targeting for a new ideal customer profile. All fields except name are optional; empty arrays mean no constraint on that dimension."}
           </DrawerDescription>
-          <div className="mt-2 flex items-center gap-2">
-            <Button
-              type="button"
-              size="sm"
-              variant="secondary"
-              onClick={handleSuggest}
-              disabled={suggesting || !nameValue.trim()}
-              title={
-                nameValue.trim()
-                  ? "Auto-fill industry, business types, geo, places types, and keywords from the ICP name"
-                  : "Type a name first, then click Suggest"
-              }
-            >
-              {suggesting ? (
-                <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden />
-              ) : (
-                <Sparkles className="h-3.5 w-3.5" aria-hidden />
-              )}
-              Suggest from name
-            </Button>
-            <span className="text-[10px] text-[var(--color-fg-700)]">
-              Powered by Claude · fills all fields
-            </span>
+          <div className="mt-3 flex flex-col gap-2 rounded-[var(--radius-md)] border border-[var(--color-border-default)] bg-[var(--color-bg-800)] p-3">
+            <Label htmlFor="icp-describe" className="flex items-center gap-1.5 text-xs">
+              <Sparkles className="h-3.5 w-3.5 text-[var(--color-accent-300)]" aria-hidden />
+              Describe your ideal customer
+            </Label>
+            <Textarea
+              id="icp-describe"
+              rows={2}
+              value={description}
+              onChange={(e) => setDescription(e.target.value)}
+              placeholder="e.g. boutique fitness studios in Calgary &amp; Edmonton, 5–30 staff, that sell branded apparel online"
+            />
+            <div className="flex items-center gap-2">
+              <Button
+                type="button"
+                size="sm"
+                variant="secondary"
+                onClick={handleSuggest}
+                disabled={suggesting || (!nameValue.trim() && !description.trim())}
+                title={
+                  description.trim()
+                    ? "Generate the whole ICP — name, industries, geo, keywords — from your description"
+                    : nameValue.trim()
+                      ? "Auto-fill all fields from the ICP name"
+                      : "Describe your customer (or type a name) first"
+                }
+              >
+                {suggesting ? (
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden />
+                ) : (
+                  <Sparkles className="h-3.5 w-3.5" aria-hidden />
+                )}
+                {description.trim() ? "Generate ICP" : "Suggest from name"}
+              </Button>
+              <span className="text-[10px] text-[var(--color-fg-700)]">
+                Powered by Claude · fills every field
+              </span>
+            </div>
           </div>
+          {!isEdit ? (
+            <GaryWizard onApply={applyGaryProposal} applied={garyApplied} />
+          ) : null}
+
           {suggestNote ? (
             <p className="mt-1 text-[11px] italic text-[var(--color-fg-500)]">
               {suggestNote}
             </p>
+          ) : null}
+
+          {isEdit ? (
+            <div className="mt-2 flex flex-col gap-2 rounded-[var(--radius-md)] border border-[var(--color-border-default)] bg-[var(--color-bg-800)] p-3">
+              <div className="flex items-center gap-2">
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="secondary"
+                  onClick={handleRefine}
+                  disabled={refining}
+                  title="Analyze the prospects already assigned to this ICP (research + fit scores) and suggest sharper targeting, cross-referenced with Runna's strongest case studies"
+                >
+                  {refining ? (
+                    <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden />
+                  ) : (
+                    <FlaskConical className="h-3.5 w-3.5" aria-hidden />
+                  )}
+                  {refining ? "Analyzing evidence…" : "Refine from evidence"}
+                </Button>
+                <span className="text-[10px] text-[var(--color-fg-700)]">
+                  Learns from assigned prospects · suggest-only
+                </span>
+              </div>
+              {refinement ? (
+                <RefinePanel
+                  refinement={refinement}
+                  onApplyArray={applyArrayField}
+                  onApplySize={applySizeField}
+                />
+              ) : null}
+            </div>
           ) : null}
         </DrawerHeader>
 
@@ -624,6 +778,138 @@ export function IcpEditDrawer({
         </DrawerFooter>
       </DrawerContent>
     </Drawer>
+  );
+}
+
+const ARRAY_FIELD_LABELS: Record<keyof IcpProposed, string> = {
+  industry_tags: "Industry tags",
+  business_types: "Business types",
+  search_keywords: "Search keywords",
+  excluded_keywords: "Excluded keywords",
+  employee_size_min: "Employee size (min)",
+  employee_size_max: "Employee size (max)",
+};
+
+function RefinePanel({
+  refinement,
+  onApplyArray,
+  onApplySize,
+}: {
+  refinement: IcpRefinement;
+  onApplyArray: (
+    field: "industry_tags" | "business_types" | "search_keywords" | "excluded_keywords",
+    values: string[],
+  ) => void;
+  onApplySize: (field: "employee_size_min" | "employee_size_max", value: string | null) => void;
+}) {
+  const { evidence, proposed, fieldRationales } = refinement;
+  const arrayFields = (
+    ["industry_tags", "business_types", "search_keywords", "excluded_keywords"] as const
+  ).filter((f) => proposed[f].length > 0);
+  const sizeFields = (["employee_size_min", "employee_size_max"] as const).filter(
+    (f) => proposed[f],
+  );
+  const hasProposals = arrayFields.length > 0 || sizeFields.length > 0;
+
+  return (
+    <div className="flex flex-col gap-2 text-[11px]">
+      {/* Evidence snapshot */}
+      {evidence.prospectCount > 0 ? (
+        <p className="text-[var(--color-fg-500)]">
+          Based on{" "}
+          <span className="font-medium text-[var(--color-fg-300)]">
+            {evidence.researchedCount}/{evidence.prospectCount}
+          </span>{" "}
+          researched prospects
+          {evidence.avgScore !== null ? ` · avg fit ${evidence.avgScore}` : ""}.
+        </p>
+      ) : null}
+
+      <p className="text-[var(--color-fg-300)]">{refinement.summary}</p>
+
+      {evidence.topPains.length > 0 ? (
+        <div className="flex flex-wrap items-center gap-1">
+          <span className="text-[var(--color-fg-700)]">Common pains:</span>
+          {evidence.topPains.slice(0, 5).map((p) => (
+            <Chip key={p.name} tone="neutral" className="text-[10px]">
+              {p.name} · {p.count}
+            </Chip>
+          ))}
+        </div>
+      ) : null}
+
+      {/* Proposed field changes — apply each individually */}
+      {hasProposals ? (
+        <div className="mt-1 flex flex-col gap-2 rounded-[var(--radius-sm)] bg-[var(--color-bg-900)] p-2">
+          <span className="text-[10px] font-medium uppercase tracking-wider text-[var(--color-fg-700)]">
+            Suggested additions
+          </span>
+          {arrayFields.map((field) => (
+            <div key={field} className="flex flex-col gap-1">
+              <div className="flex items-start gap-2">
+                <div className="flex-1">
+                  <span className="font-medium text-[var(--color-fg-300)]">
+                    {ARRAY_FIELD_LABELS[field]}
+                  </span>
+                  <div className="mt-0.5 flex flex-wrap gap-1">
+                    {proposed[field].map((v) => (
+                      <Chip key={v} tone="accent" className="text-[10px]">
+                        {v}
+                      </Chip>
+                    ))}
+                  </div>
+                </div>
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="ghost"
+                  className="shrink-0"
+                  onClick={() => onApplyArray(field, proposed[field])}
+                >
+                  <Plus className="h-3 w-3" aria-hidden /> Add
+                </Button>
+              </div>
+              {fieldRationales[field] ? (
+                <p className="italic text-[var(--color-fg-700)]">{fieldRationales[field]}</p>
+              ) : null}
+            </div>
+          ))}
+          {sizeFields.map((field) => (
+            <div key={field} className="flex items-center gap-2">
+              <span className="flex-1">
+                <span className="font-medium text-[var(--color-fg-300)]">
+                  {ARRAY_FIELD_LABELS[field]}:
+                </span>{" "}
+                {proposed[field]}
+                {fieldRationales[field] ? (
+                  <span className="italic text-[var(--color-fg-700)]"> — {fieldRationales[field]}</span>
+                ) : null}
+              </span>
+              <Button
+                type="button"
+                size="sm"
+                variant="ghost"
+                className="shrink-0"
+                onClick={() => onApplySize(field, proposed[field])}
+              >
+                <Plus className="h-3 w-3" aria-hidden /> Set
+              </Button>
+            </div>
+          ))}
+        </div>
+      ) : refinement.ok ? (
+        <p className="italic text-[var(--color-fg-700)]">
+          No new field suggestions — the current targeting already matches the evidence.
+        </p>
+      ) : null}
+
+      {refinement.note ? (
+        <p className="mt-1 flex items-start gap-1 text-[10px] text-[var(--color-warning-300)]">
+          <span aria-hidden>⚠</span>
+          <span>{refinement.note}</span>
+        </p>
+      ) : null}
+    </div>
   );
 }
 
