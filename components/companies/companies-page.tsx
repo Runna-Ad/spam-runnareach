@@ -2,7 +2,7 @@
 
 import type { Route } from "next";
 
-import { ArrowRight, Building2, ExternalLink, Filter, Gauge, Loader2, Search, Trash2, X } from "lucide-react";
+import { ArrowRight, Building2, ExternalLink, Filter, Gauge, Loader2, Mail, Search, Trash2, X } from "lucide-react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import * as React from "react";
@@ -12,7 +12,7 @@ import { EmptyState } from "@/components/ui/empty-state";
 import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
-import { bulkDeleteProspects, bulkRunPipeline, bulkScoreProspects, bulkTransitionStatus } from "@/lib/discover/bulk-actions";
+import { bulkDeleteProspects, bulkGeneratePitches, bulkRunPipeline, bulkScoreProspects, bulkTransitionStatus } from "@/lib/discover/bulk-actions";
 import type { Prospect } from "@/lib/discover/prospects-queries";
 import { useDebounce } from "@/lib/hooks";
 import { cn, relativeTime } from "@/lib/utils";
@@ -270,6 +270,30 @@ export function CompaniesPage({ prospects, icps, initialFilters }: CompaniesPage
         setBulkToast({ tone: "warn", text: res.error });
       }
       window.setTimeout(() => setBulkToast(null), 5000);
+    });
+  };
+
+  const bulkGenerate = () => {
+    if (selected.size === 0) return;
+    if (selected.size > 10) {
+      setBulkToast({ tone: "warn", text: "Pitch generation caps at 10 prospects per batch." });
+      return;
+    }
+    setBulkToast(null);
+    const ids = Array.from(selected);
+    startBulk(async () => {
+      const res = await bulkGeneratePitches({ prospect_ids: ids });
+      if (res.ok) {
+        setBulkToast({
+          tone: res.affected === 0 ? "warn" : "ok",
+          text: `Drafted ${res.affected} pitch${res.affected === 1 ? "" : "es"}${res.details ? ` — ${res.details}` : ""}. Review on /pitches.`,
+        });
+        setSelected(new Set());
+        router.refresh();
+      } else {
+        setBulkToast({ tone: "warn", text: res.error });
+      }
+      window.setTimeout(() => setBulkToast(null), 6000);
     });
   };
 
@@ -616,6 +640,21 @@ export function CompaniesPage({ prospects, icps, initialFilters }: CompaniesPage
             )}
             Score selected
           </Button>
+          <Button
+            type="button"
+            size="sm"
+            variant="secondary"
+            disabled={bulkPending || selected.size > 10}
+            onClick={bulkGenerate}
+            title={selected.size > 10 ? "Pitch generation caps at 10 per batch" : "Draft a pitch for each selected prospect (needs a contact). Drafts appear on /pitches for review."}
+          >
+            {bulkPending ? (
+              <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden />
+            ) : (
+              <Mail className="h-3.5 w-3.5" aria-hidden />
+            )}
+            Generate pitches
+          </Button>
           <span className="mx-1 h-4 w-px bg-[var(--color-border-default)]" aria-hidden />
           <Button
             type="button"
@@ -629,18 +668,24 @@ export function CompaniesPage({ prospects, icps, initialFilters }: CompaniesPage
             <Trash2 className="h-3.5 w-3.5" aria-hidden />
             Delete
           </Button>
-          {bulkToast ? (
-            <span
-              className={cn(
-                "ml-2 rounded-[var(--radius-sm)] px-2 py-1 text-[11px]",
-                bulkToast.tone === "ok"
-                  ? "bg-[color-mix(in_oklab,var(--color-success-500),transparent_85%)] text-[var(--color-success-300)]"
-                  : "bg-[color-mix(in_oklab,var(--color-warning-500),transparent_85%)] text-[var(--color-warning-300)]",
-              )}
-            >
-              {bulkToast.text}
-            </span>
-          ) : null}
+        </div>
+      ) : null}
+
+      {/* Toast lives OUTSIDE the selection-gated bar — a successful bulk action
+          clears the selection (unmounting the bar), so an inline toast would
+          vanish before it's seen. Rendered here it persists its full timeout. */}
+      {bulkToast ? (
+        <div className="px-4 py-2">
+          <span
+            className={cn(
+              "inline-block rounded-[var(--radius-sm)] px-2.5 py-1 text-[11px]",
+              bulkToast.tone === "ok"
+                ? "bg-[color-mix(in_oklab,var(--color-success-500),transparent_85%)] text-[var(--color-success-300)]"
+                : "bg-[color-mix(in_oklab,var(--color-warning-500),transparent_85%)] text-[var(--color-warning-300)]",
+            )}
+          >
+            {bulkToast.text}
+          </span>
         </div>
       ) : null}
 

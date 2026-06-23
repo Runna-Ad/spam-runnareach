@@ -488,3 +488,32 @@ and day boundaries. Newest entries at the bottom.
 ## 2026-06-23 (cont.) — role-based contact detection fixed everywhere
 
 - info@-style contacts weren't flagged email_is_role_based → composer skipped the "please forward" line. Insert paths (enrich-contacts Anymail/Hunter/SnapVerify/catch-all, pipeline SnapVerify, manual add) hardcoded false. Now all call the canonical isRoleBasedEmail (broadened: +EN, +ES ventas/contacto/etc, +separator forms) and rank role inboxes at priority 5. Removed duplicate detector in structured-research-action. Safety net: generatePitch + rewrite re-derive role-based from the email so existing stale rows self-heal. Verified.
+
+## 2026-06-23 15:08
+**Shipped (recent commits):**
+  - fix(contacts): detect role-based emails on every insert path + pitch-time net
+  - fix(pitches): raise composer max_tokens 600→1200 to stop JSON truncation
+  - fix(sending): reset daily send counter at the UTC day boundary
+  - feat(pitches): low-pressure data-led CTA + fix 👉 button when URL is mid-sentence
+  - feat(pitches): angle advisor rewrites pitches; composer leads with capability
+  - fix(ci): remove unused var in screenshot script + stale eslint-disable
+  - docs(session-log): log 2026-06-23 learning-loop + Gary + Phase 2a session
+  - feat(learning): advisory layer + Gary ICP wizard + Phase 2a outcome dashboard
+
+**Still open:**
+- [ ] Supabase: ANON + SERVICE_ROLE keys live (connection works — Phase 0 unblocked)
+- [ ] Anthropic API key + $100/mo limit
+- [ ] Google Cloud (Places API + Gmail API + OAuth consent + OAuth client + restricted Places key)
+- [ ] Name sender #1 Runna CA principal + buy both domains + add runnareach.com to Rünna Workspace + DNS (SPF/DKIM/DMARC)
+- [ ] Postmark or SES account
+- [ ] Cal.com account
+- [ ] Slack hot-lead webhook URL
+- [ ] CRON_SECRET + TOKEN_ENCRYPTION_KEY (`openssl rand -hex 32`)
+- [ ] ⏳ #7 Analytics — pitch funnel metrics, cost tracking, Claude vs template breakdown
+- [ ] ⏳ #7 Analytics — pitch funnel metrics, cost tracking, Claude vs template breakdown
+
+
+## 2026-06-23 (cont.) — bulk pitch generation + contact-masking fix
+
+- Bulk "Generate pitches" on /companies (bulkGeneratePitches): draft for several selected prospects at once; pre-filters no-contact/advanced; concurrent chunks of 5, cap 10. Fixed pre-existing bug: bulk success toast rendered inside the selection-gated bar → unmounted on setSelected(new Set()); moved it outside.
+- getTopContact lacked the null-email filter the re-enrich report had → a name-only contact masked a real scraped info@ → Overview showed "no contact" though re-enrich "Found" it. Added .not(email is null).neq(email,"") + re-derive is_role_based. Verified on Bedrock.

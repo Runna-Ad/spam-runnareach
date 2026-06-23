@@ -5,6 +5,7 @@ import { z } from "zod";
 import { writeAuditLog } from "@/lib/audit/log";
 import { requireUser } from "@/lib/auth";
 import { scoreProspect } from "@/lib/research/score-action";
+import { generatePitch } from "@/lib/pitches/actions";
 import { processSingleProspect } from "@/lib/discover/pipeline-action";
 import { enrichContactsForProspect } from "@/lib/discover/enrich-contacts";
 import { createClient } from "@/lib/supabase/server";
@@ -32,6 +33,15 @@ const bulkStatusSchema = z.object({
 const bulkScoreSchema = z.object({
   prospect_ids: z.array(z.string().uuid()).min(1).max(100),
 });
+
+// Pitch generation is a Sonnet call each (~15-20s) — cap low and run in
+// concurrent chunks so a batch fits the 60s Vercel function budget.
+const bulkGenerateSchema = z.object({
+  prospect_ids: z.array(z.string().uuid()).min(1).max(10),
+});
+const GENERATE_CHUNK = 5;
+/** Prospect statuses already past the drafting stage — don't re-draft these. */
+const ADVANCED_STATUSES = new Set(["sent", "replied", "booked", "won", "lost", "ghosted", "bounced"]);
 
 export type BulkResult =
   | { ok: true; affected: number; failed: number; details?: string }
@@ -478,5 +488,91 @@ export async function bulkScoreProspects(
       failed > 0 && firstErr && !firstErr.ok
         ? `First error: ${firstErr.error}`
         : triageNote || undefined,
+  };
+}
+
+/**
+ * Generate draft pitches for several prospects at once (instead of 1-by-1).
+ * Pre-filters the selection — skips prospects with no contact email (can't send)
+ * and ones already past the draft stage (sent/replied/booked/…) — then composes
+ * the rest in concurrent chunks so the batch fits the function budget. Each
+ * draft lands on /pitches for review, exactly like the single-prospect button.
+ */
+export async function bulkGeneratePitches(
+  input: z.input<typeof bulkGenerateSchema>,
+): Promise<BulkResult> {
+  const user = await requireUser();
+  if (user.role === "viewer") return { ok: false, error: "Viewers cannot generate pitches." };
+
+  const parsed = bulkGenerateSchema.safeParse(input);
+  if (!parsed.success) {
+    return { ok: false, error: parsed.error.issues[0]?.message ?? "Invalid input." };
+  }
+
+  const supabase = await createClient();
+  const ids = parsed.data.prospect_ids;
+
+  // ── Pre-filter: need a real contact + not already past drafting ────────────
+  const [{ data: pros }, { data: contactRows }] = await Promise.all([
+    supabase
+      .from("prospects")
+      .select("id, status")
+      .in("id", ids)
+      .eq("tenant_id", user.tenantId)
+      .returns<{ id: string; status: string }[]>(),
+    supabase
+      .from("prospect_contacts")
+      .select("prospect_id, email")
+      .in("prospect_id", ids)
+      .eq("tenant_id", user.tenantId)
+      .returns<{ prospect_id: string; email: string | null }[]>(),
+  ]);
+
+  const statusById = new Map((pros ?? []).map((p) => [p.id, p.status]));
+  const hasContact = new Set(
+    (contactRows ?? []).filter((c) => c.email && c.email.trim()).map((c) => c.prospect_id),
+  );
+
+  let skippedNoContact = 0;
+  let skippedAdvanced = 0;
+  const toGenerate: string[] = [];
+  for (const id of ids) {
+    const status = statusById.get(id);
+    if (status === undefined) continue; // not in tenant / deleted
+    if (ADVANCED_STATUSES.has(status)) { skippedAdvanced += 1; continue; }
+    if (!hasContact.has(id)) { skippedNoContact += 1; continue; }
+    toGenerate.push(id);
+  }
+
+  // ── Compose in concurrent chunks (pass injected user+supabase so generatePitch
+  //    doesn't re-auth inside this nested server-action chain) ─────────────────
+  let generated = 0;
+  let failed = 0;
+  for (let i = 0; i < toGenerate.length; i += GENERATE_CHUNK) {
+    const chunk = toGenerate.slice(i, i + GENERATE_CHUNK);
+    const res = await Promise.all(
+      chunk.map((id) => generatePitch(id, { user, supabase })),
+    );
+    for (const r of res) {
+      if (r.ok) generated += 1;
+      else failed += 1;
+    }
+  }
+
+  revalidatePath("/companies");
+  revalidatePath("/pitches");
+  revalidatePath("/funnel");
+
+  const skips = [
+    skippedNoContact > 0 ? `${skippedNoContact} no contact` : null,
+    skippedAdvanced > 0 ? `${skippedAdvanced} already sent/replied` : null,
+    failed > 0 ? `${failed} failed` : null,
+  ].filter(Boolean);
+
+  return {
+    ok: true,
+    affected: generated,
+    failed: failed + skippedNoContact + skippedAdvanced,
+    details: skips.length > 0 ? `skipped: ${skips.join(", ")}` : undefined,
   };
 }

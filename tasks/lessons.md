@@ -4,6 +4,23 @@ Running log of mistakes, root causes, and rules to prevent recurrence. Newest at
 
 ---
 
+[2026-06-23] LESSON: re-enrich reported "Found info@…" but the Overview showed no contact — getTopContact lacked the null-email filter the report had
+SYMPTOM (Pedro, Bedrock Construction): clicked re-enrich → toast "Found: info@bedrockconstructionltd.com (scraper)", but the Overview contact-email line stayed empty → "wasting research". (The "(scraper)" tells you it was a PRE-EXISTING scraped contact, not a new find — the waterfall inserts as snapverify/anymail/hunter, never "scraper".)
+ROOT CAUSE: asymmetric queries. The re-enrich report (reEnrichProspectContacts) selected the top contact with `.not("email","is",null)`, so it skipped any name-only row and surfaced the real info@. But getTopContact (detail-queries.ts — what the Overview reads) ordered by priority_rank LIMIT 1 with NO null filter, so a higher-priority name-only contact (email null, e.g. from people-intel) masked the deliverable info@ below it → returned null → "no contact". Report found it, Overview didn't.
+FIX: getTopContact now filters `.not("email","is",null").neq("email","")` so it returns the top row that actually HAS an email — aligned with the report. Verified live: Bedrock's Overview now shows info@bedrockconstructionltd.com, no-contact warning gone. Also re-derive is_role_based from the address there (like the composer's pitch-time net) so the role warning is honest even on legacy/scraper rows with a stale flag.
+RULE: when two code paths answer the same question ("what's this prospect's contact?"), they must use the SAME filters or they diverge — one says "found", the other says "none". A LIMIT 1 ordered query must filter out rows missing the very field you're selecting, or a higher-priority empty row masks a real one. This likely un-masks contacts across MANY prospects, not just Bedrock.
+TAGS: #lesson #contacts #overview #query-asymmetry #enrichment #masking
+
+---
+
+[2026-06-23] BUILD: bulk "Generate pitches" on /companies + fixed a hidden bulk-toast bug
+WHAT: new bulkGeneratePitches action (lib/discover/bulk-actions.ts) + a "Generate pitches" button on the /companies bulk bar — draft pitches for several selected prospects at once instead of 1-by-1. Pre-filters the selection: skips no-contact prospects (can't send) and ones already past drafting (sent/replied/booked/won/lost/ghosted/bounced), with per-reason counts in the toast. Composes in concurrent chunks of 5, capped at 10/batch to fit the 60s Vercel function budget. Reuses generatePitch(id, {user, supabase}) with the injected user+client so it doesn't re-auth inside the nested server-action chain.
+BUG FOUND + FIXED (pre-existing, affected ALL bulk actions): the success toast was rendered INSIDE the `{selected.size > 0 ? (...bar...) : null}` block. On success every bulk handler calls setSelected(new Set()), which unmounts the bar — and the toast with it — so success toasts were never visible (only failures, which don't clear the selection, showed). Moved the toast OUTSIDE the selection-gated bar so it persists its full timeout. Verified: "Drafted 4 pitches. Review on /pitches." now shows.
+RULE: never render a transient status/toast inside a block that the same action conditionally unmounts. A toast must outlive the UI that triggered it — render it at a stable level, gated only on its own state. When adding a bulk action, test the SUCCESS path's toast, not just the failure path (failure often doesn't clear selection, masking the bug).
+TAGS: #build #pitches #bulk #companies #toast #ux #server-actions
+
+---
+
 [2026-06-23] LESSON: role-based contacts (info@…) weren't flagged → pitch skipped the "please forward" line
 SYMPTOM (Pedro): researched contacts like info@greenstoneconstruction.ca were stored but very few tripped the role-based alert, so the composer didn't add the "if you're not the right person, I'd appreciate a forward" line.
 ROOT CAUSE (two bugs): (1) MULTIPLE contact-insert paths hardcoded `email_is_role_based: false` and never ran the detector — lib/discover/enrich-contacts.ts (Anymail + Hunter + SnapVerify + catch-all), lib/discover/pipeline-action.ts (SnapVerify), lib/prospects/detail-actions.ts (manual). Hunter's domain sweep in particular returns info@/contact@ constantly, all stored as NOT role-based. (2) lib/research/structured-research-action.ts had a DUPLICATE local copy of isRoleBasedEmail (drift risk) instead of the canonical lib/research/email-utils.ts. The canonical detector DID include "info", so the flag would have been correct IF it had been called — the bug was the call sites bypassing it, not the list.

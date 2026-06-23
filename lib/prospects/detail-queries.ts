@@ -1,4 +1,5 @@
 import { createClient } from "@/lib/supabase/server";
+import { isRoleBasedEmail } from "@/lib/research/email-utils";
 
 export type ProspectFull = {
   id: string;
@@ -359,16 +360,31 @@ export async function getTopContact(
   prospectId: string,
 ): Promise<{ id: string; email: string; is_role_based: boolean } | null> {
   const supabase = await createClient();
+  // Only consider rows that actually HAVE an email. A higher-priority name-only
+  // contact (email null — e.g. from people-intel) would otherwise mask a real
+  // deliverable address below it, making the prospect look contactless on the
+  // Overview even though re-enrich found one. role-based (info@) is fine to
+  // surface — it's sendable with the forwarding ask; priority_rank already ranks
+  // a personal address above it.
   const { data } = await supabase
     .from("prospect_contacts")
     .select("id, email, email_is_role_based")
     .eq("tenant_id", tenantId)
     .eq("prospect_id", prospectId)
+    .not("email", "is", null)
+    .neq("email", "")
     .order("priority_rank", { ascending: true })
     .limit(1)
     .maybeSingle<{ id: string; email: string | null; email_is_role_based: boolean }>();
   if (!data?.email) return null;
-  return { id: data.id, email: data.email, is_role_based: data.email_is_role_based };
+  // Re-derive role-based from the address as a safety net (legacy/scraper rows
+  // may carry a stale false flag) — keeps the Overview's role warning honest and
+  // consistent with the pitch composer's pitch-time re-derivation.
+  return {
+    id: data.id,
+    email: data.email,
+    is_role_based: data.email_is_role_based || isRoleBasedEmail(data.email),
+  };
 }
 
 function normalizePainPoints(raw: unknown): PainPoint[] {
