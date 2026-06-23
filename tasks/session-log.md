@@ -385,3 +385,21 @@ and day boundaries. Newest entries at the bottom.
 - [ ] ⏳ #7 Analytics — pitch funnel metrics, cost tracking, Claude vs template breakdown
 - [ ] ⏳ #7 Analytics — pitch funnel metrics, cost tracking, Claude vs template breakdown
 
+
+## 2026-06-23 — Learning loop (advisory + Phase 2a), Gary wizard, capability grounding [DEPLOYED]
+
+**Shipped to prod (spam-runnareach):**
+- **ICP Refinement Advisor** — `refineIcpFromEvidenceAction` + `lib/icp/refine-evidence.ts`; "Refine from evidence" panel in the ICP drawer. Suggest-only, ≥3 researched prospects gate.
+- **Pitch Angle Advisor** — `lib/pitches/angle-advisor.ts`; read-only card on prospect-detail + pitches. Capability-led, not case-study-caged.
+- **Gary** — `lib/icp/gary-action.ts` guided ICP wizard (create mode), grounded in `lib/runna/capabilities.ts`. `structuredCall` gained per-call `timeoutMs` (Gary 50s).
+- **Phase 2a outcome dashboard** — `lib/analytics/outcomes.ts` + /analytics "Outcome learning" section. Per-dimension outcomes (ICP/industry/source/city/pain/case study) with sample-size confidence gating (actionable ≥20, emerging ≥5, insufficient <5 → rate hidden). Observation-only.
+
+**Pedro overrides this session:**
+- Capability + expertise is the pitch, NOT specific case studies — advisors reframed; case studies are bonus proof when they fit. Hard line kept: never fabricate specific client/metric/geo.
+- "All of Pedro's doings are Runna's doings" — in-house builds (Daily Briefings, Barcode Studio, S.P.A.M, SnapPad Command Center + tools, Unlimited Design, 2 studios + 100+ talents) folded into `lib/runna/capabilities.ts` as citeable proof.
+
+**Phase split:** 2a built (observation). **2b (statistical reweighting) NOT built** — gated on reply/conversion volume; trigger = segments clearing the actionable (≥20 sent) threshold on the new dashboard.
+
+**Verified:** tsc + lint + build + 155/155 tests; all advisors smoke-tested live locally AND in prod (Gary 14.4s questions / 15.2s proposal; /analytics outcome section live with real 3-sent/1-replied data). Migrations 0019–0021 confirmed applied by Pedro before deploy.
+**Committed:** 6842862 (whole working tree synced to prod state, incl. co-resident reply-funnel / follow-up-composer / claude_search / warmup-DMARC WIP). Not pushed.
+**Memory:** runna-positioning (new), learning-loop-spec updated (P1 + 2a built), MEMORY.md index updated.
