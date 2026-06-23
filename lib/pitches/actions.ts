@@ -11,7 +11,7 @@ import { createClient } from "@/lib/supabase/server";
 import type { Database } from "@/lib/supabase/types";
 import { composePitchWithClaude } from "./claude-composer";
 import { hunterUrlForLanguage, renderIndustryTemplate } from "./industry-templates";
-import { isRoleBasedEmail } from "@/lib/research/email-utils";
+import { hasUsableEmail, isRoleBasedEmail } from "@/lib/research/email-utils";
 import {
   type ComposedPitch,
   type GeneratorInputContact,
@@ -151,6 +151,19 @@ export async function generatePitch(
     email_is_role_based: c.email_is_role_based || (c.email ? isRoleBasedEmail(c.email) : false),
     role_title: c.role_title ?? null,
   }));
+
+  // ── Contact gate ──────────────────────────────────────────────────────────
+  // Never generate a pitch we can't send. A prospect with no usable contact
+  // email (none found, or only placeholder/empty rows) is skipped here so the
+  // single "Generate pitch" button, bulk generation, and the pipeline all refuse
+  // consistently instead of producing an unsendable draft. (tasks/lessons.md:
+  // "Never auto-generate a pitch you can't send".)
+  if (!contacts.some((c) => hasUsableEmail(c.email))) {
+    return {
+      ok: false,
+      error: "No contact email — find or add a contact before generating a pitch.",
+    };
+  }
 
   // Load case studies + their pain_tags. We pull all active case studies
   // and their tags, then attach the strength for the pain we'll choose.

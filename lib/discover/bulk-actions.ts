@@ -8,6 +8,7 @@ import { scoreProspect } from "@/lib/research/score-action";
 import { generatePitch } from "@/lib/pitches/actions";
 import { processSingleProspect } from "@/lib/discover/pipeline-action";
 import { enrichContactsForProspect } from "@/lib/discover/enrich-contacts";
+import { hasUsableEmail } from "@/lib/research/email-utils";
 import { createClient } from "@/lib/supabase/server";
 import type { Database } from "@/lib/supabase/types";
 
@@ -530,7 +531,7 @@ export async function bulkGeneratePitches(
 
   const statusById = new Map((pros ?? []).map((p) => [p.id, p.status]));
   const hasContact = new Set(
-    (contactRows ?? []).filter((c) => c.email && c.email.trim()).map((c) => c.prospect_id),
+    (contactRows ?? []).filter((c) => hasUsableEmail(c.email)).map((c) => c.prospect_id),
   );
 
   let skippedNoContact = 0;

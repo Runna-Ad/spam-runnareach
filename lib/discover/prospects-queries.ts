@@ -1,4 +1,5 @@
 import { createClient } from "@/lib/supabase/server";
+import { hasUsableEmail } from "@/lib/research/email-utils";
 
 export type Prospect = {
   id: string;
@@ -128,7 +129,7 @@ export async function listProspects(
     icp_name: r.icps?.name ?? null,
     created_at: r.created_at,
     pitch_status: derivePitchStatus(r.pitches),
-    has_contact: (r.prospect_contacts ?? []).some((c) => !!c.email),
+    has_contact: (r.prospect_contacts ?? []).some((c) => hasUsableEmail(c.email)),
     contact_is_guess: (() => {
       const emailed = (r.prospect_contacts ?? []).filter((c) => !!c.email);
       return (

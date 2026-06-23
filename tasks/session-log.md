@@ -517,3 +517,8 @@ and day boundaries. Newest entries at the bottom.
 
 - Bulk "Generate pitches" on /companies (bulkGeneratePitches): draft for several selected prospects at once; pre-filters no-contact/advanced; concurrent chunks of 5, cap 10. Fixed pre-existing bug: bulk success toast rendered inside the selection-gated bar → unmounted on setSelected(new Set()); moved it outside.
 - getTopContact lacked the null-email filter the re-enrich report had → a name-only contact masked a real scraped info@ → Overview showed "no contact" though re-enrich "Found" it. Added .not(email is null).neq(email,"") + re-derive is_role_based. Verified on Bedrock.
+
+## 2026-06-23 (cont.) — no-contact pitch gate + queue-to-send visibility
+
+- Shared hasUsableEmail() (email-utils) now powers the no-contact badge, the bulk pre-filter, getTopContact, AND a new gate in generatePitch (returns ok:false "No contact email" before any Claude call). Single button, bulk, pipeline all refuse no-contact prospects consistently; junk/placeholder rows no longer hide the "no contact" tag.
+- "Queue N for send" now counts only ready-to-queue (approved & not scheduled) so it drops to 0 / hides after queuing. Added queuedForSend count, a "Queued to send" filter view + chip (derived from approved + scheduled_send_at); they flip to Sent when the drip cron sends. queries.ts: PitchListRow/PitchDetail += scheduled_send_at; getPitchCounts splits approved vs queuedForSend.

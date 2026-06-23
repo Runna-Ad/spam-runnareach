@@ -27,6 +27,36 @@ const ROLE_LOCALPARTS: readonly string[] = [
   "recursoshumanos", "rh", "cobranza", "compras",
 ];
 
+// Placeholder addresses that look like contacts but can't be pitched. Old
+// scraper data may still hold these (insert-time validation rejects them now).
+const PLACEHOLDER_DOMAINS = new Set([
+  "domain.com", "example.com", "example.org", "example.net", "yourdomain.com",
+  "email.com", "test.com", "sample.com", "company.com", "yourcompany.com",
+  "acme.com", "mail.com", "site.com",
+]);
+const PLACEHOLDER_LOCALS = new Set([
+  "user", "example", "test", "youremail", "yourname", "name", "firstname",
+  "lastname", "email", "username", "your",
+]);
+
+/**
+ * A contact email we can actually send to: present, well-formed, and not an
+ * obvious placeholder. The single source of truth for "does this prospect have
+ * a real contact?" — used by the no-contact badge, the pitch gate, and bulk
+ * generation so they never disagree. (A role-based info@ IS usable — it sends
+ * with the forwarding ask; that's isRoleBasedEmail's job, not this one.)
+ */
+export function hasUsableEmail(email: string | null | undefined): boolean {
+  if (!email) return false;
+  const e = email.trim().toLowerCase();
+  if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(e)) return false;
+  const [local, domain] = e.split("@");
+  if (!local || !domain) return false;
+  if (PLACEHOLDER_DOMAINS.has(domain)) return false;
+  if (PLACEHOLDER_LOCALS.has(local)) return false;
+  return true;
+}
+
 export function isRoleBasedEmail(email: string): boolean {
   const raw = (email.split("@")[0] ?? "").trim().toLowerCase().split("+")[0] ?? "";
   if (!raw) return true; // no local part at all → treat as non-personal

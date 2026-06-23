@@ -58,12 +58,25 @@ const MARKET_FLAG: Record<"CA" | "MX" | "US" | "LATAM", string> = {
 
 interface PitchesPageProps {
   pitches: PitchListRow[];
-  counts: { total: number; draft: number; queued: number; approved: number; sent: number };
+  counts: { total: number; draft: number; queued: number; approved: number; queuedForSend: number; sent: number };
   canEdit: boolean;
   inboxes: SenderInbox[];
 }
 
-type FilterValue = "ALL" | PitchStatus;
+// "queued_for_send" is a DERIVED view (status 'approved' + scheduled_send_at set),
+// not a real status — handled specially in the filter below.
+type FilterValue = "ALL" | PitchStatus | "queued_for_send";
+
+/** A pitch is queued into the drip-send queue when it's approved AND scheduled. */
+function isQueuedForSend(p: PitchListRow): boolean {
+  return p.status === "approved" && !!p.scheduled_send_at;
+}
+
+/** Display chip — surfaces "Queued to send" instead of plain "Approved" once scheduled. */
+function pitchMeta(p: PitchListRow): { label: string; tone: "neutral" | "info" | "success" | "warning" | "danger" } {
+  if (isQueuedForSend(p)) return { label: "Queued to send", tone: "info" };
+  return STATUS_META[p.status];
+}
 
 export function PitchesPage({ pitches, counts, canEdit, inboxes }: PitchesPageProps) {
   const router = useRouter();
@@ -72,10 +85,13 @@ export function PitchesPage({ pitches, counts, canEdit, inboxes }: PitchesPagePr
     pitches[0]?.id ?? null,
   );
 
-  const visible = React.useMemo(
-    () => (filter === "ALL" ? pitches : pitches.filter((p) => p.status === filter)),
-    [pitches, filter],
-  );
+  const visible = React.useMemo(() => {
+    if (filter === "ALL") return pitches;
+    if (filter === "queued_for_send") return pitches.filter(isQueuedForSend);
+    // "Approved" means ready-to-queue only — queued ones live in their own view.
+    if (filter === "approved") return pitches.filter((p) => p.status === "approved" && !p.scheduled_send_at);
+    return pitches.filter((p) => p.status === filter);
+  }, [pitches, filter]);
 
   const selected = React.useMemo(
     () => pitches.find((p) => p.id === selectedId) ?? null,
@@ -124,7 +140,16 @@ export function PitchesPage({ pitches, counts, canEdit, inboxes }: PitchesPagePr
           <span className={counts.queued > 0 ? "font-medium text-[var(--color-warning-300)]" : ""}>
             {counts.queued} queued
           </span>{" "}
-          · {counts.approved} approved · {counts.sent} sent
+          · {counts.approved} approved
+          {counts.queuedForSend > 0 ? (
+            <>
+              {" "}·{" "}
+              <span className="font-medium text-[var(--color-info-300)]">
+                {counts.queuedForSend} queued to send
+              </span>
+            </>
+          ) : null}{" "}
+          · {counts.sent} sent
         </span>
         <div className="ml-auto flex items-center gap-2">
           {queueMsg ? (
@@ -146,7 +171,7 @@ export function PitchesPage({ pitches, counts, canEdit, inboxes }: PitchesPagePr
               variant="primary"
               onClick={handleQueueAll}
               disabled={queuing}
-              title={`Queue all ${counts.approved} approved pitches to drip-send from ${sendInbox.email}`}
+              title={`Queue the ${counts.approved} approved (not-yet-queued) pitches to drip-send from ${sendInbox.email}`}
             >
               {queuing ? (
                 <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden />
@@ -165,7 +190,8 @@ export function PitchesPage({ pitches, counts, canEdit, inboxes }: PitchesPagePr
             <option value="ALL">All</option>
             <option value="draft">Draft (writing)</option>
             <option value="queued_for_approval">Queued for approval</option>
-            <option value="approved">Approved</option>
+            <option value="approved">Approved (ready to queue)</option>
+            <option value="queued_for_send">Queued to send</option>
             <option value="sent">Sent</option>
             <option value="reviewer_rejected">Rejected</option>
           </Select>
@@ -238,7 +264,7 @@ function PitchRow({
   active: boolean;
   onClick: () => void;
 }) {
-  const meta = STATUS_META[pitch.status];
+  const meta = pitchMeta(pitch);
   const score = pitch.quality_self_score ?? 0;
   const scoreColor =
     score >= 0.8
@@ -299,7 +325,7 @@ function PitchDetail({
   inboxes: SenderInbox[];
   onChange: () => void;
 }) {
-  const meta = STATUS_META[pitch.status];
+  const meta = pitchMeta(pitch);
   const [subject, setSubject] = React.useState(pitch.subject);
   const [body, setBody] = React.useState("");
   const [bodyLoaded, setBodyLoaded] = React.useState(false);

@@ -27,6 +27,8 @@ export type PitchListRow = {
   contact_name: string | null;
   pain_label: string | null;
   approved_at: string | null;
+  /** Set when queued into the drip-send queue (status stays 'approved' until the cron sends). */
+  scheduled_send_at: string | null;
   sent_at: string | null;
   created_at: string;
   updated_at: string;
@@ -49,6 +51,7 @@ export async function listPitches(tenantId: string): Promise<PitchListRow[]> {
     quality_self_score: number | null;
     pain_id: string | null;
     approved_at: string | null;
+    scheduled_send_at: string | null;
     sent_at: string | null;
     created_at?: string;
     updated_at?: string;
@@ -67,7 +70,7 @@ export async function listPitches(tenantId: string): Promise<PitchListRow[]> {
     .select(
       `
       id, prospect_id, case_study_id, status, subject, variant_index,
-      quality_self_score, pain_id, approved_at, sent_at,
+      quality_self_score, pain_id, approved_at, scheduled_send_at, sent_at,
       prospects(company_name, market, language),
       case_studies(client_name),
       prospect_contacts:contact_id(full_name, email),
@@ -97,6 +100,7 @@ export async function listPitches(tenantId: string): Promise<PitchListRow[]> {
     contact_name: r.prospect_contacts?.full_name ?? null,
     pain_label: r.pain_taxonomy?.display_name_en ?? null,
     approved_at: r.approved_at,
+    scheduled_send_at: r.scheduled_send_at ?? null,
     sent_at: r.sent_at,
     created_at: r.created_at ?? new Date().toISOString(),
     updated_at: r.updated_at ?? r.created_at ?? new Date().toISOString(),
@@ -128,6 +132,7 @@ export async function getPitch(
     quality_self_score: number | null;
     pain_id: string | null;
     approved_at: string | null;
+    scheduled_send_at: string | null;
     sent_at: string | null;
     body_original: string;
     body_edited: string | null;
@@ -147,7 +152,7 @@ export async function getPitch(
     .select(
       `
       id, prospect_id, case_study_id, status, subject, variant_index,
-      quality_self_score, pain_id, approved_at, sent_at,
+      quality_self_score, pain_id, approved_at, scheduled_send_at, sent_at,
       body_original, body_edited, body_sent,
       measurable_result_included, auto_rejected, auto_rejected_reason,
       rejection_reason,
@@ -182,6 +187,7 @@ export async function getPitch(
     contact_name: r.prospect_contacts?.full_name ?? null,
     pain_label: r.pain_taxonomy?.display_name_en ?? null,
     approved_at: r.approved_at,
+    scheduled_send_at: r.scheduled_send_at ?? null,
     sent_at: r.sent_at,
     created_at: new Date().toISOString(),
     updated_at: new Date().toISOString(),
@@ -197,22 +203,35 @@ export async function getPitch(
 
 export async function getPitchCounts(
   tenantId: string,
-): Promise<{ total: number; draft: number; queued: number; approved: number; sent: number }> {
+): Promise<{
+  total: number;
+  draft: number;
+  queued: number;
+  /** Approved but NOT yet queued to send — what the "Queue N for send" button acts on. */
+  approved: number;
+  /** Approved AND scheduled into the drip queue (status stays 'approved' until the cron sends). */
+  queuedForSend: number;
+  sent: number;
+}> {
   const supabase = await createClient();
-  type Row = { status: PitchStatus };
+  type Row = { status: PitchStatus; scheduled_send_at: string | null };
   const { data, error } = await supabase
     .from("pitches")
-    .select("status")
+    .select("status, scheduled_send_at")
     .eq("tenant_id", tenantId)
     .returns<Row[]>();
 
   if (error) throw new Error(`Failed to count pitches: ${error.message}`);
   const rows = data ?? [];
+  const approvedRows = rows.filter((r) => r.status === "approved");
   return {
     total: rows.length,
     draft: rows.filter((r) => r.status === "draft").length,
     queued: rows.filter((r) => r.status === "queued_for_approval").length,
-    approved: rows.filter((r) => r.status === "approved").length,
+    // Ready to queue = approved with no scheduled_send_at yet.
+    approved: approvedRows.filter((r) => !r.scheduled_send_at).length,
+    // Already in the drip queue, awaiting the cron.
+    queuedForSend: approvedRows.filter((r) => !!r.scheduled_send_at).length,
     sent: rows.filter((r) => r.status === "sent").length,
   };
 }
