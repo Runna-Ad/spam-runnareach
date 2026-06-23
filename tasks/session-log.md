@@ -403,3 +403,29 @@ and day boundaries. Newest entries at the bottom.
 **Verified:** tsc + lint + build + 155/155 tests; all advisors smoke-tested live locally AND in prod (Gary 14.4s questions / 15.2s proposal; /analytics outcome section live with real 3-sent/1-replied data). Migrations 0019–0021 confirmed applied by Pedro before deploy.
 **Committed:** 6842862 (whole working tree synced to prod state, incl. co-resident reply-funnel / follow-up-composer / claude_search / warmup-DMARC WIP). Not pushed.
 **Memory:** runna-positioning (new), learning-loop-spec updated (P1 + 2a built), MEMORY.md index updated.
+
+## 2026-06-23 11:16
+**Shipped (recent commits):**
+  - fix(ci): remove unused var in screenshot script + stale eslint-disable
+  - docs(session-log): log 2026-06-23 learning-loop + Gary + Phase 2a session
+  - feat(learning): advisory layer + Gary ICP wizard + Phase 2a outcome dashboard
+
+**Still open:**
+- [ ] Supabase: ANON + SERVICE_ROLE keys live (connection works — Phase 0 unblocked)
+- [ ] Anthropic API key + $100/mo limit
+- [ ] Google Cloud (Places API + Gmail API + OAuth consent + OAuth client + restricted Places key)
+- [ ] Name sender #1 Runna CA principal + buy both domains + add runnareach.com to Rünna Workspace + DNS (SPF/DKIM/DMARC)
+- [ ] Postmark or SES account
+- [ ] Cal.com account
+- [ ] Slack hot-lead webhook URL
+- [ ] CRON_SECRET + TOKEN_ENCRYPTION_KEY (`openssl rand -hex 32`)
+- [ ] ⏳ #7 Analytics — pitch funnel metrics, cost tracking, Claude vs template breakdown
+- [ ] ⏳ #7 Analytics — pitch funnel metrics, cost tracking, Claude vs template breakdown
+
+
+## 2026-06-23 (cont.) — Pitch angle advisor → rewrite tool + composer capability-first
+
+- Angle advisor moved OFF prospect-detail; on /pitches each angle has "Rewrite with this angle" → `rewritePitchWithAngle` re-composes the existing pitch led by that angle (capability-led if no case fits), writes body_edited, refreshes via reloadKey.
+- `forced_angle` on GeneratorInputs; composer bypasses Stage-1 case pick + injects a REWRITE DIRECTIVE.
+- Composer system prompt: injects RUNNA_CAPABILITIES + PROOF POLICY — capability-first, case studies optional/never forced, no fabricated specifics.
+- Verified live: pitch rewrote booking→AI-automation angle, no forced case. tsc/lint/build/155 tests green.

@@ -303,6 +303,8 @@ function PitchDetail({
   const [subject, setSubject] = React.useState(pitch.subject);
   const [body, setBody] = React.useState("");
   const [bodyLoaded, setBodyLoaded] = React.useState(false);
+  // Bumped after an angle rewrite to force the body/subject to re-fetch.
+  const [reloadKey, setReloadKey] = React.useState(0);
   const [saving, startSave] = React.useTransition();
   const [transitioning, startTransition] = React.useTransition();
   const [sending, startSending] = React.useTransition();
@@ -357,7 +359,7 @@ function PitchDetail({
     return () => {
       cancelled = true;
     };
-  }, [pitch.id, pitch.subject]);
+  }, [pitch.id, pitch.subject, reloadKey]);
 
   const wordCount = React.useMemo(
     () => body.trim().split(/\s+/).filter(Boolean).length,
@@ -454,8 +456,16 @@ function PitchDetail({
         </div>
       </div>
 
-      {/* Pitch angle advisor — guidance only, does not change this pitch */}
-      <PitchAngleAdvisor prospectId={pitch.prospect_id} compact />
+      {/* Pitch angle advisor — suggests angles + can rewrite this pitch with one */}
+      <PitchAngleAdvisor
+        prospectId={pitch.prospect_id}
+        pitchId={pitch.id}
+        onApplied={() => {
+          setReloadKey((k) => k + 1);
+          onChange();
+        }}
+        compact
+      />
 
       {/* Editable subject + body */}
       <div className="flex flex-col gap-3 rounded-[var(--radius-lg)] bg-[var(--color-bg-800)] p-4 ring-1 ring-inset ring-[var(--color-border-default)]">

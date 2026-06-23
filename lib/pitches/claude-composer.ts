@@ -20,6 +20,7 @@ import {
   getClient,
   type ClaudeUsage,
 } from "../anthropic/client.ts";
+import { RUNNA_CAPABILITIES } from "../runna/capabilities.ts";
 import type {
   ComposedPitch,
   GeneratorInputCaseStudy,
@@ -116,7 +117,18 @@ export async function composePitchWithClaude(
   let totalUsage: ClaudeUsage = { ...ZERO_USAGE };
 
   // ── Stage 1: pick case studies by tier + industry (deterministic / Haiku tie-breaker) ─
-  const stage1 = await stage1MatchCredibility(input, size);
+  // When an angle is forced (rewrite flow), skip selection entirely: use the
+  // angle's chosen case (if any) or none → capability-led. No LLM tie-break.
+  let stage1: { cases: GeneratorInputCaseStudy[]; usage: ClaudeUsage };
+  if (input.forced_angle) {
+    const forcedId = input.forced_angle.case_study_id;
+    const forcedCase = forcedId
+      ? input.case_studies.find((c) => c.id === forcedId) ?? null
+      : null;
+    stage1 = { cases: forcedCase ? [forcedCase] : [], usage: { ...ZERO_USAGE } };
+  } else {
+    stage1 = await stage1MatchCredibility(input, size);
+  }
   totalUsage = addUsage(totalUsage, stage1.usage);
 
   // ── Stage 2: translate pain + assemble pitch in one Sonnet pass ───────────
@@ -308,10 +320,11 @@ function buildSystemPrompt(lang: "en" | "es", size: SizeSignal): string {
   const langName = lang === "es" ? "Spanish — Mexican B2B register" : "English — Canadian market";
   const voiceRules = lang === "es" ? buildSpanishVoiceRules(size) : buildEnglishVoiceRules();
 
-  return `You are a B2B cold-email copywriter for Runna, a creative + design agency.
-Runna's full toolkit: brand identity, packaging, web/ecommerce design, email marketing
-flows, paid social (Meta/TikTok/Google), AI automation, custom apps and dashboards, content
-strategy and production, UX redesign. Any of these may be relevant depending on the prospect.
+  return `You are a B2B cold-email copywriter for Runna, a creative + digital agency with a broad modern toolkit.
+
+${RUNNA_CAPABILITIES}
+
+PROOF POLICY (important): a specific success story is NOT required. Lead with the most relevant Runna CAPABILITY for this prospect (AI tools/automation, optimization, custom dashboards, asset creation, video/ad production, design, growth) and use Runna's years of expertise + real in-house builds as proof. Cite a specific case study ONLY when one genuinely fits the prospect's pain — never force, stretch, or invent one. A capability-led pitch with no case study is fully valid and often stronger. The ONE hard rule: never fabricate a specific client name, metric, or geography that isn't in the payload.
 
 Your job: write a cold email that reads like a real human wrote it — conversational, specific,
 warm. Think of it like introducing yourself to someone at a bar: you notice something about
@@ -359,11 +372,17 @@ REQUIRED EMAIL STRUCTURE — follow this exactly, no additions, no reordering:
      with this setup", "well-run Meta retargeting averages 3-5x ROAS for this category."
    - Use solution_hints in the payload as a starting point, then go further using what
      you know about current trends, platforms, and what actually works for this industry.
-5. Case study bridge — ONLY if case_study_id is chosen AND it has a real measurable result:
-   ONE sentence: "Did this for {client}, {metric}." (e.g. "Did this for Niki, +34% email revenue.")
-   The metric MUST be a number or percentage from the case's hero_metric or measurable_results.
-   NEVER describe what you did ("brand and digital creative") — only the OUTCOME for the client.
-   If the case has no numeric metric, set case_study_id=null and skip the bridge entirely.
+5. Proof line — pick ONE of these, whichever is more credible for this prospect:
+   (a) CASE-STUDY BRIDGE — ONLY if a case_study_id is chosen AND it has a real measurable result:
+       ONE sentence: "Did this for {client}, {metric}." (e.g. "Did this for Niki, +34% email revenue.")
+       The metric MUST be a number or percentage from the case's hero_metric or measurable_results.
+       NEVER describe what you did — only the OUTCOME for the client.
+   (b) CAPABILITY PROOF — when no case study fits (case_study_id=null): prove it with Runna's
+       capability + track record instead. Reference the KIND of work Runna does and, if relevant,
+       a real in-house build from RUNNA'S CAPABILITIES (e.g. "we build custom AI tools and dashboards
+       like the ones running our own ops" / "we run two production studios for video"). Do NOT invent
+       a client name or a specific metric for these. This is a legitimate, strong proof — not a weak fallback.
+   Never force a case study. If none genuinely fits the pain, choose (b) and set case_study_id=null.
    ⛔ FACTUAL INTEGRITY — DO NOT FABRICATE ATTRIBUTES OF THE CLIENT:
    - State ONLY facts present in the case payload (client_name, industry, the metric).
    - NEVER invent or imply the client's country, nationality, city, or location. The
@@ -627,7 +646,18 @@ function buildStage2UserPrompt(
     hunter_url: input.deep_pitch_url ?? null,
   };
 
-  return `Compose the cold-email pitch from this payload:
+  const rewriteDirective = input.forced_angle
+    ? `\n⚑ REWRITE DIRECTIVE — the human chose a specific angle for this rewrite. Lead the email with it:
+- Pain to lead with: "${input.forced_angle.pain_label}"
+- ${
+        input.forced_angle.case_study_id
+          ? "Anchor the proof on the chosen case study in chosen_cases (use its real metric)."
+          : `No case study — prove it with the Runna capability "${input.forced_angle.capability ?? "AI / optimization / production"}" + track record (capability proof, option (b); set case_study_id=null).`
+      }
+Keep everything else (voice, structure, CTA, factual integrity) the same.\n`
+    : "";
+
+  return `Compose the cold-email pitch from this payload:${rewriteDirective}
 
 \`\`\`json
 ${JSON.stringify(payload, null, 2)}

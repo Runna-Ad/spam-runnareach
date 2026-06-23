@@ -450,6 +450,180 @@ export async function generatePitch(
   };
 }
 
+const rewriteAngleSchema = z.object({
+  pitch_id: z.string().uuid(),
+  pain_id: z.string().nullable(),
+  pain_label: z.string().trim().min(1).max(160),
+  case_study_id: z.string().uuid().nullable(),
+  capability: z.string().trim().max(80).nullable(),
+});
+
+export type RewritePitchResult =
+  | { ok: true; subject: string; body: string; quality_self_score: number }
+  | { ok: false; error: string };
+
+/**
+ * Re-compose an EXISTING pitch led by a human-chosen angle (the "Rewrite with
+ * this angle" action on the pitches page). Unlike generatePitch, this never
+ * picks its own pain/case — it pins the chosen angle (its pain + that case if
+ * one was chosen, else capability-led) and writes the result to body_edited,
+ * preserving the original draft in body_original. Claude-only (no template
+ * fallback — a template can't honor a specific angle).
+ */
+export async function rewritePitchWithAngle(
+  input: z.input<typeof rewriteAngleSchema>,
+): Promise<RewritePitchResult> {
+  const user = await requireUser();
+  if (user.role === "viewer") return { ok: false, error: "Viewers cannot rewrite pitches." };
+
+  const parsed = rewriteAngleSchema.safeParse(input);
+  if (!parsed.success) {
+    return { ok: false, error: parsed.error.issues[0]?.message ?? "Invalid input." };
+  }
+  if (!claudeIsAvailable()) {
+    return { ok: false, error: "Rewrite needs the Anthropic API key, which isn't configured." };
+  }
+
+  const supabase = await createClient();
+
+  // Locked pitches can't be rewritten.
+  type PitchRow = { id: string; prospect_id: string; status: string };
+  const { data: pitch } = await supabase
+    .from("pitches")
+    .select("id, prospect_id, status")
+    .eq("id", parsed.data.pitch_id)
+    .eq("tenant_id", user.tenantId)
+    .maybeSingle<PitchRow>();
+  if (!pitch) return { ok: false, error: "Pitch not found." };
+  if (pitch.status === "sent" || pitch.status === "sending") {
+    return { ok: false, error: "This pitch was already sent — it can't be rewritten." };
+  }
+
+  const cap = await isUnderDailyCap(user.tenantId);
+  if (!cap.under) {
+    return { ok: false, error: `Daily AI cap hit ($${cap.spent_today_usd.toFixed(2)} of $${cap.cap_usd.toFixed(2)}).` };
+  }
+
+  // Load the same inputs generatePitch uses — prospect, research, contacts,
+  // the chosen case study (if any), notable clients.
+  type ProspectRow = {
+    id: string; company_name: string; industry: string | null; language: "en" | "es";
+    employee_size_estimate: number | null; city: string | null; market: string | null;
+  };
+  type ResearchRow = { pain_points: unknown; what_they_do: string | null; tech_stack: string[] };
+
+  const [{ data: prospect }, { data: research }, { data: contactRows }] = await Promise.all([
+    supabase
+      .from("prospects")
+      .select("id, company_name, industry, language, employee_size_estimate, city, market")
+      .eq("id", pitch.prospect_id).eq("tenant_id", user.tenantId)
+      .maybeSingle<ProspectRow>(),
+    supabase
+      .from("prospect_research")
+      .select("pain_points, what_they_do, tech_stack")
+      .eq("prospect_id", pitch.prospect_id).eq("tenant_id", user.tenantId)
+      .maybeSingle<ResearchRow>(),
+    supabase
+      .from("prospect_contacts")
+      .select("full_name, email, email_is_role_based, role_title, priority_rank")
+      .eq("prospect_id", pitch.prospect_id).eq("tenant_id", user.tenantId)
+      .order("priority_rank", { ascending: true }).limit(5)
+      .returns<{ full_name: string | null; email: string | null; email_is_role_based: boolean; role_title: string | null }[]>(),
+  ]);
+  if (!prospect) return { ok: false, error: "Prospect not found." };
+
+  // The chosen case study (only when the angle anchors on one).
+  let chosenCases: GeneratorInputCaseStudy[] = [];
+  if (parsed.data.case_study_id) {
+    type CaseRow = {
+      id: string; client_name: string; industry: string | null;
+      hero_metric_en: string | null; hero_metric_es: string | null;
+      result_description_en: string | null; result_description_es: string | null;
+      testimonial_quote_en: string | null; testimonial_quote_es: string | null;
+      measurable_results: unknown; tier: "smb" | "mid_market" | "enterprise";
+    };
+    const { data: cs } = await supabase
+      .from("case_studies")
+      .select(`id, client_name, industry, hero_metric_en, hero_metric_es, result_description_en, result_description_es, testimonial_quote_en, testimonial_quote_es, measurable_results, tier`)
+      .eq("id", parsed.data.case_study_id).eq("tenant_id", user.tenantId)
+      .maybeSingle<CaseRow>();
+    if (cs) {
+      chosenCases = [{
+        id: cs.id, client_name: cs.client_name, industry: cs.industry,
+        hero_metric_en: cs.hero_metric_en, hero_metric_es: cs.hero_metric_es,
+        result_description_en: cs.result_description_en, result_description_es: cs.result_description_es,
+        testimonial_quote_en: cs.testimonial_quote_en, testimonial_quote_es: cs.testimonial_quote_es,
+        measurable_results: normalizeMeasurableResults(cs.measurable_results),
+        pain_strength: 1, tier: cs.tier,
+      }];
+    }
+  }
+
+  let notableClientRows: GeneratorInputNotableClient[] = [];
+  try {
+    notableClientRows = (await listNotableClients(user.tenantId)).map((nc) => ({
+      id: nc.id, name: nc.name, industry_tags: nc.industry_tags, markets: nc.markets,
+      relationship_description: nc.relationship_description, key_result: nc.key_result,
+      description_en: nc.description_en, description_es: nc.description_es,
+    }));
+  } catch { /* non-fatal */ }
+
+  const generatorInputs: GeneratorInputs = {
+    prospect: { ...prospect, what_they_do: research?.what_they_do ?? null, tech_stack: research?.tech_stack ?? [] },
+    pains: normalizePains(research?.pain_points ?? null),
+    contacts: (contactRows ?? []).map((c) => ({
+      full_name: c.full_name, email: c.email, email_is_role_based: c.email_is_role_based, role_title: c.role_title ?? null,
+    })),
+    case_studies: chosenCases,
+    notable_clients: notableClientRows,
+    sender: { full_name: user.fullName, tenant_display_name: user.tenantDisplayName },
+    deep_pitch_url: hunterUrlForLanguage(prospect.language),
+    forced_angle: {
+      pain_label: parsed.data.pain_label,
+      pain_id: parsed.data.pain_id,
+      case_study_id: chosenCases.length > 0 ? parsed.data.case_study_id : null,
+      capability: parsed.data.capability,
+    },
+  };
+
+  const result = await composePitchWithClaude(generatorInputs);
+  if (!result.ok) {
+    return { ok: false, error: `Rewrite failed (${result.reason}). Try again.` };
+  }
+  const composed = result.result.composed;
+
+  // supabase-js 2.47 narrows the update payload to `never` with our hand-written
+  // Database type (see tasks/lessons.md). Cast at the call site; the object above
+  // is the real shape.
+  const rewriteUpdate = {
+    subject: composed.subject,
+    body_edited: composed.body,
+    preview_text: composed.preview_text,
+    pain_id: composed.pain_id,
+    case_study_id: composed.case_study_id,
+    measurable_result_included: composed.measurable_result_included,
+    quality_self_score: composed.quality_self_score,
+  };
+  const { error: updErr } = await supabase
+    .from("pitches")
+    .update(rewriteUpdate as never)
+    .eq("id", parsed.data.pitch_id)
+    .eq("tenant_id", user.tenantId);
+  if (updErr) return { ok: false, error: `Could not save rewrite: ${updErr.message}` };
+
+  await recordClaudeCall({
+    tenantId: user.tenantId,
+    model: result.result.model,
+    entity_type: "pitch",
+    entity_id: parsed.data.pitch_id,
+    usage: { ...result.result.usage, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 },
+    metadata: { kind: "pitch.rewritten_with_angle", pitch_id: parsed.data.pitch_id, pain_label: parsed.data.pain_label, case_study_id: composed.case_study_id },
+  });
+
+  revalidatePath("/pitches");
+  return { ok: true, subject: composed.subject, body: composed.body, quality_self_score: composed.quality_self_score };
+}
+
 /**
  * Save edits to subject/body. Marks body_edited (preserves body_original
  * for audit + rerun comparison).

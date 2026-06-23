@@ -118,6 +118,20 @@ export type GeneratorInputs = {
   sender: GeneratorInputSender;
   /** Optional URL pattern for deep-link to runna-website pitch. Empty = no link. */
   deep_pitch_url?: string | null;
+  /**
+   * Set ONLY when re-composing an existing pitch from a chosen angle (the
+   * "Rewrite with this angle" action). When present, the composer leads with
+   * this exact pain and uses ONLY this case study (or none → capability-led),
+   * instead of picking its own. Never set on first generation.
+   */
+  forced_angle?: {
+    pain_label: string;
+    pain_id: string | null;
+    /** The case study to anchor on, or null → prove with capability + expertise. */
+    case_study_id: string | null;
+    /** The Runna capability to lead with when there's no case (e.g. "AI automation"). */
+    capability: string | null;
+  } | null;
 };
 
 export function composePitchHeuristic(input: GeneratorInputs): ComposedPitch | null {

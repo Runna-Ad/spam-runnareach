@@ -23,7 +23,7 @@ import { RUNNA_CAPABILITIES } from "@/lib/runna/capabilities";
 import type { AngleStrength, PitchAngle, PitchAngleResult } from "./angle-types";
 
 const HYPOTHESIS_NOTE =
-  "Suggested angles from current research + Runna's case studies — guidance only, not validated by reply outcomes. The composer is unchanged; use these to steer it.";
+  "Angles from current research + Runna's capabilities — not validated by reply outcomes yet. Pick one to rewrite the draft; you still review + approve before sending.";
 
 type SizeSignal = "smb" | "mid_market" | "enterprise";
 

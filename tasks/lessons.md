@@ -4,6 +4,19 @@ Running log of mistakes, root causes, and rules to prevent recurrence. Newest at
 
 ---
 
+[2026-06-23] BUILD: Pitch angle advisor → POST-generation rewrite tool + composer formula fixed (capability-led, cases not forced)
+PEDRO'S DIRECTION: (1) the angle advisor was pre-generation + purely informational (did nothing) — it should fire AFTER the pitch exists, suggest angles, and on click REWRITE the pitch with the chosen angle. (2) Fix the generate-pitch formula to lead with Runna's strengths (AI, design, dashboards, automation, video) and stop forcing success cases.
+BUILT:
+- Removed the advisor from prospect-detail (pre-gen slot). On /pitches PitchDetail each suggested angle now has a "Rewrite with this angle" button → new action `rewritePitchWithAngle` (lib/pitches/actions.ts): re-composes the EXISTING pitch led by the chosen angle (its pain + that case ONLY if chosen, else capability-led), writes to body_edited (preserves body_original), refreshes the body via a reloadKey on the fetch effect. Claude-only (a template can't honor a specific angle).
+- `forced_angle` added to GeneratorInputs; composePitchWithClaude bypasses Stage-1 case selection when forced and injects a REWRITE DIRECTIVE into the Stage-2 prompt.
+- Composer system prompt reframed: injects RUNNA_CAPABILITIES; explicit PROOF POLICY — lead with capability + expertise + real in-house builds; cite a case study ONLY when it genuinely fits; capability-proof (option b) is a first-class path, not a weak fallback; never fabricate a specific client/metric/geo. Structure step 5 now offers (a) case bridge OR (b) capability proof.
+VERIFIED LIVE: existing pitch rewrote from a booking/conversion angle → an AI-automation capability-led angle ("turn manual admin work into automated systems that run themselves"), no forced case, no fabricated metric. body changed, "✓ Rewrote" confirmation shown.
+GOTCHA: supabase-js 2.47 narrowed the new `.update()` payload to `never` again — cast `as never` at the call site (documented quirk). And the advisor's footer copy ("composer is unchanged") went stale the moment behavior changed.
+RULE: An "advisor" that can act should act where the artifact lives (the pitch on /pitches), not pre-creation. When you change what a feature DOES, grep its user-facing copy for now-false claims. The pitch composer's proof must be capability-first; case studies are optional evidence, never a required scaffold.
+TAGS: #build #pitches #rewrite #composer #capabilities #positioning #supabase-never
+
+---
+
 [2026-06-23] BUILD: Learning Loop PHASE 2a — outcome-learning dashboard (observation only, NO auto-tune)
 WHAT: Split Phase 2 (statistical learning) into 2a (build now, no volume needed) + 2b (later, needs volume) — Pedro's call. Built 2a: lib/analytics/outcomes.ts `getOutcomeInsights(tenantId)` aggregates real outcomes BY DIMENSION (ICP, industry, discovery source, city, pain, case study) from prospects + pitches(sent) + active scores(best_pain_id/best_case_study_id). Surfaced as a new "Outcome learning" section on the EXISTING /analytics page (extended it, didn't make a new route — /learning was already taken by the prompt-champion system, /analytics already had lib/analytics/queries.ts with an ICP leaderboard).
 KEY DESIGN — honesty via sample-size gating: each row gets a confidence label by SENT count — actionable (≥20), emerging (≥5), insufficient (<5). Reply/book RATES show as "—" until a segment clears 5 sends, so we never display a rate computed from n=1. A gold "Phase 2a · observation only" banner states plainly that nothing changes targeting/scoring and that Phase 2b reweighting is gated on this volume. Verified live: real data showed 3 sent / 1 replied, every segment correctly "—" + N<5.

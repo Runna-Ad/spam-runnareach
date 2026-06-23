@@ -52,7 +52,6 @@ import { runStructuredResearch } from "@/lib/research/structured-research-action
 import { deepResearchProspect } from "@/lib/research/deep-research-action";
 import { buildDeepResearchPrompt } from "@/lib/research/deep-research-prompt";
 import { generatePitch } from "@/lib/pitches/actions";
-import { PitchAngleAdvisor } from "@/components/pitches/pitch-angle-advisor";
 import { reEnrichProspectContacts } from "@/lib/discover/pipeline-action";
 import { cn, relativeTime } from "@/lib/utils";
 
@@ -929,7 +928,6 @@ function ResearchTab({
               )}
             </Button>
           </div>
-          <PitchAngleAdvisor prospectId={prospect.id} />
           {topContactEmail && topContactIsRoleBased ? (
             <p className="text-[11px] text-[var(--color-warning-300)]">
               ⚠ Role-based email ({topContactEmail}) — pitch will include a forwarding ask. Add a personal email in Overview for better results.

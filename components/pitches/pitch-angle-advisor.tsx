@@ -1,11 +1,12 @@
 "use client";
 
-import { Lightbulb, Loader2, Sparkles } from "lucide-react";
+import { Check, Lightbulb, Loader2, Sparkles, Wand2 } from "lucide-react";
 import * as React from "react";
 import { Button } from "@/components/ui/button";
 import { Chip } from "@/components/ui/chip";
 import { suggestPitchAnglesAction } from "@/lib/pitches/angle-advisor";
-import type { AngleStrength, PitchAngleResult } from "@/lib/pitches/angle-types";
+import { rewritePitchWithAngle } from "@/lib/pitches/actions";
+import type { AngleStrength, PitchAngle, PitchAngleResult } from "@/lib/pitches/angle-types";
 import { cn } from "@/lib/utils";
 
 const STRENGTH_TONE: Record<AngleStrength, "success" | "info" | "neutral"> = {
@@ -28,16 +29,27 @@ const STRENGTH_LABEL: Record<AngleStrength, string> = {
  */
 export function PitchAngleAdvisor({
   prospectId,
+  pitchId,
+  onApplied,
   compact = false,
 }: {
   prospectId: string;
+  /** When set, each angle gets a "Rewrite with this angle" action targeting this pitch. */
+  pitchId?: string;
+  /** Called after a successful rewrite so the parent can reload the pitch body. */
+  onApplied?: () => void;
   compact?: boolean;
 }) {
   const [loading, setLoading] = React.useState(false);
   const [result, setResult] = React.useState<PitchAngleResult | null>(null);
+  const [applyingIdx, setApplyingIdx] = React.useState<number | null>(null);
+  const [appliedIdx, setAppliedIdx] = React.useState<number | null>(null);
+  const [rewriteError, setRewriteError] = React.useState<string | null>(null);
 
   const run = async () => {
     setLoading(true);
+    setAppliedIdx(null);
+    setRewriteError(null);
     try {
       setResult(await suggestPitchAnglesAction(prospectId));
     } catch {
@@ -50,6 +62,31 @@ export function PitchAngleAdvisor({
       });
     } finally {
       setLoading(false);
+    }
+  };
+
+  const applyAngle = async (angle: PitchAngle, idx: number) => {
+    if (!pitchId) return;
+    setApplyingIdx(idx);
+    setRewriteError(null);
+    try {
+      const res = await rewritePitchWithAngle({
+        pitch_id: pitchId,
+        pain_id: angle.painId,
+        pain_label: angle.painLabel,
+        case_study_id: angle.caseStudyId,
+        capability: angle.serviceLabel,
+      });
+      if (res.ok) {
+        setAppliedIdx(idx);
+        onApplied?.();
+      } else {
+        setRewriteError(res.error);
+      }
+    } catch {
+      setRewriteError("Rewrite failed — please try again.");
+    } finally {
+      setApplyingIdx(null);
     }
   };
 
@@ -85,7 +122,9 @@ export function PitchAngleAdvisor({
 
       {!result ? (
         <p className="text-[10px] text-[var(--color-fg-700)]">
-          Grounded in this prospect&apos;s research + Runna&apos;s case studies. Suggestion only.
+          {pitchId
+            ? "Suggests stronger angles for this draft. Pick one to rewrite the pitch with it — grounded in research + Runna's capabilities."
+            : "Grounded in this prospect's research + Runna's capabilities. Suggestion only."}
         </p>
       ) : !result.ok ? (
         <p className="text-[11px] italic text-[var(--color-warning-300)]">{result.note}</p>
@@ -121,8 +160,34 @@ export function PitchAngleAdvisor({
                   “{a.evidenceQuote}”
                 </p>
               ) : null}
+              {pitchId ? (
+                appliedIdx === i ? (
+                  <span className="flex items-center gap-1 text-[10px] text-[var(--color-success-300)]">
+                    <Check className="h-3 w-3" aria-hidden /> Rewrote the pitch with this angle — review the body.
+                  </span>
+                ) : (
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="ghost"
+                    className="self-start"
+                    onClick={() => applyAngle(a, i)}
+                    disabled={applyingIdx !== null}
+                  >
+                    {applyingIdx === i ? (
+                      <Loader2 className="h-3 w-3 animate-spin" aria-hidden />
+                    ) : (
+                      <Wand2 className="h-3 w-3" aria-hidden />
+                    )}
+                    {applyingIdx === i ? "Rewriting…" : "Rewrite with this angle"}
+                  </Button>
+                )
+              ) : null}
             </div>
           ))}
+          {rewriteError ? (
+            <p className="text-[10px] text-[var(--color-danger-300)]">{rewriteError}</p>
+          ) : null}
           {result.note ? (
             <p className="flex items-start gap-1 text-[10px] text-[var(--color-warning-300)]">
               <span aria-hidden>⚠</span>
