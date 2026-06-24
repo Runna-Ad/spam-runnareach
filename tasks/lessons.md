@@ -4,6 +4,14 @@ Running log of mistakes, root causes, and rules to prevent recurrence. Newest at
 
 ---
 
+[2026-06-24] BUILD: dashboard "Pipeline at a glance" now includes Queued-to-send + Sent
+WHAT (Pedro): the glance strip only had prospect-status stages (raw→researched→pitched→replied→booked→won→lost); add Queued-to-send + Sent so sending progress is visible. Added getSendStageCounts (lib/today/queries.ts) — PITCH-derived (sending never changes prospect.status), counting DISTINCT prospects: queued_to_send = approved+scheduled & not sent; sent = has a sent pitch. Strip now 9 stages (raw, researched, pitched, queued, sent, replied, booked, won, lost); the two send stages link to /pitches (the prospect-status filter doesn't cover them).
+KEY: kept send counts in a SEPARATE `stageCounts` object, NOT merged into `statusCounts` — because totalProspects = sum(statusCounts) drives "N prospects in pipeline" + the In-Pipeline stat card, and adding pitch-derived keys there would double-count.
+RULE: when a UI strip mixes counts from two sources (prospect.status + pitch-derived), keep the source used for a TOTAL separate from the display-only superset, or the total inflates. Send/queue stages are pitch-level facts, not prospect statuses — derive them from pitches, count distinct prospects to match the strip's unit.
+TAGS: #build #dashboard #pipeline #pitches #sending #counts
+
+---
+
 [2026-06-23] LESSON: "Queue N for send" button still said "Queue 10" after queuing — queued state had no representation + no visibility
 SYMPTOM (Pedro): queued 10, toast said queued, but the button still read "Queue 10 for send" (confusing, double-send risk); also no way to SEE queued emails or watch them move queued→sent.
 ROOT CAUSE: queueApprovedForSend sets scheduled_send_at (+ sender_inbox_id, queued_at) but leaves status='approved' (the drip cron flips it to 'sent' later). There is NO distinct "queued for send" status. The button counted counts.approved = all status='approved' (ignoring scheduled_send_at), so queued pitches kept counting → button never changed even after router.refresh(). And the list had no view for them.

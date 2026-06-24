@@ -522,3 +522,46 @@ and day boundaries. Newest entries at the bottom.
 
 - Shared hasUsableEmail() (email-utils) now powers the no-contact badge, the bulk pre-filter, getTopContact, AND a new gate in generatePitch (returns ok:false "No contact email" before any Claude call). Single button, bulk, pipeline all refuse no-contact prospects consistently; junk/placeholder rows no longer hide the "no contact" tag.
 - "Queue N for send" now counts only ready-to-queue (approved & not scheduled) so it drops to 0 / hides after queuing. Added queuedForSend count, a "Queued to send" filter view + chip (derived from approved + scheduled_send_at); they flip to Sent when the drip cron sends. queries.ts: PitchListRow/PitchDetail += scheduled_send_at; getPitchCounts splits approved vs queuedForSend.
+
+## 2026-06-23 16:11
+**Shipped (recent commits):**
+  - fix(pitches): gate generation on a real contact + surface the send queue
+  - feat(companies): bulk pitch generation + fix masked contacts on Overview
+  - fix(contacts): detect role-based emails on every insert path + pitch-time net
+  - fix(pitches): raise composer max_tokens 600→1200 to stop JSON truncation
+  - fix(sending): reset daily send counter at the UTC day boundary
+  - feat(pitches): low-pressure data-led CTA + fix 👉 button when URL is mid-sentence
+  - feat(pitches): angle advisor rewrites pitches; composer leads with capability
+  - fix(ci): remove unused var in screenshot script + stale eslint-disable
+
+**Still open:**
+- [ ] Supabase: ANON + SERVICE_ROLE keys live (connection works — Phase 0 unblocked)
+- [ ] Anthropic API key + $100/mo limit
+- [ ] Google Cloud (Places API + Gmail API + OAuth consent + OAuth client + restricted Places key)
+- [ ] Name sender #1 Runna CA principal + buy both domains + add runnareach.com to Rünna Workspace + DNS (SPF/DKIM/DMARC)
+- [ ] Postmark or SES account
+- [ ] Cal.com account
+- [ ] Slack hot-lead webhook URL
+- [ ] CRON_SECRET + TOKEN_ENCRYPTION_KEY (`openssl rand -hex 32`)
+- [ ] ⏳ #7 Analytics — pitch funnel metrics, cost tracking, Claude vs template breakdown
+- [ ] ⏳ #7 Analytics — pitch funnel metrics, cost tracking, Claude vs template breakdown
+
+
+## 2026-06-24 09:15
+
+**Still open:**
+- [ ] Supabase: ANON + SERVICE_ROLE keys live (connection works — Phase 0 unblocked)
+- [ ] Anthropic API key + $100/mo limit
+- [ ] Google Cloud (Places API + Gmail API + OAuth consent + OAuth client + restricted Places key)
+- [ ] Name sender #1 Runna CA principal + buy both domains + add runnareach.com to Rünna Workspace + DNS (SPF/DKIM/DMARC)
+- [ ] Postmark or SES account
+- [ ] Cal.com account
+- [ ] Slack hot-lead webhook URL
+- [ ] CRON_SECRET + TOKEN_ENCRYPTION_KEY (`openssl rand -hex 32`)
+- [ ] ⏳ #7 Analytics — pitch funnel metrics, cost tracking, Claude vs template breakdown
+- [ ] ⏳ #7 Analytics — pitch funnel metrics, cost tracking, Claude vs template breakdown
+
+
+## 2026-06-24 — dashboard glance: Queued-to-send + Sent stages
+
+- Added getSendStageCounts (pitch-derived, distinct prospects) + two stages to the dashboard "Pipeline at a glance" strip (now 9: raw/researched/pitched/queued/sent/replied/booked/won/lost). Kept separate from statusCounts so totalProspects isn't inflated. Drip cron confirmed working live (queue 10→6, sent→9).

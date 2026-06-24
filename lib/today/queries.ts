@@ -23,6 +23,38 @@ export async function getStatusCounts(
   return out;
 }
 
+/**
+ * Send-stage counts for the pipeline strip — these are PITCH-level states, not
+ * prospect.status (sending never changes prospect.status), so they're derived
+ * from the pitches table. Counted as DISTINCT prospects to match the strip's
+ * prospect orientation:
+ *   - queued_to_send: prospects with an approved + scheduled pitch, not yet sent
+ *   - sent:           prospects with at least one sent pitch
+ */
+export async function getSendStageCounts(
+  tenantId: string,
+): Promise<{ queued_to_send: number; sent: number }> {
+  const supabase = await createClient();
+  type Row = { prospect_id: string; status: string; scheduled_send_at: string | null };
+  const { data, error } = await supabase
+    .from("pitches")
+    .select("prospect_id, status, scheduled_send_at")
+    .eq("tenant_id", tenantId)
+    .returns<Row[]>();
+
+  if (error) throw new Error(`Failed to load send-stage counts: ${error.message}`);
+  const rows = data ?? [];
+  const sent = new Set<string>();
+  for (const r of rows) if (r.status === "sent") sent.add(r.prospect_id);
+  const queued = new Set<string>();
+  for (const r of rows) {
+    if (r.status === "approved" && r.scheduled_send_at && !sent.has(r.prospect_id)) {
+      queued.add(r.prospect_id);
+    }
+  }
+  return { queued_to_send: queued.size, sent: sent.size };
+}
+
 export type AttentionRow = {
   id: string;
   company_name: string;

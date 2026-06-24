@@ -17,6 +17,7 @@ import {
   countAddedThisWeek,
   countScrapedThisWeek,
   getAttentionQueue,
+  getSendStageCounts,
   getRecentProspects,
   getStatusCounts,
   listTenantActivity,
@@ -41,6 +42,8 @@ const PIPELINE_STAGES: { key: string; label: string; color: string; glowColor: s
   { key: "raw",        label: "Raw",        color: "var(--color-fg-500)",     glowColor: "rgb(245 243 250 / 0.08)" },
   { key: "researched", label: "Researched", color: "var(--color-info-300)",   glowColor: "rgb(139 92 246 / 0.12)" },
   { key: "pitched",    label: "Pitched",    color: "var(--color-accent-300)", glowColor: "rgb(119 92 191 / 0.12)" },
+  { key: "queued_to_send", label: "Queued",  color: "var(--color-info-300)",   glowColor: "rgb(139 92 246 / 0.12)" },
+  { key: "sent",       label: "Sent",       color: "var(--color-success-300)",glowColor: "rgb(74 222 128 / 0.12)" },
   { key: "replied",    label: "Replied",    color: "var(--color-brand-gold)", glowColor: "rgb(251 174 66 / 0.12)" },
   { key: "booked",     label: "Booked",     color: "var(--color-brand-pink)", glowColor: "rgb(222 90 95 / 0.12)" },
   { key: "won",        label: "Won",        color: "var(--color-success-300)",glowColor: "rgb(74 222 128 / 0.12)" },
@@ -54,6 +57,7 @@ export default async function TodayPage() {
   // Run everything in parallel — RLS handles tenant scoping.
   const [
     statusCounts,
+    sendStageCounts,
     attentionQueue,
     recentProspects,
     addedThisWeek,
@@ -62,6 +66,7 @@ export default async function TodayPage() {
     tenantActivity,
   ] = await Promise.all([
     getStatusCounts(user.tenantId),
+    getSendStageCounts(user.tenantId),
     getAttentionQueue(user.tenantId),
     getRecentProspects(user.tenantId),
     countAddedThisWeek(user.tenantId),
@@ -77,6 +82,13 @@ export default async function TodayPage() {
   const totalProspects = Object.values(statusCounts).reduce((a, b) => a + b, 0);
   const rawCount = statusCounts.raw ?? 0;
   const researchedCount = statusCounts.researched ?? 0;
+  // Strip-only counts: prospect statuses + pitch-derived send stages. Kept
+  // separate from statusCounts so totalProspects (above) isn't double-counted.
+  const stageCounts: Record<string, number> = {
+    ...statusCounts,
+    queued_to_send: sendStageCounts.queued_to_send,
+    sent: sendStageCounts.sent,
+  };
   const activeIcps = icpCount.count ?? 0;
 
   return (
@@ -168,14 +180,18 @@ export default async function TodayPage() {
           </Link>
         </CardHeader>
         <CardContent>
-          <div className="grid grid-cols-7 gap-2">
+          <div className="grid grid-cols-9 gap-2">
             {PIPELINE_STAGES.map((s) => {
-              const n = statusCounts[s.key] ?? 0;
+              const n = stageCounts[s.key] ?? 0;
               const empty = n === 0;
+              // Send stages are pitch-level — link to /pitches, not the prospect-status filter.
+              const href = (s.key === "queued_to_send" || s.key === "sent"
+                ? "/pitches"
+                : `/companies?status=${s.key}`) as Route;
               return (
                 <Link
                   key={s.key}
-                  href={`/companies?status=${s.key}` as Route}
+                  href={href}
                   style={
                     !empty
                       ? {
