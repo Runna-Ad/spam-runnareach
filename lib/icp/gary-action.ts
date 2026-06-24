@@ -187,7 +187,7 @@ B) Propose the ICP:
 RULES:
 - Prefer canonical values from the lists provided; invent new ones ONLY when nothing fits.
 - market is one of CA, MX, US, LATAM. language is en or es and should match the market (CA/US→en, MX→es, LATAM→es unless told otherwise).
-- google_places_types only when the ICP targets physical/local businesses; leave [] for pure online/DTC.
+- google_places_types: FILL these whenever the ICP targets businesses with a physical/local presence findable on Google Maps — this INCLUDES professional services (lawyer, accounting, real_estate_agency, insurance_agency), health/wellness (gym, spa, dentist, doctor, physiotherapist), trades (plumber, electrician, general_contractor, roofing_contractor), food (restaurant, cafe, bakery, bar), and retail stores. Map the business_types/industries you chose to the closest canonical GOOGLE_PLACES_TYPES values. Leave [] ONLY for pure-online/DTC brands with no storefront. Don't skip this for "B2B services" — most are local businesses on Maps.
 - Numeric fields: use null when you have no real basis for a number — never fabricate a precise range to look thorough.
 - GROUNDING & HONESTY: reason freely about Runna's CAPABILITIES and use its years of expertise as general proof — a specific case study is NOT required to justify targeting a segment. Use the provided case studies as proof points only WHEN they genuinely fit. The ONE hard rule: never fabricate a SPECIFIC client name, metric, or geography that isn't in the provided data.
 - The proposal is a SUGGESTION the human will review, edit, and save. Do not claim it is final or saved.`;

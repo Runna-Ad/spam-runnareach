@@ -615,3 +615,8 @@ and day boundaries. Newest entries at the bottom.
 
 - Real scroll fix: DrawerBody needed min-h-0 (flex child wouldn't shrink → overflow-y-auto never engaged). Moving content to body alone wasn't enough.
 - Gary suggestion chips now toggle via substring containment (suggestions contain commas, so comma-split de-dup was broken) + show ✓ selected state. Verified click→84, →0, →84 (no dup).
+
+## 2026-06-24 — Gary fills places types + reachable-pool preview wired
+
+- Gary prompt broadened so google_places_types is filled for local businesses incl. professional services (was leaving [] for "B2B services"). Verified: gym/spa/beauty_salon/hair_care.
+- Reachable-pool "Preview pool" button was a stub; wired lib/icp/places-preview.ts (reuses google-places text search, ≤9 sampled queries, dedupe by domain, persists reachable_pool_count). Honest sample estimate. Verified live: ~118 found.

@@ -40,6 +40,7 @@ import {
 import type { Icp, IcpLanguage, IcpMarket } from "@/lib/icp/queries";
 import type { IcpSuggestionLists } from "@/lib/icp/suggestions";
 import { refineIcpFromEvidenceAction, suggestIcpFieldsAction } from "@/lib/icp/suggest-action";
+import { previewIcpReachablePool } from "@/lib/icp/places-preview";
 import type { IcpProposed, IcpRefinement } from "@/lib/icp/refine-types";
 import { GaryWizard } from "./gary-wizard";
 import type { GaryProposedIcp } from "@/lib/icp/gary-types";
@@ -190,6 +191,9 @@ export function IcpEditDrawer({
   const [refining, setRefining] = React.useState(false);
   const [refinement, setRefinement] = React.useState<IcpRefinement | null>(null);
   const [garyApplied, setGaryApplied] = React.useState(false);
+  const [previewing, setPreviewing] = React.useState(false);
+  const [poolResult, setPoolResult] = React.useState<{ count: number; sampled: boolean } | null>(null);
+  const [poolError, setPoolError] = React.useState<string | null>(null);
 
   // Reset the form whenever the mode changes (create vs. edit)
   React.useEffect(() => {
@@ -203,7 +207,24 @@ export function IcpEditDrawer({
     setDescription("");
     setRefinement(null);
     setGaryApplied(false);
+    setPoolResult(null);
+    setPoolError(null);
   }, [mode, reset]);
+
+  const handlePreviewPool = async () => {
+    if (mode?.kind !== "edit") return;
+    setPreviewing(true);
+    setPoolError(null);
+    try {
+      const res = await previewIcpReachablePool(mode.icp.id);
+      if (res.ok) setPoolResult({ count: res.count, sampled: res.sampled });
+      else setPoolError(res.error);
+    } catch {
+      setPoolError("Preview failed — please try again.");
+    } finally {
+      setPreviewing(false);
+    }
+  };
 
   if (!mode) return null;
 
@@ -720,23 +741,37 @@ export function IcpEditDrawer({
                   <MapPin className="h-4 w-4 text-[var(--color-fg-500)]" aria-hidden />
                   <div className="flex flex-1 flex-col">
                     <span className="text-xs text-[var(--color-fg-500)]">
-                      {placesKeyConfigured
-                        ? preview !== null
-                          ? `Last preview: ${preview.toLocaleString()} reachable`
-                          : "Not computed yet"
-                        : "Google Places API key required — add it to .env.local to enable preview."}
+                      {!placesKeyConfigured
+                        ? "Google Places API key required — add it to .env.local to enable preview."
+                        : !isEdit
+                          ? "Save the ICP first, then preview the reachable pool."
+                          : poolError
+                            ? poolError
+                            : poolResult
+                              ? `~${poolResult.count.toLocaleString()} found in a quick sample${poolResult.sampled ? " (more likely exist)" : ""}`
+                              : preview !== null
+                                ? `Last preview: ~${preview.toLocaleString()} (sample)`
+                                : "Not computed yet — run a preview to size the pool."}
                     </span>
+                    {placesKeyConfigured && isEdit ? (
+                      <span className="mt-0.5 text-[10px] text-[var(--color-fg-700)]">
+                        Samples Google Places across this ICP&apos;s types × regions.
+                      </span>
+                    ) : null}
                   </div>
                   <Button
                     type="button"
                     size="sm"
                     variant="secondary"
-                    disabled={!placesKeyConfigured || !isEdit}
-                    onClick={() => {
-                      /* wired when Places key lands */
-                    }}
+                    disabled={!placesKeyConfigured || !isEdit || previewing}
+                    onClick={handlePreviewPool}
                   >
-                    Preview pool
+                    {previewing ? (
+                      <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden />
+                    ) : (
+                      <MapPin className="h-3.5 w-3.5" aria-hidden />
+                    )}
+                    {previewing ? "Sampling…" : "Preview pool"}
                   </Button>
                 </div>
               </Section>
