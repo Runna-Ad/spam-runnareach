@@ -4,6 +4,24 @@ Running log of mistakes, root causes, and rules to prevent recurrence. Newest at
 
 ---
 
+[2026-06-24] LESSON: Gary's questions were unreachable — the AI panel lived in the drawer's fixed (non-scrolling) header
+SYMPTOM (Pedro): testing Gary, couldn't scroll to see the rest of the questions / the "Send to Gary" button.
+ROOT CAUSE: in components/icp/icp-edit-drawer.tsx the describe box + Gary wizard + refine panel were rendered inside <DrawerHeader>. DrawerHeader is a plain div with no overflow handling; only <DrawerBody> is `flex-1 overflow-y-auto`. A long Gary conversation expanded the header past the viewport and its overflow was simply clipped — no scroll.
+FIX: moved all the AI helper blocks (describe/suggest, GaryWizard, suggestNote, RefinePanel) out of DrawerHeader into the top of DrawerBody, above the form. Header keeps only title + description. Verified live: the Send-to-Gary button scrolls into view.
+RULE: only put fixed, short content in a drawer/modal HEADER — anything that can grow (a conversation, a dynamic list, an expanding panel) belongs in the scrollable body, or it gets clipped with no way to reach it. When adding dynamic UI to a drawer, test it at its TALLEST state in a short viewport.
+TAGS: #lesson #ux #drawer #scroll #gary #icp
+
+---
+
+[2026-06-24] LESSON: pitch showed "no contact email" though the prospect had one — stale pitch.contact_id FK
+SYMPTOM (Pedro): a queued pitch (Inside Out Total Wellness) showed "no contact email — pick one on the prospect page" even though the prospect has a contact.
+ROOT CAUSE: a pitch freezes contact_id at GENERATION time. Both the display (lib/pitches/queries.ts) and the send (lib/pitches/send-action.ts) resolved the recipient via `prospect_contacts:contact_id(email)` — the frozen FK. If the contact was found AFTER generation (re-enrich, the masking fix) or the frozen row was name-only/placeholder, the FK is stale → reads as "no contact" while the prospect actually has one. generatePitch also picked contact_id via priority_rank LIMIT 1 with no usability filter, so it could freeze a null-email row.
+FIX: resolve the prospect's CURRENT top usable contact, not the frozen FK. New lib/pitches/contacts.ts: pickTopUsableContact(list) (pure) + fetchTopUsableContact(supabase,...). listPitches/getPitch now embed prospects→prospect_contacts and show the top usable; send-action uses the FK only if usable, else falls back to fetchTopUsableContact and re-links contact_id on send; generatePitch links contact_id to the top usable. Verified live: the warning is gone, pitch shows the real email.
+RULE: a foreign key captured at creation time is a SNAPSHOT, not live truth — if the referenced thing can change afterward (a prospect gaining/losing contacts), resolve it live at read/use time (with the FK as a hint), or you'll show/act on stale data. Especially for anything that gates an action (sending) or a UI state (reachability).
+TAGS: #lesson #pitches #contacts #stale-fk #send #queries
+
+---
+
 [2026-06-24] LESSON: /companies kept showing "approved" + cluttering the main view for pitches already queued/sent
 SYMPTOM (Pedro): rows whose pitches were queued-to-send or already sent still showed the "approved" chip and stayed in the default /companies list — main view should be PENDING only, with sent/queued in their own filters.
 ROOT CAUSE: derivePitchStatus (prospects-queries.ts) had no scheduled_send_at awareness, so a queued pitch (approved + scheduled) derived as "approved"; and its priority returned approved/queued-for-approval before "sent". The /companies default view excluded only pitch_status==="sent", not queued-to-send. There were no filters for queued/sent.

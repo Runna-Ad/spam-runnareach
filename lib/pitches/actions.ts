@@ -12,6 +12,7 @@ import type { Database } from "@/lib/supabase/types";
 import { composePitchWithClaude } from "./claude-composer";
 import { hunterUrlForLanguage, renderIndustryTemplate } from "./industry-templates";
 import { hasUsableEmail, isRoleBasedEmail } from "@/lib/research/email-utils";
+import { fetchTopUsableContact } from "@/lib/pitches/contacts";
 import {
   type ComposedPitch,
   type GeneratorInputContact,
@@ -354,21 +355,15 @@ export async function generatePitch(
     };
   }
 
-  // Find the existing top contact_id for the FK (we passed it as contact)
-  const { data: contactIdRow } = await supabase
-    .from("prospect_contacts")
-    .select("id, email")
-    .eq("tenant_id", user.tenantId)
-    .eq("prospect_id", parsed.data.prospect_id)
-    .order("priority_rank", { ascending: true })
-    .limit(1)
-    .maybeSingle<{ id: string; email: string | null }>();
+  // Link the FK to the top USABLE contact (not just the top priority row, which
+  // could be a name-only/placeholder contact) so the pitch addresses correctly.
+  const topUsable = await fetchTopUsableContact(supabase, user.tenantId, parsed.data.prospect_id);
 
   type PitchInsert = Database["public"]["Tables"]["pitches"]["Insert"];
   const insert: PitchInsert = {
     tenant_id: user.tenantId,
     prospect_id: parsed.data.prospect_id,
-    contact_id: contactIdRow?.id ?? null,
+    contact_id: topUsable?.id ?? null,
     case_study_id: composed.case_study_id,
     pain_id: composed.pain_id,
     subject: composed.subject,

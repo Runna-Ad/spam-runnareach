@@ -391,89 +391,94 @@ export function IcpEditDrawer({
               ? `Edit targeting for this ICP. Used by Discovery to size the reachable pool and by the pitch generator to match case studies.`
               : "Define targeting for a new ideal customer profile. All fields except name are optional; empty arrays mean no constraint on that dimension."}
           </DrawerDescription>
-          <div className="mt-3 flex flex-col gap-2 rounded-[var(--radius-md)] border border-[var(--color-border-default)] bg-[var(--color-bg-800)] p-3">
-            <Label htmlFor="icp-describe" className="flex items-center gap-1.5 text-xs">
-              <Sparkles className="h-3.5 w-3.5 text-[var(--color-accent-300)]" aria-hidden />
-              Describe your ideal customer
-            </Label>
-            <Textarea
-              id="icp-describe"
-              rows={2}
-              value={description}
-              onChange={(e) => setDescription(e.target.value)}
-              placeholder="e.g. boutique fitness studios in Calgary &amp; Edmonton, 5–30 staff, that sell branded apparel online"
-            />
-            <div className="flex items-center gap-2">
-              <Button
-                type="button"
-                size="sm"
-                variant="secondary"
-                onClick={handleSuggest}
-                disabled={suggesting || (!nameValue.trim() && !description.trim())}
-                title={
-                  description.trim()
-                    ? "Generate the whole ICP — name, industries, geo, keywords — from your description"
-                    : nameValue.trim()
-                      ? "Auto-fill all fields from the ICP name"
-                      : "Describe your customer (or type a name) first"
-                }
-              >
-                {suggesting ? (
-                  <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden />
-                ) : (
-                  <Sparkles className="h-3.5 w-3.5" aria-hidden />
-                )}
-                {description.trim() ? "Generate ICP" : "Suggest from name"}
-              </Button>
-              <span className="text-[10px] text-[var(--color-fg-700)]">
-                Powered by Claude · fills every field
-              </span>
-            </div>
-          </div>
-          {!isEdit ? (
-            <GaryWizard onApply={applyGaryProposal} applied={garyApplied} />
-          ) : null}
+        </DrawerHeader>
 
-          {suggestNote ? (
-            <p className="mt-1 text-[11px] italic text-[var(--color-fg-500)]">
-              {suggestNote}
-            </p>
-          ) : null}
-
-          {isEdit ? (
-            <div className="mt-2 flex flex-col gap-2 rounded-[var(--radius-md)] border border-[var(--color-border-default)] bg-[var(--color-bg-800)] p-3">
+        <DrawerBody>
+          {/* AI helpers live in the scrollable body (not the fixed header) so a
+              long Gary conversation / refine panel can scroll into view. */}
+          <div className="mb-6 flex flex-col gap-2">
+            <div className="flex flex-col gap-2 rounded-[var(--radius-md)] border border-[var(--color-border-default)] bg-[var(--color-bg-900)] p-3">
+              <Label htmlFor="icp-describe" className="flex items-center gap-1.5 text-xs">
+                <Sparkles className="h-3.5 w-3.5 text-[var(--color-accent-300)]" aria-hidden />
+                Describe your ideal customer
+              </Label>
+              <Textarea
+                id="icp-describe"
+                rows={2}
+                value={description}
+                onChange={(e) => setDescription(e.target.value)}
+                placeholder="e.g. boutique fitness studios in Calgary &amp; Edmonton, 5–30 staff, that sell branded apparel online"
+              />
               <div className="flex items-center gap-2">
                 <Button
                   type="button"
                   size="sm"
                   variant="secondary"
-                  onClick={handleRefine}
-                  disabled={refining}
-                  title="Analyze the prospects already assigned to this ICP (research + fit scores) and suggest sharper targeting, cross-referenced with Runna's strongest case studies"
+                  onClick={handleSuggest}
+                  disabled={suggesting || (!nameValue.trim() && !description.trim())}
+                  title={
+                    description.trim()
+                      ? "Generate the whole ICP — name, industries, geo, keywords — from your description"
+                      : nameValue.trim()
+                        ? "Auto-fill all fields from the ICP name"
+                        : "Describe your customer (or type a name) first"
+                  }
                 >
-                  {refining ? (
+                  {suggesting ? (
                     <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden />
                   ) : (
-                    <FlaskConical className="h-3.5 w-3.5" aria-hidden />
+                    <Sparkles className="h-3.5 w-3.5" aria-hidden />
                   )}
-                  {refining ? "Analyzing evidence…" : "Refine from evidence"}
+                  {description.trim() ? "Generate ICP" : "Suggest from name"}
                 </Button>
                 <span className="text-[10px] text-[var(--color-fg-700)]">
-                  Learns from assigned prospects · suggest-only
+                  Powered by Claude · fills every field
                 </span>
               </div>
-              {refinement ? (
-                <RefinePanel
-                  refinement={refinement}
-                  onApplyArray={applyArrayField}
-                  onApplySize={applySizeField}
-                />
-              ) : null}
             </div>
-          ) : null}
-        </DrawerHeader>
+            {!isEdit ? (
+              <GaryWizard onApply={applyGaryProposal} applied={garyApplied} />
+            ) : null}
 
-        <DrawerBody>
+            {suggestNote ? (
+              <p className="mt-1 text-[11px] italic text-[var(--color-fg-500)]">
+                {suggestNote}
+              </p>
+            ) : null}
+
+            {isEdit ? (
+              <div className="mt-2 flex flex-col gap-2 rounded-[var(--radius-md)] border border-[var(--color-border-default)] bg-[var(--color-bg-900)] p-3">
+                <div className="flex items-center gap-2">
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="secondary"
+                    onClick={handleRefine}
+                    disabled={refining}
+                    title="Analyze the prospects already assigned to this ICP (research + fit scores) and suggest sharper targeting, cross-referenced with Runna's strongest case studies"
+                  >
+                    {refining ? (
+                      <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden />
+                    ) : (
+                      <FlaskConical className="h-3.5 w-3.5" aria-hidden />
+                    )}
+                    {refining ? "Analyzing evidence…" : "Refine from evidence"}
+                  </Button>
+                  <span className="text-[10px] text-[var(--color-fg-700)]">
+                    Learns from assigned prospects · suggest-only
+                  </span>
+                </div>
+                {refinement ? (
+                  <RefinePanel
+                    refinement={refinement}
+                    onApplyArray={applyArrayField}
+                    onApplySize={applySizeField}
+                  />
+                ) : null}
+              </div>
+            ) : null}
+          </div>
+
           <form id="icp-form" onSubmit={handleSubmit(onSubmit)}>
             <div className="flex flex-col gap-6">
               <Section title="Identity">

@@ -14,6 +14,8 @@ import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { writeAuditLog } from "@/lib/audit/log";
 import { bumpSendsTodayPayload, effectiveSendsToday } from "@/lib/pitches/daily-cap";
+import { fetchTopUsableContact } from "@/lib/pitches/contacts";
+import { hasUsableEmail } from "@/lib/research/email-utils";
 import { requireUser } from "@/lib/auth";
 import { getAccessToken, sendGmailMessage } from "@/lib/gmail/client";
 import { createClient } from "@/lib/supabase/server";
@@ -70,9 +72,26 @@ export async function sendPitch(input: {
     return { ok: false, error: `Pitch must be approved before sending (status: ${pitch.status}).` };
   }
 
-  const toEmail = pitch.prospect_contacts?.email ?? null;
-  const toName = pitch.prospect_contacts?.full_name ?? null;
-  if (!toEmail) return { ok: false, error: "No contact email on this pitch." };
+  // Resolve the recipient from the pitch's contact FK if it's usable; otherwise
+  // fall back to the prospect's CURRENT top usable contact (the FK goes stale —
+  // a contact may have been found after generation). Re-link contact_id so the
+  // row reflects who we actually sent to.
+  let toEmail: string | null = hasUsableEmail(pitch.prospect_contacts?.email)
+    ? pitch.prospect_contacts!.email
+    : null;
+  let toName: string | null = toEmail ? pitch.prospect_contacts?.full_name ?? null : null;
+  let resolvedContactId: string | null = null;
+  if (!toEmail) {
+    const top = await fetchTopUsableContact(supabase, user.tenantId, pitch.prospect_id);
+    if (top) {
+      toEmail = top.email;
+      toName = top.full_name;
+      resolvedContactId = top.id;
+    }
+  }
+  if (!toEmail) {
+    return { ok: false, error: "No usable contact email — add or find one on the prospect page first." };
+  }
 
   const body = pitch.body_edited ?? pitch.body_original ?? "";
   if (!body.trim()) return { ok: false, error: "Pitch body is empty." };
@@ -162,6 +181,8 @@ export async function sendPitch(input: {
       status: "sent",
       sent_at: now,
       sender_inbox_id: inbox_id,
+      // Re-link to the contact we actually resolved/sent to, if it was a fallback.
+      ...(resolvedContactId ? { contact_id: resolvedContactId } : {}),
       gmail_message_id: sendResult.gmailMessageId,
       gmail_thread_id: sendResult.threadId ?? null,
       sequence_step: 1,

@@ -1,4 +1,5 @@
 import { createClient } from "@/lib/supabase/server";
+import { pickTopUsableContact } from "@/lib/pitches/contacts";
 
 export type PitchStatus =
   | "draft"
@@ -59,9 +60,9 @@ export async function listPitches(tenantId: string): Promise<PitchListRow[]> {
       company_name: string;
       market: "CA" | "MX" | "US" | "LATAM";
       language: "en" | "es";
+      prospect_contacts: { full_name: string | null; email: string | null; priority_rank: number | null }[] | null;
     } | null;
     case_studies: { client_name: string } | null;
-    prospect_contacts: { full_name: string | null; email: string | null } | null;
     pain_taxonomy: { display_name_en: string } | null;
   };
 
@@ -71,9 +72,8 @@ export async function listPitches(tenantId: string): Promise<PitchListRow[]> {
       `
       id, prospect_id, case_study_id, status, subject, variant_index,
       quality_self_score, pain_id, approved_at, scheduled_send_at, sent_at,
-      prospects(company_name, market, language),
+      prospects(company_name, market, language, prospect_contacts(full_name, email, priority_rank)),
       case_studies(client_name),
-      prospect_contacts:contact_id(full_name, email),
       pain_taxonomy:pain_id(display_name_en)
     `,
     )
@@ -84,7 +84,11 @@ export async function listPitches(tenantId: string): Promise<PitchListRow[]> {
 
   if (error) throw new Error(`Failed to load pitches: ${error.message}`);
 
-  return (data ?? []).map((r) => ({
+  return (data ?? []).map((r) => {
+    // Resolve the prospect's CURRENT top usable contact, not the frozen pitch FK
+    // (which goes stale — see lib/pitches/contacts.ts).
+    const topContact = pickTopUsableContact(r.prospects?.prospect_contacts);
+    return {
     id: r.id,
     prospect_id: r.prospect_id,
     prospect_name: r.prospects?.company_name ?? null,
@@ -96,15 +100,16 @@ export async function listPitches(tenantId: string): Promise<PitchListRow[]> {
     subject: r.subject,
     variant_index: r.variant_index,
     quality_self_score: r.quality_self_score,
-    contact_email: r.prospect_contacts?.email ?? null,
-    contact_name: r.prospect_contacts?.full_name ?? null,
+    contact_email: topContact?.email ?? null,
+    contact_name: topContact?.full_name ?? null,
     pain_label: r.pain_taxonomy?.display_name_en ?? null,
     approved_at: r.approved_at,
     scheduled_send_at: r.scheduled_send_at ?? null,
     sent_at: r.sent_at,
     created_at: r.created_at ?? new Date().toISOString(),
     updated_at: r.updated_at ?? r.created_at ?? new Date().toISOString(),
-  }));
+    };
+  });
 }
 
 export type PitchDetail = PitchListRow & {
@@ -141,9 +146,13 @@ export async function getPitch(
     auto_rejected: boolean;
     auto_rejected_reason: string | null;
     rejection_reason: string | null;
-    prospects: { company_name: string; market: "CA" | "MX" | "US" | "LATAM"; language: "en" | "es" } | null;
+    prospects: {
+      company_name: string;
+      market: "CA" | "MX" | "US" | "LATAM";
+      language: "en" | "es";
+      prospect_contacts: { full_name: string | null; email: string | null; priority_rank: number | null }[] | null;
+    } | null;
     case_studies: { client_name: string } | null;
-    prospect_contacts: { full_name: string | null; email: string | null } | null;
     pain_taxonomy: { display_name_en: string } | null;
   };
 
@@ -156,9 +165,8 @@ export async function getPitch(
       body_original, body_edited, body_sent,
       measurable_result_included, auto_rejected, auto_rejected_reason,
       rejection_reason,
-      prospects(company_name, market, language),
+      prospects(company_name, market, language, prospect_contacts(full_name, email, priority_rank)),
       case_studies(client_name),
-      prospect_contacts:contact_id(full_name, email),
       pain_taxonomy:pain_id(display_name_en)
     `,
     )
@@ -170,6 +178,7 @@ export async function getPitch(
   if (!rawData) return null;
 
   const r = rawData as unknown as PitchDetailRow;
+  const topContact = pickTopUsableContact(r.prospects?.prospect_contacts);
 
   return {
     id: r.id,
@@ -183,8 +192,8 @@ export async function getPitch(
     subject: r.subject,
     variant_index: r.variant_index,
     quality_self_score: r.quality_self_score,
-    contact_email: r.prospect_contacts?.email ?? null,
-    contact_name: r.prospect_contacts?.full_name ?? null,
+    contact_email: topContact?.email ?? null,
+    contact_name: topContact?.full_name ?? null,
     pain_label: r.pain_taxonomy?.display_name_en ?? null,
     approved_at: r.approved_at,
     scheduled_send_at: r.scheduled_send_at ?? null,

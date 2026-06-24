@@ -586,3 +586,8 @@ and day boundaries. Newest entries at the bottom.
 ## 2026-06-24 — /companies: queued/sent move out of the main view + correct chips
 
 - derivePitchStatus now most-advanced-first + scheduled_send_at-aware (sent > queued_to_send > approved > queued_for_approval); pitch_status gained "queued_to_send". /companies ALL view excludes queued_to_send + sent (pending only); added "Queued to send" + "Sent" filters and a blue "queued to send" chip; relabeled approval chip to "queued for approval". Verified: All=5, Sent=9, Queued-to-send=6.
+
+## 2026-06-24 — stale pitch-contact fix + Gary drawer scroll
+
+- Pitches resolve the prospect's CURRENT top usable contact (lib/pitches/contacts.ts pickTopUsableContact/fetchTopUsableContact), not the frozen contact_id FK. listPitches/getPitch display + send-action recipient (with re-link on send) + generatePitch contact_id all use it. Fixes "no contact email" on pitches that have one; hardens sends.
+- Moved ICP drawer AI panels (describe/Gary/refine) out of the fixed DrawerHeader into the scrollable DrawerBody so Gary's questions + Send button are reachable.
