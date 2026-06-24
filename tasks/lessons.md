@@ -4,6 +4,14 @@ Running log of mistakes, root causes, and rules to prevent recurrence. Newest at
 
 ---
 
+[2026-06-24] LESSON: drawer scroll needed min-h-0 (moving content to the body wasn't enough); and Gary chip de-dup must be comma-safe
+SCROLL: moving the AI panels from DrawerHeader into DrawerBody (prior fix) did NOT make it scroll — the real root cause was the classic flex trap: DrawerBody was `flex-1 overflow-y-auto` WITHOUT `min-h-0`, so the flex child grew to its content height and overflow-y-auto never engaged. Added `min-h-0` to DrawerBody (components/ui/drawer.tsx) → genuinely scrollable (verified: scrollHeight 2117 > clientHeight 606). My earlier scrollIntoViewIfNeeded() test was a FALSE POSITIVE — it can scroll an outer container / report success even when the user can't wheel-scroll the intended one. Verify scroll by measuring scrollHeight vs clientHeight + setting scrollTop, not scrollIntoViewIfNeeded.
+DUPLICATE: clicking a Gary suggestion twice duplicated it. My first toggle de-duped by splitting the answer on "," — but suggestions CONTAIN commas (e.g. "Ontario (Toronto/Ottawa) — …hub, underserved…"), so the split shredded the label and the containment check failed → re-added. Fixed with SUBSTRING containment (answer.includes(s)) + remove via replace, comma-safe. Verified: click→len 84, click→0, click→84 (not 168).
+RULE: (1) any `overflow-y-auto` flex child needs `min-h-0` or it won't scroll — and don't trust scrollIntoViewIfNeeded to prove scrollability. (2) Never use a delimiter to join/split user-facing strings that can themselves contain that delimiter — match by containment, or track selections in separate state.
+TAGS: #lesson #ux #drawer #scroll #flexbox #min-h-0 #gary #toggle
+
+---
+
 [2026-06-24] LESSON: Gary's questions were unreachable — the AI panel lived in the drawer's fixed (non-scrolling) header
 SYMPTOM (Pedro): testing Gary, couldn't scroll to see the rest of the questions / the "Send to Gary" button.
 ROOT CAUSE: in components/icp/icp-edit-drawer.tsx the describe box + Gary wizard + refine panel were rendered inside <DrawerHeader>. DrawerHeader is a plain div with no overflow handling; only <DrawerBody> is `flex-1 overflow-y-auto`. A long Gary conversation expanded the header past the viewport and its overflow was simply clipped — no scroll.

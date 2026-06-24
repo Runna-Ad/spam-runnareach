@@ -7,6 +7,7 @@ import { Chip } from "@/components/ui/chip";
 import { Input } from "@/components/ui/input";
 import { garyBuildIcpAction } from "@/lib/icp/gary-action";
 import type { GaryAnswer, GaryProposedIcp, GaryResponse } from "@/lib/icp/gary-types";
+import { cn } from "@/lib/utils";
 
 /**
  * "Gary" — guided ICP-building wizard. Gary (an expert ICP/market-research
@@ -111,21 +112,38 @@ export function GaryWizard({
               />
               {q.suggestions && q.suggestions.length > 0 ? (
                 <div className="flex flex-wrap gap-1">
-                  {q.suggestions.map((s) => (
-                    <button
-                      key={s}
-                      type="button"
-                      onClick={() =>
-                        setDrafts((d) => ({
-                          ...d,
-                          [q.id]: d[q.id] ? `${d[q.id]}, ${s}` : s,
-                        }))
-                      }
-                      className="rounded-[var(--radius-sm)] bg-[var(--color-bg-900)] px-1.5 py-0.5 text-[10px] text-[var(--color-accent-300)] ring-1 ring-inset ring-[var(--color-border-default)] hover:bg-[var(--color-bg-800)]"
-                    >
-                      + {s}
-                    </button>
-                  ))}
+                  {q.suggestions.map((s) => {
+                    // Suggestions can contain commas, so match by SUBSTRING, not
+                    // a comma-split (which would break the label and re-duplicate).
+                    const selected = (drafts[q.id] ?? "").includes(s);
+                    return (
+                      <button
+                        key={s}
+                        type="button"
+                        aria-pressed={selected}
+                        // Toggle in/out — clicking again removes it (no duplicates).
+                        onClick={() =>
+                          setDrafts((d) => {
+                            const cur = d[q.id] ?? "";
+                            const next = cur.includes(s)
+                              ? cur.replace(s, "").replace(/,\s*,/g, ", ").replace(/^[\s,]+|[\s,]+$/g, "").trim()
+                              : cur
+                                ? `${cur}, ${s}`
+                                : s;
+                            return { ...d, [q.id]: next };
+                          })
+                        }
+                        className={cn(
+                          "rounded-[var(--radius-sm)] px-1.5 py-0.5 text-[10px] ring-1 ring-inset transition-colors",
+                          selected
+                            ? "bg-[color-mix(in_oklab,var(--color-accent-300),transparent_82%)] text-[var(--color-accent-300)] ring-[var(--color-accent-300)]"
+                            : "bg-[var(--color-bg-900)] text-[var(--color-accent-300)] ring-[var(--color-border-default)] hover:bg-[var(--color-bg-800)]",
+                        )}
+                      >
+                        {selected ? "✓ " : "+ "}{s}
+                      </button>
+                    );
+                  })}
                 </div>
               ) : null}
             </div>

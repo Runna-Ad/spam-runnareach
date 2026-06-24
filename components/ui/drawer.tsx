@@ -86,7 +86,10 @@ export const DrawerHeader = ({ className, ...props }: React.HTMLAttributes<HTMLD
 DrawerHeader.displayName = "DrawerHeader";
 
 export const DrawerBody = ({ className, ...props }: React.HTMLAttributes<HTMLDivElement>) => (
-  <div className={cn("flex-1 overflow-y-auto px-5 py-4", className)} {...props} />
+  // min-h-0 is required: without it a flex child won't shrink below its content
+  // height, so overflow-y-auto never kicks in and tall content (a long Gary
+  // conversation) is clipped with no scroll.
+  <div className={cn("min-h-0 flex-1 overflow-y-auto px-5 py-4", className)} {...props} />
 );
 DrawerBody.displayName = "DrawerBody";
 

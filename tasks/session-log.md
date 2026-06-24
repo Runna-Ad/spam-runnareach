@@ -591,3 +591,27 @@ and day boundaries. Newest entries at the bottom.
 
 - Pitches resolve the prospect's CURRENT top usable contact (lib/pitches/contacts.ts pickTopUsableContact/fetchTopUsableContact), not the frozen contact_id FK. listPitches/getPitch display + send-action recipient (with re-link on send) + generatePitch contact_id all use it. Fixes "no contact email" on pitches that have one; hardens sends.
 - Moved ICP drawer AI panels (describe/Gary/refine) out of the fixed DrawerHeader into the scrollable DrawerBody so Gary's questions + Send button are reachable.
+
+## 2026-06-24 11:08
+**Shipped (recent commits):**
+  - fix(pitches+icp): resolve live pitch contact + make Gary drawer scrollable
+  - fix(companies): move queued/sent out of the main view + accurate pitch chips
+  - feat(dashboard): show Queued-to-send + Sent on Pipeline at a glance
+
+**Still open:**
+- [ ] Supabase: ANON + SERVICE_ROLE keys live (connection works — Phase 0 unblocked)
+- [ ] Anthropic API key + $100/mo limit
+- [ ] Google Cloud (Places API + Gmail API + OAuth consent + OAuth client + restricted Places key)
+- [ ] Name sender #1 Runna CA principal + buy both domains + add runnareach.com to Rünna Workspace + DNS (SPF/DKIM/DMARC)
+- [ ] Postmark or SES account
+- [ ] Cal.com account
+- [ ] Slack hot-lead webhook URL
+- [ ] CRON_SECRET + TOKEN_ENCRYPTION_KEY (`openssl rand -hex 32`)
+- [ ] ⏳ #7 Analytics — pitch funnel metrics, cost tracking, Claude vs template breakdown
+- [ ] ⏳ #7 Analytics — pitch funnel metrics, cost tracking, Claude vs template breakdown
+
+
+## 2026-06-24 — drawer scroll (min-h-0) + Gary chip de-dup (comma-safe)
+
+- Real scroll fix: DrawerBody needed min-h-0 (flex child wouldn't shrink → overflow-y-auto never engaged). Moving content to body alone wasn't enough.
+- Gary suggestion chips now toggle via substring containment (suggestions contain commas, so comma-split de-dup was broken) + show ✓ selected state. Verified click→84, →0, →84 (no dup).
