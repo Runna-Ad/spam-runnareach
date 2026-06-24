@@ -142,16 +142,31 @@ export async function garyBuildIcpAction(answered: GaryAnswer[]): Promise<GaryRe
     return { phase: "question", message: data.message, questions: data.questions };
   }
 
+  const industryTags = dedupe(data.icp.industry_tags);
+  const businessTypes = dedupe(data.icp.business_types);
+
+  // Deterministic safety net: even with the prompt rule, the model drifts and
+  // fills targeting fields with what Runna SELLS. Strip offering terms, backfill
+  // buyer keywords from the verticals, and force provider exclusions.
+  const targeting = enforceBuyerTargeting({
+    language: data.icp.language,
+    industry_tags: industryTags,
+    business_types: businessTypes,
+    search_keywords: dedupe(data.icp.search_keywords),
+    google_places_types: dedupe(data.icp.google_places_types),
+    excluded_keywords: dedupe(data.icp.excluded_keywords),
+  });
+
   const icp: GaryProposedIcp = {
     name: data.icp.name,
     market: data.icp.market,
     language: data.icp.language,
-    industry_tags: dedupe(data.icp.industry_tags),
-    business_types: dedupe(data.icp.business_types),
+    industry_tags: industryTags,
+    business_types: businessTypes,
     geo_regions: dedupe(data.icp.geo_regions),
-    google_places_types: dedupe(data.icp.google_places_types),
-    search_keywords: dedupe(data.icp.search_keywords),
-    excluded_keywords: dedupe(data.icp.excluded_keywords),
+    google_places_types: targeting.google_places_types,
+    search_keywords: targeting.search_keywords,
+    excluded_keywords: targeting.excluded_keywords,
     employee_size_min: nullableStr(data.icp.employee_size_min),
     employee_size_max: nullableStr(data.icp.employee_size_max),
     revenue_min_usd: nullableStr(data.icp.revenue_min_usd),
@@ -185,6 +200,10 @@ B) Propose the ICP:
 { "phase": "proposal", "message": "<1-2 sentence summary>", "rationale": "<why this profile — tie to Runna's strengths + the user's answers, 3-5 sentences>", "icp": { "name", "market", "language", "industry_tags"[], "business_types"[], "geo_regions"[], "google_places_types"[], "search_keywords"[], "excluded_keywords"[], "employee_size_min"|null, "employee_size_max"|null, "revenue_min_usd"|null, "revenue_max_usd"|null } }
 
 RULES:
+- ⚠️ TARGET THE BUYER, NOT THE OFFERING (most important rule). Runna SELLS software, automation, dashboards, BI, AI, video/creative. Those are what we PROVIDE — they must NEVER appear in industry_tags / business_types / google_places_types / search_keywords, because Discovery uses those fields to FIND companies, and searching them returns SERVICE PROVIDERS (our competitors), not customers. Every target field must describe the CUSTOMER's OWN business — the words you'd type into Google Maps or a directory to find the buyer (e.g. "law firm", "accounting firm", "medical clinic", "manufacturer", "real estate agency"). The services Runna offers belong in the rationale/positioning, never in the targeting fields.
+  WORKED EXAMPLE of the trap: ICP "sell software & automation to mid-market firms". WRONG → search_keywords:["software development","business intelligence","custom dashboard"], industry_tags:["saas_b2b"] (this finds software vendors = competitors). RIGHT → search_keywords:["despacho de abogados","despacho contable","clínica","empresa manufacturera","consultoría"], industry_tags:["law_firm","accounting_firm","healthcare","manufacturer","professional_services"], and put "software development / dashboards / automation" only in the rationale as the VALUE we bring them.
+- search_keywords: the BUYER's business category as a real searchable phrase (in the market's language — ES for MX/LATAM). These literally become the Discovery query, so they decide WHO gets found.
+- excluded_keywords: hard-filter out anyone who PROVIDES what Runna provides — always include software/SaaS/IT/dev/data-analytics/BI companies plus marketing/creative/digital/ad agencies and consultancies, since these are peers/competitors, not buyers.
 - Prefer canonical values from the lists provided; invent new ones ONLY when nothing fits.
 - market is one of CA, MX, US, LATAM. language is en or es and should match the market (CA/US→en, MX→es, LATAM→es unless told otherwise).
 - google_places_types: FILL these whenever the ICP targets businesses with a physical/local presence findable on Google Maps — this INCLUDES professional services (lawyer, accounting, real_estate_agency, insurance_agency), health/wellness (gym, spa, dentist, doctor, physiotherapist), trades (plumber, electrician, general_contractor, roofing_contractor), food (restaurant, cafe, bakery, bar), and retail stores. Map the business_types/industries you chose to the closest canonical GOOGLE_PLACES_TYPES values. Leave [] ONLY for pure-online/DTC brands with no storefront. Don't skip this for "B2B services" — most are local businesses on Maps.
@@ -321,4 +340,103 @@ function dedupe(values: string[]): string[] {
     out.push(v.trim());
   }
   return out;
+}
+
+// ── Buyer-targeting guard (deterministic) ──────────────────────────────────────
+// Gary's prompt says "target the buyer, not the offering", but the model still
+// drifts — when an ICP is themed around what Runna SELLS (automation, dashboards),
+// it fills search_keywords/google_places_types with those service terms, which
+// makes Discovery find COMPETITORS instead of customers. This guard enforces the
+// rule no matter what the model returns: strip offering terms from the targeting
+// fields, backfill buyer-vertical search terms from the industry tags, and make
+// sure the excluded list blocks service providers. See tasks/lessons.md.
+
+// Substrings that name something RUNNA OFFERS (en + es). If a search keyword or
+// places type contains one of these, it's an offering term, not a buyer.
+const OFFERING_NEEDLES = [
+  "automation", "automatización", "automatizado", "automatizada",
+  "dashboard", "tablero", "panel de control", "cuadro de mando",
+  "internal tool", "herramientas internas", "herramienta interna",
+  "custom software", "software personalizado", "software a medida",
+  "software development", "desarrollo de software", "software",
+  "artificial intelligence", "inteligencia artificial", " ai ", "machine learning", "aprendizaje automático",
+  "business intelligence", "inteligencia de negocios", " bi ",
+  "process optimization", "optimización de procesos", "optimización", "optimization",
+  "automated report", "reportes automatizados", "reporte automatizado",
+  "data visualization", "visualización de datos", "analytics", "analítica", "analitica",
+  "workflow", "flujo de trabajo", "crm", "erp", "saas", "web app", "integration", "integración",
+];
+
+// Provider categories to ALWAYS exclude (peers/competitors who sell what we sell).
+const PROVIDER_EXCLUSIONS = [
+  "software", "saas", "desarrollo de software", "empresa de software",
+  "agencia digital", "consultora de ti", "it services", "business intelligence",
+  "data analytics", "marketing agency", "creative agency",
+];
+
+// Map an industry tag / business type → a real searchable BUYER phrase. Spanish
+// for MX/LATAM, English otherwise. Falls back to the humanized tag.
+const BUYER_PHRASES: Record<string, { es: string; en: string }> = {
+  law_firm: { es: "despacho de abogados", en: "law firm" },
+  legal: { es: "despacho de abogados", en: "law firm" },
+  accounting_firm: { es: "despacho contable", en: "accounting firm" },
+  accounting: { es: "despacho contable", en: "accounting firm" },
+  finance: { es: "despacho financiero", en: "financial services firm" },
+  financial_services: { es: "despacho financiero", en: "financial services firm" },
+  insurance: { es: "agencia de seguros", en: "insurance agency" },
+  healthcare: { es: "clínica privada", en: "medical clinic" },
+  medical: { es: "consultorio médico", en: "medical practice" },
+  dental: { es: "clínica dental", en: "dental clinic" },
+  real_estate: { es: "inmobiliaria", en: "real estate agency" },
+  education: { es: "colegio privado", en: "private school" },
+  automotive: { es: "agencia automotriz", en: "auto dealership" },
+  manufacturer: { es: "empresa de manufactura", en: "manufacturer" },
+  manufacturing: { es: "empresa de manufactura", en: "manufacturer" },
+  distribution: { es: "empresa de distribución", en: "distributor" },
+  wholesale: { es: "empresa mayorista", en: "wholesaler" },
+  logistics: { es: "empresa de logística", en: "logistics company" },
+  construction: { es: "constructora", en: "construction company" },
+  hospitality: { es: "hotel", en: "hotel" },
+  retail: { es: "tienda minorista", en: "retail store" },
+  professional_services: { es: "despacho profesional", en: "professional services firm" },
+  consulting: { es: "consultoría empresarial", en: "consulting firm" },
+};
+
+const isOffering = (term: string): boolean => {
+  const t = ` ${term.toLowerCase()} `;
+  return OFFERING_NEEDLES.some((n) => t.includes(n));
+};
+
+function buyerPhraseFor(tag: string, lang: "en" | "es"): string {
+  const key = tag.trim().toLowerCase().replace(/\s+/g, "_");
+  const hit = BUYER_PHRASES[key];
+  if (hit) return lang === "es" ? hit.es : hit.en;
+  return tag.trim().replace(/_/g, " ");
+}
+
+type Targeting = Pick<
+  GaryProposedIcp,
+  "language" | "industry_tags" | "business_types" | "search_keywords" | "google_places_types" | "excluded_keywords"
+>;
+
+/** Strip offering terms from targeting; backfill buyer keywords; enforce exclusions. */
+function enforceBuyerTargeting(t: Targeting): Pick<GaryProposedIcp, "search_keywords" | "google_places_types" | "excluded_keywords"> {
+  const lang = t.language === "es" ? "es" : "en";
+
+  // 1. Drop offering terms from search keywords + places types.
+  let searchKeywords = t.search_keywords.filter((k) => !isOffering(k));
+  const placesTypes = t.google_places_types.filter((p) => !isOffering(p));
+
+  // 2. If the model gutted search keywords by filling them with offering terms,
+  //    backfill from the (buyer) industry tags / business types.
+  if (searchKeywords.length < 2) {
+    const sources = [...t.industry_tags, ...t.business_types].filter((s) => !isOffering(s));
+    const backfilled = dedupe(sources.map((s) => buyerPhraseFor(s, lang)));
+    searchKeywords = dedupe([...searchKeywords, ...backfilled]).slice(0, 12);
+  }
+
+  // 3. Guarantee provider categories are excluded.
+  const excluded = dedupe([...t.excluded_keywords, ...PROVIDER_EXCLUSIONS]).slice(0, 16);
+
+  return { search_keywords: searchKeywords, google_places_types: placesTypes, excluded_keywords: excluded };
 }
