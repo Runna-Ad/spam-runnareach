@@ -4,6 +4,15 @@ Running log of mistakes, root causes, and rules to prevent recurrence. Newest at
 
 ---
 
+[2026-06-24] LESSON: /companies kept showing "approved" + cluttering the main view for pitches already queued/sent
+SYMPTOM (Pedro): rows whose pitches were queued-to-send or already sent still showed the "approved" chip and stayed in the default /companies list — main view should be PENDING only, with sent/queued in their own filters.
+ROOT CAUSE: derivePitchStatus (prospects-queries.ts) had no scheduled_send_at awareness, so a queued pitch (approved + scheduled) derived as "approved"; and its priority returned approved/queued-for-approval before "sent". The /companies default view excluded only pitch_status==="sent", not queued-to-send. There were no filters for queued/sent.
+FIX: derivePitchStatus now selects the MOST-ADVANCED state (sent > queued_to_send > approved > queued_for_approval) and reads scheduled_send_at (added to the pitches select). pitch_status type gained "queued_to_send". /companies: ALL view now also excludes pitch_status "queued_to_send"; added "Queued to send" + "Sent" filter options (pitch-derived, handled before the prospect.status check); added a blue "queued to send" chip and relabeled the approval-queue chip to "queued for approval" to disambiguate. Verified live: ALL=5 pending, Sent=9, Queued-to-send=6.
+RULE: a derived "pitch stage" must reflect the FURTHEST state a prospect has reached (don't return an earlier stage when a later one exists), and any "active working list" default view must exclude every terminal/in-flight stage (sent AND queued), not just one — give each excluded stage its own filter so nothing is hidden, just relocated. Two different "queued" concepts (queued-for-approval vs queued-to-send) need distinct labels.
+TAGS: #lesson #companies #pitches #pitch-status #filters #ux
+
+---
+
 [2026-06-24] BUILD: dashboard "Pipeline at a glance" now includes Queued-to-send + Sent
 WHAT (Pedro): the glance strip only had prospect-status stages (raw→researched→pitched→replied→booked→won→lost); add Queued-to-send + Sent so sending progress is visible. Added getSendStageCounts (lib/today/queries.ts) — PITCH-derived (sending never changes prospect.status), counting DISTINCT prospects: queued_to_send = approved+scheduled & not sent; sent = has a sent pitch. Strip now 9 stages (raw, researched, pitched, queued, sent, replied, booked, won, lost); the two send stages link to /pitches (the prospect-status filter doesn't cover them).
 KEY: kept send counts in a SEPARATE `stageCounts` object, NOT merged into `statusCounts` — because totalProspects = sum(statusCounts) drives "N prospects in pipeline" + the In-Pipeline stat card, and adding pitch-derived keys there would double-count.

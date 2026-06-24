@@ -565,3 +565,24 @@ and day boundaries. Newest entries at the bottom.
 ## 2026-06-24 — dashboard glance: Queued-to-send + Sent stages
 
 - Added getSendStageCounts (pitch-derived, distinct prospects) + two stages to the dashboard "Pipeline at a glance" strip (now 9: raw/researched/pitched/queued/sent/replied/booked/won/lost). Kept separate from statusCounts so totalProspects isn't inflated. Drip cron confirmed working live (queue 10→6, sent→9).
+
+## 2026-06-24 10:38
+**Shipped (recent commits):**
+  - feat(dashboard): show Queued-to-send + Sent on Pipeline at a glance
+
+**Still open:**
+- [ ] Supabase: ANON + SERVICE_ROLE keys live (connection works — Phase 0 unblocked)
+- [ ] Anthropic API key + $100/mo limit
+- [ ] Google Cloud (Places API + Gmail API + OAuth consent + OAuth client + restricted Places key)
+- [ ] Name sender #1 Runna CA principal + buy both domains + add runnareach.com to Rünna Workspace + DNS (SPF/DKIM/DMARC)
+- [ ] Postmark or SES account
+- [ ] Cal.com account
+- [ ] Slack hot-lead webhook URL
+- [ ] CRON_SECRET + TOKEN_ENCRYPTION_KEY (`openssl rand -hex 32`)
+- [ ] ⏳ #7 Analytics — pitch funnel metrics, cost tracking, Claude vs template breakdown
+- [ ] ⏳ #7 Analytics — pitch funnel metrics, cost tracking, Claude vs template breakdown
+
+
+## 2026-06-24 — /companies: queued/sent move out of the main view + correct chips
+
+- derivePitchStatus now most-advanced-first + scheduled_send_at-aware (sent > queued_to_send > approved > queued_for_approval); pitch_status gained "queued_to_send". /companies ALL view excludes queued_to_send + sent (pending only); added "Queued to send" + "Sent" filters and a blue "queued to send" chip; relabeled approval chip to "queued for approval". Verified: All=5, Sent=9, Queued-to-send=6.

@@ -119,15 +119,20 @@ export function CompaniesPage({ prospects, icps, initialFilters }: CompaniesPage
 
     const out = prospects.filter((p) => {
       if (status === "needs_contact") return isNeedsContact(p);
+      // Pitch-derived views (not prospect.status) — handle before the status check.
+      if (status === "queued_to_send") return p.pitch_status === "queued_to_send";
+      if (status === "sent") return p.pitch_status === "sent";
 
-      // Default "All" view = active working list. Keep out (a) suppressed/archived,
-      // (b) pitches already SENT, and (c) the "needs contact" worklist — all of
-      // which just dirty the ideal flow. Each is reachable via its own filter/view.
+      // Default "All" view = active working list (things still needing action).
+      // Keep out (a) suppressed/archived, (b) pitches already SENT or QUEUED to
+      // send (those live in their own filters), and (c) the "needs contact"
+      // worklist. Each is reachable via its own filter/view.
       if (
         status === "ALL" &&
         (p.status === "suppressed" ||
           p.status === "no_match" ||
           p.pitch_status === "sent" ||
+          p.pitch_status === "queued_to_send" ||
           isNeedsContact(p))
       ) {
         return false;
@@ -354,6 +359,8 @@ export function CompaniesPage({ prospects, icps, initialFilters }: CompaniesPage
         >
           <option value="ALL">All statuses</option>
           <option value="needs_contact">Needs contact</option>
+          <option value="queued_to_send">Queued to send</option>
+          <option value="sent">Sent</option>
           {STATUS_OPTIONS.map((s) => (
             <option key={s} value={s}>
               {s}
@@ -517,7 +524,9 @@ export function CompaniesPage({ prospects, icps, initialFilters }: CompaniesPage
                     <div className="flex flex-wrap items-center gap-1">
                       <Chip tone={STATUS_TONE[p.status] ?? "neutral"}>{p.status}</Chip>
                       {p.pitch_status === "queued_for_approval" ? (
-                        <Chip tone="warning">queued</Chip>
+                        <Chip tone="warning">queued for approval</Chip>
+                      ) : p.pitch_status === "queued_to_send" ? (
+                        <Chip tone="info" title="Approved + scheduled — drips out automatically">queued to send</Chip>
                       ) : p.pitch_status === "approved" ? (
                         <Chip tone="success">approved</Chip>
                       ) : p.pitch_status === "sent" ? (

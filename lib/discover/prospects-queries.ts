@@ -23,7 +23,7 @@ export type Prospect = {
    * if no pitch or only drafts. Lets /companies flag what's awaiting approval
    * without conflating it with the prospect's funnel status.
    */
-  pitch_status: "queued_for_approval" | "approved" | "sent" | null;
+  pitch_status: "queued_for_approval" | "approved" | "queued_to_send" | "sent" | null;
   /** True if at least one contact with an email is attached — i.e. reachable. */
   has_contact: boolean;
   /** True when the ONLY emailed contact(s) are unverified catch-all guesses. */
@@ -73,7 +73,7 @@ export async function listProspects(
       `
       id, company_name, domain, website_url, industry, city, region, market,
       status, match_score, red_flags, discovery_source, icp_id, created_at,
-      icps(name), pitches(status), prospect_contacts(email, selected_by)
+      icps(name), pitches(status, scheduled_send_at), prospect_contacts(email, selected_by)
     `,
     )
     .eq("tenant_id", tenantId)
@@ -142,13 +142,16 @@ export async function listProspects(
 
 /** Pick the most actionable pitch state across a prospect's pitches. */
 function derivePitchStatus(
-  pitches: { status: string }[] | null,
-): "queued_for_approval" | "approved" | "sent" | null {
+  pitches: { status: string; scheduled_send_at?: string | null }[] | null,
+): "queued_for_approval" | "approved" | "queued_to_send" | "sent" | null {
   if (!pitches || pitches.length === 0) return null;
-  const statuses = new Set(pitches.map((p) => p.status));
-  if (statuses.has("queued_for_approval")) return "queued_for_approval";
-  if (statuses.has("approved")) return "approved";
-  if (statuses.has("sent")) return "sent";
+  // Show the MOST-ADVANCED state across this prospect's pitches. "Queued to
+  // send" = an approved pitch with a scheduled_send_at (status stays 'approved'
+  // until the drip cron flips it to 'sent').
+  if (pitches.some((p) => p.status === "sent")) return "sent";
+  if (pitches.some((p) => p.status === "approved" && p.scheduled_send_at)) return "queued_to_send";
+  if (pitches.some((p) => p.status === "approved")) return "approved";
+  if (pitches.some((p) => p.status === "queued_for_approval")) return "queued_for_approval";
   return null;
 }
 
