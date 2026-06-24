@@ -427,6 +427,52 @@ export type Database = {
         };
         Relationships: NoRels;
       };
+      discovery_jobs: {
+        Row: {
+          id: UUID;
+          tenant_id: UUID;
+          icp_id: UUID | null;
+          created_by: UUID | null;
+          status: string;
+          phase: string;
+          cursor: number;
+          prospect_ids: UUID[];
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          stats: any;
+          error_message: string | null;
+          heartbeat_at: Timestamptz;
+          created_at: Timestamptz;
+          completed_at: Timestamptz | null;
+        };
+        Insert: {
+          id?: UUID;
+          tenant_id: UUID;
+          icp_id?: UUID | null;
+          created_by?: UUID | null;
+          status?: string;
+          phase?: string;
+          cursor?: number;
+          prospect_ids?: UUID[];
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          stats?: any;
+          error_message?: string | null;
+          heartbeat_at?: Timestamptz;
+          created_at?: Timestamptz;
+          completed_at?: Timestamptz | null;
+        };
+        Update: {
+          status?: string;
+          phase?: string;
+          cursor?: number;
+          prospect_ids?: UUID[];
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          stats?: any;
+          error_message?: string | null;
+          heartbeat_at?: Timestamptz;
+          completed_at?: Timestamptz | null;
+        };
+        Relationships: NoRels;
+      };
       discovery_runs: {
         Row: {
           id: UUID;

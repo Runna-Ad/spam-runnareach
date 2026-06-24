@@ -20,9 +20,16 @@
     },
     "app/api/warmup/dmarc-sync/route.ts": {
       "maxDuration": 120
+    },
+    "app/api/discover/run/route.ts": {
+      "maxDuration": 120
     }
   },
   "crons": [
+    {
+      "path": "/api/discover/janitor",
+      "schedule": "0 7 * * *"
+    },
     {
       "path": "/api/warmup/engine",
       "schedule": "0 14 * * *"

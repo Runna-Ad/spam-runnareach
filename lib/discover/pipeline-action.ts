@@ -136,6 +136,37 @@ export async function countRawProspects(
   return { ok: true, count: count ?? 0 };
 }
 
+// ── Public: discard unprocessed raw prospects ─────────────────────────────────
+// After a discovery run is stopped (or finished with leftovers), the user may not
+// want to keep the inserted-but-unprocessed prospects. This deletes the raw ones
+// for an ICP (only status='raw' — never touches already-pipelined prospects).
+
+export async function discardRawProspects(
+  icpId?: string,
+): Promise<{ ok: true; deleted: number } | { ok: false; error: string }> {
+  const user = await requireUser();
+  if (user.role === "viewer") return { ok: false, error: "Viewers cannot delete prospects." };
+
+  const supabase = await createClient();
+
+  let query = supabase
+    .from("prospects")
+    .delete()
+    .eq("tenant_id", user.tenantId)
+    .eq("status", "raw");
+
+  if (icpId) {
+    query = query.eq("icp_id", icpId);
+  }
+
+  const { data, error } = await query.select("id");
+  if (error) return { ok: false, error: error.message };
+
+  revalidatePath("/companies");
+  revalidatePath("/discover");
+  return { ok: true, deleted: (data ?? []).length };
+}
+
 // ── Public: process one prospect through the full pipeline ───────────────────
 
 export async function processSingleProspect(
