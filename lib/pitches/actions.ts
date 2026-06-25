@@ -776,6 +776,44 @@ export async function transitionPitchStatus(
 }
 
 /**
+ * Bulk-approve pitches — select several ready drafts and approve them in one go
+ * (no one-by-one). Only pitches currently in an approvable state (draft /
+ * queued_for_approval) are flipped to 'approved'; already-approved/sent are left
+ * untouched. Returns how many actually changed.
+ */
+const bulkApproveSchema = z.object({
+  pitch_ids: z.array(z.string().uuid()).min(1).max(200),
+});
+
+export async function bulkApprovePitches(
+  input: z.input<typeof bulkApproveSchema>,
+): Promise<{ ok: true; approved: number } | { ok: false; error: string }> {
+  const user = await requireUser();
+  if (user.role === "viewer") {
+    return { ok: false, error: "Viewers cannot approve pitches." };
+  }
+  const parsed = bulkApproveSchema.safeParse(input);
+  if (!parsed.success) {
+    return { ok: false, error: parsed.error.issues[0]?.message ?? "Invalid input." };
+  }
+
+  const supabase = await createClient();
+  const nowIso = new Date().toISOString();
+  const { data, error } = await supabase
+    .from("pitches")
+    .update({ status: "approved", approved_by: user.id, approved_at: nowIso } as never)
+    .in("id", parsed.data.pitch_ids)
+    .eq("tenant_id", user.tenantId)
+    .in("status", ["draft", "queued_for_approval"])
+    .select("id");
+
+  if (error) return { ok: false, error: `Could not approve: ${error.message}` };
+
+  revalidatePath("/pitches");
+  return { ok: true, approved: (data ?? []).length };
+}
+
+/**
  * Read recent rejected-pitch audit entries and return a Map keyed by
  * "<case_study_id>:<pain_id>" → rejection count over last 30 days.
  *

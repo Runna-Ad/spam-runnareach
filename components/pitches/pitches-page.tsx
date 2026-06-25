@@ -4,6 +4,7 @@ import type { Route } from "next";
 
 import {
   ArrowRight,
+  Check,
   CheckCircle2,
   Clock,
   Filter,
@@ -25,6 +26,7 @@ import { Label } from "@/components/ui/label";
 import { Select } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import {
+  bulkApprovePitches,
   savePitchEdit,
   transitionPitchStatus,
 } from "@/lib/pitches/actions";
@@ -84,6 +86,18 @@ export function PitchesPage({ pitches, counts, canEdit, inboxes }: PitchesPagePr
   const [selectedId, setSelectedId] = React.useState<string | null>(
     pitches[0]?.id ?? null,
   );
+  // Multi-select for bulk approve (separate from the detail selection).
+  const [checked, setChecked] = React.useState<Set<string>>(new Set());
+  const [approving, startApprove] = React.useTransition();
+  React.useEffect(() => setChecked(new Set()), [filter]);
+
+  const toggleCheck = (id: string) =>
+    setChecked((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
 
   const visible = React.useMemo(() => {
     if (filter === "ALL") return pitches;
@@ -119,6 +133,43 @@ export function PitchesPage({ pitches, counts, canEdit, inboxes }: PitchesPagePr
               ? `Queued ${res.queued} pitch${res.queued === 1 ? "" : "es"} — drips out ~6/day from ${sendInbox.email}`
               : "No approved pitches with a contact to queue.",
         });
+        router.refresh();
+      } else {
+        setQueueMsg({ tone: "warn", text: res.error });
+      }
+      window.setTimeout(() => setQueueMsg(null), 7000);
+    });
+  };
+
+  const isApprovable = (p: PitchListRow) =>
+    p.status === "draft" || p.status === "queued_for_approval";
+  const checkableVisible = visible.filter(isApprovable);
+  const allChecked =
+    checkableVisible.length > 0 && checkableVisible.every((p) => checked.has(p.id));
+  const toggleAll = () =>
+    setChecked((prev) => {
+      const next = new Set(prev);
+      if (checkableVisible.every((p) => prev.has(p.id))) {
+        checkableVisible.forEach((p) => next.delete(p.id));
+      } else {
+        checkableVisible.forEach((p) => next.add(p.id));
+      }
+      return next;
+    });
+
+  const handleBulkApprove = () => {
+    if (checked.size === 0) return;
+    startApprove(async () => {
+      const res = await bulkApprovePitches({ pitch_ids: [...checked] });
+      if (res.ok) {
+        setQueueMsg({
+          tone: res.approved > 0 ? "ok" : "warn",
+          text:
+            res.approved > 0
+              ? `Approved ${res.approved} pitch${res.approved === 1 ? "" : "es"} — ready to queue for send.`
+              : "Nothing approvable in the selection.",
+        });
+        setChecked(new Set());
         router.refresh();
       } else {
         setQueueMsg({ tone: "warn", text: res.error });
@@ -221,16 +272,55 @@ export function PitchesPage({ pitches, counts, canEdit, inboxes }: PitchesPagePr
               description="Switch to 'All' or another status."
             />
           ) : (
-            <ul className="divide-y divide-[var(--color-border-subtle)]">
-              {visible.map((p) => (
-                <PitchRow
-                  key={p.id}
-                  pitch={p}
-                  active={p.id === selectedId}
-                  onClick={() => setSelectedId(p.id)}
-                />
-              ))}
-            </ul>
+            <>
+              {canEdit && checkableVisible.length > 0 ? (
+                <div className="sticky top-0 z-10 flex items-center gap-2 border-b border-[var(--color-border-subtle)] bg-[var(--color-bg-900)] px-3 py-2">
+                  <label className="flex cursor-pointer items-center gap-1.5 text-[11px] text-[var(--color-fg-500)]">
+                    <input
+                      type="checkbox"
+                      checked={allChecked}
+                      ref={(el) => {
+                        if (el) el.indeterminate = checked.size > 0 && !allChecked;
+                      }}
+                      onChange={toggleAll}
+                      aria-label="Select all approvable pitches"
+                      className="h-3.5 w-3.5 cursor-pointer accent-[var(--color-accent-300)]"
+                    />
+                    {checked.size > 0 ? `${checked.size} selected` : "Select all"}
+                  </label>
+                  {checked.size > 0 ? (
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="primary"
+                      className="ml-auto"
+                      onClick={handleBulkApprove}
+                      disabled={approving}
+                    >
+                      {approving ? (
+                        <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden />
+                      ) : (
+                        <Check className="h-3.5 w-3.5" aria-hidden />
+                      )}
+                      Approve {checked.size}
+                    </Button>
+                  ) : null}
+                </div>
+              ) : null}
+              <ul className="divide-y divide-[var(--color-border-subtle)]">
+                {visible.map((p) => (
+                  <PitchRow
+                    key={p.id}
+                    pitch={p}
+                    active={p.id === selectedId}
+                    onClick={() => setSelectedId(p.id)}
+                    checkable={canEdit && isApprovable(p)}
+                    checked={checked.has(p.id)}
+                    onToggleCheck={() => toggleCheck(p.id)}
+                  />
+                ))}
+              </ul>
+            </>
           )}
         </div>
 
@@ -259,10 +349,16 @@ function PitchRow({
   pitch,
   active,
   onClick,
+  checkable,
+  checked,
+  onToggleCheck,
 }: {
   pitch: PitchListRow;
   active: boolean;
   onClick: () => void;
+  checkable: boolean;
+  checked: boolean;
+  onToggleCheck: () => void;
 }) {
   const meta = pitchMeta(pitch);
   const score = pitch.quality_self_score ?? 0;
@@ -273,7 +369,23 @@ function PitchRow({
         ? "text-[var(--color-info-300)]"
         : "text-[var(--color-warning-300)]";
   return (
-    <li>
+    <li className="flex items-stretch">
+      {checkable ? (
+        <label
+          className="flex cursor-pointer items-center pl-3"
+          onClick={(e) => e.stopPropagation()}
+        >
+          <input
+            type="checkbox"
+            checked={checked}
+            onChange={onToggleCheck}
+            aria-label={checked ? "Deselect pitch" : "Select pitch"}
+            className="h-3.5 w-3.5 cursor-pointer accent-[var(--color-accent-300)]"
+          />
+        </label>
+      ) : (
+        <span className="w-3.5 pl-3" aria-hidden />
+      )}
       <button
         type="button"
         onClick={onClick}
