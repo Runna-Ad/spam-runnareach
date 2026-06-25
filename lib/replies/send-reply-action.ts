@@ -27,6 +27,12 @@ import { writeAuditLog } from "@/lib/audit/log";
 import { requireUser } from "@/lib/auth";
 import { getAccessToken, sendGmailMessage } from "@/lib/gmail/client";
 import { createServiceRoleClient } from "@/lib/supabase/service-role";
+import {
+  composeReplyDraftWithClaude,
+  composeReplyDraftHeuristic,
+  type DraftComposerInput,
+} from "./draft-composer";
+import type { ReplyIntent } from "./queries";
 
 const MAX_REPLY_ATTEMPTS = 3;
 
@@ -218,6 +224,134 @@ export async function approveAndSendReply(
   revalidatePath("/inbox");
   revalidatePath(`/companies/${reply.prospect_id}`);
   return { ok: true, action: `sent (attempt ${newAttempts}/${MAX_REPLY_ATTEMPTS})` };
+}
+
+// ── Regenerate the draft reply (re-run the composer with fresh context) ─────────
+
+const regenSchema = z.object({ reply_id: z.string().uuid() });
+
+/**
+ * Re-draft the reply we'd send back, using the latest composer + full context
+ * (original pitch body + research). Resets the draft to a re-sendable 'pending'
+ * state and returns the new text so the inbox can show it immediately. Used to
+ * replace a weak/old draft without waiting for a new inbound poll.
+ */
+export async function regenerateReplyDraft(
+  input: z.input<typeof regenSchema>,
+): Promise<{ ok: true; body: string; subject: string } | { ok: false; error: string }> {
+  const user = await requireUser().catch(() => null);
+  if (!user) return { ok: false, error: "Not authenticated." };
+  if (user.role === "viewer") return { ok: false, error: "Viewers cannot regenerate drafts." };
+
+  const parsed = regenSchema.safeParse(input);
+  if (!parsed.success) return { ok: false, error: parsed.error.issues[0]?.message ?? "Invalid input." };
+  const { reply_id } = parsed.data;
+
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const supabase = createServiceRoleClient() as any;
+
+  const { data: reply } = await supabase
+    .from("replies")
+    .select("id, tenant_id, prospect_id, pitch_id, from_email, subject, body_text, intent")
+    .eq("id", reply_id)
+    .eq("tenant_id", user.tenantId)
+    .maybeSingle();
+  if (!reply) return { ok: false, error: "Reply not found." };
+  if (!reply.prospect_id) return { ok: false, error: "Reply has no linked prospect." };
+
+  const { data: prospect } = await supabase
+    .from("prospects")
+    .select("company_name, language")
+    .eq("id", reply.prospect_id)
+    .maybeSingle();
+  if (!prospect) return { ok: false, error: "Prospect not found." };
+  const language: "en" | "es" = prospect.language === "es" ? "es" : "en";
+
+  // Original pitch (subject for the Re: thread + body for context).
+  let threadSubject: string | null = reply.subject ?? null;
+  let originalPitchBody: string | null = null;
+  if (reply.pitch_id) {
+    const { data: pitch } = await supabase
+      .from("pitches")
+      .select("subject, body_edited, body_original")
+      .eq("id", reply.pitch_id)
+      .maybeSingle();
+    threadSubject = pitch?.subject ?? threadSubject;
+    originalPitchBody = pitch?.body_edited ?? pitch?.body_original ?? null;
+  }
+
+  // Research context.
+  let whatTheyDo: string | null = null;
+  let painSummary: string | null = null;
+  const { data: research } = await supabase
+    .from("research")
+    .select("what_they_do, pain_points")
+    .eq("prospect_id", reply.prospect_id)
+    .is("superseded_at", null)
+    .order("generated_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  whatTheyDo = research?.what_they_do ?? null;
+  const pains = Array.isArray(research?.pain_points) ? research.pain_points : [];
+  painSummary = (pains[0] as { pain_label?: string } | undefined)?.pain_label ?? null;
+
+  const draftInput: DraftComposerInput = {
+    contactFirstName: null,
+    companyName: prospect.company_name,
+    language,
+    intent: (reply.intent ?? "wants_info") as ReplyIntent,
+    replySubject: reply.subject,
+    replyBody: reply.body_text,
+    threadSubject,
+    originalPitchBody,
+    whatTheyDo,
+    painSummary,
+    senderFirstName: user.fullName?.trim().split(/\s+/)[0] || "Pedro",
+    agencyName: user.tenantDisplayName || "Runna",
+  };
+
+  let body: string;
+  let subject: string;
+  if (claudeIsAvailable()) {
+    const r = await composeReplyDraftWithClaude(draftInput);
+    if (r.ok) {
+      body = r.draft.body;
+      subject = r.draft.subject;
+      await recordClaudeCall({
+        tenantId: user.tenantId,
+        model: r.model,
+        entity_type: "reply_draft",
+        entity_id: null,
+        usage: r.usage,
+        metadata: { reply_id, source: "manual_regenerate" },
+      }).catch(() => {});
+    } else {
+      const f = composeReplyDraftHeuristic(draftInput);
+      body = f.body;
+      subject = f.subject;
+    }
+  } else {
+    const f = composeReplyDraftHeuristic(draftInput);
+    body = f.body;
+    subject = f.subject;
+  }
+
+  const now = new Date().toISOString();
+  await supabase
+    .from("replies")
+    .update({
+      auto_draft_body: body,
+      draft_subject: subject,
+      draft_status: "pending", // reopen as a reviewable draft (re-sendable)
+      auto_draft_generated_at: now,
+      handled_by: null,
+      handled_at: null,
+    })
+    .eq("id", reply_id)
+    .eq("tenant_id", user.tenantId);
+
+  revalidatePath("/inbox");
+  return { ok: true, body, subject };
 }
 
 // ── Archive a prospect that won't book (with a captured learning) ───────────────

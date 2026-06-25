@@ -12,6 +12,7 @@ import {
   MailQuestion,
   MessageSquare,
   Plus,
+  RefreshCw,
   Send,
   ShieldX,
   Sparkles,
@@ -44,7 +45,7 @@ import {
   overrideReplyIntent,
 } from "@/lib/replies/actions";
 import { handleReplyIntent } from "@/lib/replies/intent-actions";
-import { approveAndSendReply, archiveNoMeeting } from "@/lib/replies/send-reply-action";
+import { approveAndSendReply, archiveNoMeeting, regenerateReplyDraft } from "@/lib/replies/send-reply-action";
 import type {
   ProspectOption,
   Reply,
@@ -550,6 +551,22 @@ function DraftReview({
   const [error, setError] = React.useState<string | null>(null);
   const [sending, startSend] = React.useTransition();
   const [archiving, startArchive] = React.useTransition();
+  const [regenerating, startRegen] = React.useTransition();
+
+  const regen = () => {
+    setError(null);
+    startRegen(async () => {
+      const res = await regenerateReplyDraft({ reply_id: reply.id });
+      if (res.ok) {
+        setBody(res.body);
+        setSubject(res.subject);
+        toast.success("Draft regenerated");
+        onChange();
+      } else {
+        setError(res.error);
+      }
+    });
+  };
 
   // Re-sync when a different reply is selected.
   React.useEffect(() => {
@@ -612,10 +629,29 @@ function DraftReview({
 
   if (sent) {
     return (
-      <div className="rounded-[var(--radius-md)] bg-[var(--color-bg-700)] p-3 text-[11px] text-[var(--color-success-300)]">
-        <CheckCircle2 className="mr-1 inline h-3 w-3" aria-hidden /> Reply sent
-        {reply.draft_sent_at ? ` ${relativeTime(reply.draft_sent_at)}` : ""}. Reply {attempts}/
-        {MAX_REPLY_ATTEMPTS} used.
+      <div className="rounded-[var(--radius-md)] bg-[var(--color-bg-700)] p-3">
+        <p className="text-[11px] text-[var(--color-success-300)]">
+          <CheckCircle2 className="mr-1 inline h-3 w-3" aria-hidden /> Reply sent
+          {reply.draft_sent_at ? ` ${relativeTime(reply.draft_sent_at)}` : ""}. Reply {attempts}/
+          {MAX_REPLY_ATTEMPTS} used.
+        </p>
+        {!capReached ? (
+          <Button
+            type="button"
+            variant="ghost"
+            onClick={regen}
+            disabled={regenerating}
+            className="mt-2 w-full justify-center text-[var(--color-fg-500)]"
+          >
+            {regenerating ? (
+              <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden />
+            ) : (
+              <RefreshCw className="h-3.5 w-3.5" aria-hidden />
+            )}
+            Regenerate &amp; redraft (new version)
+          </Button>
+        ) : null}
+        {error ? <p className="mt-1 text-[11px] text-[var(--color-danger-300)]">{error}</p> : null}
       </div>
     );
   }
@@ -658,20 +694,36 @@ function DraftReview({
             className="text-xs"
             placeholder="Your reply…"
           />
-          <Button
-            type="button"
-            variant="primary"
-            onClick={send}
-            disabled={sending || !body.trim()}
-            className="w-full justify-center"
-          >
-            {sending ? (
-              <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden />
-            ) : (
-              <Send className="h-3.5 w-3.5" aria-hidden />
-            )}
-            Approve &amp; send reply
-          </Button>
+          <div className="flex gap-2">
+            <Button
+              type="button"
+              variant="primary"
+              onClick={send}
+              disabled={sending || !body.trim()}
+              className="flex-1 justify-center"
+            >
+              {sending ? (
+                <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden />
+              ) : (
+                <Send className="h-3.5 w-3.5" aria-hidden />
+              )}
+              Approve &amp; send reply
+            </Button>
+            <Button
+              type="button"
+              variant="secondary"
+              onClick={regen}
+              disabled={regenerating}
+              title="Re-draft with the AI composer"
+            >
+              {regenerating ? (
+                <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden />
+              ) : (
+                <RefreshCw className="h-3.5 w-3.5" aria-hidden />
+              )}
+              Regenerate
+            </Button>
+          </div>
         </div>
       )}
 
