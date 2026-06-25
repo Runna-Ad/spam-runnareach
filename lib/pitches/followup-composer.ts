@@ -55,10 +55,12 @@ export type ComposedFollowup = {
   reasoning: string;
 };
 
+// Clip, don't reject — a hard .max() overrun on any field dumps the follow-up to
+// the static template fallback. Generous ceiling, then slice to spec.
 const responseSchema = z.object({
-  subject: z.string().trim().min(3).max(140),
-  body: z.string().trim().min(30).max(1200),
-  reasoning: z.string().trim().max(400).optional().default("(no reasoning provided)"),
+  subject: z.string().trim().min(3).max(600).transform((s) => s.slice(0, 140)),
+  body: z.string().trim().min(30).max(8000).transform((s) => s.slice(0, 1200)),
+  reasoning: z.string().trim().max(4000).transform((s) => s.slice(0, 400)).optional().default("(no reasoning provided)"),
 });
 
 export async function composeFollowupWithClaude(

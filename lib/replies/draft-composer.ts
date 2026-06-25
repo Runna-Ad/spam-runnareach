@@ -48,10 +48,12 @@ export type ComposedDraft = {
   reasoning: string;
 };
 
+// Clip, don't reject — a hard .max() overrun on any field dumps the reply to the
+// generic heuristic fallback (the "AI slop" class). Generous ceiling, then slice.
 const responseSchema = z.object({
-  subject: z.string().trim().min(3).max(140),
-  body: z.string().trim().min(40).max(1600),
-  reasoning: z.string().trim().max(400).optional().default("(no reasoning provided)"),
+  subject: z.string().trim().min(3).max(600).transform((s) => s.slice(0, 140)),
+  body: z.string().trim().min(40).max(8000).transform((s) => s.slice(0, 1600)),
+  reasoning: z.string().trim().max(4000).transform((s) => s.slice(0, 400)).optional().default("(no reasoning provided)"),
 });
 
 export async function composeReplyDraftWithClaude(

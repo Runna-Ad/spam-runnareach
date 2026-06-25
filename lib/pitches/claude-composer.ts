@@ -30,10 +30,14 @@ import type {
 
 // ── Zod schema (unchanged from v1) ───────────────────────────────────────────
 
+// CLIP, don't REJECT: a hard .max() fails the WHOLE parse when Claude runs a few
+// chars long on any one field, dumping the pitch to the junky heuristic template
+// (tasks/lessons.md 2026-05-29 + the REALTY EXPERTS reasoning>800 failure). Use a
+// generous ceiling so genuinely-broken output still errors, then slice to spec.
 const responseSchema = z.object({
-  subject: z.string().trim().min(4).max(120),
-  preview_text: z.string().trim().min(20).max(500).transform((s) => s.slice(0, 150)),
-  body: z.string().trim().min(80).max(2000),
+  subject: z.string().trim().min(4).max(600).transform((s) => s.slice(0, 120)),
+  preview_text: z.string().trim().min(20).max(2000).transform((s) => s.slice(0, 150)),
+  body: z.string().trim().min(80).max(8000).transform((s) => s.slice(0, 2000)),
   // pain_id can be a text slug like "abandoned_cart_loss" or a UUID — accept both.
   pain_id: z.string().nullable(),
   // case_study_id is always a UUID from the DB.
@@ -42,7 +46,7 @@ const responseSchema = z.object({
   contact_email: z.union([z.string().email(), z.literal(""), z.null()]).transform(v => v || null),
   measurable_result_included: z.boolean(),
   quality_self_score: z.number().min(0).max(1),
-  reasoning: z.string().trim().max(800).optional().default("(no reasoning provided)"),
+  reasoning: z.string().trim().max(8000).transform((s) => s.slice(0, 800)).optional().default("(no reasoning provided)"),
 });
 
 export type ClaudeComposeResult = {
