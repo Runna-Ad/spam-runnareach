@@ -18,6 +18,7 @@ const REPLY_INTENTS = [
   "not_now",
   "wrong_person",
   "auto_reply",
+  "bounced",
   "unclassified",
 ] as const;
 

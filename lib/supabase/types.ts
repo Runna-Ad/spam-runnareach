@@ -802,6 +802,7 @@ export type Database = {
             | "not_now"
             | "wrong_person"
             | "auto_reply"
+            | "bounced"
             | "unclassified";
           urgency: "hot" | "warm" | "cold" | null;
           sentiment: "positive" | "neutral" | "negative" | null;
@@ -834,6 +835,7 @@ export type Database = {
             | "not_now"
             | "wrong_person"
             | "auto_reply"
+            | "bounced"
             | "unclassified";
           urgency?: "hot" | "warm" | "cold" | null;
           sentiment?: "positive" | "neutral" | "negative" | null;
@@ -854,6 +856,7 @@ export type Database = {
             | "not_now"
             | "wrong_person"
             | "auto_reply"
+            | "bounced"
             | "unclassified";
           urgency?: "hot" | "warm" | "cold" | null;
           sentiment?: "positive" | "neutral" | "negative" | null;

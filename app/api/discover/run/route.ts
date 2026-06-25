@@ -30,13 +30,21 @@ import {
   getRawProspectIds,
   processSingleProspect,
   pruneRunToTop30,
+  type ProspectOutcome,
 } from "@/lib/discover/pipeline-action";
 import { triggerNextSlice } from "@/lib/discover/job-trigger";
 import { EMPTY_JOB_STATS, type DiscoveryJobStats } from "@/lib/discover/job-types";
 
 const PIPELINE_CAP = 50; // matches the prior client-side cap
-const BATCH = 3; // prospects per slice — small enough to stay well under the 120s
-// function cap even on slow prospects, and to bump the heartbeat often.
+
+// Time-budgeted slicing (prod functions are capped at 120s; a single heavy
+// prospect can blow a fixed batch). Process prospects ONE at a time until we're
+// out of budget, then hand off. A fresh slice has ~110s; we stop starting new
+// prospects when less than MIN_START_REMAINING is left, and cap each prospect so
+// it can never run the function past the limit.
+const HARD_CAP_MS = 110_000; // stay safely under the 120s maxDuration
+const MIN_START_REMAINING_MS = 45_000; // don't begin a prospect we can't finish
+const PER_PROSPECT_MAX_MS = 95_000; // upper bound for one prospect
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type AnySupabase = any;
@@ -173,32 +181,55 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ ok: true, phase: "pipeline", total: prospectIds.length });
     }
 
-    // ── Phase: pipeline ─────────────────────────────────────────────────────
+    // ── Phase: pipeline (time-budgeted, one prospect at a time) ──────────────
     if (job.phase === "pipeline") {
       const ids = job.prospect_ids ?? [];
-      const batch = ids.slice(job.cursor, job.cursor + BATCH);
+      const startedAt = Date.now();
+      let cursor = job.cursor;
 
-      if (batch.length > 0) {
-        const results = await Promise.all(batch.map((id) => processSingleProspect(id)));
-        for (const r of results) {
-          if (r.outcome === "pitched") stats.pitched += 1;
-          else if (r.outcome === "website_pitch") stats.website_pitch += 1;
-          else if (r.outcome === "needs_review") stats.needs_review += 1;
-          else if (r.outcome === "suppressed") stats.suppressed += 1;
-          else if (r.outcome === "error") stats.error_count += 1;
+      // Process prospects until we run low on budget. Persist cursor + heartbeat
+      // after EACH prospect so progress survives a crash and the watchdog sees
+      // life. Each prospect is raced against a timeout so one poison/slow prospect
+      // can never run the function past the cap (it's skipped as an error, never
+      // an infinite re-kick loop).
+      while (cursor < ids.length) {
+        const remaining = HARD_CAP_MS - (Date.now() - startedAt);
+        if (remaining < MIN_START_REMAINING_MS) break;
+
+        const id = ids[cursor]!;
+        const budget = Math.min(PER_PROSPECT_MAX_MS, remaining - 5_000);
+        let outcome: ProspectOutcome = "error";
+        try {
+          const r = await Promise.race([
+            processSingleProspect(id),
+            new Promise<never>((_, reject) =>
+              setTimeout(() => reject(new Error("prospect-timeout")), budget),
+            ),
+          ]);
+          outcome = r.outcome;
+        } catch {
+          outcome = "error"; // timed out or threw — skip, don't block the job
         }
+
+        if (outcome === "pitched") stats.pitched += 1;
+        else if (outcome === "website_pitch") stats.website_pitch += 1;
+        else if (outcome === "needs_review") stats.needs_review += 1;
+        else if (outcome === "suppressed") stats.suppressed += 1;
+        else stats.error_count += 1;
+
+        cursor += 1;
+        // Persist after each prospect (advances cursor + bumps heartbeat).
+        await patchJob(supabase, job.id, { cursor, stats });
       }
 
-      const nextCursor = job.cursor + batch.length;
-      const moreToProcess = nextCursor < ids.length && batch.length > 0;
-
+      const moreToProcess = cursor < ids.length;
       await patchJob(supabase, job.id, {
-        cursor: nextCursor,
+        cursor,
         stats,
         ...(moreToProcess ? {} : { phase: "pruning" }),
       });
       after(() => triggerNextSlice(job.id, cookieHeader, origin));
-      return NextResponse.json({ ok: true, phase: moreToProcess ? "pipeline" : "pruning", cursor: nextCursor });
+      return NextResponse.json({ ok: true, phase: moreToProcess ? "pipeline" : "pruning", cursor });
     }
 
     // ── Phase: pruning ──────────────────────────────────────────────────────

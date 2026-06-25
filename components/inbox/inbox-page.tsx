@@ -62,6 +62,7 @@ const INTENT_META: Record<
   not_now: { label: "Not now", tone: "warning", icon: MailQuestion },
   wrong_person: { label: "Wrong person", tone: "warning", icon: MailQuestion },
   auto_reply: { label: "Auto-reply", tone: "neutral", icon: InboxIcon },
+  bounced: { label: "Bounced", tone: "danger", icon: ShieldX },
   unclassified: { label: "Unclassified", tone: "neutral", icon: Sparkles },
 };
 
@@ -165,6 +166,7 @@ export function InboxPage({
             <option value="not_now">Not now</option>
             <option value="wrong_person">Wrong person</option>
             <option value="auto_reply">Auto-reply</option>
+            <option value="bounced">Bounced</option>
             <option value="unclassified">Unclassified</option>
           </Select>
           {canEdit ? (
@@ -348,6 +350,13 @@ const INTENT_ACTION: Partial<Record<ReplyIntent, {
     variant: "secondary",
     successMsg: "Follow-up snoozed 14 days for OOO.",
     requiresProspect: false,
+  },
+  bounced: {
+    label: "Suppress (undeliverable)",
+    icon: ShieldX,
+    variant: "danger",
+    successMsg: "Address bounced — prospect suppressed and sequence stopped.",
+    requiresProspect: true,
   },
 };
 

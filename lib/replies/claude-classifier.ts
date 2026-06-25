@@ -29,6 +29,7 @@ const INTENTS = [
   "not_now",
   "wrong_person",
   "auto_reply",
+  "bounced",
   "unclassified",
 ] as const;
 
@@ -120,32 +121,40 @@ Intent taxonomy (pick exactly one):
 - "wrong_person" — sender is not the right contact, suggests forwarding to someone
   else, or says "please contact X instead". This is a routing signal, not a no.
 - "auto_reply" — out-of-office / vacation / parental leave / automatic reply. The
-  sender did not actually engage; bot did.
+  sender did not actually engage; bot did. NOTE: this is for a HUMAN who is away —
+  NOT for a delivery failure (see "bounced").
+- "bounced" — a non-delivery report / bounce: the email never reached a person.
+  Sent by a mail daemon (MAILER-DAEMON, postmaster, mail delivery subsystem) or with
+  subjects like "Undeliverable", "Delivery Status Notification (Failure)", "Mail
+  delivery failed", "Returned mail", or body text like "wasn't found", "address
+  rejected", "no such user", "couldn't be delivered", or an SMTP 5.x.x code. The
+  ADDRESS IS DEAD — never confuse with auto_reply.
 - "unclassified" — genuinely ambiguous, no strong signal. Use sparingly — if
   there's any clear intent, pick the matching category.
 
 Precedence rules (highest wins when multiple signals):
-1. auto_reply — if it's an OOO bounce, that wins regardless of body content.
-2. hard_no — explicit unsubscribe trumps any meeting language ("not interested,
+1. bounced — a non-delivery report wins over everything (the message bounced; no human read it).
+2. auto_reply — if it's an OOO from a real person, that wins over body content.
+3. hard_no — explicit unsubscribe trumps any meeting language ("not interested,
    please don't contact again, ever" is hard_no even if it ends with "let's chat").
-3. wrong_person — only if no hard_no signal.
-4. wants_meeting > wants_info > not_now in that order when multiple appear.
+4. wrong_person — only if no hard_no signal.
+5. wants_meeting > wants_info > not_now in that order when multiple appear.
 
 Urgency:
 - "hot" — wants_meeting (sender is ready to talk now)
 - "warm" — wants_info or not_now (engaged but not booked)
-- "cold" — auto_reply, wrong_person, hard_no
+- "cold" — auto_reply, wrong_person, hard_no, bounced
 - null — unclassified
 
 Sentiment:
 - "positive" — wants_meeting, wants_info, generally enthusiastic language
-- "neutral" — auto_reply, wrong_person, not_now (no emotional charge)
+- "neutral" — auto_reply, wrong_person, not_now, bounced (no emotional charge)
 - "negative" — hard_no, frustrated/angry tone
 - null — unclassified
 
 Output a JSON object EXACTLY matching this shape:
 {
-  "intent": "wants_meeting" | "wants_info" | "hard_no" | "not_now" | "wrong_person" | "auto_reply" | "unclassified",
+  "intent": "wants_meeting" | "wants_info" | "hard_no" | "not_now" | "wrong_person" | "auto_reply" | "bounced" | "unclassified",
   "urgency": "hot" | "warm" | "cold" | null,
   "sentiment": "positive" | "neutral" | "negative" | null,
   "reasoning": string  // 1 sentence explaining the call. Required.

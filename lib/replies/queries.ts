@@ -7,6 +7,7 @@ export type ReplyIntent =
   | "not_now"
   | "wrong_person"
   | "auto_reply"
+  | "bounced"
   | "unclassified";
 
 export type ReplyUrgency = "hot" | "warm" | "cold" | null;

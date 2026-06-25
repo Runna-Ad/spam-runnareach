@@ -12,6 +12,7 @@ type ReplyIntent =
   | "not_now"
   | "wrong_person"
   | "auto_reply"
+  | "bounced"
   | "unclassified";
 
 export type HandleIntentResult =
@@ -191,6 +192,40 @@ export async function handleReplyIntent(
 
       await revalidateAll();
       return { ok: true, action: "snoozed_14d" };
+    }
+
+    case "bounced": {
+      // The address is dead — suppress so we never email it again, and stop the
+      // sequence. A long cooldown (1y) doubles as a "don't resurrect" guard.
+      const cooldownUntil = new Date(
+        Date.now() + 365 * 24 * 60 * 60 * 1000,
+      ).toISOString();
+
+      await supabase
+        .from("prospects")
+        .update({
+          status: "suppressed",
+          suppressed_at: now,
+          suppressed_reason: "Email bounced (undeliverable)",
+          cooldown_until: cooldownUntil,
+        })
+        .eq("id", prospectId)
+        .eq("tenant_id", user.tenantId);
+
+      await pauseSequence();
+      await markReplyHandled();
+
+      await writeAuditLog({
+        tenantId: user.tenantId,
+        actorId: user.id,
+        action: "reply.intent_handled",
+        entityType: "prospect",
+        entityId: prospectId,
+        metadata: { reply_id: replyId, intent, outcome: "suppressed_bounced" },
+      });
+
+      await revalidateAll();
+      return { ok: true, action: "suppressed_bounced" };
     }
 
     case "wants_info":

@@ -29,7 +29,27 @@ export function classifyReplyHeuristic(input: ClassifyInput): ClassifyResult {
   const haystack = [input.subject ?? "", input.body_text ?? ""]
     .join("\n")
     .toLowerCase();
+  const from = (input.from_email ?? "").toLowerCase();
   const reasonParts: string[] = [];
+
+  // 0) Bounce / non-delivery report (highest precedence — a dead address is not
+  // an OOO and must NOT be snoozed). Detect the daemon sender + classic NDR
+  // subject/body phrases (Gmail "Delivery Status Notification (Failure)",
+  // Office 365 "Undeliverable", Postfix "failure notice", SMTP 5.x.x codes).
+  const fromDaemon =
+    /mailer-daemon|postmaster|mail delivery (subsystem|system)|no-?reply.*(deliver|bounce)/i.test(from);
+  const ndrPhrases =
+    /delivery (status notification|has failed|incomplete)|undeliverable|mail delivery failed|failure notice|returned mail|could ?n'?t be delivered|was not delivered|wasn'?t found|address (not found|couldn'?t be found|rejected)|recipient (address rejected|not found)|no such (user|address|mailbox)|user unknown|mailbox (unavailable|full|not found)|550[ -]5\.|\b55[0-9]\b.*(unknown|reject|not exist)|permanent (error|failure)/i;
+  if (fromDaemon || ndrPhrases.test(haystack)) {
+    return {
+      intent: "bounced",
+      urgency: "cold",
+      sentiment: "neutral",
+      reasoning: fromDaemon
+        ? "Non-delivery report from a mail daemon — address is undeliverable."
+        : "Bounce / undeliverable language detected.",
+    };
+  }
 
   // 1) Auto-reply / out-of-office detection (high confidence).
   // Avoid bare "holiday" — "after the holidays" is not_now, not OOO.
