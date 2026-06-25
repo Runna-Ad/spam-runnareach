@@ -4,6 +4,15 @@ Running log of mistakes, root causes, and rules to prevent recurrence. Newest at
 
 ---
 
+[2026-06-25] FIX: pitch bridged a MISMATCHED + weak success case (Meta-ads result onto an AI-chatbot pitch)
+SYMPTOM (Pedro, M&H Abogados): pitch offered an AI chatbot to qualify leads, but the proof line cited Blues Real "ran Meta ads, ~1000 clicks/month" — a DIFFERENT service (paid ads) bridged onto the chatbot solution, and a weak metric. Pedro: "doesn't make sense, and it's a weak case anyway — the pitch without that section is very strong." (Recurring: we already set capability-first positioning, but the case bar was too low.)
+ROOT CAUSE: composer step 5(a) only required "a chosen case_study_id + any metric." Stage-1 credibility match selects cases by INDUSTRY + TIER (so a professional-services case is offered for a law firm regardless of what work it was), and the composer was allowed to bridge it as long as it had a number. Nothing required the case's WORK to match the SOLUTION being pitched. Same-industry ≠ same-solution.
+FIX (lib/pitches/claude-composer.ts PROOF POLICY + structure step 5): DEFAULT is now NO case study (capability-led is the norm and usually stronger). A case may be used ONLY when it clears a HIGH bar — it must be about the SAME KIND OF WORK proposed in the email (an AI/chatbot/lead-qual/automation case for a chatbot pitch), with a genuinely impressive metric; SAME INDUSTRY IS NOT ENOUGH. Added an explicit ⛔ anti-pattern: never bridge a paid-ads/"X clicks" result to prove an AI chatbot, or a web result to prove email automation — a mismatched/weak case is a non-sequitur that makes the email LESS credible. "When in doubt, leave it out."
+RULE: a proof case must match the SOLUTION/work being pitched, not just the prospect's industry. Default to capability-led; require a case to EARN its place (on-point work + strong metric), and treat a forced/mismatched/weak case as a negative, not a bonus. See [[runna-positioning]].
+TAGS: #fix #pitch #composer #positioning #case-study #proof #capability-first #recurring
+STATUS: built, typecheck+lint clean; deploying. Re-generate M&H to confirm capability-led (no Blues Real bridge).
+---
+
 [2026-06-25] FIX: pitch fell to the junky heuristic template — "reasoning: String must contain at most 800 character(s)" (clip-not-reject, AGAIN)
 SYMPTOM (Pedro, REALTY EXPERTS MEXICO): "Draft pitch ready (self-score 35%, heuristic). Industry template ... Claude unavailable: parse: Schema validation failed: reasoning:String must contain at most 800 character(s)." A real Claude pitch was generated but THROWN AWAY because one field ran long.
 ROOT CAUSE: the SAME clip-not-reject bug we already learned (Gary, 2026-05-29) was still living in the pitch composer (lib/pitches/claude-composer.ts) and the reply/followup/nudge composers: hard `.max()` on reasoning/subject/body/preview_text REJECTS the entire structuredCall parse when Claude runs a few chars over → reason:"parse" → generatePitch falls back to the generic industry template (self-score 35%). reasoning had .max(800); preview_text had .max(500) BEFORE its slice(150) so it could reject too.

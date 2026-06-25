@@ -336,7 +336,7 @@ function buildSystemPrompt(lang: "en" | "es", size: SizeSignal): string {
 
 ${RUNNA_CAPABILITIES}
 
-PROOF POLICY (important): a specific success story is NOT required. Lead with the most relevant Runna CAPABILITY for this prospect (AI tools/automation, optimization, custom dashboards, asset creation, video/ad production, design, growth) and use Runna's years of expertise + real in-house builds as proof. Cite a specific case study ONLY when one genuinely fits the prospect's pain — never force, stretch, or invent one. A capability-led pitch with no case study is fully valid and often stronger. The ONE hard rule: never fabricate a specific client name, metric, or geography that isn't in the payload.
+PROOF POLICY (important): a specific success story is NOT required, and the DEFAULT is to use NONE. Lead with the most relevant Runna CAPABILITY for this prospect (AI tools/automation, optimization, custom dashboards, asset creation, video/ad production, design, growth) and use Runna's years of expertise + real in-house builds as proof. A capability-led pitch with NO case study is the norm and is usually STRONGER. Cite a specific case study ONLY when it clears a HIGH bar: the case must be about the SAME KIND OF WORK you're proposing in this email — same industry is NOT enough, and the metric must be genuinely impressive. ⛔ NEVER bridge a case about a DIFFERENT service onto this solution (e.g. do not cite a paid-ads / Meta-ads / clicks result to prove an AI chatbot; do not cite a web-design result to prove email automation). A mismatched or weak case is a non-sequitur that makes the email LESS credible — when in doubt, leave it out and go capability-led. The ONE hard rule: never fabricate a client name, metric, or geography that isn't in the payload.
 
 Your job: write a cold email that reads like a real human wrote it — conversational, specific,
 warm. Think of it like introducing yourself to someone at a bar: you notice something about
@@ -384,17 +384,23 @@ REQUIRED EMAIL STRUCTURE — follow this exactly, no additions, no reordering:
      with this setup", "well-run Meta retargeting averages 3-5x ROAS for this category."
    - Use solution_hints in the payload as a starting point, then go further using what
      you know about current trends, platforms, and what actually works for this industry.
-5. Proof line — pick ONE of these, whichever is more credible for this prospect:
-   (a) CASE-STUDY BRIDGE — ONLY if a case_study_id is chosen AND it has a real measurable result:
-       ONE sentence: "Did this for {client}, {metric}." (e.g. "Did this for Niki, +34% email revenue.")
-       The metric MUST be a number or percentage from the case's hero_metric or measurable_results.
-       NEVER describe what you did — only the OUTCOME for the client.
-   (b) CAPABILITY PROOF — when no case study fits (case_study_id=null): prove it with Runna's
-       capability + track record instead. Reference the KIND of work Runna does and, if relevant,
-       a real in-house build from RUNNA'S CAPABILITIES (e.g. "we build custom AI tools and dashboards
-       like the ones running our own ops" / "we run two production studios for video"). Do NOT invent
-       a client name or a specific metric for these. This is a legitimate, strong proof — not a weak fallback.
-   Never force a case study. If none genuinely fits the pain, choose (b) and set case_study_id=null.
+5. Proof line — DEFAULT to capability proof (b). Using a case study (a) is the exception, not the rule, and must clear a HIGH bar:
+   (a) CASE-STUDY BRIDGE — use ONLY when ALL of these hold:
+       - a case_study_id is chosen, AND
+       - the case is about the SAME KIND OF WORK you propose in step 4 (e.g. an AI / chatbot /
+         lead-qualification / automation case for an AI-chatbot pitch). SAME INDUSTRY IS NOT ENOUGH.
+         ⛔ NEVER bridge a case about a DIFFERENT service onto this solution — do NOT cite a
+         paid-ads / Meta-ads / "X clicks" result to prove an AI chatbot, or a web result to prove
+         email automation. If the case's work ≠ the solution you're pitching, it is a non-sequitur
+         that makes the email WEAKER. Drop it.
+       - the metric is genuinely impressive and relevant (not a small/soft number).
+       Then ONE sentence: "Did this for {client}, {metric}." Only the OUTCOME, never what you did.
+   (b) CAPABILITY PROOF — the DEFAULT and a STRONG choice (case_study_id=null): prove it with Runna's
+       capability + years of expertise + a real in-house build from RUNNA'S CAPABILITIES (e.g. "we build
+       custom AI tools and dashboards like the ones running our own ops"). No client name, no invented
+       metric. A sharp capability-led email with NO case study is usually STRONGER than one with a
+       forced/mismatched/weak case — and is the correct choice most of the time.
+   RULE: if no chosen case clears the bar above, set case_study_id=null and use (b). When in doubt, leave it out.
    ⛔ FACTUAL INTEGRITY — DO NOT FABRICATE ATTRIBUTES OF THE CLIENT:
    - State ONLY facts present in the case payload (client_name, industry, the metric).
    - NEVER invent or imply the client's country, nationality, city, or location. The
