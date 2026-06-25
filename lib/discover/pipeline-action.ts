@@ -405,13 +405,13 @@ export async function processSingleProspect(
 
   // ── Triage on final score ─────────────────────────────────────────────────
 
-  if (score < 40) {
-    // Suppress
+  if (score < 50) {
+    // Below the floor — suppress.
     await supabase
       .from("prospects")
       .update({
         status: "suppressed",
-        suppressed_reason: `Auto: score ${score} below threshold`,
+        suppressed_reason: `Auto: score ${score} below 50`,
         suppressed_at: new Date().toISOString(),
         updated_at: new Date().toISOString(),
       })
@@ -423,16 +423,15 @@ export async function processSingleProspect(
   }
 
   if (score < 70) {
-    // Needs review — mark pitch_gate_passed=false. If the prospect was parked
-    // (auto-suppressed or no_match under an earlier score) but now clears the
-    // bar, reactivate it to "researched" so it's not stuck out of view.
-    const reactivate = p?.status === "suppressed" || p?.status === "no_match";
+    // 50-69 → B-list: a time-boxed, opt-in review pool (out of the default view,
+    // auto-suppressed after 21 days untouched by the janitor). updated_at below
+    // anchors that clock.
     await supabase
       .from("prospects")
       .update({
-        ...(reactivate
-          ? { status: "researched", suppressed_reason: null, suppressed_at: null }
-          : {}),
+        status: "b_list",
+        suppressed_reason: null,
+        suppressed_at: null,
         pitch_gate_passed: false,
         updated_at: new Date().toISOString(),
       })
@@ -484,21 +483,22 @@ export async function processSingleProspect(
   });
 
   if (!validContacts || validContacts.length === 0) {
-    // ≥70 but unreachable — needs review. Reactivate if it was parked.
-    const reactivate = p?.status === "suppressed" || p?.status === "no_match";
+    // ≥70 but unreachable: we ran the full enrichment waterfall and still found no
+    // email — "if we didn't get it in the pipeline, we aren't getting it" — so
+    // suppress rather than park it in a worklist nobody clears.
     await supabase
       .from("prospects")
       .update({
-        ...(reactivate
-          ? { status: "researched", suppressed_reason: null, suppressed_at: null }
-          : {}),
+        status: "suppressed",
+        suppressed_reason: `Auto: score ${score} but no contact found (unreachable)`,
+        suppressed_at: new Date().toISOString(),
         pitch_gate_passed: false,
         updated_at: new Date().toISOString(),
       })
       .eq("id", prospectId)
       .eq("tenant_id", user.tenantId);
     revalidatePath("/companies");
-    return { prospect_id: prospectId, company_name: name, score, outcome: "needs_review" };
+    return { prospect_id: prospectId, company_name: name, score, outcome: "suppressed" };
   }
 
   let pitchError: string | null = null;

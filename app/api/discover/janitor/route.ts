@@ -17,6 +17,8 @@ import { createServiceRoleClient } from "@/lib/supabase/service-role";
 
 // Slices run seconds apart; 5 min of silence means the chain is dead.
 const STALE_MINUTES = 5;
+// B-list (50-69) prospects auto-suppress after this many days untouched.
+const B_LIST_TTL_DAYS = 21;
 
 function isAuthorized(req: NextRequest): boolean {
   const cronSecret = process.env.CRON_SECRET;
@@ -44,5 +46,29 @@ export async function GET(req: NextRequest) {
     .select("id");
 
   if (error) return NextResponse.json({ ok: false, error: error.message }, { status: 500 });
-  return NextResponse.json({ ok: true, failed: data?.length ?? 0 });
+
+  // Time-box the B-list (50-69): auto-suppress any b_list prospect untouched for
+  // 21+ days (updated_at is bumped whenever it's touched, so this is "no activity
+  // in 21 days"). Keeps the review pool from accumulating forever.
+  const bListCutoff = new Date(Date.now() - B_LIST_TTL_DAYS * 86_400_000).toISOString();
+  const nowIso = new Date().toISOString();
+  const { data: archived, error: bErr } = await supabase
+    .from("prospects")
+    .update({
+      status: "suppressed",
+      suppressed_reason: `Auto: B-list expired (untouched ${B_LIST_TTL_DAYS}d)`,
+      suppressed_at: nowIso,
+      updated_at: nowIso,
+    } as never)
+    .eq("status", "b_list")
+    .lt("updated_at", bListCutoff)
+    .select("id");
+
+  if (bErr) return NextResponse.json({ ok: false, error: bErr.message }, { status: 500 });
+
+  return NextResponse.json({
+    ok: true,
+    failed: data?.length ?? 0,
+    b_list_expired: archived?.length ?? 0,
+  });
 }

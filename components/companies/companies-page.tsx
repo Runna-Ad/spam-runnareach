@@ -45,9 +45,11 @@ const STATUS_OPTIONS: string[] = [
   "suppressed",
 ];
 
+const STATUS_LABEL: Record<string, string> = { b_list: "B-list" };
 const STATUS_TONE: Record<string, "info" | "neutral" | "success" | "danger" | "warning" | "accent"> = {
   raw: "neutral",       // grey — untouched
   researched: "info",   // blue — analyzed
+  b_list: "warning",    // amber — 50-69, time-boxed review pool
   pitched: "accent",    // purple — outreach drafted/sent (distinct from researched)
   replied: "success",   // green — they responded
   booked: "success",    // green — meeting booked (key was wrongly "meeting_booked")
@@ -140,6 +142,7 @@ export function CompaniesPage({ prospects, icps, initialFilters }: CompaniesPage
         status === "ALL" &&
         (p.status === "suppressed" ||
           p.status === "no_match" ||
+          p.status === "b_list" || // 50-69 review pool — reachable via its own filter
           p.pitch_status === "sent" ||
           p.pitch_status === "queued_to_send" ||
           isNeedsContact(p))
@@ -382,6 +385,7 @@ export function CompaniesPage({ prospects, icps, initialFilters }: CompaniesPage
           className="h-8 max-w-[140px] py-0 text-xs"
         >
           <option value="ALL">All statuses</option>
+          <option value="b_list">B-list (50-69)</option>
           <option value="needs_contact">Needs contact</option>
           <option value="queued_to_send">Queued to send</option>
           <option value="sent">Sent</option>
@@ -561,7 +565,7 @@ export function CompaniesPage({ prospects, icps, initialFilters }: CompaniesPage
                   </td>
                   <td className="px-4 py-2">
                     <div className="flex flex-wrap items-center gap-1">
-                      <Chip tone={STATUS_TONE[p.status] ?? "neutral"}>{p.status}</Chip>
+                      <Chip tone={STATUS_TONE[p.status] ?? "neutral"}>{STATUS_LABEL[p.status] ?? p.status}</Chip>
                       {p.pitch_status === "queued_for_approval" ? (
                         <Chip tone="warning">queued for approval</Chip>
                       ) : p.pitch_status === "queued_to_send" ? (

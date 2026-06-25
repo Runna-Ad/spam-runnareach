@@ -4,6 +4,15 @@ Running log of mistakes, root causes, and rules to prevent recurrence. Newest at
 
 ---
 
+[2026-06-25] BUILD: triage tiers reworked — <50 suppress, 50-69 time-boxed B-list, ≥70-no-contact suppress
+CONTEXT (Pedro): the old 40-69 "needs_review" band sat in the default /companies view, never got worked, and just accumulated clutter. Pedro's calls: keep only genuine near-misses (50-69) as an opt-in, time-boxed pool; auto-suppress everything <50; and auto-suppress ≥70 prospects we couldn't find a contact for ("if we didn't get it in the pipeline run, we aren't getting it" — the old "needs contact" worklist nobody cleared).
+BUILD: (1) migration 0026 adds 'b_list' to the prospect_status ENUM (MUST be applied to prod before deploy — pipeline writes status='b_list', enum rejects it otherwise). (2) processSingleProspect triage (lib/discover/pipeline-action.ts): score<50 → suppress; 50-69 → status='b_list' (pitch_gate_passed=false; updated_at anchors the TTL clock); ≥70 with no contact after the full enrichment waterfall → suppress (was needs_review). (3) /companies: b_list hidden from the default ALL view, reachable via a new "B-list (50-69)" filter; chip labeled "B-list" (amber). (4) discovery/janitor cron now auto-suppresses b_list prospects with updated_at older than 21 days ("untouched" TTL) — no new timestamp column, reuses updated_at. prospects.status is typed `string` in types.ts so no type churn.
+NOTE: "needs_review" is still the in-flight OUTCOME (return value) for the b_list branch so the discovery stats tally (stats.needs_review) is unchanged; the DB STATUS is now b_list. Existing pre-change 40-49 'researched' prospects aren't retro-suppressed — they'll fall to the B-list/janitor only if re-run; Pedro can bulk-handle on /companies if wanted.
+RULE: don't keep a "maybe" tier in the default working view with no TTL — it becomes clutter nobody works. Give borderline pools their own filter + an auto-expiry (reuse updated_at as the "untouched" clock). When a tier maps to a Postgres ENUM column, ship the `alter type ... add value` migration FIRST.
+TAGS: #build #triage #scoring #b-list #suppression #enum-migration #ttl #companies
+STATUS: built, typecheck+lint clean. Needs migration 0026 applied to prod + deploy.
+---
+
 [2026-06-25] FIX: /companies "Run pipeline" bulk action 504'd + crashed the page (client-side exception)
 SYMPTOM (Pedro): selected raw prospects on /companies → Run pipeline → "Application error: a client-side exception has occurred", console showed 504 on the page server-action + "An unexpected response was received from the server" at fetchServerAction.
 ROOT CAUSE: bulkRunPipeline (lib/discover/bulk-actions.ts) ran `Promise.all(prospect_ids.map(processSingleProspect))` SYNCHRONOUSLY inside one server action. Server actions run under the page function's maxDuration (app/** = 60s), and each processSingleProspect is 30-90s — so >1 prospect blows the cap → 504 → the RSC fetch throws → React unmounts to the error boundary ("client-side exception"). Exact same class as the discovery "Run All" 504 we already moved to a background job; this path was missed.
