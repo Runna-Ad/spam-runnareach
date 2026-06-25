@@ -33,10 +33,17 @@ const PLACEHOLDER_DOMAINS = new Set([
   "domain.com", "example.com", "example.org", "example.net", "yourdomain.com",
   "email.com", "test.com", "sample.com", "company.com", "yourcompany.com",
   "acme.com", "mail.com", "site.com",
+  // Spanish / MX placeholders ("ejemplo" = "example", "tu/mi empresa" = "your/my company").
+  "ejemplo.com", "ejemplo.org", "ejemplo.net", "ejemplo.mx", "ejemplo.es",
+  "ejemplo.com.mx", "tuempresa.com", "tu-empresa.com", "miempresa.com",
+  "empresa.com", "dominio.com", "sitio.com", "correo.com", "prueba.com",
+  "nombre.com",
 ]);
 const PLACEHOLDER_LOCALS = new Set([
   "user", "example", "test", "youremail", "yourname", "name", "firstname",
   "lastname", "email", "username", "your",
+  // Spanish placeholders.
+  "ejemplo", "correo", "tunombre", "tucorreo", "nombre", "prueba", "usuario",
 ]);
 
 /**

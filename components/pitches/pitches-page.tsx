@@ -7,6 +7,7 @@ import {
   Check,
   CheckCircle2,
   Clock,
+  Trash2,
   Filter,
   Loader2,
   Save,
@@ -30,6 +31,8 @@ import {
   savePitchEdit,
   transitionPitchStatus,
 } from "@/lib/pitches/actions";
+import { bulkDeleteProspects } from "@/lib/discover/bulk-actions";
+import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { sendPitch, queueApprovedForSend } from "@/lib/pitches/send-action";
 import { PitchAngleAdvisor } from "@/components/pitches/pitch-angle-advisor";
 import type { PitchListRow, PitchStatus } from "@/lib/pitches/queries";
@@ -91,6 +94,9 @@ export function PitchesPage({ pitches, counts, canEdit, inboxes }: PitchesPagePr
   const [approving, startApprove] = React.useTransition();
   React.useEffect(() => setChecked(new Set()), [filter]);
 
+  const [deleting, startDelete] = React.useTransition();
+  const [confirmDeleteOpen, setConfirmDeleteOpen] = React.useState(false);
+
   const toggleCheck = (id: string) =>
     setChecked((prev) => {
       const next = new Set(prev);
@@ -143,19 +149,55 @@ export function PitchesPage({ pitches, counts, canEdit, inboxes }: PitchesPagePr
 
   const isApprovable = (p: PitchListRow) =>
     p.status === "draft" || p.status === "queued_for_approval";
-  const checkableVisible = visible.filter(isApprovable);
-  const allChecked =
-    checkableVisible.length > 0 && checkableVisible.every((p) => checked.has(p.id));
+  // Every visible pitch is selectable (so you can DELETE any, not just approvable).
+  const allChecked = visible.length > 0 && visible.every((p) => checked.has(p.id));
+  const approvableCheckedCount = visible.filter(
+    (p) => checked.has(p.id) && isApprovable(p),
+  ).length;
   const toggleAll = () =>
     setChecked((prev) => {
       const next = new Set(prev);
-      if (checkableVisible.every((p) => prev.has(p.id))) {
-        checkableVisible.forEach((p) => next.delete(p.id));
+      if (visible.every((p) => prev.has(p.id))) {
+        visible.forEach((p) => next.delete(p.id));
       } else {
-        checkableVisible.forEach((p) => next.add(p.id));
+        visible.forEach((p) => next.add(p.id));
       }
       return next;
     });
+
+  // Delete = remove the underlying PROSPECT (and cascade its pitches/research/
+  // contacts) — used when a prospect isn't worth pursuing (e.g. a fake/placeholder
+  // contact slipped through). Maps the selected pitches to their prospects.
+  const checkedProspectIds = React.useMemo(
+    () =>
+      Array.from(
+        new Set(
+          pitches
+            .filter((p) => checked.has(p.id) && p.prospect_id)
+            .map((p) => p.prospect_id as string),
+        ),
+      ),
+    [pitches, checked],
+  );
+
+  const handleBulkDelete = () => {
+    if (checkedProspectIds.length === 0) return;
+    startDelete(async () => {
+      const res = await bulkDeleteProspects({ prospect_ids: checkedProspectIds });
+      setConfirmDeleteOpen(false);
+      if (res.ok) {
+        setQueueMsg({
+          tone: "ok",
+          text: `Deleted ${res.affected} prospect${res.affected === 1 ? "" : "s"} and their pitches.`,
+        });
+        setChecked(new Set());
+        router.refresh();
+      } else {
+        setQueueMsg({ tone: "warn", text: res.error });
+      }
+      window.setTimeout(() => setQueueMsg(null), 7000);
+    });
+  };
 
   const handleBulkApprove = () => {
     if (checked.size === 0) return;
@@ -273,7 +315,7 @@ export function PitchesPage({ pitches, counts, canEdit, inboxes }: PitchesPagePr
             />
           ) : (
             <>
-              {canEdit && checkableVisible.length > 0 ? (
+              {canEdit && visible.length > 0 ? (
                 <div className="sticky top-0 z-10 flex items-center gap-2 border-b border-[var(--color-border-subtle)] bg-[var(--color-bg-900)] px-3 py-2">
                   <label className="flex cursor-pointer items-center gap-1.5 text-[11px] text-[var(--color-fg-500)]">
                     <input
@@ -283,27 +325,44 @@ export function PitchesPage({ pitches, counts, canEdit, inboxes }: PitchesPagePr
                         if (el) el.indeterminate = checked.size > 0 && !allChecked;
                       }}
                       onChange={toggleAll}
-                      aria-label="Select all approvable pitches"
+                      aria-label="Select all pitches"
                       className="h-3.5 w-3.5 cursor-pointer accent-[var(--color-accent-300)]"
                     />
                     {checked.size > 0 ? `${checked.size} selected` : "Select all"}
                   </label>
                   {checked.size > 0 ? (
-                    <Button
-                      type="button"
-                      size="sm"
-                      variant="primary"
-                      className="ml-auto"
-                      onClick={handleBulkApprove}
-                      disabled={approving}
-                    >
-                      {approving ? (
-                        <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden />
-                      ) : (
-                        <Check className="h-3.5 w-3.5" aria-hidden />
-                      )}
-                      Approve {checked.size}
-                    </Button>
+                    <div className="ml-auto flex items-center gap-1.5">
+                      {approvableCheckedCount > 0 ? (
+                        <Button
+                          type="button"
+                          size="sm"
+                          variant="primary"
+                          onClick={handleBulkApprove}
+                          disabled={approving || deleting}
+                        >
+                          {approving ? (
+                            <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden />
+                          ) : (
+                            <Check className="h-3.5 w-3.5" aria-hidden />
+                          )}
+                          Approve {approvableCheckedCount}
+                        </Button>
+                      ) : null}
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="danger"
+                        onClick={() => setConfirmDeleteOpen(true)}
+                        disabled={deleting || approving || checkedProspectIds.length === 0}
+                      >
+                        {deleting ? (
+                          <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden />
+                        ) : (
+                          <Trash2 className="h-3.5 w-3.5" aria-hidden />
+                        )}
+                        Delete {checkedProspectIds.length}
+                      </Button>
+                    </div>
                   ) : null}
                 </div>
               ) : null}
@@ -314,7 +373,7 @@ export function PitchesPage({ pitches, counts, canEdit, inboxes }: PitchesPagePr
                     pitch={p}
                     active={p.id === selectedId}
                     onClick={() => setSelectedId(p.id)}
-                    checkable={canEdit && isApprovable(p)}
+                    checkable={canEdit}
                     checked={checked.has(p.id)}
                     onToggleCheck={() => toggleCheck(p.id)}
                   />
@@ -341,6 +400,17 @@ export function PitchesPage({ pitches, counts, canEdit, inboxes }: PitchesPagePr
           )}
         </div>
       </div>
+
+      <ConfirmDialog
+        open={confirmDeleteOpen}
+        onOpenChange={setConfirmDeleteOpen}
+        title={`Delete ${checkedProspectIds.length} prospect${checkedProspectIds.length === 1 ? "" : "s"}?`}
+        description="This permanently removes the selected pitches' prospects and all their research, scores, pitches, and contacts. This can't be undone. Prospects with a booked opportunity are skipped automatically."
+        confirmLabel={`Delete ${checkedProspectIds.length}`}
+        variant="danger"
+        pending={deleting}
+        onConfirm={handleBulkDelete}
+      />
     </div>
   );
 }
