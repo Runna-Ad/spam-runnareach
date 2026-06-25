@@ -19,6 +19,8 @@ export type AuditAction =
   | "reply.imported"
   | "reply.drafted"
   | "reply.sent"
+  | "reply.nudge_sent"
+  | "reply.nudge_held"
   | "prospect.archived_no_meeting";
 
 export type AuditPayload = {

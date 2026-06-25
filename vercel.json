@@ -23,9 +23,16 @@
     },
     "app/api/discover/run/route.ts": {
       "maxDuration": 120
+    },
+    "app/api/replies/nudge/route.ts": {
+      "maxDuration": 120
     }
   },
   "crons": [
+    {
+      "path": "/api/replies/nudge",
+      "schedule": "0 17 * * *"
+    },
     {
       "path": "/api/discover/janitor",
       "schedule": "0 7 * * *"

@@ -136,6 +136,154 @@ function ensureReSubject(subject: string, threadSubject: string | null): string 
   return /^re:/i.test(base) ? base : `Re: ${base}`;
 }
 
+// ── Nudge composer (re-engage a prospect who replied, then went quiet) ──────────
+
+export type NudgeComposerInput = {
+  contactFirstName: string | null;
+  companyName: string;
+  language: "en" | "es";
+  threadSubject: string | null;
+  /** The pitch we originally sent (context for what they were interested in). */
+  originalPitchBody: string | null;
+  /** Their last inbound message in the thread — what they last asked/said. */
+  lastInboundBody: string | null;
+  whatTheyDo: string | null;
+  painSummary: string | null;
+  /** Which outbound attempt this nudge is (2 or 3 of the 3-reply budget). */
+  attemptNumber: number;
+  senderFirstName: string;
+  agencyName: string;
+};
+
+/**
+ * A nudge looks safe to AUTO-SEND when it's a real, complete, plain-text message
+ * (not too short/long, no unfilled {placeholders}, has sentence punctuation).
+ * Anything failing this is held for human review instead.
+ */
+export function nudgeLooksSafeToSend(body: string): boolean {
+  const b = body.trim();
+  if (b.length < 40 || b.length > 1600) return false;
+  if (/\{[a-z_]+\}/i.test(b)) return false; // leftover template placeholder
+  if (!/[.!?]/.test(b)) return false; // no real sentence
+  return true;
+}
+
+export async function composeNudgeWithClaude(
+  input: NudgeComposerInput,
+): Promise<
+  | { ok: true; draft: ComposedDraft; usage: ClaudeUsage; model: string }
+  | { ok: false; error: string; reason: string; usage: ClaudeUsage | null }
+> {
+  const call = await structuredCall({
+    model: ANTHROPIC_DEFAULT_MODEL,
+    system: buildNudgeSystemPrompt(input.language, input.attemptNumber),
+    user: buildNudgeUserPrompt(input),
+    max_tokens: 700,
+    schema: responseSchema,
+  });
+
+  if (!call.ok) {
+    return { ok: false, error: call.error, reason: call.reason, usage: call.usage };
+  }
+
+  const cleanBody = call.data.body
+    .replace(/\s*—\s*/g, ", ")
+    .replace(/—/g, " ")
+    .replace(/ {2,}/g, " ")
+    .trim();
+
+  return {
+    ok: true,
+    draft: {
+      subject: ensureReSubject(call.data.subject, input.threadSubject),
+      body: cleanBody,
+      reasoning: call.data.reasoning ?? "(no reasoning provided)",
+    },
+    usage: call.usage,
+    model: call.model,
+  };
+}
+
+/** Deterministic nudge fallback (always held for review, never the happy path). */
+export function composeNudgeHeuristic(input: NudgeComposerInput): ComposedDraft {
+  const greetName = input.contactFirstName?.trim() || input.companyName;
+  const es = input.language === "es";
+  const hi = es ? `Hola ${greetName},` : `Hi ${greetName},`;
+  const isFinal = input.attemptNumber >= 3;
+  const core = isFinal
+    ? es
+      ? "Sé que andas ocupado, así que no te insisto más después de esto. Si todavía te interesa lo que platicamos, aquí sigo y con gusto te lo muestro. Si no, sin problema."
+      : "I know things get busy, so I'll leave it here after this. If what we talked about is still interesting, I'm happy to show you, and if not, no worries at all."
+    : es
+      ? "Solo queria retomar lo que platicamos, sigo con muchas ganas de mostrarte como se veria para tu negocio. ¿Te late si te mando un ejemplo rapido?"
+      : "Just circling back on what we talked about. I'd still love to show you how it'd look for your business. Want me to send over a quick example?";
+  const signoff = `\n\n${es ? "Saludos" : "Best"},\n${input.senderFirstName}\n${input.agencyName}`;
+  return {
+    subject: ensureReSubject(input.threadSubject ?? "", input.threadSubject),
+    body: `${hi}\n\n${core}${signoff}`,
+    reasoning: "(heuristic nudge fallback)",
+  };
+}
+
+function buildNudgeSystemPrompt(lang: "en" | "es", attempt: number): string {
+  const langName = lang === "es" ? "Spanish (Mexican B2B register)" : "English (Canadian market)";
+  const finalRule =
+    attempt >= 3
+      ? `THIS IS THE FINAL nudge (last of a 3-message budget). Be graceful: warmly acknowledge
+they're busy, restate the value in one line, and leave the door open with zero pressure ("I'll
+leave it here, but I'm around if it's useful"). No guilt, no desperation.`
+      : `This is a gentle re-engagement after they engaged once and then went quiet. Light and human.`;
+  return `You write a short NUDGE in an ongoing email thread to a prospect who REPLIED to us once,
+showed some interest, and then went quiet. We are following up softly. A human set this up; if the
+draft is clearly good it sends automatically, so it must be genuinely good.
+
+${finalRule}
+
+WHAT GOOD LOOKS LIKE:
+- Warm and human, by first name. Sound like a real person who remembers the conversation, not a bot.
+- Reference what they were interested in (use original_pitch_body + their last message) so it's clearly
+  a continuation, not a generic "just following up".
+- Add a tiny bit of forward motion: a concrete, low-friction offer ("want me to send a quick example?"
+  / "happy to walk you through how it'd look for you"). NOT a hard ask for a meeting time.
+- SHORT: 35-70 words. Skimmable in 5 seconds.
+- NO em dashes. NO jargon or corporate filler. NO guilt-tripping ("just bumping this", "did you see my
+  last email"). Plain, friendly words.
+- Write the ENTIRE message in ${langName}. Never mix languages.
+
+Sign off: sender's first name on one line, agency name on the next.
+
+Output a JSON object EXACTLY matching:
+{
+  "subject": string,   // keep the thread subject, prefixed "Re:" if not already
+  "body": string,      // plain text, \\n line breaks, no markdown
+  "reasoning": string  // 1 sentence on the angle. Required.
+}`;
+}
+
+function buildNudgeUserPrompt(input: NudgeComposerInput): string {
+  const pitch = (input.originalPitchBody ?? "").trim().slice(0, 1500) || "(not available)";
+  const lastInbound = (input.lastInboundBody ?? "").trim().slice(0, 800) || "(not available)";
+  return `Write a soft nudge for this prospect who went quiet.
+
+Prospect company: ${input.companyName}
+What they do: ${input.whatTheyDo ?? "(unknown)"}
+Their main interest/pain: ${input.painSummary ?? "(unknown)"}
+Person: ${input.contactFirstName ?? "(unknown first name)"}
+Thread subject: ${input.threadSubject ?? "(none)"}
+This is outbound attempt #${input.attemptNumber} of 3.
+
+THE PITCH WE ORIGINALLY SENT (what hooked them):
+${pitch}
+
+THE LAST THING THEY SAID (continue from here):
+${lastInbound}
+
+Sender (you): ${input.senderFirstName}
+Agency: ${input.agencyName}
+
+Write a warm, short nudge that continues the conversation and offers an easy next step.`;
+}
+
 function buildSystemPrompt(lang: "en" | "es"): string {
   const langName = lang === "es" ? "Spanish (Mexican B2B register)" : "English (Canadian market)";
   return `You are the sender (named below), a real person at a creative + AI agency, replying to a
