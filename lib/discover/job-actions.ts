@@ -137,6 +137,56 @@ export async function startDiscoveryJob(
   return { ok: true, jobId };
 }
 
+/**
+ * Watchdog resume — re-kick a job whose self-chain died (slice killed by the
+ * 120s function cap, or a dropped trigger). Safe to call from the client poller:
+ * it only acts when the job is still 'running' AND its heartbeat is stale beyond
+ * STALL_MS (well past a normal slice), then bumps the heartbeat to claim it and
+ * re-fires the worker from the current cursor. Re-running the in-flight slice is
+ * idempotent: cursor only advances after a batch fully persists, so a killed
+ * batch's prospects are still unprocessed and get redone, never skipped.
+ */
+const STALL_MS = 100_000; // a normal slice is well under this; longer = dead chain
+
+export async function resumeDiscoveryJob(
+  jobId: string,
+): Promise<{ ok: true; resumed: boolean } | { ok: false; error: string }> {
+  const idParse = z.string().uuid().safeParse(jobId);
+  if (!idParse.success) return { ok: false, error: "Invalid job id." };
+
+  const user = await requireUser();
+  const supabase = await createClient();
+
+  const { data: job } = await supabase
+    .from("discovery_jobs")
+    .select("id, status, heartbeat_at")
+    .eq("id", idParse.data)
+    .eq("tenant_id", user.tenantId)
+    .maybeSingle<{ id: string; status: string; heartbeat_at: string }>();
+
+  if (!job || job.status !== "running") return { ok: true, resumed: false };
+  const staleMs = Date.now() - new Date(job.heartbeat_at).getTime();
+  if (staleMs < STALL_MS) return { ok: true, resumed: false }; // slice still alive
+
+  // Claim it: bump heartbeat so a concurrent poller won't double-fire.
+  await supabase
+    .from("discovery_jobs")
+    .update({ heartbeat_at: new Date().toISOString() } as never)
+    .eq("id", idParse.data)
+    .eq("tenant_id", user.tenantId)
+    .eq("status", "running");
+
+  const cookieHeader = await currentCookieHeader();
+  const origin = originFromHeaders(await headers());
+  if (!origin) return { ok: false, error: "Could not resolve request origin." };
+  const id = job.id;
+  after(async () => {
+    await triggerNextSlice(id, cookieHeader, origin);
+  });
+
+  return { ok: true, resumed: true };
+}
+
 export async function cancelDiscoveryJob(
   jobId: string,
 ): Promise<{ ok: true } | { ok: false; error: string }> {

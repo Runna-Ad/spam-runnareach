@@ -35,7 +35,8 @@ import { triggerNextSlice } from "@/lib/discover/job-trigger";
 import { EMPTY_JOB_STATS, type DiscoveryJobStats } from "@/lib/discover/job-types";
 
 const PIPELINE_CAP = 50; // matches the prior client-side cap
-const BATCH = 5; // prospects per slice — keeps each invocation well under maxDuration
+const BATCH = 3; // prospects per slice — small enough to stay well under the 120s
+// function cap even on slow prospects, and to bump the heartbeat often.
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type AnySupabase = any;

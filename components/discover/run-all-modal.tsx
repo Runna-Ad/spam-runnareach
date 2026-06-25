@@ -44,6 +44,7 @@ import { getRawProspectIds, discardRawProspects } from "@/lib/discover/pipeline-
 import {
   startDiscoveryJob,
   cancelDiscoveryJob,
+  resumeDiscoveryJob,
   getDiscoveryJob,
   getActiveJobForIcp,
 } from "@/lib/discover/job-actions";
@@ -60,6 +61,9 @@ interface RunAllModalProps {
 }
 
 const POLL_MS = 3000;
+// Re-kick a job whose heartbeat is staler than this (a healthy slice bumps it
+// every ~40s). Matches the server-side STALL_MS guard in resumeDiscoveryJob.
+const STALL_RESUME_MS = 100_000;
 
 // ── Component ─────────────────────────────────────────────────────────────────
 
@@ -130,6 +134,13 @@ export function RunAllModal({ open, onOpenChange, icps }: RunAllModalProps) {
         if (j.status !== "running") {
           setStep("done");
           return; // stop polling
+        }
+        // Watchdog: if the server chain died (slice killed by the 120s cap or a
+        // dropped trigger), the heartbeat goes stale — re-kick it ourselves so a
+        // stall recovers in seconds instead of waiting for the daily janitor.
+        const staleMs = Date.now() - new Date(j.heartbeat_at).getTime();
+        if (staleMs > STALL_RESUME_MS) {
+          void resumeDiscoveryJob(jobId);
         }
       }
       if (active) timer = window.setTimeout(tick, POLL_MS);
@@ -262,11 +273,14 @@ export function RunAllModal({ open, onOpenChange, icps }: RunAllModalProps) {
                 </Button>
                 <Button
                   variant="primary"
+                  className="min-w-0 max-w-[16rem]"
                   disabled={!selectedIcpId || loadingPreview}
                   onClick={() => void beginJob("full")}
                 >
-                  <Play className="h-3.5 w-3.5" aria-hidden />
-                  {activeIcp ? `Run for ${activeIcp.name}` : "Run"}
+                  <Play className="h-3.5 w-3.5 shrink-0" aria-hidden />
+                  <span className="truncate">
+                    {activeIcp ? `Run for ${activeIcp.name}` : "Run"}
+                  </span>
                 </Button>
               </>
             )}
