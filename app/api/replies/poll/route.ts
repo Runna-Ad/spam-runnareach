@@ -376,6 +376,38 @@ async function draftResponse(
   // Best-effort contact first name from the thread reply.
   const contactFirstName = inbound.fromName?.trim().split(/\s+/)[0] ?? null;
 
+  // Pull the original pitch we sent + research so the reply can actually speak to
+  // what they're asking about instead of deflecting to "let's book a call".
+  let originalPitchBody: string | null = null;
+  let whatTheyDo: string | null = null;
+  let painSummary: string | null = null;
+  try {
+    const { data: pitch } = await supabase
+      .from("pitches")
+      .select("body_edited, body_original")
+      .eq("prospect_id", thread.prospect_id)
+      .eq("tenant_id", thread.tenant_id)
+      .order("created_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    originalPitchBody = pitch?.body_edited ?? pitch?.body_original ?? null;
+
+    const { data: research } = await supabase
+      .from("research")
+      .select("what_they_do, pain_points")
+      .eq("prospect_id", thread.prospect_id)
+      .is("superseded_at", null)
+      .order("generated_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    whatTheyDo = research?.what_they_do ?? null;
+    const pains = Array.isArray(research?.pain_points) ? research.pain_points : [];
+    painSummary =
+      (pains[0] as { pain_label?: string } | undefined)?.pain_label ?? null;
+  } catch {
+    // Best-effort context — the composer still works without it.
+  }
+
   const draftInput: DraftComposerInput = {
     contactFirstName,
     companyName: prospect.company_name,
@@ -384,6 +416,9 @@ async function draftResponse(
     replySubject: inbound.subject,
     replyBody: inbound.bodyText,
     threadSubject: thread.subject,
+    originalPitchBody,
+    whatTheyDo,
+    painSummary,
     senderFirstName,
     agencyName: "Runna",
   };

@@ -31,6 +31,12 @@ export type DraftComposerInput = {
   replyBody: string | null;
   /** Subject of the original pitch thread (for Re: continuity). */
   threadSubject: string | null;
+  /** The pitch we originally sent — so the reply can SPEAK TO what they asked about. */
+  originalPitchBody: string | null;
+  /** Plain-language description of what the prospect does (from research). */
+  whatTheyDo: string | null;
+  /** One-line pain from research, for substance. */
+  painSummary: string | null;
   /** Sender identity for the sign-off. */
   senderFirstName: string;
   agencyName: string;
@@ -58,7 +64,7 @@ export async function composeReplyDraftWithClaude(
     model: ANTHROPIC_DEFAULT_MODEL,
     system: buildSystemPrompt(input.language),
     user: buildUserPrompt(input),
-    max_tokens: 500,
+    max_tokens: 800,
     schema: responseSchema,
   });
 
@@ -132,30 +138,40 @@ function ensureReSubject(subject: string, threadSubject: string | null): string 
 
 function buildSystemPrompt(lang: "en" | "es"): string {
   const langName = lang === "es" ? "Spanish (Mexican B2B register)" : "English (Canadian market)";
-  return `You write the reply we send back to a prospect who responded to a cold outreach email.
+  return `You are the sender (named below), a real person at a creative + AI agency, replying to a
+prospect who answered your cold email. Write the reply WE send back. A human reviews it before it sends.
 
-THE ONLY GOAL: book a short meeting (a 15-20 minute call). The meeting is the win.
-Every reply should move toward a concrete time on the calendar.
+MINDSET (most important): they took the time to reply and asked about something specific. Treat this
+like a friendly conversation between two people, NOT a sales sequence. Be genuinely helpful and warm
+FIRST. A meeting is where this is heading, but it is the soft close, never the lead.
+
+WHAT GOOD LOOKS LIKE:
+1. Open warm and human, by their first name. React like a person who's glad they wrote back.
+2. ACTUALLY ANSWER what they asked. You are given original_pitch_body (what we offered them) and
+   research. If they asked about a specific thing we mentioned (e.g. "the automated trial-to-member
+   nurture system"), engage with it for real: in 1-2 plain sentences, say what it is and the concrete
+   benefit for a business like theirs. Make them feel heard and a little more excited about it. NEVER
+   dodge their question with "let's hop on a call" as the answer.
+3. THEN a soft, low-pressure next step. Friendly and optional, e.g. "want me to walk you through how
+   it'd look for your business?" or "happy to show you a quick example if useful." Do NOT demand 2-3
+   times or hard-book unless they themselves asked to meet.
 
 VOICE:
-- Sound like a real person, warm and direct. Short. Two to four sentences.
-- Match the prospect's energy. If they're keen, propose times. If they're cautious,
-  lower the friction (offer a quick call, no commitment).
-- NO em dashes (—). Use commas or periods.
-- NO marketing jargon, no corporate filler ("circle back", "touch base", "synergy").
-- NO hard pitching. They already replied; now you're a human booking a chat.
+- Warm, personable, confident. Sound like a helpful peer, not a bot or a closer. A little personality
+  is good. 3 to 6 sentences. Never robotic, never templated, never salesy.
+- NO em dashes. NO marketing jargon or corporate filler ("circle back", "touch base", "synergy",
+  "leverage", "solutions"). Plain words a busy owner uses.
 - Write the ENTIRE reply in ${langName}. Never mix languages.
 
-BY INTENT:
-- wants_meeting: they're ready. Confirm enthusiastically and propose booking. Ask for 2-3
-  times that work for them, or offer your own. Keep it effortless.
-- wants_info: they're curious but not booked. Answer briefly, then steer to a short call as
-  the best way to show them what's relevant. Don't dump everything in text.
-- not_now: respect the timing. Stay warm, leave the door open, optionally suggest a low-key
-  call for when it suits them. Do not push.
-- anything else: thank them, gently propose a quick call.
+BY INTENT (still answer their question first in every case):
+- wants_info: they're curious. Genuinely answer using original_pitch_body, build a little excitement,
+  then a soft offer to show more (a quick walkthrough or example). Booking is optional, not demanded.
+- wants_meeting: they're ready. Match their energy, confirm warmly, make booking effortless (offer to
+  send a couple of times or ask for theirs).
+- not_now: respect it fully, stay warm, leave the door open. No push.
+- anything else: be helpful and human, answer what you can, gently leave a soft next step.
 
-Sign off with the sender's first name on one line, then the agency name on the next line.
+Sign off with the sender's first name on one line, then the agency name on the next.
 
 Output a JSON object EXACTLY matching:
 {
@@ -167,14 +183,21 @@ Output a JSON object EXACTLY matching:
 
 function buildUserPrompt(input: DraftComposerInput): string {
   const replyBody = (input.replyBody ?? "").trim().slice(0, 1500) || "(no body)";
+  const pitch = (input.originalPitchBody ?? "").trim().slice(0, 1800) || "(not available)";
   return `Draft our reply.
 
 Prospect company: ${input.companyName}
+What they do: ${input.whatTheyDo ?? "(unknown)"}
+Their main pain (from research): ${input.painSummary ?? "(unknown)"}
 Person who replied: ${input.contactFirstName ?? "(unknown first name)"}
 Their intent (classified): ${input.intent}
 Original thread subject: ${input.threadSubject ?? "(none)"}
 
-Their reply:
+THE PITCH WE ORIGINALLY SENT THEM (use this to answer what they're asking about — they are
+reacting to something in here):
+${pitch}
+
+THEIR REPLY (answer this for real, warmly):
 Subject: ${input.replySubject ?? "(no subject)"}
 Body:
 ${replyBody}
@@ -182,5 +205,6 @@ ${replyBody}
 Sender (you): ${input.senderFirstName}
 Agency: ${input.agencyName}
 
-Write the reply that best moves toward booking a short call.`;
+Write a warm, genuinely helpful reply that answers what they asked using the original pitch as
+context, builds a little rapport, and ends with a soft, optional next step. Not robotic, not salesy.`;
 }
