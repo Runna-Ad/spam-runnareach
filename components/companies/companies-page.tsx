@@ -46,6 +46,19 @@ const STATUS_OPTIONS: string[] = [
 ];
 
 const STATUS_LABEL: Record<string, string> = { b_list: "B-list" };
+
+// "B-list" = a 50-69 scorer still in the active funnel without a pitch. Score-based
+// (not just status='b_list') so it also catches prospects scored before the b_list
+// status existed (they carry status 'researched'/'scored').
+function isBListProspect(p: Prospect): boolean {
+  return (
+    p.match_score != null &&
+    p.match_score >= 50 &&
+    p.match_score < 70 &&
+    (p.status === "b_list" || p.status === "researched" || p.status === "scored") &&
+    p.pitch_status == null
+  );
+}
 const STATUS_TONE: Record<string, "info" | "neutral" | "success" | "danger" | "warning" | "accent"> = {
   raw: "neutral",       // grey — untouched
   researched: "info",   // blue — analyzed
@@ -130,6 +143,7 @@ export function CompaniesPage({ prospects, icps, initialFilters }: CompaniesPage
 
     const out = prospects.filter((p) => {
       if (status === "needs_contact") return isNeedsContact(p);
+      if (status === "b_list") return isBListProspect(p);
       // Pitch-derived views (not prospect.status) — handle before the status check.
       if (status === "queued_to_send") return p.pitch_status === "queued_to_send";
       if (status === "sent") return p.pitch_status === "sent";
@@ -142,7 +156,7 @@ export function CompaniesPage({ prospects, icps, initialFilters }: CompaniesPage
         status === "ALL" &&
         (p.status === "suppressed" ||
           p.status === "no_match" ||
-          p.status === "b_list" || // 50-69 review pool — reachable via its own filter
+          isBListProspect(p) || // 50-69 review pool — reachable via its own filter
           p.pitch_status === "sent" ||
           p.pitch_status === "queued_to_send" ||
           isNeedsContact(p))
