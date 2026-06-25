@@ -104,6 +104,7 @@ type PainCategory =
   | "ads"
   | "social"
   | "brand"
+  | "website"
   | "reporting";
 
 // "AI" needs word-boundary matching — a bare "ai" substring falsely hits
@@ -138,8 +139,12 @@ const PAIN_KEYWORDS: [string, PainCategory][] = [
   ["packaging", "brand"],
   ["brand", "brand"],
   ["value prop", "brand"],
-  ["website", "brand"],
-  ["outdated", "brand"],
+  ["redesign", "website"],
+  ["website", "website"],
+  ["web design", "website"],
+  ["outdated", "website"],
+  ["responsive", "website"],
+  ["mobile-friendly", "website"],
   ["proof", "brand"],
   ["report", "reporting"],
   ["dashboard", "reporting"],
@@ -154,6 +159,7 @@ const CATEGORY_TO_TIMESINK: Record<PainCategory, HunterTimesink> = {
   ads: "ads",
   social: "social",
   brand: "production",
+  website: "production",
   reporting: "reporting",
 };
 
@@ -165,6 +171,10 @@ const CATEGORY_TO_SLUGS: Record<PainCategory, string[]> = {
   ads: ["paid-ads", "creative-testing", "segmented-ads", "ugc-creative", "buyer-profile-ads", "high-intent-ads", "local-ads"],
   social: ["content-system", "thought-leadership", "authority-content", "story-content", "project-content", "brand-content", "listing-content"],
   brand: ["content-system", "brand-library", "brand-content", "listing-content"],
+  // 'website-modern' is a SPECIAL injected finding — not in any static industry
+  // pool. The Hunter surfaces it only when its own scan flags the site as
+  // outdated, so it's allowed for any industry (validity checked below).
+  website: ["website-modern"],
   reporting: ["dashboard", "attribution-dashboard", "automated-reporting", "ad-attribution"],
 };
 
@@ -196,7 +206,10 @@ export function painToLeadKey(
   if (!category) return null;
   const valid = HUNTER_LEAD_SLUGS[industry];
   for (const slug of CATEGORY_TO_SLUGS[category]) {
-    if (valid.includes(slug)) return slug;
+    // 'website-modern' isn't in any static pool — it's injected by the Hunter
+    // when its scan flags the site as outdated, so allow it for any industry.
+    // (If the site isn't actually outdated, the Hunter falls back gracefully.)
+    if (slug === "website-modern" || valid.includes(slug)) return slug;
   }
   return null;
 }

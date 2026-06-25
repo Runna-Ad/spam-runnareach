@@ -50,6 +50,10 @@ test("painToLeadKey: returns a slug valid for the chosen industry, else null", (
   assert.equal(painToLeadKey("Wasted ad spend", "automotive"), "buyer-profile-ads");
   // Reporting pain in retail → attribution-dashboard
   assert.equal(painToLeadKey("Manual reporting", "retail"), "attribution-dashboard");
+  // Website/outdated pain → website-modern (special injected slug, any industry)
+  assert.equal(painToLeadKey("Outdated, non-responsive website", "proservices"), "website-modern");
+  assert.equal(painToLeadKey("needs a redesign", "restaurant"), "website-modern");
+  assert.equal(painToTimesink("Outdated website"), "production");
   // Unclassifiable pain → null
   assert.equal(painToLeadKey("xyzzy", "ecommerce"), null);
   // Every returned slug must exist in the industry's pool
