@@ -62,6 +62,8 @@ const MARKET_FLAG: Record<"CA" | "MX" | "US" | "LATAM", string> = {
   LATAM: "🌎",
 };
 
+const PAGE_SIZE = 20;
+
 export function CompaniesPage({ prospects, icps, initialFilters }: CompaniesPageProps) {
   const router = useRouter();
   const pathname = usePathname();
@@ -81,9 +83,15 @@ export function CompaniesPage({ prospects, icps, initialFilters }: CompaniesPage
   const [bulkToast, setBulkToast] = React.useState<{ tone: "ok" | "warn"; text: string } | null>(null);
   const [confirmDeleteOpen, setConfirmDeleteOpen] = React.useState(false);
 
+  // Client-side pagination over the already-filtered list (the page loads all
+  // rows up front and filters in-memory, so we just slice here). Reset to page 1
+  // whenever the filtered set changes so you never land on an empty page.
+  const [page, setPage] = React.useState(1);
+
   React.useEffect(() => {
     setSelected(new Set());
-  }, [status, market, icpId, search]);
+    setPage(1);
+  }, [status, market, icpId, search, sort]);
 
   // Sync filter state → URL (shallow replace, no scroll). Deeplinks like
   // /companies?status=raw work both ways: the page hydrates from URL on
@@ -174,8 +182,23 @@ export function CompaniesPage({ prospects, icps, initialFilters }: CompaniesPage
     return c;
   }, [prospects]);
 
+  // ── Pagination (20/page over the filtered set) ────────────────────────
+  const pageCount = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
+  // Clamp if the filtered set shrank under the current page.
+  const safePage = Math.min(page, pageCount);
+  React.useEffect(() => {
+    if (page > pageCount) setPage(pageCount);
+  }, [page, pageCount]);
+  const paged = React.useMemo(
+    () => filtered.slice((safePage - 1) * PAGE_SIZE, safePage * PAGE_SIZE),
+    [filtered, safePage],
+  );
+  const rangeStart = filtered.length === 0 ? 0 : (safePage - 1) * PAGE_SIZE + 1;
+  const rangeEnd = Math.min(safePage * PAGE_SIZE, filtered.length);
+
   // ── Bulk action helpers ───────────────────────────────────────────────
-  const visibleIds = React.useMemo(() => filtered.map((p) => p.id), [filtered]);
+  // Select-all acts on the CURRENT PAGE (what the user can actually see).
+  const visibleIds = React.useMemo(() => paged.map((p) => p.id), [paged]);
   const allVisibleSelected =
     visibleIds.length > 0 && visibleIds.every((id) => selected.has(id));
   const someVisibleSelected =
@@ -426,10 +449,21 @@ export function CompaniesPage({ prospects, icps, initialFilters }: CompaniesPage
             description="Loosen the search or clear filters to see more."
           />
         ) : (
-          <table className="w-full text-left text-sm">
+          <table className="w-full table-fixed text-left text-sm">
+            <colgroup>
+              <col className="w-9" />
+              <col className="w-[24%]" />
+              <col className="w-[12%]" />
+              <col className="w-[12%]" />
+              <col className="w-[16%]" />
+              <col className="w-[6%]" />
+              <col className="w-[14%]" />
+              <col className="w-[8%]" />
+              <col className="w-[8%]" />
+            </colgroup>
             <thead className="sticky top-0 z-10 border-b border-[var(--color-border-subtle)] bg-[var(--color-bg-900)] text-[10px] uppercase tracking-wider text-[var(--color-fg-700)]">
               <tr>
-                <th className="px-3 py-2 font-medium w-9">
+                <th className="px-3 py-2 font-medium">
                   <input
                     type="checkbox"
                     checked={allVisibleSelected}
@@ -452,7 +486,7 @@ export function CompaniesPage({ prospects, icps, initialFilters }: CompaniesPage
               </tr>
             </thead>
             <tbody>
-              {filtered.map((p) => {
+              {paged.map((p) => {
                 const isSelected = selected.has(p.id);
                 return (
                 <tr
@@ -483,10 +517,10 @@ export function CompaniesPage({ prospects, icps, initialFilters }: CompaniesPage
                     />
                   </td>
                   <td className="px-4 py-2">
-                    <div className="flex flex-col">
-                      <span className="flex items-center gap-1.5 text-[var(--color-fg-50)]">
-                        <span aria-hidden>{MARKET_FLAG[p.market]}</span>
-                        <span className="truncate">{p.company_name}</span>
+                    <div className="flex min-w-0 flex-col">
+                      <span className="flex min-w-0 items-center gap-1.5 text-[var(--color-fg-50)]">
+                        <span aria-hidden className="shrink-0">{MARKET_FLAG[p.market]}</span>
+                        <span className="min-w-0 truncate" title={p.company_name}>{p.company_name}</span>
                       </span>
                       {p.domain ? (
                         <a
@@ -515,10 +549,14 @@ export function CompaniesPage({ prospects, icps, initialFilters }: CompaniesPage
                     ) : null}
                   </td>
                   <td className="px-4 py-2 text-[11px] text-[var(--color-fg-300)]">
-                    {p.industry ?? "—"}
+                    <span className="block truncate" title={p.industry ?? undefined}>
+                      {p.industry ?? "—"}
+                    </span>
                   </td>
                   <td className="px-4 py-2 text-[11px] text-[var(--color-fg-500)]">
-                    {[p.city, p.region].filter(Boolean).join(", ") || "—"}
+                    <span className="block truncate">
+                      {[p.city, p.region].filter(Boolean).join(", ") || "—"}
+                    </span>
                   </td>
                   <td className="px-4 py-2">
                     <div className="flex flex-wrap items-center gap-1">
@@ -551,10 +589,14 @@ export function CompaniesPage({ prospects, icps, initialFilters }: CompaniesPage
                     {p.match_score !== null ? p.match_score : "—"}
                   </td>
                   <td className="px-4 py-2 text-[11px] text-[var(--color-fg-500)]">
-                    {p.icp_name ?? "—"}
+                    <span className="block truncate" title={p.icp_name ?? undefined}>
+                      {p.icp_name ?? "—"}
+                    </span>
                   </td>
                   <td className="px-4 py-2 text-[11px] text-[var(--color-fg-500)]">
-                    {p.discovery_source.replace(/_/g, " ")}
+                    <span className="block truncate capitalize">
+                      {p.discovery_source.replace(/_/g, " ")}
+                    </span>
                   </td>
                   <td className="px-4 py-2 text-[11px] text-[var(--color-fg-500)]">
                     {relativeTime(p.created_at)}
@@ -565,6 +607,16 @@ export function CompaniesPage({ prospects, icps, initialFilters }: CompaniesPage
             </tbody>
           </table>
         )}
+        {filtered.length > 0 ? (
+          <Pager
+            page={safePage}
+            pageCount={pageCount}
+            rangeStart={rangeStart}
+            rangeEnd={rangeEnd}
+            total={filtered.length}
+            onPage={setPage}
+          />
+        ) : null}
       </div>
 
       {/* Floating bulk-action bar — appears when ≥1 row is selected */}
@@ -708,6 +760,91 @@ export function CompaniesPage({ prospects, icps, initialFilters }: CompaniesPage
         pending={bulkPending}
         onConfirm={bulkDelete}
       />
+    </div>
+  );
+}
+
+// ── Pager ──────────────────────────────────────────────────────────────────────
+// Windowed page numbers with first/last + ellipsis, e.g. 1 … 4 5 [6] 7 8 … 20.
+function pageWindow(page: number, pageCount: number): (number | "…")[] {
+  if (pageCount <= 7) return Array.from({ length: pageCount }, (_, i) => i + 1);
+  const out: (number | "…")[] = [1];
+  const start = Math.max(2, page - 1);
+  const end = Math.min(pageCount - 1, page + 1);
+  if (start > 2) out.push("…");
+  for (let i = start; i <= end; i++) out.push(i);
+  if (end < pageCount - 1) out.push("…");
+  out.push(pageCount);
+  return out;
+}
+
+function Pager({
+  page,
+  pageCount,
+  rangeStart,
+  rangeEnd,
+  total,
+  onPage,
+}: {
+  page: number;
+  pageCount: number;
+  rangeStart: number;
+  rangeEnd: number;
+  total: number;
+  onPage: (p: number) => void;
+}) {
+  const btn =
+    "grid h-7 min-w-7 place-items-center rounded-[var(--radius-sm)] px-2 text-xs transition-colors disabled:opacity-40 disabled:cursor-not-allowed";
+  return (
+    <div className="flex flex-wrap items-center justify-between gap-3 border-t border-[var(--color-border-subtle)] px-4 py-3">
+      <p className="text-[11px] text-[var(--color-fg-500)]">
+        Showing <span className="text-[var(--color-fg-300)]">{rangeStart}–{rangeEnd}</span> of{" "}
+        <span className="text-[var(--color-fg-300)]">{total}</span>
+      </p>
+      {pageCount > 1 ? (
+        <div className="flex items-center gap-1">
+          <button
+            type="button"
+            className={cn(btn, "text-[var(--color-fg-400)] hover:bg-[var(--color-bg-800)]")}
+            disabled={page <= 1}
+            onClick={() => onPage(page - 1)}
+            aria-label="Previous page"
+          >
+            Prev
+          </button>
+          {pageWindow(page, pageCount).map((p, i) =>
+            p === "…" ? (
+              <span key={`gap-${i}`} className="px-1 text-xs text-[var(--color-fg-700)]">
+                …
+              </span>
+            ) : (
+              <button
+                key={p}
+                type="button"
+                aria-current={p === page ? "page" : undefined}
+                onClick={() => onPage(p)}
+                className={cn(
+                  btn,
+                  p === page
+                    ? "bg-[var(--color-accent-300)] font-medium text-[var(--color-bg-900)]"
+                    : "text-[var(--color-fg-400)] hover:bg-[var(--color-bg-800)]",
+                )}
+              >
+                {p}
+              </button>
+            ),
+          )}
+          <button
+            type="button"
+            className={cn(btn, "text-[var(--color-fg-400)] hover:bg-[var(--color-bg-800)]")}
+            disabled={page >= pageCount}
+            onClick={() => onPage(page + 1)}
+            aria-label="Next page"
+          >
+            Next
+          </button>
+        </div>
+      ) : null}
     </div>
   );
 }
