@@ -482,7 +482,7 @@ PREVIEW TEXT — the 1–2 lines shown under the subject in Gmail/Outlook:
 
 Output the final pitch as a JSON object with EXACTLY these fields:
 {
-  "subject": string,                    // ≤50 chars ideally, max 120, lower case, plain text
+  "subject": string,                    // ≤50 chars ideally, max 120, lower case, plain text, everyday words (NO jargon: no "leads"/"funnel"/"pipeline")
   "preview_text": string,               // 20–150 chars, extends subject, never repeats it
   "body": string,                       // 80–2000 chars, plain text with \\n line breaks, no markdown
   "pain_id": string | null,             // UUID from pain_candidates[].pain_id, or null
@@ -531,8 +531,16 @@ ${register}
   Varía sobre todo la ENTRADA — no empieces todos los CTA igual. Encuentra una forma fresca que vaya
   con este correo, manteniendo el mensaje "lo dicen los datos, no yo; compruébalo tú mismo; gratis; sin compromiso".
   Empieza siempre la línea del CTA con 👉 (se convierte en el botón del correo). Sin video, sin llamada, sin registro.
-- Salutation: "Hola {nombre}," — if no first name, use "Hola equipo de {empresa},"
-  NEVER use "Hola there," — critical failure. If no name at all, use "Hola," alone.
+- Salutation: si address_contact.first_name existe Y se lee como un nombre real de
+  persona, salúdalo POR SU NOMBRE: "Hola {first_name}," (o "Estimado/a {first_name},"
+  en usted). SIEMPRE prefiere el nombre de la persona sobre saludar al "equipo". Usa
+  "Hola equipo de {empresa}," solo cuando first_name es null O parece iniciales/algo
+  ambiguo (p. ej. "Jdoe"). NUNCA "Hola there,". Si no hay nada, "Hola," a secas.
+- JERGA — el ASUNTO y el cuerpo en lenguaje cotidiano que cualquier dueño entienda.
+  NUNCA uses "leads", "funnel", "pipeline", "CRM", "ROI", "conversión". Di "clientes
+  potenciales", "clientes que se te escapan", "solicitudes que no atiendes a tiempo",
+  "oportunidades de venta". Aunque el pain_label traiga jerga (p. ej. "lead process"),
+  NO la copies — tradúcela a cómo lo diría un dueño de negocio normal.
 - One-liner intro (required, step 2 of structure):
   "Pedro de Runna — ayudamos a marcas independientes a crecer sin quemar presupuesto en ads."
   or "Soy Pedro, de Runna — trabajamos con tiendas en línea en exactamente esto."
@@ -548,8 +556,15 @@ Voice rules (Canadian market):
 - FORBIDDEN: "synergy", "best-in-class", "solutions", "thought leader", "circle back".
 - FORBIDDEN openings: "I hope this finds you well", "Quick question", "Just reaching out".
 - Use direct phrasing: "You're losing sales" not "There are conversion optimization opportunities".
-- Salutation: "Hi {first_name}," — if no first name is available, use "Hi {company} team,"
-  NEVER use "Hi there," — it's impersonal and reads as a mass blast.
+- Salutation: if address_contact.first_name exists AND clearly reads as a real given
+  name, greet them BY NAME: "Hi {first_name},". ALWAYS prefer the person's name over
+  greeting the "team". Use "Hi {company} team," only when first_name is null OR looks
+  like initials/ambiguous (e.g. "Jdoe"). NEVER use "Hi there," — it reads as a mass blast.
+- JARGON — keep the SUBJECT and body in plain everyday words anyone understands.
+  Avoid "leads", "funnel", "pipeline", "CRM", "ROI", "conversion". Say "potential
+  customers", "customers slipping through", "enquiries you're not getting to in time",
+  "sales you're losing". Even if pain_label carries jargon (e.g. "lead process"), do
+  NOT copy it — translate it into how a normal business owner would say it.
 - CTA — the Inefficiency Hunter (hunter_url): a free ~30-second self-serve audit, no signup.
   PHILOSOPHY (this is THE message — make it unmistakable): the Inefficiency Hunter is a FREE platform
   where THEY audit their OWN company and see for themselves where it's lacking or could be improved.
@@ -609,6 +624,40 @@ TIER 3 — Name-drop (use only if no Tier 2 match):
 Never invent clients not in these lists.`;
 }
 
+// Generic inbox local-parts that are NOT a person's name — never greet these.
+const GENERIC_LOCALS = new Set([
+  "info", "contacto", "contact", "ventas", "sales", "hola", "hello", "hi",
+  "admin", "soporte", "support", "ayuda", "help", "gerencia", "direccion",
+  "recepcion", "reception", "webmaster", "noreply", "no-reply", "mail",
+  "correo", "citas", "office", "general", "team", "equipo",
+]);
+
+/**
+ * Best-effort first name to greet. Prefers the contact's full_name; otherwise
+ * infers from the email local-part when it cleanly reads as a given name
+ * (miguel@ → "Miguel"), but never for role inboxes (info@, ventas@) or when the
+ * contact is role-based. Returns null when there's no confident name.
+ */
+function firstNameGuess(
+  fullName: string | null,
+  email: string | null,
+  roleBased: boolean,
+): string | null {
+  const cap = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
+  if (fullName && fullName.trim()) {
+    const tok = fullName.trim().split(/\s+/)[0];
+    if (tok && tok.length >= 2) return cap(tok);
+  }
+  if (roleBased || !email) return null;
+  const local = email.split("@")[0]?.toLowerCase() ?? "";
+  const seg = local.split(/[._\-+]/)[0] ?? "";
+  // Only when the first segment is a plausible given name (letters, 3–15 chars).
+  if (seg.length >= 3 && seg.length <= 15 && /^[a-zñáéíóúü]+$/.test(seg) && !GENERIC_LOCALS.has(seg)) {
+    return cap(seg);
+  }
+  return null;
+}
+
 function buildStage2UserPrompt(
   input: GeneratorInputs,
   chosenCases: GeneratorInputCaseStudy[],
@@ -640,6 +689,23 @@ function buildStage2UserPrompt(
       pain_label: p.pain_label,
       evidence_quote: p.evidence_quote,
     })),
+    // The single contact to address, resolved + with a derived first name so the
+    // model greets the decision-maker by name instead of defaulting to "team".
+    address_contact: (() => {
+      const c =
+        input.contacts.find((x) => !x.email_is_role_based && x.full_name) ??
+        input.contacts.find((x) => !x.email_is_role_based) ??
+        input.contacts[0] ??
+        null;
+      if (!c) return null;
+      return {
+        first_name: firstNameGuess(c.full_name, c.email, c.email_is_role_based),
+        full_name: c.full_name,
+        email: c.email,
+        role_title: c.role_title ?? null,
+        role_based: c.email_is_role_based,
+      };
+    })(),
     contacts: input.contacts.map((c) => ({
       full_name: c.full_name,
       email: c.email,
