@@ -10,7 +10,8 @@ import type { CurrentUser } from "@/lib/auth";
 import { createClient } from "@/lib/supabase/server";
 import type { Database } from "@/lib/supabase/types";
 import { composePitchWithClaude } from "./claude-composer";
-import { hunterUrlForLanguage, renderIndustryTemplate } from "./industry-templates";
+import { renderIndustryTemplate } from "./industry-templates";
+import { buildHunterUrlForPitch } from "./hunter-mapping";
 import { hasUsableEmail, isRoleBasedEmail } from "@/lib/research/email-utils";
 import { fetchTopUsableContact } from "@/lib/pitches/contacts";
 import {
@@ -100,6 +101,8 @@ export async function generatePitch(
     employee_size_estimate: number | null;
     city: string | null;
     market: string | null;
+    domain: string | null;
+    website_url: string | null;
   };
   type ResearchRow = {
     pain_points: unknown;
@@ -110,7 +113,7 @@ export async function generatePitch(
   const [{ data: prospect, error: prospectErr }, { data: research }] = await Promise.all([
     supabase
       .from("prospects")
-      .select("id, company_name, industry, language, employee_size_estimate, city, market")
+      .select("id, company_name, industry, language, employee_size_estimate, city, market, domain, website_url")
       .eq("id", parsed.data.prospect_id)
       .eq("tenant_id", user.tenantId)
       .maybeSingle<ProspectRow>(),
@@ -240,6 +243,8 @@ export async function generatePitch(
   const labelOnlyPain =
     !evidencedPain ? pains.find((p) => p.pain_label && p.pain_id) ?? null : null;
   const chosenPainId = (evidencedPain ?? labelOnlyPain)?.pain_id ?? null;
+  // Same chosen pain drives the Hunter handoff (timesink + pinned hero finding).
+  const chosenPainLabel = (evidencedPain ?? labelOnlyPain)?.pain_label ?? null;
 
   // Layer 4: read recent rejection counts per (case_study_id, pain_id) so
   // we can downrank case studies that the team already rejected for this
@@ -297,8 +302,19 @@ export async function generatePitch(
       full_name: user.fullName,
       tenant_display_name: user.tenantDisplayName,
     },
-    // Inefficiency Hunter CTA — language picks the market: en → Canada, es → Mexico.
-    deep_pitch_url: hunterUrlForLanguage(prospect.language),
+    // Inefficiency Hunter CTA — pre-fills the audit + pins the email's hero play.
+    // Derived from the prospect + chosen pain; degrades gracefully on the Hunter
+    // side if any param is missing/unknown.
+    deep_pitch_url: buildHunterUrlForPitch({
+      language: prospect.language,
+      market: prospect.market,
+      industry: prospect.industry,
+      employeeEstimate: prospect.employee_size_estimate,
+      painLabel: chosenPainLabel,
+      techStack: research?.tech_stack ?? [],
+      domain: prospect.domain,
+      websiteUrl: prospect.website_url,
+    }),
   };
 
   // ── PHASE 2: try Claude first, fall back to heuristic ─────────────────
@@ -521,13 +537,14 @@ export async function rewritePitchWithAngle(
   type ProspectRow = {
     id: string; company_name: string; industry: string | null; language: "en" | "es";
     employee_size_estimate: number | null; city: string | null; market: string | null;
+    domain: string | null; website_url: string | null;
   };
   type ResearchRow = { pain_points: unknown; what_they_do: string | null; tech_stack: string[] };
 
   const [{ data: prospect }, { data: research }, { data: contactRows }] = await Promise.all([
     supabase
       .from("prospects")
-      .select("id, company_name, industry, language, employee_size_estimate, city, market")
+      .select("id, company_name, industry, language, employee_size_estimate, city, market, domain, website_url")
       .eq("id", pitch.prospect_id).eq("tenant_id", user.tenantId)
       .maybeSingle<ProspectRow>(),
     supabase
@@ -589,7 +606,17 @@ export async function rewritePitchWithAngle(
     case_studies: chosenCases,
     notable_clients: notableClientRows,
     sender: { full_name: user.fullName, tenant_display_name: user.tenantDisplayName },
-    deep_pitch_url: hunterUrlForLanguage(prospect.language),
+    // Hunter CTA leads with the forced angle's pain as the pinned hero finding.
+    deep_pitch_url: buildHunterUrlForPitch({
+      language: prospect.language,
+      market: prospect.market,
+      industry: prospect.industry,
+      employeeEstimate: prospect.employee_size_estimate,
+      painLabel: parsed.data.pain_label,
+      techStack: research?.tech_stack ?? [],
+      domain: prospect.domain,
+      websiteUrl: prospect.website_url,
+    }),
     forced_angle: {
       pain_label: parsed.data.pain_label,
       pain_id: parsed.data.pain_id,
