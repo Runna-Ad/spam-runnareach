@@ -14,10 +14,7 @@
 import { z } from "zod";
 import {
   ANTHROPIC_DEFAULT_MODEL,
-  ANTHROPIC_HAIKU_MODEL,
   structuredCall,
-  computeCostUsd,
-  getClient,
   type ClaudeUsage,
 } from "../anthropic/client.ts";
 import { RUNNA_CAPABILITIES } from "../runna/capabilities.ts";
@@ -82,21 +79,6 @@ function addUsage(a: ClaudeUsage, b: ClaudeUsage): ClaudeUsage {
     cache_read_input_tokens: a.cache_read_input_tokens + b.cache_read_input_tokens,
     cache_creation_input_tokens: a.cache_creation_input_tokens + b.cache_creation_input_tokens,
     cost_usd: Math.round((a.cost_usd + b.cost_usd) * 1_000_000) / 1_000_000,
-  };
-}
-
-function usageFromResponse(
-  model: string,
-  u: { input_tokens: number; output_tokens: number; cache_read_input_tokens?: number | null; cache_creation_input_tokens?: number | null },
-): ClaudeUsage {
-  const input = u.input_tokens;
-  const output = u.output_tokens;
-  return {
-    input_tokens: input,
-    output_tokens: output,
-    cache_read_input_tokens: u.cache_read_input_tokens ?? 0,
-    cache_creation_input_tokens: u.cache_creation_input_tokens ?? 0,
-    cost_usd: computeCostUsd(model, input, output),
   };
 }
 
@@ -276,54 +258,19 @@ async function stage1MatchCredibility(
   }
 
   if (eligible.length === 0) return { cases: [], usage: { ...ZERO_USAGE } };
-  if (eligible.length <= 2) return { cases: eligible, usage: { ...ZERO_USAGE } };
 
-  // 3+ candidates — LLM tie-breaker via Haiku
-  const systemPrompt = `You pick the best 1-2 case studies for a cold pitch.
-
-RULES:
-- Pick case studies that match the prospect's SCALE and INDUSTRY.
-- Smaller / more relatable wins over bigger / more impressive.
-- Output ONLY a JSON array of case study IDs: ["id1", "id2"]
-- Maximum 2 IDs. Minimum 1. No explanation.`;
-
-  const userPrompt = `Prospect: ${input.prospect.company_name}
-Industry: ${input.prospect.industry ?? "unknown"}
-Size: ${size}
-
-Available case studies:
-${eligible.map((c) => `- ${c.id}: ${c.client_name} (${c.tier}, ${c.industry ?? "n/a"})`).join("\n")}
-
-Pick the best 1-2 IDs as JSON array.`;
-
-  const client = getClient();
-  let response: Awaited<ReturnType<typeof client.messages.create>>;
-  try {
-    response = await client.messages.create({
-      model: ANTHROPIC_HAIKU_MODEL,
-      max_tokens: 100,
-      system: systemPrompt,
-      messages: [{ role: "user", content: userPrompt }],
-    });
-  } catch {
-    return { cases: eligible.slice(0, 2), usage: { ...ZERO_USAGE } };
-  }
-
-  const textBlock = response.content.find((b) => b.type === "text");
-  const usage = usageFromResponse(ANTHROPIC_HAIKU_MODEL, response.usage);
-
-  if (!textBlock || textBlock.type !== "text") {
-    return { cases: eligible.slice(0, 2), usage };
-  }
-
-  try {
-    const raw = textBlock.text.trim().replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/i, "");
-    const ids = JSON.parse(raw) as string[];
-    const picked = eligible.filter((c) => ids.includes(c.id));
-    return { cases: picked.length > 0 ? picked.slice(0, 2) : eligible.slice(0, 2), usage };
-  } catch {
-    return { cases: eligible.slice(0, 2), usage };
-  }
+  // Cases are now a RARE garnish — the composer defaults to capability-led and
+  // only cites a case on a perfect (solution + segment + strong-metric) match.
+  // So ranking candidates with a per-pitch Haiku call is wasted cost: pick the 2
+  // strongest deterministically (a real measurable result first, then pain
+  // strength) and let the composer decide whether either clears the bar.
+  const ranked = [...eligible].sort((a, b) => {
+    const am = a.measurable_results ? 1 : 0;
+    const bm = b.measurable_results ? 1 : 0;
+    if (am !== bm) return bm - am;
+    return (b.pain_strength ?? 0) - (a.pain_strength ?? 0);
+  });
+  return { cases: ranked.slice(0, 2), usage: { ...ZERO_USAGE } };
 }
 
 // ── Stage 3 helpers ───────────────────────────────────────────────────────────
@@ -363,6 +310,8 @@ from the audit. Describe the BUSINESS CONSEQUENCE in plain language.
 Wrong: 'Vi "Outdated website — no e-commerce functionality..."'
 Right (ES): "Revisé [company].com — sin checkout, sin ficha de producto real."
 Right (EN): "Checked [company].com — no product pages, no checkout path."
+
+⚙️ THE ENGINE OF EVERY PITCH (what the email is actually built on): their RESEARCHED pain (industry + what_they_do + tech_stack + evidence) → the specific RUNNA SERVICE that fixes it → the concrete OUTCOME for them (more revenue, hours saved, faster, less leaking). That pain→service→outcome chain IS the pitch. Use industry BENCHMARKS for any numbers (e.g. "firms that automate first contact recover 20-30% more enquiries") — never a fabricated client metric. Case studies do NOT drive or shape the email; the pitch must stand fully on its own without one (it usually will).
 
 REQUIRED EMAIL STRUCTURE — follow this exactly, no additions, no reordering:
 1. Salutation (see voice rules for format)
@@ -419,10 +368,10 @@ exactly what I need." Generic = fail. Specific, data-backed, tailored = win.
 Language: ${langName}.
 IMPORTANT: Write the ENTIRE email in ${langName}. Do not mix languages.
 
-Case-study selection rules — be honest, don't force a connection:
-1. The chosen_cases payload already pre-filtered by prospect size — only pick from those.
-2. A packaging-design case is NOT a match for a social-media pain. Activity must match.
-3. If no chosen_case clearly addresses the prospect's pain, set case_study_id=null.
+Case-study selection rules — DEFAULT is case_study_id=null. Don't force a connection:
+1. The chosen_cases payload is just a pre-filtered shortlist — it does NOT mean you should use one. Most pitches use NONE.
+2. The case's WORK must be the same kind as the solution you're pitching (a packaging case is NOT a match for a social-media pain; a paid-ads case is NOT a match for an AI-chatbot pitch). Same industry is not a match. The metric must also be genuinely strong.
+3. If no chosen_case is a near-perfect match on BOTH work and strength, set case_study_id=null and don't mention any case. The pain→service→outcome pitch stands on its own.
 4. pain_id and case_study_id MUST come from the candidates in the payload. No invented UUIDs.
 
 SUBJECT LINE — there are exactly 5 engines that get cold emails opened. Use one:
