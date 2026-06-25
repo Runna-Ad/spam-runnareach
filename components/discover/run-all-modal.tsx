@@ -523,6 +523,7 @@ const PHASE_LABEL: Record<string, string> = {
   discovering: "Discovering across all sources…",
   pipeline: "Scraping, researching, scoring & triaging…",
   pruning: "Keeping the strongest prospects…",
+  pitching: "Writing pitches for the top prospects…",
 };
 
 function RunningStep({ job }: { job: DiscoveryJob | null }) {
@@ -559,11 +560,11 @@ function RunningStep({ job }: { job: DiscoveryJob | null }) {
         </p>
       )}
 
-      {/* Pipeline progress */}
-      {(phase === "pipeline" || phase === "pruning") && total > 0 && (
+      {/* Pipeline / pitching progress */}
+      {(phase === "pipeline" || phase === "pruning" || phase === "pitching") && total > 0 && (
         <div className="flex flex-col gap-2">
           <div className="flex items-center justify-between text-xs text-[var(--color-fg-400)]">
-            <span>Processing prospects</span>
+            <span>{phase === "pitching" ? "Writing pitches" : "Processing prospects"}</span>
             <span>{done} / {total}</span>
           </div>
           <div className="h-1.5 w-full rounded-full bg-[var(--color-bg-900)] overflow-hidden">

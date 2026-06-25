@@ -33,7 +33,11 @@ import {
   type ProspectOutcome,
 } from "@/lib/discover/pipeline-action";
 import { triggerNextSlice } from "@/lib/discover/job-trigger";
+import { generatePitch } from "@/lib/pitches/actions";
 import { EMPTY_JOB_STATS, type DiscoveryJobStats } from "@/lib/discover/job-types";
+
+// Prospects in these states are not pitch-eligible in the pitching phase.
+const NON_PITCHABLE = ["suppressed", "no_match", "booked", "won", "lost"];
 
 const PIPELINE_CAP = 50; // matches the prior client-side cap
 
@@ -247,12 +251,89 @@ export async function POST(req: NextRequest) {
         ...stats,
         ...(prune.ok ? { pruned_kept: prune.kept, pruned_deleted: prune.deleted } : {}),
       };
+
+      // Hand off to the PITCHING phase: high-scorers (>=70) that survived the
+      // prune but never got a pitch (their pipeline slice ran out of time before
+      // the in-slice pitch step). Reuse the cursor machinery — store the pending
+      // ids as the work list so the pitching phase is identical in shape to the
+      // pipeline (optimistic advance, time budget).
+      const { data: highScorers } = await supabase
+        .from("prospects")
+        .select("id, status")
+        .in("id", ids)
+        .eq("tenant_id", user.tenantId)
+        .gte("match_score", 70);
+      const eligible = ((highScorers ?? []) as Array<{ id: string; status: string }>)
+        .filter((p) => !NON_PITCHABLE.includes(p.status))
+        .map((p) => p.id);
+
+      let pending: string[] = [];
+      if (eligible.length > 0) {
+        const { data: pitchRows } = await supabase
+          .from("pitches")
+          .select("prospect_id")
+          .in("prospect_id", eligible)
+          .eq("tenant_id", user.tenantId);
+        const pitched = new Set((pitchRows ?? []).map((r: { prospect_id: string }) => r.prospect_id));
+        pending = eligible.filter((id) => !pitched.has(id));
+      }
+
+      if (pending.length === 0) {
+        await patchJob(supabase, job.id, {
+          status: "done",
+          stats: nextStats,
+          completed_at: new Date().toISOString(),
+        });
+        return NextResponse.json({ ok: true, done: true });
+      }
+
       await patchJob(supabase, job.id, {
-        status: "done",
+        phase: "pitching",
+        cursor: 0,
+        prospect_ids: pending,
         stats: nextStats,
-        completed_at: new Date().toISOString(),
       });
-      return NextResponse.json({ ok: true, done: true });
+      after(() => triggerNextSlice(job.id, cookieHeader, origin));
+      return NextResponse.json({ ok: true, phase: "pitching", pending: pending.length });
+    }
+
+    // ── Phase: pitching (time-budgeted; catches high-scorers the pipeline cut) ─
+    if (job.phase === "pitching") {
+      const ids = job.prospect_ids ?? [];
+      const startedAt = Date.now();
+      let cursor = job.cursor;
+
+      while (cursor < ids.length) {
+        const remaining = HARD_CAP_MS - (Date.now() - startedAt);
+        if (remaining < MIN_START_REMAINING_MS) break;
+
+        const id = ids[cursor]!;
+        cursor += 1;
+        await patchJob(supabase, job.id, { cursor, stats }); // optimistic advance
+
+        const budget = Math.min(PER_PROSPECT_MAX_MS, remaining - 10_000);
+        try {
+          const r = await Promise.race([
+            generatePitch(id),
+            new Promise<never>((_, reject) =>
+              setTimeout(() => reject(new Error("pitch-timeout")), budget),
+            ),
+          ]);
+          if (r && r.ok) stats.pitched += 1;
+        } catch {
+          // timed out / failed (e.g. no usable contact) — already skipped via advance
+        }
+        await patchJob(supabase, job.id, { stats });
+      }
+
+      const moreToProcess = cursor < ids.length;
+      await patchJob(supabase, job.id, {
+        cursor,
+        stats,
+        ...(moreToProcess ? {} : { status: "done", completed_at: new Date().toISOString() }),
+      });
+      if (moreToProcess) after(() => triggerNextSlice(job.id, cookieHeader, origin));
+      return NextResponse.json({ ok: true, phase: moreToProcess ? "pitching" : "done", cursor });
     }
 
     return NextResponse.json({ ok: false, error: `Unknown phase: ${job.phase}` }, { status: 500 });

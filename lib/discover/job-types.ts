@@ -5,7 +5,7 @@
  */
 
 export type DiscoveryJobStatus = "running" | "cancelled" | "done" | "failed";
-export type DiscoveryJobPhase = "discovering" | "pipeline" | "pruning";
+export type DiscoveryJobPhase = "discovering" | "pipeline" | "pruning" | "pitching";
 
 /** Aggregate counters + per-outcome tallies, persisted on discovery_jobs.stats. */
 export type DiscoveryJobStats = {
