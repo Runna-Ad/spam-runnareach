@@ -42,9 +42,10 @@ const PIPELINE_CAP = 50; // matches the prior client-side cap
 // out of budget, then hand off. A fresh slice has ~110s; we stop starting new
 // prospects when less than MIN_START_REMAINING is left, and cap each prospect so
 // it can never run the function past the limit.
-const HARD_CAP_MS = 110_000; // stay safely under the 120s maxDuration
-const MIN_START_REMAINING_MS = 45_000; // don't begin a prospect we can't finish
-const PER_PROSPECT_MAX_MS = 95_000; // upper bound for one prospect
+const HARD_CAP_MS = 100_000; // stop STARTING prospects past this (well under 120s)
+const MIN_START_REMAINING_MS = 50_000; // don't begin a prospect we can't finish
+const PER_PROSPECT_MAX_MS = 70_000; // hard upper bound for one prospect, so the
+// function returns with plenty of headroom for after()/the next trigger to fire.
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type AnySupabase = any;
@@ -187,17 +188,23 @@ export async function POST(req: NextRequest) {
       const startedAt = Date.now();
       let cursor = job.cursor;
 
-      // Process prospects until we run low on budget. Persist cursor + heartbeat
-      // after EACH prospect so progress survives a crash and the watchdog sees
-      // life. Each prospect is raced against a timeout so one poison/slow prospect
-      // can never run the function past the cap (it's skipped as an error, never
-      // an infinite re-kick loop).
+      // Process prospects until we run low on budget. The cursor is advanced +
+      // persisted BEFORE the slow work (optimistic advance) so that if a single
+      // "poison" prospect hangs and its orphaned async work keeps the function
+      // alive until Vercel kills it at maxDuration, the cursor is already past it
+      // — the next slice (or the watchdog) skips it instead of retrying the same
+      // prospect forever. Each prospect is also raced against a timeout so the
+      // common slow case returns cleanly without hitting the cap at all.
       while (cursor < ids.length) {
         const remaining = HARD_CAP_MS - (Date.now() - startedAt);
         if (remaining < MIN_START_REMAINING_MS) break;
 
         const id = ids[cursor]!;
-        const budget = Math.min(PER_PROSPECT_MAX_MS, remaining - 5_000);
+        cursor += 1;
+        // Commit the advance + bump the heartbeat up front.
+        await patchJob(supabase, job.id, { cursor, stats });
+
+        const budget = Math.min(PER_PROSPECT_MAX_MS, remaining - 10_000);
         let outcome: ProspectOutcome = "error";
         try {
           const r = await Promise.race([
@@ -208,7 +215,7 @@ export async function POST(req: NextRequest) {
           ]);
           outcome = r.outcome;
         } catch {
-          outcome = "error"; // timed out or threw — skip, don't block the job
+          outcome = "error"; // timed out or threw — already skipped via the advance
         }
 
         if (outcome === "pitched") stats.pitched += 1;
@@ -217,9 +224,7 @@ export async function POST(req: NextRequest) {
         else if (outcome === "suppressed") stats.suppressed += 1;
         else stats.error_count += 1;
 
-        cursor += 1;
-        // Persist after each prospect (advances cursor + bumps heartbeat).
-        await patchJob(supabase, job.id, { cursor, stats });
+        await patchJob(supabase, job.id, { stats });
       }
 
       const moreToProcess = cursor < ids.length;
