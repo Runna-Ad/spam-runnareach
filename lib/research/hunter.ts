@@ -55,7 +55,7 @@ export async function hunterDomainSearch(domain: string): Promise<HunterDomainRe
         if (r.status === 429 || r.status >= 500) throw new Error(`Hunter HTTP ${r.status}`);
         return r;
       },
-      { retries: 2, minTimeout: 1000, factor: 2 },
+      { retries: 1, minTimeout: 1000, factor: 2 },
     );
   } catch (err) {
     return { ok: false, error: `Network error: ${err instanceof Error ? err.message : String(err)}` };

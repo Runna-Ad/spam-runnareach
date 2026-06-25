@@ -42,10 +42,12 @@ const PIPELINE_CAP = 50; // matches the prior client-side cap
 // out of budget, then hand off. A fresh slice has ~110s; we stop starting new
 // prospects when less than MIN_START_REMAINING is left, and cap each prospect so
 // it can never run the function past the limit.
-const HARD_CAP_MS = 100_000; // stop STARTING prospects past this (well under 120s)
-const MIN_START_REMAINING_MS = 50_000; // don't begin a prospect we can't finish
-const PER_PROSPECT_MAX_MS = 70_000; // hard upper bound for one prospect, so the
-// function returns with plenty of headroom for after()/the next trigger to fire.
+const HARD_CAP_MS = 105_000; // stop STARTING prospects past this (under 120s)
+const MIN_START_REMAINING_MS = 55_000; // don't begin a prospect we can't finish
+const PER_PROSPECT_MAX_MS = 95_000; // hard upper bound for one prospect — enough
+// for a high-scorer that also enriches (now bounded ~25s for anymail + ~17s hunter)
+// so the best prospects COMPLETE instead of being skipped; optimistic advance makes
+// an occasional overrun safe (the cursor is already past it).
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type AnySupabase = any;

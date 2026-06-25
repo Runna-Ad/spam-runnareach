@@ -58,7 +58,9 @@ export async function anymailFindDecisionMaker(domain: string): Promise<AnymailR
             domain: clean,
             decision_maker_category: DECISION_MAKER_CATEGORIES,
           }),
-          signal: AbortSignal.timeout(30_000),
+          // 12s per attempt (was 30s) — combined with 1 retry this bounds the
+          // call to ~25s worst case so it can't blow a pipeline slice's budget.
+          signal: AbortSignal.timeout(12_000),
         });
         // Don't retry on definitive soft failures
         if (r.status === 404 || r.status === 402) return r;
@@ -66,7 +68,7 @@ export async function anymailFindDecisionMaker(domain: string): Promise<AnymailR
         if (r.status >= 500) throw new Error(`Anymail Finder server error ${r.status}`);
         return r;
       },
-      { retries: 2, minTimeout: 800, factor: 2 },
+      { retries: 1, minTimeout: 800, factor: 2 },
     );
   } catch (err) {
     return {

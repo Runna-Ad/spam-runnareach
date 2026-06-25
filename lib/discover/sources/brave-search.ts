@@ -73,6 +73,9 @@ export async function searchBrave(
         "Accept-Encoding": "gzip",
         "X-Subscription-Token": apiKey,
       },
+      // Hard timeout — an unbounded Brave fetch can hang a pipeline slice past
+      // the serverless cap. Abort and let the caller fall back.
+      signal: AbortSignal.timeout(8_000),
     });
 
     if (res.status === 429) {

@@ -4,6 +4,14 @@ Running log of mistakes, root causes, and rules to prevent recurrence. Newest at
 
 ---
 
+[2026-06-25] FIX (proactive): bound the slow per-prospect ops so high-scorers complete instead of getting skipped/504'd
+CONTEXT: after the optimistic-advance fix stopped the infinite stall, the remaining issue was WHY a prospect takes >70s. Audited every fetch in the pipeline: most already had AbortController/AbortSignal timeouts, but two real offenders: (1) lib/discover/sources/brave-search.ts had a fetch with NO timeout (truly unbounded — used by discoverWebsiteViaBrave for no-website prospects); (2) lib/research/anymail-finder.ts = 30s timeout × pRetry{retries:2} ≈ 90s worst-case for ONE call, and hunter.ts pRetry{retries:2} ≈ 27s. On a high-scoring prospect these run AFTER scrape(~30s)+research(20s)+score(20s), so the total blew past the 70s per-prospect race budget → the BEST prospects (the ones that enrich) were the ones getting skipped/504'd. (Claude calls were already safe: DEFAULT_MAX_RETRIES=0, 20s each.)
+FIX: brave-search → AbortSignal.timeout(8s). anymail → 30s→12s timeout + retries 2→1 (~25s worst). hunter → retries 2→1 (~17s worst). Then RAISED the worker per-prospect budget 70s→95s (HARD_CAP 105s, MIN_START 55s) so an enriching high-scorer now fits and COMPLETES; optimistic advance keeps an occasional overrun safe.
+RULE: "it has a timeout" isn't enough — audit the CUMULATIVE worst case: per-attempt timeout × retry count, summed across all sequential ops in the unit of work, must fit the function cap. A 30s×3-retry call hidden behind pRetry is a 90s hang. Size retries+timeouts to the slice budget, and make sure the budget is big enough for the EXPENSIVE path (enrichment), not just the cheap one, or you silently skip your best items.
+TAGS: #fix #prod #discovery #timeouts #abortcontroller #pretry #cumulative-budget #enrichment
+STATUS: built, typecheck+lint clean; deploying.
+---
+
 [2026-06-25] FIX: pipeline STILL stalled (now at 5) even with time-budgeted slices — poison prospect + a function kill that lost the cursor advance
 SYMPTOM (Pedro, PROD): re-ran on the time-budget code, stuck at 5/N. Logs: POST /api/discover/run hit "Vercel Runtime Timeout Error" (killed at 120s).
 ROOT CAUSE: a single "poison" prospect (processSingleProspect has an unbounded internal op — a scrape fetch / Claude call with no hard timeout) hangs. My per-prospect Promise.race rejects at ~95s so we LOGICALLY move on, but the orphaned async work keeps the Node function alive, Vercel kills it at the 120s maxDuration BEFORE the cursor++ patchJob persists. The watchdog re-kicks → cursor still points at the same poison prospect → same hang → killed again → infinite stall. A Promise.race timeout does NOT cancel the underlying work, so it can't free a serverless function from a true hang.
