@@ -432,6 +432,20 @@ export function detectTechStack(html: string, $: cheerio.CheerioAPI): string[] {
 
 const EMAIL_REGEX = /\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b/g;
 
+// Messy HTML often glues a phone number to an email ("Tel: 2266.8020carmen@x.com")
+// and the regex swallows it into the local-part. Strip a leading run of digits +
+// phone separators (>= 6 digits) that sits immediately before the real name.
+function stripLeadingPhonePrefix(email: string): string {
+  const at = email.indexOf("@");
+  if (at <= 0) return email;
+  const local = email.slice(0, at);
+  const m = local.match(/^[\d.\-\s()]+(?=[A-Za-z])/);
+  if (m && (m[0].match(/\d/g) ?? []).length >= 6) {
+    return email.slice(m[0].length);
+  }
+  return email;
+}
+
 function extractContactEmails(html: string, $: cheerio.CheerioAPI): string[] {
   const found = new Set<string>();
 
@@ -446,7 +460,7 @@ function extractContactEmails(html: string, $: cheerio.CheerioAPI): string[] {
   const visibleText = $("body").text();
   const matches = visibleText.match(EMAIL_REGEX) ?? [];
   for (const raw of matches) {
-    const email = raw.toLowerCase();
+    const email = stripLeadingPhonePrefix(raw.toLowerCase());
     if (isValidEmail(email)) found.add(email);
   }
 

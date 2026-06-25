@@ -330,18 +330,32 @@ export async function upsertManualContact(
 
   const manualEmail = parsed.data.email.toLowerCase();
   const manualRoleBased = isRoleBasedEmail(manualEmail);
+  // priority_rank 0 = a human's explicit choice ALWAYS wins over auto-scraped/
+  // enriched contacts (which start at 1+). pickTopUsableContact sorts ascending,
+  // so the manual email becomes the one the pitch uses.
   const { error } = await supabase.from("prospect_contacts").insert({
     tenant_id: user.tenantId,
     prospect_id: parsed.data.prospect_id,
     email: manualEmail,
     email_is_role_based: manualRoleBased,
-    priority_rank: manualRoleBased ? 5 : 1,
+    priority_rank: 0,
     selected_by: "manual",
     selected_at: new Date().toISOString(),
   });
 
-  if (error && error.code !== "23505") {
-    return { ok: false, error: `Could not save contact: ${error.message}` };
+  if (error) {
+    if (error.code === "23505") {
+      // Email already exists for this prospect — promote it to top priority so a
+      // re-entered email still becomes the selected contact.
+      await supabase
+        .from("prospect_contacts")
+        .update({ priority_rank: 0, selected_by: "manual", email_is_role_based: manualRoleBased })
+        .eq("tenant_id", user.tenantId)
+        .eq("prospect_id", parsed.data.prospect_id)
+        .eq("email", manualEmail);
+    } else {
+      return { ok: false, error: `Could not save contact: ${error.message}` };
+    }
   }
 
   await writeAuditLog({
