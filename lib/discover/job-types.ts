@@ -22,6 +22,9 @@ export type DiscoveryJobStats = {
   // prune summary
   pruned_kept?: number;
   pruned_deleted?: number;
+  // true for a manual "run these specific prospects" job — skip the top-30 prune
+  // (the user hand-picked them; don't delete any).
+  skip_prune?: boolean;
 };
 
 export type DiscoveryJob = {

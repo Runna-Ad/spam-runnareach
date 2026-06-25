@@ -12,7 +12,8 @@ import { EmptyState } from "@/components/ui/empty-state";
 import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
-import { bulkDeleteProspects, bulkGeneratePitches, bulkRunPipeline, bulkScoreProspects, bulkTransitionStatus } from "@/lib/discover/bulk-actions";
+import { bulkDeleteProspects, bulkGeneratePitches, bulkScoreProspects, bulkTransitionStatus } from "@/lib/discover/bulk-actions";
+import { startPipelineJobForProspects } from "@/lib/discover/job-actions";
 import type { Prospect } from "@/lib/discover/prospects-queries";
 import { useDebounce } from "@/lib/hooks";
 import { cn, relativeTime } from "@/lib/utils";
@@ -251,22 +252,22 @@ export function CompaniesPage({ prospects, icps, initialFilters }: CompaniesPage
 
   const bulkPipeline = () => {
     if (selected.size === 0) return;
-    if (selected.size > 20) {
-      setBulkToast({ tone: "warn", text: "Pipeline caps at 20 prospects per batch." });
+    if (selected.size > 50) {
+      setBulkToast({ tone: "warn", text: "Pipeline caps at 50 prospects per batch." });
       return;
     }
     setBulkToast(null);
     const ids = Array.from(selected);
     startBulk(async () => {
-      const res = await bulkRunPipeline({ prospect_ids: ids });
+      // Runs server-side as a background job (time-budgeted, no 504) instead of
+      // synchronously. Returns immediately; rows update as it processes.
+      const res = await startPipelineJobForProspects(ids);
       if (res.ok) {
-        const detail = res.failed > 0 ? ` (${res.failed} failed${res.details ? ` — ${res.details}` : ""})` : "";
         setBulkToast({
-          tone: res.failed > 0 ? "warn" : "ok",
-          text: `Pipeline complete: ${res.affected} processed${detail}`,
+          tone: "ok",
+          text: `Processing ${ids.length} prospect${ids.length === 1 ? "" : "s"} in the background — refresh in a bit to see results.`,
         });
         setSelected(new Set());
-        router.refresh();
       } else {
         setBulkToast({ tone: "warn", text: res.error });
       }

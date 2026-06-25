@@ -187,6 +187,51 @@ export async function resumeDiscoveryJob(
   return { ok: true, resumed: true };
 }
 
+/**
+ * Start a background pipeline job over a HAND-PICKED set of prospects (the
+ * /companies "Run pipeline" bulk action). Runs server-side through the same
+ * self-chaining worker (time-budgeted, crash-safe) instead of a synchronous
+ * server action that 504s on more than a couple of prospects. Skips the top-30
+ * prune (the user chose these on purpose). Returns immediately with the jobId.
+ */
+export async function startPipelineJobForProspects(
+  prospectIds: string[],
+): Promise<{ ok: true; jobId: string } | { ok: false; error: string }> {
+  const ids = z.array(z.string().uuid()).min(1).max(50).safeParse(prospectIds);
+  if (!ids.success) return { ok: false, error: "Select 1-50 prospects." };
+
+  const user = await requireUser();
+  if (user.role === "viewer") return { ok: false, error: "Viewers cannot run the pipeline." };
+
+  const supabase = await createClient();
+  const { data, error } = await supabase
+    .from("discovery_jobs")
+    .insert({
+      tenant_id: user.tenantId,
+      icp_id: null,
+      created_by: user.id,
+      status: "running",
+      phase: "pipeline",
+      cursor: 0,
+      prospect_ids: ids.data,
+      stats: { ...EMPTY_JOB_STATS, skip_prune: true },
+    } as never)
+    .select("id")
+    .single<{ id: string }>();
+
+  if (error || !data) return { ok: false, error: error?.message ?? "Could not start the job." };
+
+  const cookieHeader = await currentCookieHeader();
+  const origin = originFromHeaders(await headers());
+  if (!origin) return { ok: false, error: "Could not resolve request origin." };
+  const jobId = data.id;
+  after(async () => {
+    await triggerNextSlice(jobId, cookieHeader, origin);
+  });
+
+  return { ok: true, jobId };
+}
+
 export async function cancelDiscoveryJob(
   jobId: string,
 ): Promise<{ ok: true } | { ok: false; error: string }> {

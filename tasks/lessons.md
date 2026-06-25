@@ -4,6 +4,15 @@ Running log of mistakes, root causes, and rules to prevent recurrence. Newest at
 
 ---
 
+[2026-06-25] FIX: /companies "Run pipeline" bulk action 504'd + crashed the page (client-side exception)
+SYMPTOM (Pedro): selected raw prospects on /companies → Run pipeline → "Application error: a client-side exception has occurred", console showed 504 on the page server-action + "An unexpected response was received from the server" at fetchServerAction.
+ROOT CAUSE: bulkRunPipeline (lib/discover/bulk-actions.ts) ran `Promise.all(prospect_ids.map(processSingleProspect))` SYNCHRONOUSLY inside one server action. Server actions run under the page function's maxDuration (app/** = 60s), and each processSingleProspect is 30-90s — so >1 prospect blows the cap → 504 → the RSC fetch throws → React unmounts to the error boundary ("client-side exception"). Exact same class as the discovery "Run All" 504 we already moved to a background job; this path was missed.
+FIX: route it through the SAME background discovery_jobs worker. New startPipelineJobForProspects(ids) creates a job (phase=pipeline, prospect_ids=selected, stats.skip_prune=true, icp_id=null) and kicks the self-chaining worker; returns instantly. The worker's pruning phase now skips pruneRunToTop30 when stats.skip_prune (hand-picked prospects must not be deleted), then the pitching phase pitches the >=70 ones. /companies shows a "processing N in the background, refresh in a bit" toast (fire-and-forget; no progress bar there). Cap raised 20→50.
+RULE: NEVER fan out N slow operations (each tens of seconds) inside a single server action / request — it WILL 504 once N×cost exceeds maxDuration, and a 504 on a server action crashes the whole page to the error boundary, not a graceful inline error. Any "run/process these N" button must hand off to a background job (persisted row + self-chaining time-budgeted worker), the same pattern as discovery. Audit for other synchronous Promise.all-over-heavy-work actions.
+TAGS: #fix #prod #504 #server-action #background-job #companies #bulk #maxduration
+STATUS: built, typecheck+lint clean; deploying.
+---
+
 [2026-06-25] FIX: pitch bridged a MISMATCHED + weak success case (Meta-ads result onto an AI-chatbot pitch)
 SYMPTOM (Pedro, M&H Abogados): pitch offered an AI chatbot to qualify leads, but the proof line cited Blues Real "ran Meta ads, ~1000 clicks/month" — a DIFFERENT service (paid ads) bridged onto the chatbot solution, and a weak metric. Pedro: "doesn't make sense, and it's a weak case anyway — the pitch without that section is very strong." (Recurring: we already set capability-first positioning, but the case bar was too low.)
 ROOT CAUSE: composer step 5(a) only required "a chosen case_study_id + any metric." Stage-1 credibility match selects cases by INDUSTRY + TIER (so a professional-services case is offered for a law firm regardless of what work it was), and the composer was allowed to bridge it as long as it had a number. Nothing required the case's WORK to match the SOLUTION being pitched. Same-industry ≠ same-solution.

@@ -246,7 +246,11 @@ export async function POST(req: NextRequest) {
     // ── Phase: pruning ──────────────────────────────────────────────────────
     if (job.phase === "pruning") {
       const ids = job.prospect_ids ?? [];
-      const prune = await pruneRunToTop30(ids);
+      // Manual "run these specific prospects" jobs skip the top-30 prune — the
+      // user hand-picked them; don't delete any.
+      const prune = stats.skip_prune
+        ? ({ ok: true as const, kept: ids.length, deleted: 0 })
+        : await pruneRunToTop30(ids);
       const nextStats: DiscoveryJobStats = {
         ...stats,
         ...(prune.ok ? { pruned_kept: prune.kept, pruned_deleted: prune.deleted } : {}),
