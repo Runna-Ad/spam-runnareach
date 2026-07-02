@@ -35,7 +35,7 @@
     },
     {
       "path": "/api/discover/janitor",
-      "schedule": "0 7 * * *"
+      "schedule": "*/5 * * * *"
     },
     {
       "path": "/api/warmup/engine",

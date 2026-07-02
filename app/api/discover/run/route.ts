@@ -53,6 +53,15 @@ const PER_PROSPECT_MAX_MS = 95_000; // hard upper bound for one prospect — eno
 // so the best prospects COMPLETE instead of being skipped; optimistic advance makes
 // an occasional overrun safe (the cursor is already past it).
 
+// Process this many prospects CONCURRENTLY per batch. Each prospect is I/O-bound
+// (scrape, Brave, Claude, Hunter — mostly waiting on the network), so a batch's
+// wall-clock ≈ the slowest single prospect, not the sum. This turns ~1 prospect
+// per slice into ~4, cutting a 50-prospect run from ~60min to ~15-20min WITHOUT
+// reducing per-prospect depth: every prospect still runs the identical full chain.
+// Bounded so parallel external calls don't burst past provider rate limits (Brave
+// is additionally serialized by a throttle in brave-search.ts).
+const PIPELINE_CONCURRENCY = 4;
+
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type AnySupabase = any;
 
@@ -71,6 +80,16 @@ async function patchJob(supabase: AnySupabase, jobId: string, patch: Record<stri
   await supabase
     .from("discovery_jobs")
     .update({ ...patch, heartbeat_at: new Date().toISOString() })
+    .eq("id", jobId);
+}
+
+// Heartbeat-only bump — safe to race (last-write-wins on a timestamp, no stats
+// clobber). Called as each prospect in a concurrent batch settles so a long batch
+// keeps the heartbeat fresh and the watchdog never falsely resumes a live slice.
+async function bumpHeartbeat(supabase: AnySupabase, jobId: string) {
+  await supabase
+    .from("discovery_jobs")
+    .update({ heartbeat_at: new Date().toISOString() })
     .eq("id", jobId);
 }
 
@@ -194,41 +213,50 @@ export async function POST(req: NextRequest) {
       const startedAt = Date.now();
       let cursor = job.cursor;
 
-      // Process prospects until we run low on budget. The cursor is advanced +
-      // persisted BEFORE the slow work (optimistic advance) so that if a single
-      // "poison" prospect hangs and its orphaned async work keeps the function
-      // alive until Vercel kills it at maxDuration, the cursor is already past it
-      // — the next slice (or the watchdog) skips it instead of retrying the same
-      // prospect forever. Each prospect is also raced against a timeout so the
+      // Process prospects in concurrency-bounded BATCHES until we run low on
+      // budget. The cursor is advanced + persisted BEFORE the slow work (optimistic
+      // advance) so that if a batch hangs and its orphaned async work keeps the
+      // function alive until Vercel kills it at maxDuration, the cursor is already
+      // past it — the next slice (or the watchdog) skips it instead of retrying the
+      // same prospects forever. Each prospect is also raced against a timeout so the
       // common slow case returns cleanly without hitting the cap at all.
       while (cursor < ids.length) {
         const remaining = HARD_CAP_MS - (Date.now() - startedAt);
         if (remaining < MIN_START_REMAINING_MS) break;
 
-        const id = ids[cursor]!;
-        cursor += 1;
+        const batch = ids.slice(cursor, cursor + PIPELINE_CONCURRENCY);
+        cursor += batch.length;
         // Commit the advance + bump the heartbeat up front.
         await patchJob(supabase, job.id, { cursor, stats });
 
         const budget = Math.min(PER_PROSPECT_MAX_MS, remaining - 10_000);
-        let outcome: ProspectOutcome = "error";
-        try {
-          const r = await Promise.race([
-            processSingleProspect(id),
-            new Promise<never>((_, reject) =>
-              setTimeout(() => reject(new Error("prospect-timeout")), budget),
-            ),
-          ]);
-          outcome = r.outcome;
-        } catch {
-          outcome = "error"; // timed out or threw — already skipped via the advance
-        }
+        const outcomes = await Promise.all(
+          batch.map(async (id): Promise<ProspectOutcome> => {
+            try {
+              const r = await Promise.race([
+                processSingleProspect(id),
+                new Promise<never>((_, reject) =>
+                  setTimeout(() => reject(new Error("prospect-timeout")), budget),
+                ),
+              ]);
+              return r.outcome;
+            } catch {
+              return "error"; // timed out or threw — already skipped via the advance
+            } finally {
+              // Keep the heartbeat fresh as each prospect settles so a long batch
+              // is never mistaken for a dead chain.
+              void bumpHeartbeat(supabase, job.id);
+            }
+          }),
+        );
 
-        if (outcome === "pitched") stats.pitched += 1;
-        else if (outcome === "website_pitch") stats.website_pitch += 1;
-        else if (outcome === "needs_review") stats.needs_review += 1;
-        else if (outcome === "suppressed") stats.suppressed += 1;
-        else stats.error_count += 1;
+        for (const outcome of outcomes) {
+          if (outcome === "pitched") stats.pitched += 1;
+          else if (outcome === "website_pitch") stats.website_pitch += 1;
+          else if (outcome === "needs_review") stats.needs_review += 1;
+          else if (outcome === "suppressed") stats.suppressed += 1;
+          else stats.error_count += 1;
+        }
 
         await patchJob(supabase, job.id, { stats });
       }
@@ -311,22 +339,29 @@ export async function POST(req: NextRequest) {
         const remaining = HARD_CAP_MS - (Date.now() - startedAt);
         if (remaining < MIN_START_REMAINING_MS) break;
 
-        const id = ids[cursor]!;
-        cursor += 1;
+        const batch = ids.slice(cursor, cursor + PIPELINE_CONCURRENCY);
+        cursor += batch.length;
         await patchJob(supabase, job.id, { cursor, stats }); // optimistic advance
 
         const budget = Math.min(PER_PROSPECT_MAX_MS, remaining - 10_000);
-        try {
-          const r = await Promise.race([
-            generatePitch(id),
-            new Promise<never>((_, reject) =>
-              setTimeout(() => reject(new Error("pitch-timeout")), budget),
-            ),
-          ]);
-          if (r && r.ok) stats.pitched += 1;
-        } catch {
-          // timed out / failed (e.g. no usable contact) — already skipped via advance
-        }
+        const results = await Promise.all(
+          batch.map(async (id): Promise<boolean> => {
+            try {
+              const r = await Promise.race([
+                generatePitch(id),
+                new Promise<never>((_, reject) =>
+                  setTimeout(() => reject(new Error("pitch-timeout")), budget),
+                ),
+              ]);
+              return !!(r && r.ok);
+            } catch {
+              return false; // timed out / failed (e.g. no usable contact) — skipped via advance
+            } finally {
+              void bumpHeartbeat(supabase, job.id);
+            }
+          }),
+        );
+        stats.pitched += results.filter(Boolean).length;
         await patchJob(supabase, job.id, { stats });
       }
 

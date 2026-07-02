@@ -13,7 +13,11 @@ import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { bulkDeleteProspects, bulkGeneratePitches, bulkScoreProspects, bulkTransitionStatus } from "@/lib/discover/bulk-actions";
-import { startPipelineJobForProspects } from "@/lib/discover/job-actions";
+import {
+  startPipelineJobForProspects,
+  getDiscoveryJob,
+  resumeDiscoveryJob,
+} from "@/lib/discover/job-actions";
 import type { Prospect } from "@/lib/discover/prospects-queries";
 import { useDebounce } from "@/lib/hooks";
 import { cn, relativeTime } from "@/lib/utils";
@@ -80,6 +84,11 @@ const MARKET_FLAG: Record<"CA" | "MX" | "US" | "LATAM", string> = {
 
 const PAGE_SIZE = 20;
 
+// Background "Run pipeline" job poller cadence + stall threshold. STALL matches
+// the server-side STALL_MS guard in resumeDiscoveryJob.
+const BULK_POLL_MS = 3000;
+const BULK_STALL_RESUME_MS = 100_000;
+
 export function CompaniesPage({ prospects, icps, initialFilters }: CompaniesPageProps) {
   const router = useRouter();
   const pathname = usePathname();
@@ -98,6 +107,11 @@ export function CompaniesPage({ prospects, icps, initialFilters }: CompaniesPage
   const [bulkPending, startBulk] = React.useTransition();
   const [bulkToast, setBulkToast] = React.useState<{ tone: "ok" | "warn"; text: string } | null>(null);
   const [confirmDeleteOpen, setConfirmDeleteOpen] = React.useState(false);
+  // Background pipeline job kicked by "Run pipeline". Tracked so we can poll it to
+  // completion + watchdog-resume a stalled chain — same safety net the Run All
+  // Sources modal has. Without this, a dropped self-trigger left the job dead
+  // (stuck "running") until the janitor swept it.
+  const [bulkJobId, setBulkJobId] = React.useState<string | null>(null);
 
   // Client-side pagination over the already-filtered list (the page loads all
   // rows up front and filters in-memory, so we just slice here). Reset to page 1
@@ -108,6 +122,52 @@ export function CompaniesPage({ prospects, icps, initialFilters }: CompaniesPage
     setSelected(new Set());
     setPage(1);
   }, [status, market, icpId, search, sort]);
+
+  // Watchdog + progress poller for the background "Run pipeline" job. Mirrors the
+  // Run All Sources modal: poll the job every few seconds, re-kick it if the
+  // self-chain dies (stale heartbeat), and refresh the table + summarise when it
+  // finishes. Keeps the toast live with progress so the run visibly completes.
+  React.useEffect(() => {
+    if (!bulkJobId) return;
+    let active = true;
+    let timer: number;
+
+    const tick = async () => {
+      const j = await getDiscoveryJob(bulkJobId);
+      if (!active) return;
+      if (j) {
+        if (j.status !== "running") {
+          const done = j.stats.pitched + j.stats.website_pitch + j.stats.needs_review + j.stats.suppressed;
+          setBulkToast(
+            j.status === "failed"
+              ? { tone: "warn", text: j.error_message ?? "Pipeline run failed — try again." }
+              : {
+                  tone: "ok",
+                  text: `Pipeline done — ${j.stats.pitched} pitched · ${j.stats.needs_review} review · ${j.stats.suppressed} suppressed (${done} processed).`,
+                },
+          );
+          setBulkJobId(null);
+          router.refresh();
+          window.setTimeout(() => setBulkToast(null), 8000);
+          return; // stop polling
+        }
+        // Live progress + watchdog.
+        setBulkToast({
+          tone: "ok",
+          text: `Processing prospects in the background — ${Math.min(j.cursor, j.total)} / ${j.total}…`,
+        });
+        const staleMs = Date.now() - new Date(j.heartbeat_at).getTime();
+        if (staleMs > BULK_STALL_RESUME_MS) void resumeDiscoveryJob(bulkJobId);
+      }
+      if (active) timer = window.setTimeout(tick, BULK_POLL_MS);
+    };
+    timer = window.setTimeout(tick, BULK_POLL_MS);
+
+    return () => {
+      active = false;
+      window.clearTimeout(timer);
+    };
+  }, [bulkJobId, router]);
 
   // Sync filter state → URL (shallow replace, no scroll). Deeplinks like
   // /companies?status=raw work both ways: the page hydrates from URL on
@@ -282,13 +342,17 @@ export function CompaniesPage({ prospects, icps, initialFilters }: CompaniesPage
       if (res.ok) {
         setBulkToast({
           tone: "ok",
-          text: `Processing ${ids.length} prospect${ids.length === 1 ? "" : "s"} in the background — refresh in a bit to see results.`,
+          text: `Processing ${ids.length} prospect${ids.length === 1 ? "" : "s"} in the background…`,
         });
         setSelected(new Set());
+        // Hand off to the watchdog poller — it keeps the job alive, shows live
+        // progress, and refreshes the table when it finishes. (No auto-hide here:
+        // the poller owns the toast until the run completes.)
+        setBulkJobId(res.jobId);
       } else {
         setBulkToast({ tone: "warn", text: res.error });
+        window.setTimeout(() => setBulkToast(null), 8000);
       }
-      window.setTimeout(() => setBulkToast(null), 8000);
     });
   };
 

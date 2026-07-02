@@ -41,6 +41,27 @@ export type BraveErrorCode =
 const BRAVE_API_URL =
   "https://api.search.brave.com/res/v1/web/search";
 
+// ── Rate-limit throttle ────────────────────────────────────────────────────────
+//
+// Brave's free tier is limited to ~1 request/second. Sequentially this is a
+// non-issue, but when the pipeline processes prospects CONCURRENTLY each prospect
+// fires ~4-5 Brave queries (deep research) — a batch of 4 would burst ~16-20
+// queries at once and get HTTP 429s that the callers silently swallow, quietly
+// degrading research quality. This gate reserves a time slot for every call so
+// calls are spaced ≥ MIN_SPACING_MS apart, preserving full research depth under
+// parallelism. State is per function instance, which is exactly the scope of an
+// in-slice concurrent batch.
+const MIN_SPACING_MS = 1_100;
+let braveNextSlot = 0;
+
+function reserveBraveSlot(): Promise<void> {
+  const now = Date.now();
+  const slot = Math.max(now, braveNextSlot);
+  braveNextSlot = slot + MIN_SPACING_MS;
+  const wait = slot - now;
+  return wait > 0 ? new Promise((r) => setTimeout(r, wait)) : Promise.resolve();
+}
+
 // ── Public helpers ────────────────────────────────────────────────────────────
 
 export function braveIsAvailable(): boolean {
@@ -65,6 +86,9 @@ export async function searchBrave(
     result_filter: "web",
     safesearch: "off",
   });
+
+  // Space out concurrent callers to respect Brave's ~1 req/sec free-tier limit.
+  await reserveBraveSlot();
 
   try {
     const res = await fetch(`${BRAVE_API_URL}?${params.toString()}`, {
