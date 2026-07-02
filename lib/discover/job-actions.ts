@@ -70,6 +70,40 @@ async function currentCookieHeader(): Promise<string> {
     .join("; ");
 }
 
+// Slices bump heartbeat_at seconds apart; this much silence means the chain is
+// dead. Kept in sync with the janitor cron's STALE_MINUTES.
+const STALE_JOB_MS = 5 * 60_000;
+
+/**
+ * Opportunistic zombie sweep. The janitor cron only runs daily (Vercel Hobby
+ * caps cron cadence), so dead chains from closed tabs would otherwise linger as
+ * "running" for up to 24h. We fail this tenant's own stale-heartbeat jobs right
+ * when they start a new run — the exact moment stale rows are noticeable — so the
+ * UI is clean without waiting for the cron. Runs under the caller's session (RLS),
+ * so it only ever touches their own tenant's jobs. Best-effort: never blocks the
+ * new run if it fails.
+ */
+async function sweepStaleTenantJobs(supabase: AwaitedClient, tenantId: string): Promise<void> {
+  try {
+    const cutoff = new Date(Date.now() - STALE_JOB_MS).toISOString();
+    await supabase
+      .from("discovery_jobs")
+      .update({
+        status: "failed",
+        error_message: "Worker chain stalled (stale heartbeat) — cleaned up on new run.",
+        completed_at: new Date().toISOString(),
+      } as never)
+      .eq("tenant_id", tenantId)
+      .eq("status", "running")
+      .lt("heartbeat_at", cutoff);
+  } catch {
+    // Non-fatal — the daily janitor is the backstop.
+  }
+}
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+type AwaitedClient = any;
+
 export async function startDiscoveryJob(
   icpId: string,
   mode: DiscoveryJobMode = "full",
@@ -81,6 +115,10 @@ export async function startDiscoveryJob(
   if (user.role === "viewer") return { ok: false, error: "Viewers cannot run discovery." };
 
   const supabase = await createClient();
+
+  // Clear this tenant's dead-chain zombies before we look for a job to reuse —
+  // otherwise a stale "running" row could be resurfaced as the active job below.
+  await sweepStaleTenantJobs(supabase, user.tenantId);
 
   // Don't stack jobs: reuse an already-running job for this ICP if one exists.
   const { data: existing } = await supabase
@@ -204,6 +242,7 @@ export async function startPipelineJobForProspects(
   if (user.role === "viewer") return { ok: false, error: "Viewers cannot run the pipeline." };
 
   const supabase = await createClient();
+  await sweepStaleTenantJobs(supabase, user.tenantId);
   const { data, error } = await supabase
     .from("discovery_jobs")
     .insert({
