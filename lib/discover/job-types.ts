@@ -22,6 +22,10 @@ export type DiscoveryJobStats = {
   // prune summary
   pruned_kept?: number;
   pruned_deleted?: number;
+  // target-seeking discovery loop: cumulative prospects researched this run (drives
+  // the per-run safety cap) and the pitched-lead count last observed for the ICP.
+  processed?: number;
+  pitched_pool?: number;
   // true for a manual "run these specific prospects" job — skip the top-30 prune
   // (the user hand-picked them; don't delete any).
   skip_prune?: boolean;

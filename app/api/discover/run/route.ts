@@ -62,6 +62,15 @@ const PER_PROSPECT_MAX_MS = 95_000; // hard upper bound for one prospect — eno
 // is additionally serialized by a throttle in brave-search.ts).
 const PIPELINE_CONCURRENCY = 4;
 
+// Target-seeking discovery loop. A "full" run keeps pulling batches of raw
+// prospects, researching them, pruning the chaff, and refilling — until the ICP
+// has banked TARGET_PITCHED pitched leads (score ≥70 + reachable) OR it has
+// researched MAX_PROCESSED_PER_RUN prospects (a cost guard) OR raw is exhausted.
+// b_list (50-69) and researched are KEPT (parked for review), never counted or
+// deleted; only suppressed/errored prospects are pruned.
+const TARGET_PITCHED = 50;
+const MAX_PROCESSED_PER_RUN = 200;
+
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type AnySupabase = any;
 
@@ -257,44 +266,128 @@ export async function POST(req: NextRequest) {
           else if (outcome === "suppressed") stats.suppressed += 1;
           else stats.error_count += 1;
         }
+        stats.processed = (stats.processed ?? 0) + batch.length;
 
         await patchJob(supabase, job.id, { stats });
       }
 
-      const moreToProcess = cursor < ids.length;
-      await patchJob(supabase, job.id, {
-        cursor,
-        stats,
-        ...(moreToProcess ? {} : { phase: "pruning" }),
-      });
+      // Still more of THIS batch to chew through — keep the same prospect_ids set,
+      // just advance to the next slice.
+      if (cursor < ids.length) {
+        await patchJob(supabase, job.id, { cursor, stats });
+        after(() => triggerNextSlice(job.id, cookieHeader, origin));
+        return NextResponse.json({ ok: true, phase: "pipeline", cursor });
+      }
+
+      // This batch is fully processed. Manual "run these specific prospects" jobs
+      // (skip_prune / no ICP) DON'T loop — go straight to the finish.
+      const icpId = job.icp_id;
+      if (!icpId || stats.skip_prune) {
+        await patchJob(supabase, job.id, { cursor, stats, phase: "pruning" });
+        after(() => triggerNextSlice(job.id, cookieHeader, origin));
+        return NextResponse.json({ ok: true, phase: "pruning", cursor });
+      }
+
+      // ── Target-seeking discovery loop ──────────────────────────────────────
+      // Forward-progress guard: any prospect in this batch still 'raw' (errored or
+      // timed out) is reclassified to 'suppressed' so the next refill's raw query
+      // can't re-select it forever. We do NOT delete suppressed rows here — they're
+      // kept as dedup tombstones so future discovery doesn't re-surface known-bad
+      // companies and waste research spend. b_list / pitched / researched survive.
+      await supabase
+        .from("prospects")
+        .update({
+          status: "suppressed",
+          suppressed_reason: "Auto: pipeline did not complete (error/timeout)",
+          suppressed_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+        })
+        .in("id", ids)
+        .eq("tenant_id", user.tenantId)
+        .eq("status", "raw");
+
+      // Count the ICP's pitched leads (real + website pitches both carry status
+      // 'pitched') — the cumulative pool the target measures against.
+      const { count: pitchedCount } = await supabase
+        .from("prospects")
+        .select("id", { count: "exact", head: true })
+        .eq("tenant_id", user.tenantId)
+        .eq("icp_id", icpId)
+        .eq("status", "pitched");
+      stats.pitched_pool = pitchedCount ?? 0;
+
+      const processedSoFar = stats.processed ?? 0;
+      const targetReached = (pitchedCount ?? 0) >= TARGET_PITCHED;
+      const capReached = processedSoFar >= MAX_PROCESSED_PER_RUN;
+
+      if (!targetReached && !capReached) {
+        // Refill with the next batch of raw prospects for this ICP and loop.
+        const nextRaw = await getRawProspectIds(icpId);
+        const nextIds = nextRaw.ok ? nextRaw.ids : [];
+        if (nextIds.length > 0) {
+          await patchJob(supabase, job.id, {
+            phase: "pipeline",
+            cursor: 0,
+            prospect_ids: nextIds,
+            stats,
+          });
+          after(() => triggerNextSlice(job.id, cookieHeader, origin));
+          return NextResponse.json({ ok: true, phase: "pipeline", refill: nextIds.length, pitched: stats.pitched_pool });
+        }
+        // else: raw exhausted — fall through to finish.
+      }
+
+      // Target met, cap hit, or raw exhausted → finish (prune leftover raw + a
+      // final pitching catch-up).
+      await patchJob(supabase, job.id, { cursor, stats, phase: "pruning" });
       after(() => triggerNextSlice(job.id, cookieHeader, origin));
-      return NextResponse.json({ ok: true, phase: moreToProcess ? "pipeline" : "pruning", cursor });
+      return NextResponse.json({ ok: true, phase: "pruning", pitched: stats.pitched_pool });
     }
 
     // ── Phase: pruning ──────────────────────────────────────────────────────
     if (job.phase === "pruning") {
       const ids = job.prospect_ids ?? [];
-      // Manual "run these specific prospects" jobs skip the top-30 prune — the
-      // user hand-picked them; don't delete any.
-      const prune = stats.skip_prune
-        ? ({ ok: true as const, kept: ids.length, deleted: 0 })
-        : await pruneRunToTop30(ids);
+      const icpId = job.icp_id;
+
+      // Pruning depends on job type:
+      //  • manual (skip_prune): keep everything the user hand-picked.
+      //  • discovery loop: delete the leftover unprocessed raw overflow for this
+      //    ICP — we hit the target/cap, so the rest of the wide net is discarded
+      //    ("prune the rest"). Kept prospects (pitched/b_list/researched) survive.
+      //  • legacy (no ICP): fall back to the old top-30 prune.
+      let prune: { ok: true; kept: number; deleted: number } | { ok: false; error: string };
+      if (stats.skip_prune) {
+        prune = { ok: true, kept: ids.length, deleted: 0 };
+      } else if (icpId) {
+        const { data: del } = await supabase
+          .from("prospects")
+          .delete()
+          .eq("tenant_id", user.tenantId)
+          .eq("icp_id", icpId)
+          .eq("status", "raw")
+          .select("id");
+        prune = { ok: true, kept: stats.pitched_pool ?? 0, deleted: (del ?? []).length };
+      } else {
+        prune = await pruneRunToTop30(ids);
+      }
       const nextStats: DiscoveryJobStats = {
         ...stats,
         ...(prune.ok ? { pruned_kept: prune.kept, pruned_deleted: prune.deleted } : {}),
       };
 
-      // Hand off to the PITCHING phase: high-scorers (>=70) that survived the
-      // prune but never got a pitch (their pipeline slice ran out of time before
-      // the in-slice pitch step). Reuse the cursor machinery — store the pending
-      // ids as the work list so the pitching phase is identical in shape to the
-      // pipeline (optimistic advance, time budget).
-      const { data: highScorers } = await supabase
+      // Hand off to the PITCHING phase: high-scorers (>=70) that never got a pitch
+      // (their pipeline slice ran out of time before the in-slice pitch step). For
+      // a discovery loop, catch ALL such ≥70 for the ICP so the pitched pool is
+      // topped up toward the target; for other jobs, just this run's set. Reuse the
+      // cursor machinery — the pitching phase is identical in shape to the pipeline.
+      const highScorersQuery = supabase
         .from("prospects")
         .select("id, status")
-        .in("id", ids)
         .eq("tenant_id", user.tenantId)
         .gte("match_score", 70);
+      const { data: highScorers } = icpId
+        ? await highScorersQuery.eq("icp_id", icpId)
+        : await highScorersQuery.in("id", ids);
       const eligible = ((highScorers ?? []) as Array<{ id: string; status: string }>)
         .filter((p) => !NON_PITCHABLE.includes(p.status))
         .map((p) => p.id);
