@@ -16,9 +16,15 @@ process.env.ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY ?? "test-key";
 type MessagesCreateInput = {
   model: string;
   max_tokens: number;
-  system?: string;
+  system?: string | { type: string; text: string }[];
   messages: { role: string; content: string }[];
 };
+
+// System is now sent as content blocks (for prompt caching) — flatten for assertions.
+function systemText(s: MessagesCreateInput["system"]): string {
+  if (!s) return "";
+  return typeof s === "string" ? s : s.map((b) => b.text).join("\n");
+}
 type MessagesCreateResponse = {
   content: { type: "text"; text: string }[];
   usage: { input_tokens: number; output_tokens: number; cache_read_input_tokens?: number; cache_creation_input_tokens?: number };
@@ -141,8 +147,9 @@ test("composePitchWithClaude: passes correct system+user prompts", async () => {
     assert.equal(calls.length, 1);
     const call = calls[0]!;
     // System prompt: cold-email copywriter + JSON-only instruction
-    assert.match(call.system ?? "", /cold[- ]email/i);
-    assert.match(call.system ?? "", /JSON/);
+    const sys = systemText(call.system);
+    assert.match(sys, /cold[- ]email/i);
+    assert.match(sys, /JSON/);
     // User prompt (payload): sender agency name + candidate IDs
     assert.match(call.messages[0]!.content, /Runna CA/);
     assert.match(call.messages[0]!.content, new RegExp(CASE_ID));

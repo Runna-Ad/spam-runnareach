@@ -16,6 +16,7 @@ import {
   ANTHROPIC_DEFAULT_MODEL,
   structuredCall,
   type ClaudeUsage,
+  type SystemBlock,
 } from "../anthropic/client.ts";
 import { RUNNA_CAPABILITIES } from "../runna/capabilities.ts";
 import type {
@@ -119,9 +120,18 @@ export async function composePitchWithClaude(
 
   // ── Stage 2: translate pain + assemble pitch in one Sonnet pass ───────────
   const lang = input.prospect.language;
-  const system =
-    buildSystemPrompt(lang, size) +
-    buildNotableClientsTierContext(input.notable_clients, lang);
+  // The ~4–5k-token voice/structure/subject-engine prompt is byte-identical for
+  // a given (lang, size) across every pitch in a run — cache it. First pitch of
+  // each variant writes the cache, the rest read it at 0.1× input price. All
+  // per-prospect data lives in the user message, so the cached prefix is stable.
+  const system: SystemBlock[] = [
+    {
+      text:
+        buildSystemPrompt(lang, size) +
+        buildNotableClientsTierContext(input.notable_clients, lang),
+      cache: true,
+    },
+  ];
   const user = buildStage2UserPrompt(input, stage1.cases);
 
   const call = await structuredCall({

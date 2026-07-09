@@ -11,9 +11,15 @@ process.env.ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY ?? "test-key";
 type MessagesCreateInput = {
   model: string;
   max_tokens: number;
-  system?: string;
+  system?: string | { type: string; text: string }[];
   messages: { role: string; content: string }[];
 };
+
+// System is now sent as content blocks (for prompt caching) — flatten for assertions.
+function systemText(s: MessagesCreateInput["system"]): string {
+  if (!s) return "";
+  return typeof s === "string" ? s : s.map((b) => b.text).join("\n");
+}
 type MessagesCreateResponse = {
   content: { type: "text"; text: string }[];
   usage: { input_tokens: number; output_tokens: number; cache_read_input_tokens?: number; cache_creation_input_tokens?: number };
@@ -101,9 +107,10 @@ test("classifyReplyWithClaude: passes Haiku model + classification taxonomy in p
     // Routes to Haiku (cost-sensitive simple classification)
     assert.equal(call.model, "claude-haiku-4-5");
     // System prompt enumerates all 7 intents
-    assert.match(call.system ?? "", /wants_meeting/);
-    assert.match(call.system ?? "", /hard_no/);
-    assert.match(call.system ?? "", /auto_reply/);
+    const sys = systemText(call.system);
+    assert.match(sys, /wants_meeting/);
+    assert.match(sys, /hard_no/);
+    assert.match(sys, /auto_reply/);
     // User prompt includes the from address + subject + body
     assert.match(call.messages[0]!.content, /sarah@example\.com/);
     assert.match(call.messages[0]!.content, /quick question on mobile checkout/);

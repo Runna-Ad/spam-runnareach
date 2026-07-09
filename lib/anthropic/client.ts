@@ -91,11 +91,26 @@ export function computeCostUsd(
   return Math.round(cost * 1_000_000) / 1_000_000;
 }
 
+/**
+ * A system-prompt block. Set `cache: true` on the large *static* portion of a
+ * prompt (voice rules, rubric, taxonomy) to add an Anthropic prompt-cache
+ * breakpoint there: the first call in a run writes the cache (1.25× input
+ * price once), every subsequent call within the 5-min TTL reads it at 0.1×.
+ * Only mark blocks that are byte-identical across calls, and only when the
+ * cached prefix clears the model minimum (1024 tokens Sonnet, 2048 Haiku) —
+ * below that the API silently ignores cache_control.
+ */
+export type SystemBlock = { text: string; cache?: boolean };
+
 export type StructuredCallInput<T> = {
   /** Optional model override; defaults to Sonnet 4.5. */
   model?: string;
-  /** System prompt — domain-level instructions. */
-  system: string;
+  /**
+   * System prompt — domain-level instructions. Pass a string for a plain
+   * (uncached) prompt, or an array of blocks to mark the static prefix
+   * `cache: true` for prompt caching. Blocks are concatenated in order.
+   */
+  system: string | SystemBlock[];
   /** User prompt — task-specific request, fully resolved. */
   user: string;
   /** Max output tokens. Pitch ~600. Score/research ~1200. */
@@ -134,10 +149,28 @@ export async function structuredCall<T>(
   const model = input.model ?? ANTHROPIC_DEFAULT_MODEL;
   const client = getClient(input.timeoutMs);
 
-  const system =
-    input.system +
-    "\n\nRespond ONLY with valid JSON matching the requested schema. " +
-    "No prose, no markdown fences, no leading or trailing text.";
+  // Build the system prompt as content blocks. Caller blocks come first (with a
+  // cache breakpoint on any block flagged `cache: true`); the JSON-only
+  // instruction is a separate *trailing, uncached* block so the cached prefix
+  // stays byte-stable even if we tweak that instruction later. A plain string
+  // system is wrapped in a single uncached block — behaviour identical to before.
+  const callerBlocks: Anthropic.TextBlockParam[] =
+    typeof input.system === "string"
+      ? [{ type: "text", text: input.system }]
+      : input.system.map((b) => ({
+          type: "text",
+          text: b.text,
+          ...(b.cache ? { cache_control: { type: "ephemeral" as const } } : {}),
+        }));
+  const system: Anthropic.TextBlockParam[] = [
+    ...callerBlocks,
+    {
+      type: "text",
+      text:
+        "\n\nRespond ONLY with valid JSON matching the requested schema. " +
+        "No prose, no markdown fences, no leading or trailing text.",
+    },
+  ];
 
   let response: Awaited<ReturnType<typeof client.messages.create>>;
   try {

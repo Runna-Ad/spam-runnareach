@@ -9,8 +9,12 @@
  * are never blocked by API issues.
  */
 
-import Anthropic from "@anthropic-ai/sdk";
-import { ANTHROPIC_HAIKU_MODEL } from "@/lib/anthropic/client";
+import { z } from "zod";
+import {
+  ANTHROPIC_HAIKU_MODEL,
+  structuredCall,
+  type ClaudeUsage,
+} from "@/lib/anthropic/client";
 import {
   scoreWithHeuristic,
   type RubricInputIcp,
@@ -21,13 +25,37 @@ import {
 
 const MODEL = ANTHROPIC_HAIKU_MODEL; // claude-haiku-4-5
 
-// Anthropic pricing for claude-haiku-4-5
-const INPUT_PRICE_PER_TOKEN = 0.000001;  // $1.00 / 1M
-const OUTPUT_PRICE_PER_TOKEN = 0.000005; // $5.00 / 1M
+const ZERO_USAGE: ClaudeUsage = {
+  input_tokens: 0,
+  output_tokens: 0,
+  cache_read_input_tokens: 0,
+  cache_creation_input_tokens: 0,
+  cost_usd: 0,
+};
+
+// Loose schema — the API returns numbers; we clamp to rubric ranges afterwards
+// (clampToRubric) so a slightly out-of-range value is corrected, not rejected.
+const scorerSchema = z.object({
+  composite_score: z.number(),
+  breakdown: z.object({
+    industry_fit_pts: z.number(),
+    size_fit_pts: z.number(),
+    digital_maturity_pts: z.number(),
+    pain_signal_pts: z.number(),
+    service_match_pts: z.number(),
+    contact_discoverability_pts: z.number(),
+    geo_fit_pts: z.number(),
+    red_flag_penalty: z.number(),
+  }),
+  confidence: z.number(),
+  reasoning: z.string().optional(),
+});
 
 export type ClaudeScorerResult = RubricResult & {
   cost_usd: number;
   model: string;
+  /** Token usage for cost_tracking. Zero on the heuristic fallback. */
+  usage: ClaudeUsage;
 };
 
 // ── Entry point ───────────────────────────────────────────────────────────────
@@ -37,43 +65,39 @@ export async function scoreWithClaude(
   research: RubricInputResearch,
   icp: RubricInputIcp,
 ): Promise<ClaudeScorerResult> {
-  const client = new Anthropic();
+  // Routed through the shared structuredCall so it inherits the no-keepalive
+  // client, JSON+Zod parsing, and returned token usage for cost tracking.
+  const call = await structuredCall({
+    model: MODEL,
+    system: buildSystemPrompt(),
+    user: buildUserPrompt(prospect, research, icp),
+    max_tokens: 800,
+    schema: scorerSchema,
+  });
 
-  try {
-    const response = await client.messages.create({
-      model: MODEL,
-      max_tokens: 800,
-      messages: [{ role: "user", content: buildPrompt(prospect, research, icp) }],
-    });
-
-    const raw = response.content
-      .filter((b) => b.type === "text")
-      .map((b) => (b as { type: "text"; text: string }).text)
-      .join("");
-
-    const parsed = parseResponse(raw);
-    const cost_usd =
-      response.usage.input_tokens * INPUT_PRICE_PER_TOKEN +
-      response.usage.output_tokens * OUTPUT_PRICE_PER_TOKEN;
-
-    return { ...parsed, cost_usd, model: MODEL };
-  } catch (err) {
-    const errMsg = err instanceof Error ? err.message.slice(0, 120) : String(err);
+  if (!call.ok) {
+    const errMsg = call.error.slice(0, 120);
     console.error("[claude-scorer] Claude call failed — falling back to heuristic:", errMsg);
     const fallback = scoreWithHeuristic(prospect, research, icp);
     return {
       ...fallback,
       cost_usd: 0,
       model: "heuristic_fallback",
+      usage: ZERO_USAGE,
       // Surface why Claude wasn't used so the UI "heuristic" label is debuggable
       reasoning: `[Heuristic — Claude error: ${errMsg}] ${fallback.reasoning}`,
     };
   }
+
+  const parsed = clampToRubric(call.data);
+  return { ...parsed, cost_usd: call.usage.cost_usd, model: MODEL, usage: call.usage };
 }
 
-// ── Prompt builder ────────────────────────────────────────────────────────────
+// ── Prompt builders ───────────────────────────────────────────────────────────
+// Split into a static system prompt (rules + rubric + JSON shape — identical
+// every call) and a per-prospect user prompt (ICP + prospect + research data).
 
-function buildPrompt(
+function buildUserPrompt(
   prospect: RubricInputProspect,
   research: RubricInputResearch,
   icp: RubricInputIcp,
@@ -99,6 +123,17 @@ Pain points documented: ${research.pain_points.length}
 Evidence URLs: ${research.evidence_urls.length}`
     : "No research data yet.";
 
+  return `ICP:
+${icpBlock}
+
+PROSPECT:
+${prospectBlock}
+
+RESEARCH:
+${researchBlock}`;
+}
+
+function buildSystemPrompt(): string {
   return `You are scoring a B2B sales prospect for Runna, a digital marketing agency. Runna sells marketing services to SMBs: websites, booking apps, social media management, video/ad creative, email marketing, paid media, and marketing automation. Runna's customers are businesses that NEED those services — both product brands (DTC/ecommerce) AND service businesses (fitness studios, gyms, clinics, salons, restaurants, hospitality, local services). Operating market: Canada and Mexico.
 
 CRITICAL RULE — EXCLUDE ONLY COMPETITORS AND ALREADY-SERVED BUSINESSES:
@@ -109,7 +144,7 @@ Do NOT hard-reject a business merely because it "sells services." A fitness stud
 
 PROSPECT TYPES THAT SCORE WELL: DTC/product brands AND consumer-facing service businesses — fitness studios, gyms, yoga/pilates, clinics, dental/med-spa, salons, restaurants, cafes, hospitality, local services, etc. Anything with a real marketing surface and a decision-maker to reach.
 
-Score the prospect against the ICP using this rubric. Return ONLY valid JSON — no markdown, no explanation outside the JSON.
+Score the prospect against the ICP (provided in the user message) using this rubric. Return ONLY valid JSON — no markdown, no explanation outside the JSON.
 
 RUBRIC DIMENSIONS (max points):
 - industry_fit_pts (max 20): Match to the ICP's industry_tags AND business_types. A consumer-facing service business that matches the ICP's targeted types is a fit — do NOT zero it for being a service business. 0 only for competitors/agencies (see CRITICAL RULE) or a genuinely off-ICP industry.
@@ -120,15 +155,6 @@ RUBRIC DIMENSIONS (max points):
 - contact_discoverability_pts (max 10): Ease of finding decision-maker contact
 - geo_fit_pts (max 15): Prospect in ICP's target geography
 - red_flag_penalty: −10 per red flag, max −30 total
-
-ICP:
-${icpBlock}
-
-PROSPECT:
-${prospectBlock}
-
-RESEARCH:
-${researchBlock}
 
 Return exactly this JSON shape:
 {
@@ -148,34 +174,15 @@ Return exactly this JSON shape:
 }`;
 }
 
-// ── Response parser ───────────────────────────────────────────────────────────
+// ── Response clamp ─────────────────────────────────────────────────────────────
+// structuredCall already JSON-parsed + Zod-validated the shape; here we only
+// clamp each field into its rubric range (same behaviour as the old parser).
 
-function parseResponse(raw: string): RubricResult {
-  // Strip markdown code fences if present
-  const cleaned = raw
-    .replace(/^```(?:json)?\s*/i, "")
-    .replace(/\s*```\s*$/, "")
-    .trim();
-
-  let obj: unknown;
-  try {
-    obj = JSON.parse(cleaned);
-  } catch {
-    // Try extracting JSON from a longer response
-    const match = cleaned.match(/\{[\s\S]+\}/);
-    if (!match) throw new Error("No JSON found in Claude response");
-    obj = JSON.parse(match[0]);
-  }
-
-  if (!obj || typeof obj !== "object") throw new Error("Response is not an object");
-  const r = obj as Record<string, unknown>;
-
-  const bd = r.breakdown as Record<string, unknown> | undefined;
-  if (!bd || typeof bd !== "object") throw new Error("Missing breakdown in response");
-
-  const clamp = (n: unknown, min: number, max: number): number =>
+function clampToRubric(data: z.infer<typeof scorerSchema>): RubricResult {
+  const clamp = (n: number, min: number, max: number): number =>
     Math.min(Math.max(Math.round(Number(n) || 0), min), max);
 
+  const bd = data.breakdown;
   const breakdown = {
     industry_fit_pts: clamp(bd.industry_fit_pts, 0, 20),
     size_fit_pts: clamp(bd.size_fit_pts, 0, 15),
@@ -187,9 +194,9 @@ function parseResponse(raw: string): RubricResult {
     red_flag_penalty: clamp(bd.red_flag_penalty, -30, 0),
   };
 
-  const composite_score = clamp(r.composite_score, 0, 100);
-  const confidence = Math.min(Math.max(Number(r.confidence) || 0.5, 0.1), 0.95);
-  const reasoning = typeof r.reasoning === "string" ? r.reasoning : "Scored by Claude.";
+  const composite_score = clamp(data.composite_score, 0, 100);
+  const confidence = Math.min(Math.max(Number(data.confidence) || 0.5, 0.1), 0.95);
+  const reasoning = typeof data.reasoning === "string" ? data.reasoning : "Scored by Claude.";
 
   return { composite_score, breakdown, confidence, reasoning };
 }

@@ -12,7 +12,10 @@ export type CostRecordInput = {
   metadata?: Record<string, unknown>;
 };
 
-const DAILY_USD_CAP_DEFAULT = 5.0;
+// Safety net, not a run-stopper. Per-lead cost is driven down via prompt
+// caching + cutting the redundant score call; this cap only trips on a
+// genuine runaway. Override per-tenant via ANTHROPIC_DAILY_USD_CAP.
+const DAILY_USD_CAP_DEFAULT = 6.0;
 
 function getDailyCap(): number {
   const raw = process.env.ANTHROPIC_DAILY_USD_CAP;

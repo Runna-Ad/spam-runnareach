@@ -5,6 +5,8 @@ import { z } from "zod";
 import { writeAuditLog } from "@/lib/audit/log";
 import { requireUser } from "@/lib/auth";
 import { createClient } from "@/lib/supabase/server";
+import { ANTHROPIC_HAIKU_MODEL, type ClaudeUsage } from "@/lib/anthropic/client";
+import { isUnderDailyCap, recordClaudeCall } from "@/lib/anthropic/cost-tracking";
 import {
   scoreWithHeuristic,
   type RubricInputIcp,
@@ -163,12 +165,23 @@ export async function scoreProspect(
   let result: RubricResult;
   let cost_usd = 0;
   let method: "heuristic" | "claude";
+  let claudeUsage: ClaudeUsage | null = null;
 
   if (process.env.ANTHROPIC_API_KEY) {
-    const claudeResult = await scoreWithClaude(rubricProspect, rubricResearch, rubricIcp);
-    result = claudeResult;
-    cost_usd = claudeResult.cost_usd;
-    method = claudeResult.model === "heuristic_fallback" ? "heuristic" : "claude";
+    // Daily-cap safety net: once the tenant is over budget, degrade to the
+    // heuristic scorer (same behavior as "Claude unavailable"). This is the
+    // first place the previously-uncapped scorer honors the cap.
+    const cap = await isUnderDailyCap(user.tenantId);
+    if (!cap.under) {
+      result = scoreWithHeuristic(rubricProspect, rubricResearch, rubricIcp);
+      method = "heuristic";
+    } else {
+      const claudeResult = await scoreWithClaude(rubricProspect, rubricResearch, rubricIcp);
+      result = claudeResult;
+      cost_usd = claudeResult.cost_usd;
+      method = claudeResult.model === "heuristic_fallback" ? "heuristic" : "claude";
+      if (method === "claude") claudeUsage = claudeResult.usage;
+    }
   } else {
     result = scoreWithHeuristic(rubricProspect, rubricResearch, rubricIcp);
     method = "heuristic";
@@ -203,6 +216,19 @@ export async function scoreProspect(
   });
 
   if (insertErr) return { ok: false, error: `Could not save score: ${insertErr.message}` };
+
+  // Record Claude spend to cost_tracking so the daily cap can see it. Scoring
+  // fires up to 3× per prospect and was previously invisible to the cap — this
+  // closes that hole. Best-effort; never blocks the score.
+  if (claudeUsage) {
+    await recordClaudeCall({
+      tenantId: user.tenantId,
+      model: ANTHROPIC_HAIKU_MODEL,
+      entity_type: "scoring",
+      entity_id: parsed.data.prospect_id,
+      usage: claudeUsage,
+    });
+  }
 
   // Update prospect snapshot fields used by listing pages.
   const { error: updErr } = await supabase

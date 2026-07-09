@@ -21,10 +21,15 @@
  */
 
 import { revalidatePath } from "next/cache";
-import Anthropic from "@anthropic-ai/sdk";
 import { requireUser } from "@/lib/auth";
 import { createClient } from "@/lib/supabase/server";
-import { claudeIsAvailable, ANTHROPIC_DEFAULT_MODEL, computeCostUsd } from "@/lib/anthropic/client";
+import {
+  claudeIsAvailable,
+  getClient,
+  ANTHROPIC_DEFAULT_MODEL,
+  computeCostUsd,
+} from "@/lib/anthropic/client";
+import { isUnderDailyCap, recordClaudeCall } from "@/lib/anthropic/cost-tracking";
 import { scrapeSite } from "./scraper";
 import { scoreProspect } from "./score-action";
 import { searchBrave, braveIsAvailable } from "@/lib/discover/sources/brave-search";
@@ -49,6 +54,7 @@ export type DeepResearchResult =
 
 export async function deepResearchProspect(
   prospectId: string,
+  options?: { skipScore?: boolean },
 ): Promise<DeepResearchResult> {
   if (!claudeIsAvailable()) {
     return { ok: false, error: "ANTHROPIC_API_KEY not set — deep research requires Claude." };
@@ -56,6 +62,18 @@ export async function deepResearchProspect(
 
   const user = await requireUser();
   if (user.role === "viewer") return { ok: false, error: "Viewers cannot run deep research." };
+
+  // Daily-cap safety net. Deep research (scrape + 4 Brave queries + a Sonnet
+  // call) was previously invisible to the cap; gate it here so we skip the
+  // whole expensive chain when the tenant is over budget. The pipeline
+  // try/catches this and continues on already-scraped data.
+  const cap = await isUnderDailyCap(user.tenantId);
+  if (!cap.under) {
+    return {
+      ok: false,
+      error: `Daily Anthropic cap reached ($${cap.spent_today_usd.toFixed(2)} of $${cap.cap_usd}).`,
+    };
+  }
 
   const supabase = await createClient();
 
@@ -153,7 +171,7 @@ export async function deepResearchProspect(
   let costUsd = 0;
 
   try {
-    const client = new Anthropic();
+    const client = getClient();
     const msg = await client.messages.create({
       model: ANTHROPIC_DEFAULT_MODEL,
       max_tokens: 1_200,
@@ -164,6 +182,21 @@ export async function deepResearchProspect(
       .map((b) => (b as { type: "text"; text: string }).text)
       .join("");
     costUsd = computeCostUsd(ANTHROPIC_DEFAULT_MODEL, msg.usage.input_tokens, msg.usage.output_tokens);
+    // Record to cost_tracking so the daily cap accounts for deep research —
+    // previously this (one Sonnet call per prospect) was entirely uncapped.
+    await recordClaudeCall({
+      tenantId: user.tenantId,
+      model: ANTHROPIC_DEFAULT_MODEL,
+      entity_type: "research",
+      entity_id: prospectId,
+      usage: {
+        input_tokens: msg.usage.input_tokens,
+        output_tokens: msg.usage.output_tokens,
+        cache_read_input_tokens: msg.usage.cache_read_input_tokens ?? 0,
+        cache_creation_input_tokens: msg.usage.cache_creation_input_tokens ?? 0,
+        cost_usd: costUsd,
+      },
+    });
   } catch (err) {
     return {
       ok: false,
@@ -317,30 +350,39 @@ export async function deepResearchProspect(
   }
 
   // ── Step 11: Auto-score ───────────────────────────────────────────────────
-  const scoreResult = await scoreProspect(prospectId);
-  const score = scoreResult.ok ? scoreResult.composite_score : 0;
+  // Skipped in pipeline context (skipScore) — processSingleProspect scores
+  // AGAIN right after this on the same enriched data (pain extraction runs in
+  // between), so this internal re-score was pure waste: computed, then
+  // immediately overwritten. Standalone UI callers keep it (default) so the
+  // "deep research this prospect" button stays self-contained.
+  let score = 0;
+  let outcome: "pitched_ready" | "needs_review" | "low_score" = "needs_review";
+  if (!options?.skipScore) {
+    const scoreResult = await scoreProspect(prospectId);
+    score = scoreResult.ok ? scoreResult.composite_score : 0;
+    outcome =
+      score >= 70 ? "pitched_ready" : score >= 40 ? "needs_review" : "low_score";
 
-  const outcome =
-    score >= 70 ? "pitched_ready" : score >= 40 ? "needs_review" : "low_score";
-
-  // ── Step 12: Apply the same triage as the full pipeline ───────────────────
-  // A standalone deep-research re-score must honor the <40 → suppress gate, just
-  // like processSingleProspect does. Otherwise a prospect that drops to e.g. 28
-  // here stays visible in the active list with a failing score. We only suppress
-  // (never un-suppress or downgrade a manually-advanced status) — and only from
-  // the early funnel states, so we don't yank a replied/booked/won prospect.
-  const SUPPRESSIBLE = new Set(["raw", "researched", "needs_review"]);
-  if (score < 40 && SUPPRESSIBLE.has(prospect.status)) {
-    await supabase
-      .from("prospects")
-      .update({
-        status: "suppressed",
-        suppressed_reason: `Auto: deep-research score ${score} below threshold`,
-        suppressed_at: new Date().toISOString(),
-        updated_at: new Date().toISOString(),
-      })
-      .eq("id", prospectId)
-      .eq("tenant_id", user.tenantId);
+    // ── Step 12: Apply the same triage as the full pipeline ─────────────────
+    // A standalone deep-research re-score must honor the <40 → suppress gate,
+    // just like processSingleProspect does. Otherwise a prospect that drops to
+    // e.g. 28 here stays visible in the active list with a failing score. We
+    // only suppress (never un-suppress or downgrade a manually-advanced status)
+    // — and only from the early funnel states, so we don't yank a replied/
+    // booked/won prospect.
+    const SUPPRESSIBLE = new Set(["raw", "researched", "needs_review"]);
+    if (score < 40 && SUPPRESSIBLE.has(prospect.status)) {
+      await supabase
+        .from("prospects")
+        .update({
+          status: "suppressed",
+          suppressed_reason: `Auto: deep-research score ${score} below threshold`,
+          suppressed_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+        })
+        .eq("id", prospectId)
+        .eq("tenant_id", user.tenantId);
+    }
   }
 
   revalidatePath(`/companies/${prospectId}`);

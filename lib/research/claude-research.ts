@@ -3,6 +3,7 @@ import {
   ANTHROPIC_DEFAULT_MODEL,
   structuredCall,
   type ClaudeUsage,
+  type SystemBlock,
 } from "../anthropic/client.ts";
 
 /**
@@ -99,7 +100,15 @@ export async function runResearchWithClaude(
     };
   }
 
-  const system = buildSystemPrompt();
+  // System = static analyst instructions + the canonical pain taxonomy. Both are
+  // identical for every prospect in a run (the taxonomy is per-tenant), so we
+  // mark them cacheable and move the taxonomy OUT of the per-prospect user
+  // prompt — where it was re-billed on all ~180 prospects/run. The model sees
+  // the same information, just relocated user→system.
+  const system: SystemBlock[] = [
+    { text: buildSystemPrompt(), cache: true },
+    { text: buildTaxonomyBlock(input.options), cache: true },
+  ];
   const user = buildUserPrompt(input);
 
   const call = await structuredCall({
@@ -191,26 +200,38 @@ Empty pain_points array is legal — better to skip than to guess. Respond
 with ONLY the JSON. No prose, no markdown fences.`;
 }
 
+// Static per-run: the canonical pain catalogue. Lives in a cached system block
+// so it isn't re-billed on every prospect. Claude must echo pain_id values
+// verbatim from here, so it's passed as a clean JSON list (no typos).
+function buildTaxonomyBlock(
+  options: ClaudeResearchInput["options"],
+): string {
+  const taxonomy = options.map((o) => ({
+    pain_id: o.id,
+    code: o.code,
+    display_name: o.display_name,
+    evidence_phrases: o.evidence_phrases,
+  }));
+  return `CANONICAL PAIN TAXONOMY — you MUST pick every pain_id from this list.
+Do not invent UUIDs; echo the pain_id values below verbatim.
+
+\`\`\`json
+${JSON.stringify(taxonomy, null, 2)}
+\`\`\``;
+}
+
 function buildUserPrompt(input: ClaudeResearchInput): string {
-  // We pass options as a clean JSON list so Claude can echo back the
-  // exact pain_id UUIDs without typos.
   const payload = {
     research: {
       what_they_do: input.what_they_do ?? "(none)",
       notes: input.notes ?? "(none)",
     },
-    pain_taxonomy: input.options.map((o) => ({
-      pain_id: o.id,
-      code: o.code,
-      display_name: o.display_name,
-      evidence_phrases: o.evidence_phrases,
-    })),
     already_tagged_pain_ids: input.existingPainIds,
   };
 
   return `Classify this prospect's pain points and pick the best decision-maker
-email. The pain_id you return MUST be from pain_taxonomy[].pain_id; do not
-re-tag anything in already_tagged_pain_ids.
+email. The pain_id you return MUST come from the CANONICAL PAIN TAXONOMY in the
+system prompt; do not re-tag anything in already_tagged_pain_ids.
 
 \`\`\`json
 ${JSON.stringify(payload, null, 2)}

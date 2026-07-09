@@ -15,11 +15,17 @@
  *   - icp_id != null           (must be tied to a specific campaign ICP)
  */
 
-import Anthropic from "@anthropic-ai/sdk";
 import { revalidatePath } from "next/cache";
 import { requireUser } from "@/lib/auth";
 import { createClient } from "@/lib/supabase/server";
-import { claudeIsAvailable, ANTHROPIC_HAIKU_MODEL, computeCostUsd } from "@/lib/anthropic/client";
+import {
+  claudeIsAvailable,
+  getClient,
+  ANTHROPIC_HAIKU_MODEL,
+  computeCostUsd,
+  type ClaudeUsage,
+} from "@/lib/anthropic/client";
+import { isUnderDailyCap, recordClaudeCall } from "@/lib/anthropic/cost-tracking";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -136,7 +142,10 @@ export async function generateWebsitePitch(
   let method: "claude" | "template" = "template";
   let costUsd = 0;
 
-  if (claudeIsAvailable()) {
+  // Daily-cap safety net — over budget, skip Claude and use the deterministic
+  // template (same as "Claude unavailable").
+  const cap = claudeIsAvailable() ? await isUnderDailyCap(user.tenantId) : null;
+  if (claudeIsAvailable() && cap?.under) {
     const result = await callClaudeForWebsitePitch({
       companyName: prospect.company_name,
       industry: industryLabel,
@@ -151,6 +160,14 @@ export async function generateWebsitePitch(
       body = result.body;
       method = "claude";
       costUsd = result.cost_usd;
+      // Record spend so the cap accounts for it (was previously uncapped).
+      await recordClaudeCall({
+        tenantId: user.tenantId,
+        model: ANTHROPIC_HAIKU_MODEL,
+        entity_type: "pitch",
+        entity_id: prospectId,
+        usage: result.usage,
+      });
     } else {
       // Fall back to deterministic template
       const fallback = buildFallbackPitch({
@@ -216,7 +233,7 @@ async function callClaudeForWebsitePitch(opts: {
   firstName: string | null;
   caseStudyLine: string | null;
   senderName: string;
-}): Promise<{ ok: true; subject: string; body: string; cost_usd: number } | { ok: false }> {
+}): Promise<{ ok: true; subject: string; body: string; cost_usd: number; usage: ClaudeUsage } | { ok: false }> {
   const greeting = opts.firstName ? `Hi ${opts.firstName},` : "Hi there,";
   const marketLabel =
     opts.market === "MX" ? "Mexico" : opts.market === "US" ? "the US" : "Canada";
@@ -268,7 +285,7 @@ Rules:
 - Return ONLY the email. First line: "Subject: ..." then blank line then body. Nothing else.`;
 
   try {
-    const client = new Anthropic();
+    const client = getClient();
     const msg = await client.messages.create({
       model: ANTHROPIC_HAIKU_MODEL,
       max_tokens: 800,
@@ -301,7 +318,15 @@ Rules:
       msg.usage.output_tokens,
     );
 
-    return { ok: true, subject: subjectParsed, body: bodyParsed, cost_usd };
+    const usage: ClaudeUsage = {
+      input_tokens: msg.usage.input_tokens,
+      output_tokens: msg.usage.output_tokens,
+      cache_read_input_tokens: msg.usage.cache_read_input_tokens ?? 0,
+      cache_creation_input_tokens: msg.usage.cache_creation_input_tokens ?? 0,
+      cost_usd,
+    };
+
+    return { ok: true, subject: subjectParsed, body: bodyParsed, cost_usd, usage };
   } catch {
     return { ok: false };
   }

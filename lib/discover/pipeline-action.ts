@@ -341,8 +341,11 @@ export async function processSingleProspect(
   if (hasWebsite) {
     // Step 3: Deep research — Brave people-intel + Claude synthesis.
     // Enriches notes with founder names, press mentions, LinkedIn signals.
+    // skipScore: the pipeline re-scores at Step 6 on the fully-enriched data
+    // (after pain extraction), so deep research's internal re-score would be
+    // computed then immediately overwritten — one wasted Haiku call/prospect.
     try {
-      await deepResearchProspect(prospectId);
+      await deepResearchProspect(prospectId, { skipScore: true });
     } catch {
       // Non-fatal — continue with scraped data
     }

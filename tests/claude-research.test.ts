@@ -13,9 +13,16 @@ process.env.ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY ?? "test-key";
 type MessagesCreateInput = {
   model: string;
   max_tokens: number;
-  system?: string;
+  system?: string | { type: string; text: string }[];
   messages: { role: string; content: string }[];
 };
+
+// System is now sent as an array of content blocks (for prompt caching) —
+// flatten to a single string for assertions.
+function systemText(s: MessagesCreateInput["system"]): string {
+  if (!s) return "";
+  return typeof s === "string" ? s : s.map((b) => b.text).join("\n");
+}
 type MessagesCreateResponse = {
   content: { type: "text"; text: string }[];
   usage: { input_tokens: number; output_tokens: number; cache_read_input_tokens?: number; cache_creation_input_tokens?: number };
@@ -118,7 +125,7 @@ test("runResearchWithClaude: returns parsed pains + email on valid response", as
   }
 });
 
-test("runResearchWithClaude: sends Sonnet model + taxonomy in user prompt", async () => {
+test("runResearchWithClaude: sends Sonnet model + taxonomy in cached system prompt", async () => {
   const calls: MessagesCreateInput[] = [];
   installMock({
     reply: {
@@ -132,11 +139,15 @@ test("runResearchWithClaude: sends Sonnet model + taxonomy in user prompt", asyn
     assert.equal(calls.length, 1);
     const call = calls[0]!;
     assert.equal(call.model, "claude-sonnet-4-5-20250929"); // pain class drives pitch — pay for Sonnet
+    const sys = systemText(call.system);
     // System prompt explains the dual job + UUID-from-taxonomy rule
-    assert.match(call.system ?? "", /pain_taxonomy|canonical pain/i);
-    assert.match(call.system ?? "", /UUID/);
-    // User prompt embeds the candidate IDs so Claude can echo them back
-    assert.match(call.messages[0]!.content, new RegExp(PAIN_MOBILE));
+    assert.match(sys, /pain_taxonomy|canonical pain/i);
+    assert.match(sys, /UUID/);
+    // Candidate IDs now live in the cached system taxonomy block (moved out of
+    // the per-prospect user prompt) so Claude can echo them back.
+    assert.match(sys, new RegExp(PAIN_MOBILE));
+    // System is sent as content blocks with a cache breakpoint.
+    assert.ok(Array.isArray(call.system));
   } finally {
     teardown();
   }
