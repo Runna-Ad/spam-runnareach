@@ -620,3 +620,309 @@ and day boundaries. Newest entries at the bottom.
 
 - Gary prompt broadened so google_places_types is filled for local businesses incl. professional services (was leaving [] for "B2B services"). Verified: gym/spa/beauty_salon/hair_care.
 - Reachable-pool "Preview pool" button was a stub; wired lib/icp/places-preview.ts (reuses google-places text search, ≤9 sampled queries, dedupe by domain, persists reachable_pool_count). Honest sample estimate. Verified live: ~118 found.
+
+## 2026-06-24 13:09
+**Shipped (recent commits):**
+  - feat(icp): wire reachable-pool preview + Gary fills google_places_types
+  - fix(ui): drawer body scroll (min-h-0) + comma-safe Gary chip toggle
+  - fix(pitches+icp): resolve live pitch contact + make Gary drawer scrollable
+  - fix(companies): move queued/sent out of the main view + accurate pitch chips
+  - feat(dashboard): show Queued-to-send + Sent on Pipeline at a glance
+
+**Still open:**
+- [ ] Supabase: ANON + SERVICE_ROLE keys live (connection works — Phase 0 unblocked)
+- [ ] Anthropic API key + $100/mo limit
+- [ ] Google Cloud (Places API + Gmail API + OAuth consent + OAuth client + restricted Places key)
+- [ ] Name sender #1 Runna CA principal + buy both domains + add runnareach.com to Rünna Workspace + DNS (SPF/DKIM/DMARC)
+- [ ] Postmark or SES account
+- [ ] Cal.com account
+- [ ] Slack hot-lead webhook URL
+- [ ] CRON_SECRET + TOKEN_ENCRYPTION_KEY (`openssl rand -hex 32`)
+- [ ] ⏳ #7 Analytics — pitch funnel metrics, cost tracking, Claude vs template breakdown
+- [ ] ⏳ #7 Analytics — pitch funnel metrics, cost tracking, Claude vs template breakdown
+
+
+## 2026-06-24 14:03
+**Shipped (recent commits):**
+  - feat(icp): wire reachable-pool preview + Gary fills google_places_types
+  - fix(ui): drawer body scroll (min-h-0) + comma-safe Gary chip toggle
+  - fix(pitches+icp): resolve live pitch contact + make Gary drawer scrollable
+  - fix(companies): move queued/sent out of the main view + accurate pitch chips
+  - feat(dashboard): show Queued-to-send + Sent on Pipeline at a glance
+
+**Still open:**
+- [ ] Supabase: ANON + SERVICE_ROLE keys live (connection works — Phase 0 unblocked)
+- [ ] Anthropic API key + $100/mo limit
+- [ ] Google Cloud (Places API + Gmail API + OAuth consent + OAuth client + restricted Places key)
+- [ ] Name sender #1 Runna CA principal + buy both domains + add runnareach.com to Rünna Workspace + DNS (SPF/DKIM/DMARC)
+- [ ] Postmark or SES account
+- [ ] Cal.com account
+- [ ] Slack hot-lead webhook URL
+- [ ] CRON_SECRET + TOKEN_ENCRYPTION_KEY (`openssl rand -hex 32`)
+- [ ] ⏳ #7 Analytics — pitch funnel metrics, cost tracking, Claude vs template breakdown
+- [ ] ⏳ #7 Analytics — pitch funnel metrics, cost tracking, Claude vs template breakdown
+
+
+## 2026-06-24 15:39
+**Shipped (recent commits):**
+  - fix(icp): Gary targets the buyer, not Runna's offering (prompt + deterministic guard)
+  - feat(discover): run "Run All Sources" as a background job that survives tab close
+  - feat(icp): wire reachable-pool preview + Gary fills google_places_types
+  - fix(ui): drawer body scroll (min-h-0) + comma-safe Gary chip toggle
+  - fix(pitches+icp): resolve live pitch contact + make Gary drawer scrollable
+  - fix(companies): move queued/sent out of the main view + accurate pitch chips
+
+**Still open:**
+- [ ] Supabase: ANON + SERVICE_ROLE keys live (connection works — Phase 0 unblocked)
+- [ ] Anthropic API key + $100/mo limit
+- [ ] Google Cloud (Places API + Gmail API + OAuth consent + OAuth client + restricted Places key)
+- [ ] Name sender #1 Runna CA principal + buy both domains + add runnareach.com to Rünna Workspace + DNS (SPF/DKIM/DMARC)
+- [ ] Postmark or SES account
+- [ ] Cal.com account
+- [ ] Slack hot-lead webhook URL
+- [ ] CRON_SECRET + TOKEN_ENCRYPTION_KEY (`openssl rand -hex 32`)
+- [ ] ⏳ #7 Analytics — pitch funnel metrics, cost tracking, Claude vs template breakdown
+- [ ] ⏳ #7 Analytics — pitch funnel metrics, cost tracking, Claude vs template breakdown
+
+
+## 2026-06-25 08:55
+**Shipped (recent commits):**
+  - fix(discover): self-heal stalled background jobs + clip long Run button
+
+**Still open:**
+- [ ] Supabase: ANON + SERVICE_ROLE keys live (connection works — Phase 0 unblocked)
+- [ ] Anthropic API key + $100/mo limit
+- [ ] Google Cloud (Places API + Gmail API + OAuth consent + OAuth client + restricted Places key)
+- [ ] Name sender #1 Runna CA principal + buy both domains + add runnareach.com to Rünna Workspace + DNS (SPF/DKIM/DMARC)
+- [ ] Postmark or SES account
+- [ ] Cal.com account
+- [ ] Slack hot-lead webhook URL
+- [ ] CRON_SECRET + TOKEN_ENCRYPTION_KEY (`openssl rand -hex 32`)
+- [ ] ⏳ #7 Analytics — pitch funnel metrics, cost tracking, Claude vs template breakdown
+- [ ] ⏳ #7 Analytics — pitch funnel metrics, cost tracking, Claude vs template breakdown
+
+
+## 2026-06-25 09:22
+**Shipped (recent commits):**
+  - feat(companies): paginate the list (20/page) + rebalance table columns
+  - fix(discover): self-heal stalled background jobs + clip long Run button
+
+**Still open:**
+- [ ] Supabase: ANON + SERVICE_ROLE keys live (connection works — Phase 0 unblocked)
+- [ ] Anthropic API key + $100/mo limit
+- [ ] Google Cloud (Places API + Gmail API + OAuth consent + OAuth client + restricted Places key)
+- [ ] Name sender #1 Runna CA principal + buy both domains + add runnareach.com to Rünna Workspace + DNS (SPF/DKIM/DMARC)
+- [ ] Postmark or SES account
+- [ ] Cal.com account
+- [ ] Slack hot-lead webhook URL
+- [ ] CRON_SECRET + TOKEN_ENCRYPTION_KEY (`openssl rand -hex 32`)
+- [ ] ⏳ #7 Analytics — pitch funnel metrics, cost tracking, Claude vs template breakdown
+- [ ] ⏳ #7 Analytics — pitch funnel metrics, cost tracking, Claude vs template breakdown
+
+
+## 2026-06-25 10:04
+**Shipped (recent commits):**
+  - fix(pitch): greet the decision-maker by name + drop jargon from the subject
+  - feat(companies): paginate the list (20/page) + rebalance table columns
+  - fix(discover): self-heal stalled background jobs + clip long Run button
+
+**Still open:**
+- [ ] Supabase: ANON + SERVICE_ROLE keys live (connection works — Phase 0 unblocked)
+- [ ] Anthropic API key + $100/mo limit
+- [ ] Google Cloud (Places API + Gmail API + OAuth consent + OAuth client + restricted Places key)
+- [ ] Name sender #1 Runna CA principal + buy both domains + add runnareach.com to Rünna Workspace + DNS (SPF/DKIM/DMARC)
+- [ ] Postmark or SES account
+- [ ] Cal.com account
+- [ ] Slack hot-lead webhook URL
+- [ ] CRON_SECRET + TOKEN_ENCRYPTION_KEY (`openssl rand -hex 32`)
+- [ ] ⏳ #7 Analytics — pitch funnel metrics, cost tracking, Claude vs template breakdown
+- [ ] ⏳ #7 Analytics — pitch funnel metrics, cost tracking, Claude vs template breakdown
+
+
+## 2026-06-25 11:10
+**Shipped (recent commits):**
+  - feat(inbox): regenerate reply draft on demand (test the warm composer)
+  - fix(reply-funnel): warm, answer-first reply drafts (kill the robotic AI slop)
+  - feat(pitch): hand off pitch context to the Inefficiency Hunter (prefill + pin)
+  - fix: bounce→suppress in the inbox + time-budgeted discovery slices
+  - fix(pitch): greet the decision-maker by name + drop jargon from the subject
+  - feat(companies): paginate the list (20/page) + rebalance table columns
+  - fix(discover): self-heal stalled background jobs + clip long Run button
+
+**Still open:**
+- [ ] Supabase: ANON + SERVICE_ROLE keys live (connection works — Phase 0 unblocked)
+- [ ] Anthropic API key + $100/mo limit
+- [ ] Google Cloud (Places API + Gmail API + OAuth consent + OAuth client + restricted Places key)
+- [ ] Name sender #1 Runna CA principal + buy both domains + add runnareach.com to Rünna Workspace + DNS (SPF/DKIM/DMARC)
+- [ ] Postmark or SES account
+- [ ] Cal.com account
+- [ ] Slack hot-lead webhook URL
+- [ ] CRON_SECRET + TOKEN_ENCRYPTION_KEY (`openssl rand -hex 32`)
+- [ ] ⏳ #7 Analytics — pitch funnel metrics, cost tracking, Claude vs template breakdown
+- [ ] ⏳ #7 Analytics — pitch funnel metrics, cost tracking, Claude vs template breakdown
+
+
+## 2026-06-25 12:26
+**Shipped (recent commits):**
+  - feat(pitch): route website/redesign pains to the Hunter's website-modern finding
+  - fix(discover): bound enrich/brave timeouts + raise per-prospect budget
+  - fix(discover): optimistic cursor advance so a poison prospect can't stall the pipeline
+  - feat(reply-funnel): auto-nudge prospects who replied then went quiet
+  - feat(inbox): regenerate reply draft on demand (test the warm composer)
+  - fix(reply-funnel): warm, answer-first reply drafts (kill the robotic AI slop)
+  - feat(pitch): hand off pitch context to the Inefficiency Hunter (prefill + pin)
+  - fix: bounce→suppress in the inbox + time-budgeted discovery slices
+
+**Still open:**
+- [ ] Supabase: ANON + SERVICE_ROLE keys live (connection works — Phase 0 unblocked)
+- [ ] Anthropic API key + $100/mo limit
+- [ ] Google Cloud (Places API + Gmail API + OAuth consent + OAuth client + restricted Places key)
+- [ ] Name sender #1 Runna CA principal + buy both domains + add runnareach.com to Rünna Workspace + DNS (SPF/DKIM/DMARC)
+- [ ] Postmark or SES account
+- [ ] Cal.com account
+- [ ] Slack hot-lead webhook URL
+- [ ] CRON_SECRET + TOKEN_ENCRYPTION_KEY (`openssl rand -hex 32`)
+- [ ] ⏳ #7 Analytics — pitch funnel metrics, cost tracking, Claude vs template breakdown
+- [ ] ⏳ #7 Analytics — pitch funnel metrics, cost tracking, Claude vs template breakdown
+
+
+## 2026-06-25 13:13
+**Shipped (recent commits):**
+  - fix(pitch): clip-not-reject LLM fields so a long reasoning can't dump the pitch to the heuristic
+  - docs(lessons): mark Hunter handoff P1-P4 shipped + log gotchas
+  - feat(pitch): route website/redesign pains to the Hunter's website-modern finding
+  - fix(discover): bound enrich/brave timeouts + raise per-prospect budget
+  - fix(discover): optimistic cursor advance so a poison prospect can't stall the pipeline
+  - feat(reply-funnel): auto-nudge prospects who replied then went quiet
+  - feat(inbox): regenerate reply draft on demand (test the warm composer)
+  - fix(reply-funnel): warm, answer-first reply drafts (kill the robotic AI slop)
+
+**Still open:**
+- [ ] Supabase: ANON + SERVICE_ROLE keys live (connection works — Phase 0 unblocked)
+- [ ] Anthropic API key + $100/mo limit
+- [ ] Google Cloud (Places API + Gmail API + OAuth consent + OAuth client + restricted Places key)
+- [ ] Name sender #1 Runna CA principal + buy both domains + add runnareach.com to Rünna Workspace + DNS (SPF/DKIM/DMARC)
+- [ ] Postmark or SES account
+- [ ] Cal.com account
+- [ ] Slack hot-lead webhook URL
+- [ ] CRON_SECRET + TOKEN_ENCRYPTION_KEY (`openssl rand -hex 32`)
+- [ ] ⏳ #7 Analytics — pitch funnel metrics, cost tracking, Claude vs template breakdown
+- [ ] ⏳ #7 Analytics — pitch funnel metrics, cost tracking, Claude vs template breakdown
+
+
+## 2026-06-25 14:07
+**Shipped (recent commits):**
+  - fix(companies): run "Run pipeline" bulk as a background job (no more 504 crash)
+  - feat(pitches): bulk delete + flag Spanish placeholder emails (ejemplo.com)
+  - feat(pitch): pitches built on pain × service × outcome, not success cases
+  - fix(pitch): a proof case must match the SOLUTION, not just the industry
+  - feat(discover): dedicated "pitching" phase so high-scorers always get pitched
+  - feat(pitches): bulk-approve — select multiple ready pitches and approve at once
+  - fix(pitch): clip-not-reject LLM fields so a long reasoning can't dump the pitch to the heuristic
+  - docs(lessons): mark Hunter handoff P1-P4 shipped + log gotchas
+
+**Still open:**
+- [ ] Supabase: ANON + SERVICE_ROLE keys live (connection works — Phase 0 unblocked)
+- [ ] Anthropic API key + $100/mo limit
+- [ ] Google Cloud (Places API + Gmail API + OAuth consent + OAuth client + restricted Places key)
+- [ ] Name sender #1 Runna CA principal + buy both domains + add runnareach.com to Rünna Workspace + DNS (SPF/DKIM/DMARC)
+- [ ] Postmark or SES account
+- [ ] Cal.com account
+- [ ] Slack hot-lead webhook URL
+- [ ] CRON_SECRET + TOKEN_ENCRYPTION_KEY (`openssl rand -hex 32`)
+- [ ] ⏳ #7 Analytics — pitch funnel metrics, cost tracking, Claude vs template breakdown
+- [ ] ⏳ #7 Analytics — pitch funnel metrics, cost tracking, Claude vs template breakdown
+
+
+## 2026-06-25 15:09
+**Shipped (recent commits):**
+  - fix(contacts): strip phone glued to scraped emails + manual edit always wins
+  - fix(companies): B-list view is score-based so it catches pre-existing 50-69s
+  - feat(triage): <50 suppress, 50-69 time-boxed B-list, >=70-no-contact suppress
+  - fix(companies): run "Run pipeline" bulk as a background job (no more 504 crash)
+  - feat(pitches): bulk delete + flag Spanish placeholder emails (ejemplo.com)
+  - feat(pitch): pitches built on pain × service × outcome, not success cases
+  - fix(pitch): a proof case must match the SOLUTION, not just the industry
+  - feat(discover): dedicated "pitching" phase so high-scorers always get pitched
+
+**Still open:**
+- [ ] Supabase: ANON + SERVICE_ROLE keys live (connection works — Phase 0 unblocked)
+- [ ] Anthropic API key + $100/mo limit
+- [ ] Google Cloud (Places API + Gmail API + OAuth consent + OAuth client + restricted Places key)
+- [ ] Name sender #1 Runna CA principal + buy both domains + add runnareach.com to Rünna Workspace + DNS (SPF/DKIM/DMARC)
+- [ ] Postmark or SES account
+- [ ] Cal.com account
+- [ ] Slack hot-lead webhook URL
+- [ ] CRON_SECRET + TOKEN_ENCRYPTION_KEY (`openssl rand -hex 32`)
+- [ ] ⏳ #7 Analytics — pitch funnel metrics, cost tracking, Claude vs template breakdown
+- [ ] ⏳ #7 Analytics — pitch funnel metrics, cost tracking, Claude vs template breakdown
+
+
+## 2026-07-02 16:15
+**Shipped (recent commits):**
+  - fix(discover): Hobby-safe zombie cleanup — daily cron + start-time sweep
+  - perf(discover): parallelize pipeline 4x + self-heal bulk jobs + 5-min janitor
+
+**Still open:**
+- [ ] Supabase: ANON + SERVICE_ROLE keys live (connection works — Phase 0 unblocked)
+- [ ] Anthropic API key + $100/mo limit
+- [ ] Google Cloud (Places API + Gmail API + OAuth consent + OAuth client + restricted Places key)
+- [ ] Name sender #1 Runna CA principal + buy both domains + add runnareach.com to Rünna Workspace + DNS (SPF/DKIM/DMARC)
+- [ ] Postmark or SES account
+- [ ] Cal.com account
+- [ ] Slack hot-lead webhook URL
+- [ ] CRON_SECRET + TOKEN_ENCRYPTION_KEY (`openssl rand -hex 32`)
+- [ ] ⏳ #7 Analytics — pitch funnel metrics, cost tracking, Claude vs template breakdown
+- [ ] ⏳ #7 Analytics — pitch funnel metrics, cost tracking, Claude vs template breakdown
+
+
+## 2026-07-02 17:00
+**Shipped (recent commits):**
+  - feat(discover): target-seeking loop — research until 50 pitched leads
+  - fix(discover): Hobby-safe zombie cleanup — daily cron + start-time sweep
+  - perf(discover): parallelize pipeline 4x + self-heal bulk jobs + 5-min janitor
+
+**Still open:**
+- [ ] Supabase: ANON + SERVICE_ROLE keys live (connection works — Phase 0 unblocked)
+- [ ] Anthropic API key + $100/mo limit
+- [ ] Google Cloud (Places API + Gmail API + OAuth consent + OAuth client + restricted Places key)
+- [ ] Name sender #1 Runna CA principal + buy both domains + add runnareach.com to Rünna Workspace + DNS (SPF/DKIM/DMARC)
+- [ ] Postmark or SES account
+- [ ] Cal.com account
+- [ ] Slack hot-lead webhook URL
+- [ ] CRON_SECRET + TOKEN_ENCRYPTION_KEY (`openssl rand -hex 32`)
+- [ ] ⏳ #7 Analytics — pitch funnel metrics, cost tracking, Claude vs template breakdown
+- [ ] ⏳ #7 Analytics — pitch funnel metrics, cost tracking, Claude vs template breakdown
+
+
+## 2026-07-09 10:10
+
+**Still open:**
+- [ ] Supabase: ANON + SERVICE_ROLE keys live (connection works — Phase 0 unblocked)
+- [ ] Anthropic API key + $100/mo limit
+- [ ] Google Cloud (Places API + Gmail API + OAuth consent + OAuth client + restricted Places key)
+- [ ] Name sender #1 Runna CA principal + buy both domains + add runnareach.com to Rünna Workspace + DNS (SPF/DKIM/DMARC)
+- [ ] Postmark or SES account
+- [ ] Cal.com account
+- [ ] Slack hot-lead webhook URL
+- [ ] CRON_SECRET + TOKEN_ENCRYPTION_KEY (`openssl rand -hex 32`)
+- [ ] ⏳ #7 Analytics — pitch funnel metrics, cost tracking, Claude vs template breakdown
+- [ ] ⏳ #7 Analytics — pitch funnel metrics, cost tracking, Claude vs template breakdown
+
+
+## 2026-07-09 (PM) — Anthropic cost reduction (SHIPPED to prod, commit 872553f)
+
+**Problem:** one discovery+pitch run cost ~$8. Root causes found via 3 parallel Explore agents.
+
+**Shipped (quality-neutral — identical output, ~20-35% cheaper/run + hard $6 cap):**
+- **Prompt caching** — taught `structuredCall` (lib/anthropic/client.ts) to send the system prompt as cacheable content blocks (cache_control: ephemeral on the static prefix; JSON-only instruction moved to a separate trailing uncached block so the cached prefix stays byte-stable). Plain-string callers unchanged (backward compat).
+  - Composer's ~4-5k-token system prompt cached per (lang,size) — biggest win.
+  - Pain taxonomy moved OUT of the per-prospect user prompt into a cached system block (was re-billed ~180x/run) — lib/research/claude-research.ts.
+- **Closed the cost-cap hole** — scoring (claude-scorer.ts), deep research (deep-research-action.ts), and website-pitch (website-pitch-action.ts) used bare `new Anthropic()` clients that NEVER called recordClaudeCall and NEVER checked isUnderDailyCap → the real reason an "under $5" run hit $8. All three now route through the shared getClient()/structuredCall, record spend (entity_type scoring/research/pitch), and honor the cap (degrade to heuristic when over budget). Cap raised 5→$6 as a safety net.
+- **Cut one wasted call** — deep research took an internal score the pipeline immediately overwrote. Pipeline now passes `deepResearchProspect(id, { skipScore: true })` → ~200 fewer Haiku calls/run, zero output change. Standalone "deep research this prospect" UI keeps its score (default).
+
+**Verified:** tsc 0 errors, ESLint clean, 163/163 tests pass (updated 3 test files for the system content-block shape), production `next build` passes, lefthook pre-commit green. Vercel prod deploy dpl_5p7Muo… READY in ~60s. No DB migrations, no Supabase functions.
+
+**NOT done (deferred by Pedro):** merging the two Sonnet research calls (deep-research + pain-extraction) into one — the bigger lever but medium quality risk. Prototype behind a flag later if more savings needed.
+
+**Next step to MEASURE the win:** run one real discovery cycle, then compare `cost_tracking` run total vs the $8 baseline; confirm composer+research rows now show non-zero `cache_read_input_tokens` (were always 0); confirm new `scoring`/`research` rows exist per prospect.
