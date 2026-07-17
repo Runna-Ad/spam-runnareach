@@ -7,7 +7,7 @@ import { isUnderDailyCap, recordClaudeCall } from "@/lib/anthropic/cost-tracking
 import { writeAuditLog } from "@/lib/audit/log";
 import { requireUser } from "@/lib/auth";
 import { createClient } from "@/lib/supabase/server";
-import { isRoleBasedEmail } from "@/lib/research/email-utils";
+import { isRoleBasedEmail, hasUsableEmail } from "@/lib/research/email-utils";
 import type { Database } from "@/lib/supabase/types";
 import { runResearchWithClaude } from "./claude-research";
 
@@ -234,7 +234,13 @@ export async function runStructuredResearch(
   }
 
   // ── Decision-maker contact upsert ─────────────────────────────────────
+  // Gate on the shared usable-email check: research notes can carry legacy
+  // scraped junk, and the Claude path can hallucinate a plausible address —
+  // both would otherwise land at priority_rank 1 and get pitched.
   let contactsAdded = 0;
+  if (decisionMakerEmail && !hasUsableEmail(decisionMakerEmail)) {
+    decisionMakerEmail = null;
+  }
   if (decisionMakerEmail) {
     const isRoleBased = isRoleBasedEmail(decisionMakerEmail);
     type ContactInsert =

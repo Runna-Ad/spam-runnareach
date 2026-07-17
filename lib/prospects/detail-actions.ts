@@ -5,7 +5,7 @@ import { z } from "zod";
 import { writeAuditLog } from "@/lib/audit/log";
 import { requireUser } from "@/lib/auth";
 import { createClient } from "@/lib/supabase/server";
-import { isRoleBasedEmail } from "@/lib/research/email-utils";
+import { isRoleBasedEmail, hasUsableEmail } from "@/lib/research/email-utils";
 import type { Database } from "@/lib/supabase/types";
 
 type ProspectUpdate = Database["public"]["Tables"]["prospects"]["Update"];
@@ -273,6 +273,23 @@ export async function transitionStatus(
 
   if (error) return { ok: false, error: `Could not change status: ${error.message}` };
 
+  // Suppression must also stop the outbound machinery (paused sequence +
+  // unscheduled queued sends) — the crons only skip what they can see.
+  if (parsed.data.next_status === "suppressed") {
+    await supabase
+      .from("pitches")
+      .update({ sequence_paused_at: nowIso, next_followup_at: null } as never)
+      .eq("prospect_id", parsed.data.id)
+      .eq("tenant_id", user.tenantId)
+      .eq("status", "sent");
+    await supabase
+      .from("pitches")
+      .update({ scheduled_send_at: null } as never)
+      .eq("prospect_id", parsed.data.id)
+      .eq("tenant_id", user.tenantId)
+      .eq("status", "approved");
+  }
+
   await writeAuditLog({
     tenantId: user.tenantId,
     actorId: user.id,
@@ -329,6 +346,14 @@ export async function upsertManualContact(
   const supabase = await createClient();
 
   const manualEmail = parsed.data.email.toLowerCase();
+  // Reject junk at entry with a clear error — the rest of the system would
+  // silently refuse to use this address anyway (send gate re-checks it).
+  if (!hasUsableEmail(manualEmail)) {
+    return {
+      ok: false,
+      error: "That address looks like a placeholder or malformed email (unknown domain ending) — double-check it.",
+    };
+  }
   const manualRoleBased = isRoleBasedEmail(manualEmail);
   // priority_rank 0 = a human's explicit choice ALWAYS wins over auto-scraped/
   // enriched contacts (which start at 1+). pickTopUsableContact sorts ascending,

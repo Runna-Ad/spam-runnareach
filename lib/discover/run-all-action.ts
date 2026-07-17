@@ -20,7 +20,6 @@ import { createClient } from "@/lib/supabase/server";
 import { runCrawl } from "./crawl-action";
 import { braveIsAvailable } from "./sources/brave-search";
 import { denueIsAvailable, deriveScianCode, deriveMexicoStateCode, MEXICO_STATE_CODES, INDUSTRY_TO_SCIAN } from "./sources/denue";
-import { yelpIsAvailable } from "./sources/yelp";
 import { googlePlacesIsAvailable } from "./sources/google-places";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -211,27 +210,9 @@ export async function runAllSources(icpId: string): Promise<RunAllResult> {
       );
     }
 
-    // Yelp (CA/MX/US)
-    if (yelpIsAvailable()) {
-      const yelpLocation =
-        icp.market === "MX" ? "Mexico"
-        : icp.market === "US" ? "United States"
-        : ypLocation !== "Canada" ? `${ypLocation}, Canada`
-        : "Canada";
-
-      collect(
-        await runCrawl({
-          source: "yelp",
-          keyword: kw,
-          location: yelpLocation,
-          market,
-          pages: 1,
-          icp_id: icpId,
-          industry_label: kw,
-        }),
-        `Yelp (${kw})`,
-      );
-    }
+    // Yelp was removed 2026-06-22 (expired API trial) — do not re-add without
+    // Pedro's say-so. Keying availability off YELP_API_KEY alone kept firing
+    // it long after removal because the env var stayed set in Vercel.
   }
 
   // ── DENUE (MX market only, if key configured) ────────────────────────────
@@ -293,9 +274,6 @@ export type RunAllPreview = {
   // Brave
   braveQuery: string;
   braveAvailable: boolean;
-  // Yelp — CA/MX/US
-  yelpAvailable: boolean;
-  yelpLocation: string;
   // Google Places — all markets
   googlePlacesAvailable: boolean;
   googlePlacesLocation: string;
@@ -328,12 +306,6 @@ export async function previewRunAllSources(icpId: string): Promise<RunAllPreview
     : scianCode !== "0" ? `SCIAN ${scianCode}` : "all industries";
 
   const ypLoc = deriveYpLocation(icp.geo_regions);
-  const yelpLocation =
-    icp.market === "MX" ? "Mexico"
-    : icp.market === "US" ? "United States"
-    : ypLoc !== "Canada" ? `${ypLoc}, Canada`
-    : "Canada";
-
   const googleLocation =
     icp.market === "MX" ? "Mexico"
     : icp.market === "US" ? "United States"
@@ -346,7 +318,6 @@ export async function previewRunAllSources(icpId: string): Promise<RunAllPreview
   let activeDirSources = 0;
   if (icp.market === "CA" || icp.market === "LATAM") activeDirSources += 1; // YP
   if (googlePlacesIsAvailable()) activeDirSources += 1;
-  if (yelpIsAvailable()) activeDirSources += 1;
 
   return {
     market: icp.market,
@@ -358,8 +329,6 @@ export async function previewRunAllSources(icpId: string): Promise<RunAllPreview
     denueAvailable: denueIsAvailable(),
     denueActivity,
     denueState: stateName,
-    yelpAvailable: yelpIsAvailable(),
-    yelpLocation,
     googlePlacesAvailable: googlePlacesIsAvailable(),
     googlePlacesLocation: googleLocation,
   };

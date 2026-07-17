@@ -71,7 +71,10 @@ export function buildFollowup1(ctx: FollowupContext): FollowupEmail {
 
   let valueHook = "";
   if (ctx.hunterValue !== null) {
-    valueHook = `We found ${formatValue(ctx.hunterValue, ctx.market)} in recoverable revenue at ${ctx.prospectName} — wanted to make sure this landed in the right place.`;
+    // hunterValue is currently always null (scan provenance can't be verified —
+    // asserting "we found $X" would fabricate an audit we never ran). Kept as a
+    // soft reference in case a verified per-prospect scan ever exists.
+    valueHook = `The quick self-serve audit for ${ctx.prospectName} pointed at roughly ${formatValue(ctx.hunterValue, ctx.market)} in recoverable inefficiencies — wanted to make sure this landed in the right place.`;
   } else if (ctx.painSummary) {
     valueHook = `Wanted to make sure my note about ${ctx.painSummary} at ${ctx.prospectName} didn't get buried.`;
   } else {
@@ -102,7 +105,7 @@ export function buildFollowup2(ctx: FollowupContext): FollowupEmail {
 
   let valueIntro = "";
   if (ctx.hunterValue !== null) {
-    valueIntro = `When we looked at ${ctx.prospectName} we found ${formatValue(ctx.hunterValue, ctx.market)} in recoverable revenue sitting on the table.`;
+    valueIntro = `The self-serve audit for ${ctx.prospectName} pointed at roughly ${formatValue(ctx.hunterValue, ctx.market)} in recoverable inefficiencies.`;
   } else if (ctx.painSummary) {
     valueIntro = `When we looked at ${ctx.prospectName} we spotted a real gap around ${ctx.painSummary} — the kind that quietly costs you revenue every month.`;
   } else {

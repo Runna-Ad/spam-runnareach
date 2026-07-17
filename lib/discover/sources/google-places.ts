@@ -134,28 +134,37 @@ export async function searchGooglePlaces(
       return { ok: true, listings: [], total_returned: 0 };
     }
 
-    // Domains we'd never pitch — SaaS platforms, directories
-    const GP_BLOCKED = new Set([
+    // Domains that aren't the business's OWN website — SaaS platforms,
+    // directories, link-in-bio and hosted-page services. Matched by suffix so
+    // subdomains (m.facebook.com, sites.google.com, acme.business.site) are
+    // caught too; normalizeWebsite would otherwise strip the path and store
+    // e.g. "https://linktr.ee" as the prospect's site.
+    const GP_BLOCKED = [
       "shopify.com", "woocommerce.com", "bigcommerce.com", "squarespace.com",
       "wix.com", "weebly.com", "wordpress.com", "google.com",
-      "facebook.com", "instagram.com", "linkedin.com",
+      "facebook.com", "fb.com", "instagram.com", "linkedin.com",
       "amazon.com", "amazon.ca", "etsy.com", "ebay.com",
       "yelp.com", "yelp.ca", "yellowpages.ca",
-    ]);
+      "linktr.ee", "business.site", "godaddysites.com", "wixsite.com",
+      "blogspot.com", "wa.me", "whatsapp.com",
+    ];
+    const isBlockedHost = (host: string): boolean =>
+      GP_BLOCKED.some((b) => host === b || host.endsWith(`.${b}`));
 
     const listings: GooglePlacesListing[] = data.places
       .filter((p) => p.businessStatus !== "CLOSED_PERMANENTLY")
-      .filter((p) => {
-        if (!p.websiteUri) return true; // no site — filter handled downstream
-        try {
-          const host = new URL(p.websiteUri).hostname.replace(/^www\./, "");
-          return !GP_BLOCKED.has(host);
-        } catch { return true; }
-      })
       .map((place) => {
-        const website_url = place.websiteUri
-          ? normalizeWebsite(place.websiteUri)
-          : null;
+        // A listing pointing at a hosted/social page means the business has no
+        // site of its own — keep the prospect, drop the URL (the no-website
+        // lane handles it) instead of storing the platform as "their site".
+        let websiteUri = place.websiteUri ?? null;
+        if (websiteUri) {
+          try {
+            const host = new URL(websiteUri).hostname.replace(/^www\./, "");
+            if (isBlockedHost(host)) websiteUri = null;
+          } catch { websiteUri = null; }
+        }
+        const website_url = websiteUri ? normalizeWebsite(websiteUri) : null;
         const domain = website_url ? normalizeDomain(website_url) : null;
 
         // Extract city, state, country from addressComponents

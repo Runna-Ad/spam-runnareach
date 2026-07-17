@@ -206,13 +206,21 @@ export async function resumeDiscoveryJob(
   const staleMs = Date.now() - new Date(job.heartbeat_at).getTime();
   if (staleMs < STALL_MS) return { ok: true, resumed: false }; // slice still alive
 
-  // Claim it: bump heartbeat so a concurrent poller won't double-fire.
-  await supabase
+  // Claim it ATOMICALLY: the conditional .lt on heartbeat_at means only ONE of
+  // several concurrent pollers wins the claim — the losers see 0 rows and back
+  // off. Without it, two pollers reading the same stale heartbeat would both
+  // re-trigger the worker and double-process the same prospects.
+  const { data: claimed } = await supabase
     .from("discovery_jobs")
     .update({ heartbeat_at: new Date().toISOString() } as never)
     .eq("id", idParse.data)
     .eq("tenant_id", user.tenantId)
-    .eq("status", "running");
+    .eq("status", "running")
+    .lt("heartbeat_at", new Date(Date.now() - STALL_MS).toISOString())
+    .select("id");
+  if (!claimed || claimed.length === 0) {
+    return { ok: true, resumed: false }; // another poller claimed it first
+  }
 
   const cookieHeader = await currentCookieHeader();
   const origin = originFromHeaders(await headers());

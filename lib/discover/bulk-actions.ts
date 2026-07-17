@@ -41,8 +41,16 @@ const bulkGenerateSchema = z.object({
   prospect_ids: z.array(z.string().uuid()).min(1).max(10),
 });
 const GENERATE_CHUNK = 5;
-/** Prospect statuses already past the drafting stage — don't re-draft these. */
-const ADVANCED_STATUSES = new Set(["sent", "replied", "booked", "won", "lost", "ghosted", "bounced"]);
+/**
+ * Prospect statuses bulk pitch generation must skip: already past drafting
+ * (sent/replied/…) OR deliberately taken out of play (suppressed/archived/
+ * no_match — re-pitching those requires changing the status first, an explicit
+ * human decision).
+ */
+const ADVANCED_STATUSES = new Set([
+  "sent", "replied", "booked", "won", "lost", "ghosted", "bounced",
+  "suppressed", "archived_no_meeting", "no_match",
+]);
 
 export type BulkResult =
   | { ok: true; affected: number; failed: number; details?: string }
@@ -100,6 +108,24 @@ export async function bulkTransitionStatus(
     .eq("tenant_id", user.tenantId);
 
   if (error) return { ok: false, error: `Could not update: ${error.message}` };
+
+  // Suppressing a prospect must also stop its outbound machinery: pause the
+  // follow-up sequence on sent pitches and unschedule queued sends. Without
+  // this, the crons kept emailing prospects that were suppressed mid-sequence.
+  if (parsed.data.next_status === "suppressed") {
+    await supabase
+      .from("pitches")
+      .update({ sequence_paused_at: nowIso, next_followup_at: null } as never)
+      .in("prospect_id", parsed.data.prospect_ids)
+      .eq("tenant_id", user.tenantId)
+      .eq("status", "sent");
+    await supabase
+      .from("pitches")
+      .update({ scheduled_send_at: null } as never)
+      .in("prospect_id", parsed.data.prospect_ids)
+      .eq("tenant_id", user.tenantId)
+      .eq("status", "approved");
+  }
 
   // Audit one entry per prospect so the per-prospect activity tab
   // surfaces the change. Run sequentially — these are best-effort.

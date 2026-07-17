@@ -15,8 +15,7 @@ export type DiscoverySource =
   | "yellowpages_ca"
   | "brave_search"
   | "denue"
-  | "claude_search"
-  | "yelp";
+  | "claude_search";
 
 /** Sources that support the keyword-based crawl drawer */
 export const CRAWLABLE_SOURCES = ["claude_search", "yellowpages_ca", "brave_search", "denue", "google_places"] as const;
@@ -60,13 +59,8 @@ export const SOURCE_META: Record<
     available: false, // toggled to true at runtime when key is present
     blockedOn: "Add DENUE_API_KEY to .env.local — free at inegi.org.mx/servicios/api_denue.html (note: INEGI API may only respond from Mexican IPs)",
   },
-  yelp: {
-    label: "Yelp Fusion",
-    description:
-      "Search Yelp's business directory across Canada, US, and Mexico. 500 free calls/day. Ideal for finding SMBs without websites.",
-    available: false, // toggled to true at runtime when key is present
-    blockedOn: "Add YELP_API_KEY to .env.local — free at developer.yelp.com (instant, 500 calls/day).",
-  },
+  // Yelp was removed 2026-06-22 (expired trial) — run-history rows with
+  // source='yelp' fall back to the raw string label in the UI.
   google_places: {
     label: "Google Places",
     description:

@@ -149,6 +149,10 @@ export async function searchWithClaude(
   let searchesRun = 0;
   let totalInput = 0;
   let totalOutput = 0;
+  // Every domain Brave actually showed the model. The final answer is
+  // whitelisted against this set — an LLM can emit a plausible-looking domain
+  // it never saw, and an unverified domain on a prospect ends up in outreach.
+  const seenDomains = new Set<string>();
 
   try {
     for (let turn = 0; turn < MAX_TURNS; turn++) {
@@ -174,7 +178,7 @@ export async function searchWithClaude(
           .map((b) => (b.type === "text" ? b.text : ""))
           .join("")
           .trim();
-        const listings = parseFinalAnswer(text);
+        const listings = parseFinalAnswer(text, seenDomains);
         const cost_usd = computeCostUsd(ANTHROPIC_DEFAULT_MODEL, totalInput, totalOutput);
         if (!listings) {
           return {
@@ -213,6 +217,11 @@ export async function searchWithClaude(
         }
         searchesRun++;
         const brave = await searchBrave({ query, country, count: 20 });
+        if (brave.ok) {
+          for (const l of brave.listings) {
+            if (l.domain) seenDomains.add(l.domain);
+          }
+        }
         toolResults.push({
           type: "tool_result",
           tool_use_id: tu.id,
@@ -304,7 +313,7 @@ function formatBraveResults(
     .join("\n");
 }
 
-function parseFinalAnswer(text: string): ClaudeSearchListing[] | null {
+function parseFinalAnswer(text: string, seenDomains: Set<string>): ClaudeSearchListing[] | null {
   // Be lenient — strip code fences and grab the outermost JSON object.
   let cleaned = text
     .replace(/^```(?:json)?\s*/i, "")
@@ -329,7 +338,7 @@ function parseFinalAnswer(text: string): ClaudeSearchListing[] | null {
   if (!parsed.success) return null;
 
   return parsed.data.businesses.map((b) => {
-    const website = b.website_url?.trim() || null;
+    let website = b.website_url?.trim() || null;
     let domain: string | null = null;
     if (website) {
       try {
@@ -337,6 +346,14 @@ function parseFinalAnswer(text: string): ClaudeSearchListing[] | null {
       } catch {
         domain = null;
       }
+    }
+    // Whitelist against the Brave results the model actually saw. A domain it
+    // never saw is (at best) a guess and (at worst) a hallucination — blank it
+    // so the pipeline's verified website-discovery handles it instead of
+    // storing an unvetted URL that could reach a sent pitch.
+    if (domain && !seenDomains.has(domain)) {
+      website = null;
+      domain = null;
     }
     return {
       company_name: b.company_name.trim(),

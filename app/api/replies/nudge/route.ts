@@ -137,13 +137,12 @@ export async function GET(req: NextRequest) {
 
     let whatTheyDo: string | null = null;
     let painSummary: string | null = null;
+    // prospect_research is the table every writer uses (the legacy "research"
+    // table this used to read is never written — the composer ran blind).
     const { data: research } = await supabase
-      .from("research")
+      .from("prospect_research")
       .select("what_they_do, pain_points")
       .eq("prospect_id", prospectId)
-      .is("superseded_at", null)
-      .order("generated_at", { ascending: false })
-      .limit(1)
       .maybeSingle();
     whatTheyDo = (research?.what_they_do as string | null) ?? null;
     const pains = Array.isArray(research?.pain_points) ? research!.pain_points : [];

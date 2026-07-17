@@ -223,6 +223,34 @@ export async function GET(req: NextRequest) {
           },
         });
 
+        // ── Bounce (NDR) → auto-suppress immediately ───────────────────────
+        // A daemon NDR means the address is dead. Waiting for a human to click
+        // "Suppress" leaves the prospect active — follow-ups kept firing at
+        // dead mailboxes, and the generic path below even marked the prospect
+        // "replied" (a bounce is not engagement). Suppress now; the inbox item
+        // stays visible for review with the suppression already applied.
+        if (classification.intent === "bounced") {
+          await supabase
+            .from("prospects")
+            .update({
+              status: "suppressed",
+              suppressed_at: new Date().toISOString(),
+              suppressed_reason: "Email bounced (undeliverable) — auto-suppressed",
+              cooldown_until: new Date(Date.now() + 365 * 24 * 60 * 60 * 1000).toISOString(),
+            })
+            .eq("id", thread.prospect_id);
+          await pauseSequence(supabase, thread.tenant_id, thread.prospect_id);
+          await supabase.from("audit_log").insert({
+            tenant_id: thread.tenant_id,
+            actor_id: null,
+            action: "prospect.suppressed",
+            entity_type: "prospect",
+            entity_id: thread.prospect_id,
+            metadata: { reply_id: insertedReply.id, reason: "bounced_auto", source: "gmail_poll" },
+          });
+          continue;
+        }
+
         // ── Cap reached + not booked + still negotiating → archive ─────────
         if (replyAttempts >= MAX_REPLY_ATTEMPTS && classification.intent !== "wants_meeting") {
           const reason =
@@ -392,13 +420,12 @@ async function draftResponse(
       .maybeSingle();
     originalPitchBody = pitch?.body_edited ?? pitch?.body_original ?? null;
 
+    // prospect_research is the table every writer uses (the legacy "research"
+    // table this used to read is never written — drafts ran without context).
     const { data: research } = await supabase
-      .from("research")
+      .from("prospect_research")
       .select("what_they_do, pain_points")
       .eq("prospect_id", thread.prospect_id)
-      .is("superseded_at", null)
-      .order("generated_at", { ascending: false })
-      .limit(1)
       .maybeSingle();
     whatTheyDo = research?.what_they_do ?? null;
     const pains = Array.isArray(research?.pain_points) ? research.pain_points : [];

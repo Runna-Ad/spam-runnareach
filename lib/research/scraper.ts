@@ -1,4 +1,5 @@
 import * as cheerio from "cheerio";
+import { hasUsableEmail, hasValidTld } from "./email-utils.ts";
 
 /**
  * Use a realistic browser UA. Bot-style UAs (e.g. "RunnaCABot/0.1") are
@@ -37,6 +38,8 @@ export type ScrapedSite = {
   http_status: number;
   what_they_do: string | null;
   tech_stack: string[];
+  /** The site's own name (og:site_name / title) — null when not clean. */
+  site_name: string | null;
   contact_emails: string[];
   social_links: { platform: string; url: string }[];
   key_pages: { label: string; url: string }[];
@@ -51,6 +54,9 @@ export type ScrapedSite = {
 export type ScrapeError =
   | { kind: "timeout" }
   | { kind: "network"; detail: string }
+  // DNS says the domain does not exist (ENOTFOUND). Unlike a timeout or HTTP
+  // error, this is definitive: there is no website behind this domain.
+  | { kind: "dns"; detail: string }
   | { kind: "http"; status: number; final_url: string }
   | { kind: "too_large"; bytes: number }
   | { kind: "not_html"; content_type: string }
@@ -172,6 +178,15 @@ async function fetchHtml(url: string): Promise<FetchResult> {
     if (err instanceof Error && err.name === "AbortError") {
       return { ok: false, error: { kind: "timeout" } };
     }
+    // Node's fetch wraps DNS failures as "fetch failed" with the real code on
+    // err.cause. ENOTFOUND = the domain has no DNS records at all.
+    const causeCode =
+      err instanceof Error && err.cause && typeof err.cause === "object" && "code" in err.cause
+        ? String((err.cause as { code?: unknown }).code)
+        : null;
+    if (causeCode === "ENOTFOUND") {
+      return { ok: false, error: { kind: "dns", detail: `Domain does not resolve (${causeCode})` } };
+    }
     return {
       ok: false,
       error: {
@@ -188,16 +203,42 @@ type ParsedSite = Omit<ScrapedSite, "fetched_url" | "final_url" | "http_status" 
 
 export function parseSite(html: string, baseUrl: string): ParsedSite {
   const $ = cheerio.load(html);
+  let siteDomain: string | null = null;
+  try {
+    siteDomain = new URL(baseUrl).hostname.replace(/^www\./, "");
+  } catch {
+    /* keep null — glue repair simply won't run */
+  }
 
   return {
+    site_name: extractSiteName($),
     what_they_do: extractWhatTheyDo($),
     tech_stack: detectTechStack(html, $),
-    contact_emails: extractContactEmails(html, $),
+    contact_emails: extractContactEmails(html, $, siteDomain),
     social_links: extractSocials($, baseUrl),
     key_pages: extractKeyPages($, baseUrl),
     language: detectLanguage($, html, baseUrl),
     market: detectMarket(baseUrl, html, $),
   };
+}
+
+/**
+ * The site's own name for itself — og:site_name, else the first segment of
+ * <title> before a separator. Used to repair prospects whose company_name was
+ * derived from a hostname ("Acadianlogworks") or a mangled search title.
+ * Returns null rather than guessing when nothing clean is found.
+ */
+export function extractSiteName($: cheerio.CheerioAPI): string | null {
+  const og = $('meta[property="og:site_name"]').attr("content")?.trim();
+  if (og && og.length >= 2 && og.length <= 80) return og;
+  const title = $("title").first().text().trim();
+  if (!title) return null;
+  // Hyphen splits only when space-surrounded ("Wal-Mart" stays intact).
+  const first = title.split(/\s+-\s+|\s*[|·—–]\s*/)[0]?.trim() ?? "";
+  if (first.length >= 2 && first.length <= 80 && !/^(home|welcome|inicio|bienvenidos?)$/i.test(first)) {
+    return first;
+  }
+  return null;
 }
 
 // ── Language detection ─────────────────────────────────────────────────────────
@@ -432,21 +473,22 @@ export function detectTechStack(html: string, $: cheerio.CheerioAPI): string[] {
 
 const EMAIL_REGEX = /\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b/g;
 
-// Messy HTML often glues a phone number to an email ("Tel: 2266.8020carmen@x.com")
-// and the regex swallows it into the local-part. Strip a leading run of digits +
-// phone separators (>= 6 digits) that sits immediately before the real name.
+// Messy HTML often glues a phone number OR postal code to an email
+// ("Tel: 2266.8020carmen@x.com", "CP 66220store@x.com") and the regex swallows
+// it into the local-part. Strip a leading run of digits + phone separators
+// (>= 5 digits — MX/US postal codes are 5) sitting immediately before letters.
 function stripLeadingPhonePrefix(email: string): string {
   const at = email.indexOf("@");
   if (at <= 0) return email;
   const local = email.slice(0, at);
   const m = local.match(/^[\d.\-\s()]+(?=[A-Za-z])/);
-  if (m && (m[0].match(/\d/g) ?? []).length >= 6) {
+  if (m && (m[0].match(/\d/g) ?? []).length >= 5) {
     return email.slice(m[0].length);
   }
   return email;
 }
 
-function extractContactEmails(html: string, $: cheerio.CheerioAPI): string[] {
+function extractContactEmails(html: string, $: cheerio.CheerioAPI, siteDomain: string | null): string[] {
   const found = new Set<string>();
 
   // mailto: links
@@ -460,7 +502,7 @@ function extractContactEmails(html: string, $: cheerio.CheerioAPI): string[] {
   const visibleText = $("body").text();
   const matches = visibleText.match(EMAIL_REGEX) ?? [];
   for (const raw of matches) {
-    const email = stripLeadingPhonePrefix(raw.toLowerCase());
+    const email = repairGluedTldDomain(stripLeadingPhonePrefix(raw.toLowerCase()), siteDomain);
     if (isValidEmail(email)) found.add(email);
   }
 
@@ -469,17 +511,43 @@ function extractContactEmails(html: string, $: cheerio.CheerioAPI): string[] {
   return Array.from(found).filter((e) => !e.includes("@2x.") && !e.includes("@3x.") && !isMonitoringEmail(e));
 }
 
-// Template/demo placeholder addresses that litter website starter themes.
+// Extra theme-template placeholders beyond the shared email-utils lists.
 // "user@domain.com", "you@example.com", "name@company.com" are NOT real contacts.
 const PLACEHOLDER_EMAIL_DOMAINS = new Set([
-  "domain.com", "example.com", "example.org", "example.net", "yourdomain.com",
-  "yourcompany.com", "yoursite.com", "mydomain.com", "mysite.com", "sample.com",
-  "sitename.com", "email.com", "test.com", "company.com", "acme.com",
+  "yoursite.com", "mydomain.com", "mysite.com", "sitename.com",
 ]);
 const PLACEHOLDER_EMAIL_LOCALS = new Set([
-  "user", "you", "youremail", "yourname", "name", "example", "firstname",
-  "lastname", "john.doe", "jane.doe", "email",
+  "you", "john.doe", "jane.doe",
 ]);
+
+/**
+ * Repair run-together page text glued onto an email's domain — but ONLY when
+ * the repaired domain is the site's own ("info@neeralta.commonday" scraped
+ * from neeralta.com → "info@neeralta.com"). Foreign-domain glue (e.g. scam
+ * comments like "…@gmail.comwhatsapp") is left broken on purpose: those are
+ * third-party addresses we cannot attribute to the business, and a truncation
+ * guess there produces someone ELSE's real inbox.
+ */
+export function repairGluedTldDomain(email: string, siteDomain: string | null): string {
+  if (!siteDomain) return email;
+  const at = email.lastIndexOf("@");
+  if (at <= 0) return email;
+  const local = email.slice(0, at);
+  const domain = email.slice(at + 1).toLowerCase();
+  if (hasValidTld(domain)) return email; // nothing glued
+  const site = siteDomain.toLowerCase().replace(/^www\./, "");
+  const labels = domain.split(".");
+  const last = labels[labels.length - 1] ?? "";
+  // Trim the glued run at every possible TLD boundary; accept only the
+  // candidate that equals the site's own domain.
+  for (let cut = 2; cut < last.length; cut++) {
+    const candidate = [...labels.slice(0, -1), last.slice(0, cut)].join(".");
+    if (candidate === site && hasValidTld(candidate)) {
+      return `${local}@${candidate}`;
+    }
+  }
+  return email;
+}
 
 function isValidEmail(email: string): boolean {
   // Basic shape + reject internal placeholders
@@ -487,10 +555,13 @@ function isValidEmail(email: string): boolean {
   if (email.endsWith(".png") || email.endsWith(".jpg") || email.endsWith(".svg")) return false;
   const [local, domain] = email.toLowerCase().split("@");
   if (!local || !domain) return false;
+  // Shared junk lists + TLD allowlist + glued-digit check — the same gate the
+  // send path uses (hasUsableEmail), so extraction can never store an address
+  // the sender would refuse. Catches "…@godaddy.comreservaciones…"-style
+  // run-together text and builder placeholders like filler@godaddy.com.
+  if (!hasUsableEmail(email)) return false;
   if (PLACEHOLDER_EMAIL_DOMAINS.has(domain)) return false;
-  if (PLACEHOLDER_EMAIL_LOCALS.has(local) && /(example|domain|company|site|yourname)/.test(domain)) {
-    return false;
-  }
+  if (PLACEHOLDER_EMAIL_LOCALS.has(local)) return false;
   return true;
 }
 

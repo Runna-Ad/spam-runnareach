@@ -6,7 +6,7 @@ import type { createClient } from "@/lib/supabase/server";
 import { anymailFindDecisionMaker } from "@/lib/research/anymail-finder";
 import { hunterDomainSearch } from "@/lib/research/hunter";
 import { snapVerifyEnrich } from "@/lib/research/snap-contact";
-import { isRoleBasedEmail } from "@/lib/research/email-utils";
+import { isRoleBasedEmail, hasUsableEmail } from "@/lib/research/email-utils";
 
 /**
  * Contact enrichment for a single prospect (call only for score ≥ 70):
@@ -71,7 +71,7 @@ export async function enrichContactsForProspect(
 
   // ── Tier 2: Anymail Finder (verified) ─────────────────────────────────────
   const anymailResult = await anymailFindDecisionMaker(domain);
-  if (anymailResult.ok) {
+  if (anymailResult.ok && hasUsableEmail(anymailResult.contact.email)) {
     const c = anymailResult.contact;
     const roleBased = isRoleBasedEmail(c.email);
     await supabase.from("prospect_contacts").insert({
@@ -94,6 +94,9 @@ export async function enrichContactsForProspect(
   const hunterResult = await hunterDomainSearch(domain);
   if (hunterResult.ok && hunterResult.contacts.length > 0) {
     for (const contact of hunterResult.contacts) {
+      // Paid finders get the same shape gate as everything else — Hunter's
+      // domain sweep occasionally returns scraped-junk patterns too.
+      if (!hasUsableEmail(contact.email)) continue;
       const roleBased = isRoleBasedEmail(contact.email);
       // Hunter's domain sweep often returns info@/contact@ — rank those below
       // any personal hit so a real decision-maker is preferred when present.

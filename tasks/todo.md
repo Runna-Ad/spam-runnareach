@@ -943,3 +943,92 @@ Before touching any code:
 - Tasks marked [ ] = not done, even if discussed or partially implemented
 - If unsure: `git log --oneline --all | head -10` to see what commits exist
 - Never assume something is done because it was "worked on" in a prior session
+
+---
+
+## Session 2026-07-17 — Critical-fail audit (fake website in pitch, bounced junk emails, MX discovery fails)
+
+### Root causes found
+1. **Fake website in sent pitch (Acadian Log Works — lost lead):** `discoverWebsiteViaBrave`
+   attached the FIRST Brave result for `"Company" city official website` with no
+   name-match and no liveness check → scrape failed (domain has no DNS) → scrape-action
+   logged a "website unreachable" pain citing the guessed domain → composer wrote a
+   confident email about "their broken site".
+2. **Bounces:** scraped emails inserted with no SMTP screen; regex glued postal codes
+   (66220store@ — 5 digits, strip threshold was 6) and run-together TLDs
+   (godaddy.comreservaciones…); filler@godaddy.com is GoDaddy's builder placeholder and
+   wasn't blocklisted.
+3. **Yelp still firing:** availability = "YELP_API_KEY set in env" and the key was never
+   removed from Vercel.
+4. **Brave 402** = quota/subscription exhausted (deep research burns 4-6 queries per
+   prospect). **DENUE 406** = INEGI WAF rejecting bot UA / Vercel datacenter IP — runs
+   never originate from Pedro's location, so "running from Mexico" changes nothing.
+
+### Fixed (all verified: 170/170 tests, tsc + eslint clean)
+- [x] discoverWebsiteViaBrave: company-name token must match domain/title + HEAD liveness
+      probe (only DNS ENOTFOUND = dead)
+- [x] scraper: DNS failures classified as `dns` error kind
+- [x] scrape-action: DNS-dead domain → `domain_dead` flag, NO fabricated pain point;
+      "website unreachable" pain now only for verifiable 404/410/5xx
+- [x] pipeline: dead domain → clear domain + red_flag `dead_domain` → honest no-website
+      pitch lane (extracted `runNoWebsiteLane`)
+- [x] email-utils: shared placeholder lists (godaddy/secureserver/wixsite + filler),
+      TLD allowlist (`hasValidTld`), glued-digit-prefix check (≥5 digits);
+      `hasUsableEmail` enforces all → send path retroactively refuses stored junk
+- [x] scraper: uses shared gate; leading-digit strip threshold 6→5
+- [x] scrape-action: same-domain scraped emails SMTP-screened via new
+      `screenEmailsAgainstSmtp` (drops 550-class); off-domain kept
+- [x] Yelp removed from run-all orchestration, crawl-action, source-meta, modal; yelp.ts deleted
+- [x] Brave 402 → explicit quota error; DENUE → browser UA + status-specific diagnostics
+- [x] firstNameGuess: local-part inference capped at 9 chars (no more "Hi Calgauthier,")
+- [x] tests/email-utils.test.ts — 7 suites pinned to the real bounces
+
+### Pedro action items
+- [ ] Brave: check billing/usage at api-dashboard.search.brave.com (402 = quota out)
+- [ ] DENUE: token may need regenerating at inegi.org.mx; may stay blocked from Vercel IPs
+- [ ] Optionally remove YELP_API_KEY from Vercel env (now unused by code)
+- [ ] Run scripts/audit-2026-07-17-review.sql in Supabase SQL editor — review unsent
+      pitches citing unverified domains + legacy junk contacts
+- [ ] Deploy approval pending
+
+### Tech debt
+- structured-research contact inserts + composer audit → see audit-agent findings below
+
+### Round 2 — audit-agent findings fixed (same session, all verified: build + 170/170 tests + tsc + lint clean)
+- [x] Drip cron: hasUsableEmail + prospect status/cooldown gate at send time (was: null-check only)
+- [x] Follow-up cron: same gates (was: suppressed prospects kept getting follow-ups)
+- [x] Poll cron: bounces now AUTO-suppress (1y cooldown) + pause sequence; no longer mark the prospect "replied"
+- [x] Suppression (single + bulk) now pauses sequences + unschedules queued sends
+- [x] Bulk pitch generation skips suppressed/archived/no_match
+- [x] structured-research, manual contact, Anymail, Hunter inserts all gated by hasUsableEmail
+- [x] Follow-up + nudge composers: factual-integrity rules added (were auto-sending with ZERO anti-fabrication rules)
+- [x] Follow-up "We found $X in recoverable revenue" removed — hunter_scans provenance unverifiable = fabricated audit claim
+- [x] follow-up/nudge/poll/reply routes: read prospect_research (were reading the never-written legacy "research" table → composed blind)
+- [x] Deep research: bails instead of confabulating when scrape+Brave return nothing; Brave queries disambiguated with city
+- [x] "Website unreachable" pain additionally requires a company-name token in the domain
+- [x] claude-search: returned websites whitelisted against domains Brave actually showed (no hallucinated domains stored)
+- [x] Pipeline: final-score failure = error (no more pitching on the structural pre-research score)
+- [x] Pipeline: discovered-website domain now used by SnapVerify + enrichment (was stale → good leads auto-suppressed "no contact")
+- [x] nameMatchesListing: domain-only (title matching could attach directory domains)
+- [x] claude-scorer: composite recomputed from breakdown (model's own total no longer trusted)
+- [x] generatePitch advances b_list → pitched (stops janitor TTL suppressing live outreach)
+- [x] Watchdog claim made atomic (no double-processing)
+- [x] Janitor also closes stuck discovery_runs (>30 min running)
+- [x] Google Places: platform/link-in-bio hosts (linktr.ee, business.site, facebook…) no longer stored as "their website" (suffix match; prospect kept, URL dropped)
+- [x] DENUE names: legal suffixes stripped (no more "Sa De Cv" greetings)
+- [x] Scrape backfills hostname-derived company names from the site's own og:site_name/title
+- [x] Heuristic template no longer invents "${company}.com" subjects
+
+### Known-open (deliberate, needs Pedro's call — see session report)
+- [ ] Catch-all guessed addresses (snapverify_catchall_guess) still auto-send when they're the only contact
+- [ ] Hunter results with confidence 50-69 still inserted (rank 3)
+- [ ] Discovery "discovering" phase still one slice — can exceed 120s on 5-keyword ICPs (janitor now cleans up; per-source slicing deferred)
+- [ ] LATAM ICP market mapping contradictory (run-all→CA, crawl insert→MX)
+- [ ] Suppression is per-prospect, not per-email-address
+- [ ] Website-pitch fallback template is English-only (Claude path localizes)
+
+### Round 3 — post-SQL-audit (2026-07-17, cont.)
+- [x] INEGI token re-requested via browser → re-sent EXISTING token to petedv31@gmail.com (so token likely valid → 406 = WAF/IP, UA fix is the relevant one)
+- [x] Scraper: same-domain TLD-glue repair (info@neeralta.commonday → info@neeralta.com); foreign-domain glue stays rejected (CPA4IT scam-comment gmails). 172/172 tests.
+- [x] Cleanup DELETE appended to scripts/audit-2026-07-17-review.sql (Pedro to run)
+- [ ] Pedro: compare token vs Vercel `DENUE_API_KEY`; run the DELETE; after deploy bulk re-scrape affected prospects to recover real contacts

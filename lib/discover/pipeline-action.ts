@@ -196,6 +196,11 @@ export async function processSingleProspect(
   const name = p?.company_name ?? prospectId;
   let hasWebsite = !!(p?.domain || p?.website_url);
   const hasIcp = !!(p?.icp_id);
+  // The domain later steps should use. `p` is a snapshot from before website
+  // discovery — using p.domain after a successful discovery silently skipped
+  // SnapVerify + the enrichment waterfall, so every discovered-website
+  // prospect ended up "no contact found" and was suppressed after full spend.
+  let effectiveDomain = p?.domain ?? null;
 
   // ── Website discovery via Brave (for no-website prospects like Yelp results) ─
   // Yelp and other directory sources don't include website URLs in their search
@@ -229,6 +234,7 @@ export async function processSingleProspect(
         .eq("id", prospectId)
         .eq("tenant_id", user.tenantId);
       hasWebsite = true;
+      effectiveDomain = discovered.domain;
     }
   }
 
@@ -237,7 +243,9 @@ export async function processSingleProspect(
   // If they're ICP-linked (i.e. discovered for a real campaign), we auto-
   // generate a "you need a website" pitch instead of suppressing them.
   // Without an ICP link there's no industry context to personalise — suppress.
-  if (!hasWebsite) {
+  // Also entered mid-pipeline when the stored domain turns out not to exist
+  // (DNS-dead): the domain is cleared first, then the prospect lands here.
+  async function runNoWebsiteLane(): Promise<SinglePipelineResult> {
     if (!hasIcp) {
       await supabase
         .from("prospects")
@@ -289,6 +297,10 @@ export async function processSingleProspect(
     return { prospect_id: prospectId, company_name: name, score: null, outcome: "suppressed" };
   }
 
+  if (!hasWebsite) {
+    return runNoWebsiteLane();
+  }
+
   // ── Pass 1: scrape + gate score (no pain extraction yet) ───────────────
   //
   // Gate on cheap signals only: industry fit, geo, tech stack, size.
@@ -298,7 +310,33 @@ export async function processSingleProspect(
 
   // Step 1: Scrape website (homepage + up to 4 sub-pages: About, Team, Contact…)
   try {
-    await scrapeWebsite(prospectId);
+    const scrapeResult = await scrapeWebsite(prospectId);
+    if (!scrapeResult.ok && scrapeResult.domain_dead) {
+      // The stored domain has no DNS records — it either lapsed or was never
+      // theirs (auto-discovery can attach a wrong domain). Clear it and pitch
+      // the honest "no website" angle. NEVER email a prospect claiming a
+      // domain we can't verify is theirs is "their broken site".
+      const { data: cur } = await supabase
+        .from("prospects")
+        .select("red_flags")
+        .eq("id", prospectId)
+        .eq("tenant_id", user.tenantId)
+        .maybeSingle<{ red_flags: string[] }>();
+      const flags = new Set(cur?.red_flags ?? []);
+      flags.add("dead_domain");
+      await supabase
+        .from("prospects")
+        .update({
+          website_url: null,
+          domain: null,
+          red_flags: Array.from(flags),
+          updated_at: new Date().toISOString(),
+        })
+        .eq("id", prospectId)
+        .eq("tenant_id", user.tenantId);
+      hasWebsite = false;
+      return runNoWebsiteLane();
+    }
   } catch {
     // Continue — scoring can still run with whatever data exists
   }
@@ -355,7 +393,7 @@ export async function processSingleProspect(
   // homepage + About/Team/Contact sub-pages (2000 chars each) + Brave intel.
   // Free: no API credits. Suppressed prospects never reach here.
   let snapVerifyFoundContact = false;
-  if (p?.domain) {
+  if (effectiveDomain) {
     try {
       type ResearchRow = { notes: string | null; what_they_do: string | null };
       const { data: research } = await supabase
@@ -367,10 +405,10 @@ export async function processSingleProspect(
 
       const snapResult = await snapVerifyEnrich(
         prospectId,
-        p.domain,
+        effectiveDomain,
         research?.notes ?? null,
         research?.what_they_do ?? null,
-        p.company_name,
+        p?.company_name ?? name,
       );
 
       if (snapResult.found) {
@@ -402,9 +440,21 @@ export async function processSingleProspect(
     // Non-fatal — continue without pain points
   }
 
-  // Step 6: Final score — has pain signal + contact signal + all research
+  // Step 6: Final score — has pain signal + contact signal + all research.
+  // If it fails, STOP — do not triage (and possibly pitch) on the Pass-1
+  // structural score, which never saw pain evidence and can clear 70 on
+  // structure alone. The prospect stays researched for a re-run.
   const scoreResult = await scoreProspect(prospectId);
-  const score = scoreResult.ok ? scoreResult.composite_score : initialScore;
+  if (!scoreResult.ok) {
+    return {
+      prospect_id: prospectId,
+      company_name: name,
+      score: initialScore,
+      outcome: "error",
+      error: `Final score failed: ${scoreResult.error}`,
+    };
+  }
+  const score = scoreResult.composite_score;
 
   // ── Triage on final score ─────────────────────────────────────────────────
 
@@ -449,14 +499,14 @@ export async function processSingleProspect(
   // (SnapVerify 3-pass → Anymail → Hunter → catch-all-safe guess). We pass
   // skipSnapVerify=false so SnapVerify re-runs here and can surface the
   // catch-all best-guess as a last resort — Pass-1's run only inserts verified.
-  if (p?.domain && !snapVerifyFoundContact) {
+  if (effectiveDomain && !snapVerifyFoundContact) {
     try {
-      await enrichContactsForProspect(user.tenantId, prospectId, p.domain, p.company_name, supabase, false);
+      await enrichContactsForProspect(user.tenantId, prospectId, effectiveDomain, p?.company_name ?? name, supabase, false);
     } catch (err) {
       console.error(`[pipeline] enrichContactsForProspect failed for ${name}:`, err);
     }
   } else {
-    console.log(`[pipeline] skipping enrichContacts for ${name}: domain=${p?.domain} snapVerifyFound=${snapVerifyFoundContact}`);
+    console.log(`[pipeline] skipping enrichContacts for ${name}: domain=${effectiveDomain} snapVerifyFound=${snapVerifyFoundContact}`);
   }
 
   // ── No-contact gate ───────────────────────────────────────────────────────
@@ -704,6 +754,15 @@ async function discoverWebsiteViaBrave(
       if (SKIP_DOMAINS.some((skip) => listing.domain!.includes(skip))) continue;
       // Must look like a real domain (has a dot, not just a path)
       if (!listing.domain.includes(".")) continue;
+      // The site must plausibly BELONG to this company — a generic search
+      // result is not their website. Require a significant company-name token
+      // in the domain or the result title. (We once attached a stranger's — and
+      // nonexistent — domain to a prospect and emailed them about "their" site.)
+      if (!nameMatchesListing(companyName, listing.domain, listing.company_name)) continue;
+      // And the domain must actually be live — Brave's index can hold dead
+      // domains. Any HTTP response (even 403 bot-blocking) proves it exists;
+      // DNS/connection failure means it doesn't.
+      if (!(await domainIsLive(listing.website_url))) continue;
       return {
         website_url: listing.website_url,
         domain: normalizeDomain(listing.website_url) ?? listing.domain,
@@ -714,4 +773,54 @@ async function discoverWebsiteViaBrave(
   }
 
   return null;
+}
+
+/**
+ * True when at least one significant token of the company name (≥4 chars,
+ * not a generic filler word) appears in the candidate DOMAIN. The domain is
+ * the only signal that actually identifies the site's owner — a result TITLE
+ * can mention the company on someone else's site (directory profile pages),
+ * which is how a stranger's domain got attached to a prospect.
+ */
+function nameMatchesListing(companyName: string, domain: string, _title: string): boolean {
+  const GENERIC = new Set([
+    "the", "and", "les", "las", "los", "del", "de", "inc", "ltd", "llc",
+    "corp", "shop", "store", "tienda", "casa", "grupo", "group", "company",
+    "studio", "salon", "centro", "center", "clinic", "clinica",
+  ]);
+  const tokens = companyName
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[̀-ͯ]/g, "")
+    .split(/[^a-z0-9]+/)
+    .filter((t) => t.length >= 4 && !GENERIC.has(t));
+  if (tokens.length === 0) return false;
+  const haystack = domain
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[̀-ͯ]/g, "");
+  return tokens.some((t) => haystack.includes(t));
+}
+
+/**
+ * Quick liveness probe. Any HTTP response (even 403 bot-blocking) proves the
+ * domain exists. Only a definitive DNS "no such domain" (ENOTFOUND) counts as
+ * dead — timeouts, TLS quirks, and connection resets happen on real sites, and
+ * the name-match check above remains the primary guard.
+ */
+async function domainIsLive(url: string): Promise<boolean> {
+  try {
+    await fetch(url, {
+      method: "HEAD",
+      redirect: "follow",
+      signal: AbortSignal.timeout(5_000),
+    });
+    return true;
+  } catch (err) {
+    const causeCode =
+      err instanceof Error && err.cause && typeof err.cause === "object" && "code" in err.cause
+        ? String((err.cause as { code?: unknown }).code)
+        : null;
+    return causeCode !== "ENOTFOUND";
+  }
 }

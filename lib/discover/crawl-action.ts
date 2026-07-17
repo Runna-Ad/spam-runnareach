@@ -10,14 +10,13 @@ import { findDuplicate, normalizeDomain } from "./fuzzy-dedupe";
 import { searchBrave, braveIsAvailable } from "./sources/brave-search";
 import { searchYellowPagesCA } from "./sources/yellowpages-ca";
 import { searchDenue, denueIsAvailable, deriveMexicoStateCode, MEXICO_STATE_CODES } from "./sources/denue";
-import { searchYelp, yelpIsAvailable } from "./sources/yelp";
 import { searchGooglePlaces, googlePlacesIsAvailable } from "./sources/google-places";
 import { searchWithClaude, claudeSearchIsAvailable, type ClaudeSearchIcp } from "./sources/claude-search";
 
 // ── Input schema ──────────────────────────────────────────────────────────────
 
 const crawlSchema = z.object({
-  source: z.enum(["yellowpages_ca", "brave_search", "denue", "yelp", "google_places", "claude_search"]),
+  source: z.enum(["yellowpages_ca", "brave_search", "denue", "google_places", "claude_search"]),
   keyword: z.string().trim().min(1).max(200),
   /** Province name for YP ("Alberta"), or omit for Brave (uses market) */
   location: z.string().trim().max(200).optional(),
@@ -39,7 +38,7 @@ export type CrawlResult =
   | {
       ok: true;
       run_id: string;
-      source: "yellowpages_ca" | "brave_search" | "denue" | "yelp" | "google_places" | "claude_search";
+      source: "yellowpages_ca" | "brave_search" | "denue" | "google_places" | "claude_search";
       candidates_found: number;
       candidates_new: number;
       candidates_duplicate: number;
@@ -298,7 +297,7 @@ type FetchSourceResult =
   | { ok: false; error: string };
 
 async function fetchFromSource(opts: {
-  source: "yellowpages_ca" | "brave_search" | "denue" | "yelp" | "google_places" | "claude_search";
+  source: "yellowpages_ca" | "brave_search" | "denue" | "google_places" | "claude_search";
   keyword: string;
   location: string | undefined;
   market: "CA" | "MX" | "US" | "LATAM";
@@ -446,34 +445,6 @@ async function fetchFromSource(opts: {
         domain: l.domain,
         city: l.city,
         region: l.region,
-      })),
-    };
-  }
-
-  if (opts.source === "yelp") {
-    if (!yelpIsAvailable()) {
-      return {
-        ok: false,
-        error: "Yelp not configured — add YELP_API_KEY to .env.local (free at developer.yelp.com)",
-      };
-    }
-    // resolveLocationForGeoApi converts INEGI codes ("09") → "Ciudad de México, Mexico"
-    const loc = resolveLocationForGeoApi(opts.location, opts.market);
-
-    const result = await searchYelp({
-      keyword: opts.keyword,
-      location: loc,
-      limit: 50,
-    });
-    if (!result.ok) return { ok: false, error: result.error };
-    return {
-      ok: true,
-      listings: result.listings.map((l) => ({
-        company_name: l.company_name,
-        website_url: l.website_url, // null — Yelp search doesn't expose business sites
-        domain: l.domain,           // null
-        city: l.city,
-        region: l.state_code,
       })),
     };
   }

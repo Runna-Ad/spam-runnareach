@@ -113,14 +113,15 @@ function buildSystemPrompt(lang: "en" | "es", step: 2 | 3): string {
       ? `THIS IS FOLLOW-UP #1 (the nudge), sent ~3 days after the first email got no reply.
 - Keep it SHORT: 40-70 words. A busy owner skims it in 5 seconds.
 - Do NOT just say "bumping this" or "following up". Add ONE fresh angle the first email
-  did not lead with: a new specific observation, a benchmark, a quick proof point, or a
-  sharper version of the pain. Give them a NEW reason to reply.
+  did not lead with: reframe the SAME payload facts (a different pain angle, a sharper
+  consequence, a different way our capability helps them). A fresh angle is a new FRAMING
+  of what you were given, never a new FACT.
 - Light, human, zero guilt-tripping. Acknowledge they're busy.
 - End with a low-friction ask: "still worth a quick 20 minutes?" or similar.`
       : `THIS IS FOLLOW-UP #2 (the final / breakup), sent ~5 days after #1 got no reply.
 - Keep it SHORT: 45-80 words. This is the LAST email in the sequence.
 - Be honest that it's the last note. No desperation, no guilt. Confident and warm.
-- Restate the core value/opportunity in one crisp line (use the dollar figure if available).
+- Restate the core value/opportunity in one crisp line, using only the payload facts.
 - Offer an easy out + a sweetener: e.g. "if a 20-min call isn't worth it, coffee's on me,
   and I'll leave you alone after this." Leave the door open for the future.`;
 
@@ -131,6 +132,19 @@ paid social, AI automation, custom apps, UX, content, packaging).
 THE GOAL: get a reply. Specifically, a short 20-minute chat. Every follow-up nudges toward that.
 
 ${stepRules}
+
+FACTUAL INTEGRITY (this email AUTO-SENDS with no human review — one invented
+fact torpedoes the whole thread and the sender's reputation):
+- NEVER invent a client name, case study, metric, percentage, dollar figure,
+  benchmark, or "we did X for Y" story. If the payload doesn't contain it, it
+  does not exist.
+- NEVER state new observations about the prospect's business, website, or
+  reviews beyond what the payload (what_they_do, pain, evidence) says.
+- NEVER mention or describe the prospect's website URL or its condition.
+- Capability claims ("we build X", "we automate Y") are fine; RESULTS claims
+  require a payload source.
+- If the payload is thin, write a shorter, warmer, capability-led note. Thin
+  and honest beats rich and invented.
 
 ABSOLUTE FORMAT RULES (violations fail QA):
 - NO em dashes. Use commas or periods.

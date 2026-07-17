@@ -189,16 +189,28 @@ export async function searchDenue(input: DenueSearchInput): Promise<DenueSearchR
     const res = await fetch(url, {
       headers: {
         Accept: "application/json",
-        "User-Agent": "Mozilla/5.0 (compatible; RunnaBot/0.1; +https://runna.agency/bot)",
+        // Plain browser UA — INEGI's WAF rejects bot-styled UAs (HTTP 406),
+        // especially from datacenter IPs like Vercel's.
+        "User-Agent":
+          "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
       },
       signal: controller.signal,
     });
 
     if (!res.ok) {
       if (res.status === 404) {
+        // INEGI serves its 404 page both for invalid tokens and (historically)
+        // for blocked source IPs.
         return {
           ok: false,
-          error: "DENUE API unreachable — INEGI restricts access to Mexican IP addresses. Use a MX VPN for local testing, or deploy to a server in Mexico.",
+          error:
+            "DENUE API returned 404 — the token is likely invalid/expired (INEGI serves a 404 page for bad tokens). Regenerate it at inegi.org.mx/servicios/api_denue.html and update DENUE_API_KEY.",
+        };
+      }
+      if (res.status === 406 || res.status === 403) {
+        return {
+          ok: false,
+          error: `DENUE API rejected the request (HTTP ${res.status}) — INEGI's firewall is blocking the server's IP or user-agent. Note: discovery runs from Vercel's US datacenter, NOT your location, so running it "from Mexico" doesn't change the source IP. If this persists, the token may also need regenerating.`,
         };
       }
       return { ok: false, error: `DENUE API returned HTTP ${res.status}` };
@@ -285,11 +297,18 @@ function normalizeWebsite(raw: string): string | null {
   }
 }
 
-/** Convert ALL CAPS to Title Case (DENUE returns uppercase names) */
+/**
+ * Convert ALL CAPS to Title Case (DENUE returns uppercase legal names) and
+ * strip trailing legal-entity suffixes — an email greeting "Abarrotes Don
+ * Jose Sa De Cv" reads as a bot that scraped a government registry (it did).
+ */
 function titleCase(str: string): string {
   if (!str) return str;
-  return str
+  const cased = str
     .toLowerCase()
     .replace(/(?:^|\s|[-/])\S/g, (c) => c.toUpperCase())
+    .trim();
+  return cased
+    .replace(/[,\s]+(S\.?a\.?p\.?i\.?\s+De\s+C\.?v\.?|S\.?a\.?\s+De\s+C\.?v\.?|S\.?\s+De\s+R\.?l\.?(\s+De\s+C\.?v\.?)?|S\.?a\.?b?\.?|S\.?c\.?|A\.?c\.?|S\.?\s+En\s+C\.?)\.?$/i, "")
     .trim();
 }

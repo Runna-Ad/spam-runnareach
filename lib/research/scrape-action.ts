@@ -7,6 +7,7 @@ import { requireUser } from "@/lib/auth";
 import { createClient } from "@/lib/supabase/server";
 import { scrapeSite, type SubPageExtract } from "./scraper";
 import { isRoleBasedEmail } from "./email-utils";
+import { screenEmailsAgainstSmtp } from "./snap-contact";
 
 const inputSchema = z.object({
   prospect_id: z.string().uuid(),
@@ -25,6 +26,13 @@ export type ScrapeWebsiteResult =
       error: string;
       /** True when a "website unreachable" pain point was recorded on the prospect. */
       pain_point_added?: boolean;
+      /**
+       * True when DNS says the domain doesn't exist at all. The pipeline uses
+       * this to clear the (possibly mis-discovered) domain and route the
+       * prospect to the honest no-website pitch lane instead of emailing them
+       * about "their" broken site.
+       */
+      domain_dead?: boolean;
     };
 
 /**
@@ -52,6 +60,7 @@ export async function scrapeWebsite(prospectId: string): Promise<ScrapeWebsiteRe
 
   type ProspectRow = {
     id: string;
+    company_name: string;
     domain: string | null;
     website_url: string | null;
     status: string;
@@ -61,7 +70,7 @@ export async function scrapeWebsite(prospectId: string): Promise<ScrapeWebsiteRe
   };
   const { data: prospect, error: prospectErr } = await supabase
     .from("prospects")
-    .select("id, domain, website_url, status, match_score, language, market")
+    .select("id, company_name, domain, website_url, status, match_score, language, market")
     .eq("id", parsed.data.prospect_id)
     .eq("tenant_id", user.tenantId)
     .maybeSingle<ProspectRow>();
@@ -85,36 +94,55 @@ export async function scrapeWebsite(prospectId: string): Promise<ScrapeWebsiteRe
     const scrapeMsg =
       e.kind === "timeout"
         ? "Site took too long to respond — it may be blocking automated requests."
-        : e.kind === "http"
-          ? `Site returned HTTP ${e.status}.`
-          : e.kind === "too_large"
-            ? `Page too large (${(e.bytes / 1_048_576).toFixed(1)} MB — cap is 4 MB).`
-            : e.kind === "not_html"
-              ? `Not an HTML page (got ${e.content_type || "unknown content-type"}).`
-              : e.kind === "parse"
-                ? `Parser failed: ${e.detail}`
-                : `Can't reach site — it may not exist or is blocking automated requests.`;
+        : e.kind === "dns"
+          ? "Domain doesn't exist (no DNS records) — the stored website is wrong or lapsed."
+          : e.kind === "http"
+            ? `Site returned HTTP ${e.status}.`
+            : e.kind === "too_large"
+              ? `Page too large (${(e.bytes / 1_048_576).toFixed(1)} MB — cap is 4 MB).`
+              : e.kind === "not_html"
+                ? `Not an HTML page (got ${e.content_type || "unknown content-type"}).`
+                : e.kind === "parse"
+                  ? `Parser failed: ${e.detail}`
+                  : `Can't reach site — it may not exist or is blocking automated requests.`;
 
-    // "too_large" and "not_html" and "parse" are scraper-side failures, not dead-website
-    // signals. Only treat network/timeout/http errors as "site unreachable" for the
-    // pain-point + contact-fallback path.
-    const isSiteUnreachable =
-      e.kind === "network" || e.kind === "timeout" || e.kind === "http";
+    // DNS-dead: the domain doesn't exist. We can't know whether it was ever
+    // theirs (auto-discovery can attach a wrong domain), so we must NEVER email
+    // them claiming "your site acadianlogworks.com is down" — that exact
+    // mistake lost a warm lead. Surface domain_dead so the pipeline clears the
+    // domain and pitches the honest "no website" angle instead.
+    if (e.kind === "dns") {
+      return { ok: false, error: scrapeMsg, domain_dead: true };
+    }
 
-    if (!isSiteUnreachable) {
+    // The "website unreachable" pain point is only defensible when the site
+    // verifiably EXISTS (DNS resolves) but serves an error a visitor would
+    // also hit: 404/410/5xx. Timeouts and 401/403/406/429 usually mean the
+    // site blocks bots while working fine in a browser — claiming it's down
+    // would be false. Those (plus scraper-side failures) just return an error.
+    const isSiteBroken =
+      e.kind === "http" && (e.status === 404 || e.status === 410 || e.status >= 500);
+
+    // AND the domain must plausibly be THEIRS: a company-name token must
+    // appear in it. Auto-discovery has attached wrong domains before — telling
+    // a prospect "your site is broken" about a stranger's domain lost a lead.
+    const nameTokens = prospect.company_name
+      .toLowerCase()
+      .normalize("NFD")
+      .replace(/[̀-ͯ]/g, "")
+      .split(/[^a-z0-9]+/)
+      .filter((t) => t.length >= 4);
+    const domainLc = (prospect.domain ?? target).toLowerCase();
+    const domainLooksTheirs = nameTokens.some((t) => domainLc.includes(t));
+
+    if (!isSiteBroken || !domainLooksTheirs) {
       return { ok: false, error: scrapeMsg };
     }
 
     // Build a usable evidence quote from the error so the pitch can open with it.
-    // e.g. "Checked homedecoration.com.mx — site doesn't exist"
-    const evidenceDetail =
-      e.kind === "timeout"
-        ? "site didn't respond"
-        : e.kind === "http"
-          ? `returned HTTP ${e.status}`
-          : `site doesn't appear to exist`;
+    // e.g. "Checked homedecoration.com.mx — returned HTTP 500"
     const domainLabel = prospect.domain ?? target;
-    const unreachableQuote = `Checked ${domainLabel} — ${evidenceDetail}.`;
+    const unreachableQuote = `Checked ${domainLabel} — returned HTTP ${e.status}.`;
 
     // Persist the "website unreachable" pain point so it surfaces in pitch generation.
     // Best opener: "Checked your site — it's down."
@@ -195,7 +223,28 @@ export async function scrapeWebsite(prospectId: string): Promise<ScrapeWebsiteRe
     return { ok: false, error: `Lookup failed: ${existingErr.message}` };
   }
 
-  const site = result.site;
+  const rawSite = result.site;
+
+  // Screen same-domain scraped addresses against the SMTP probe before they
+  // touch research notes or prospect_contacts — pages routinely display stale
+  // addresses the mail server no longer knows ("550 No Such User Here"
+  // bounces). Off-domain addresses (gmail etc.) can't be probed in one batch
+  // and are kept as-is. Best-effort: probe unavailable → keep everything.
+  let screenedEmails = rawSite.contact_emails;
+  if (prospect.domain) {
+    const sameDomain = screenedEmails.filter((e) => e.endsWith(`@${prospect.domain}`));
+    if (sameDomain.length > 0) {
+      try {
+        const passed = new Set(await screenEmailsAgainstSmtp(sameDomain, prospect.domain));
+        screenedEmails = screenedEmails.filter(
+          (e) => !e.endsWith(`@${prospect.domain}`) || passed.has(e),
+        );
+      } catch {
+        // Screening is best-effort — keep all emails if the probe errors.
+      }
+    }
+  }
+  const site = { ...rawSite, contact_emails: screenedEmails };
   const mergedTechStack = unionUnique(existing?.tech_stack ?? [], site.tech_stack);
   const mergedEvidence = unionUnique(existing?.evidence_urls ?? [], [
     site.final_url,
@@ -274,6 +323,13 @@ export async function scrapeWebsite(prospectId: string): Promise<ScrapeWebsiteRe
   const prospectPatch: Record<string, unknown> = { updated_at: new Date().toISOString() };
   if (!prospect.language) prospectPatch.language = site.language;
   if (!prospect.market && site.market) prospectPatch.market = site.market;
+  // Repair hostname-derived company names ("Acadianlogworks", "Best-pet-food")
+  // with the site's OWN name — discovery sources fall back to capitalizing the
+  // hostname when page titles are junk, and that fake name then shows up in
+  // sent emails. Only replaces names that clearly came from the hostname.
+  if (site.site_name && looksHostnameDerived(prospect.company_name, prospect.domain)) {
+    prospectPatch.company_name = site.site_name.slice(0, 200);
+  }
   if (Object.keys(prospectPatch).length > 1) {
     await supabase
       .from("prospects")
@@ -317,6 +373,23 @@ export async function scrapeWebsite(prospectId: string): Promise<ScrapeWebsiteRe
     what_they_do_set: Boolean(whatTheyDo),
     contact_insert_errors: contactInsertErrors,
   };
+}
+
+/**
+ * True when a company name is just the domain's first label with cosmetic
+ * casing — the discovery-source fallback ("acadianlogworks.com" →
+ * "Acadianlogworks"). One-word names that don't match the hostname (real
+ * brands like "Nike") are left alone.
+ */
+function looksHostnameDerived(companyName: string, domain: string | null): boolean {
+  if (!domain) return false;
+  // The hostname fallback never produces spaces — a spaced name is human/source
+  // data and must not be overwritten even if it flattens to the hostname.
+  if (/\s/.test(companyName.trim())) return false;
+  const firstLabel = (domain.replace(/^www\./, "").split(".")[0] ?? "").toLowerCase();
+  if (!firstLabel) return false;
+  const nameFlat = companyName.toLowerCase().replace(/[^a-z0-9]/g, "");
+  return nameFlat === firstLabel.replace(/[^a-z0-9]/g, "");
 }
 
 function unionUnique<T>(a: T[], b: T[]): T[] {

@@ -15,6 +15,14 @@ import { type NextRequest, NextResponse } from "next/server";
 import { createServiceRoleClient } from "@/lib/supabase/service-role";
 import { getAccessToken, sendGmailMessage } from "@/lib/gmail/client";
 import { effectiveSendsToday, utcToday } from "@/lib/pitches/daily-cap";
+import { hasUsableEmail } from "@/lib/research/email-utils";
+
+// Prospect states that must never receive a queued cold pitch, even if the
+// pitch was approved before the state changed. Checked at send time — the
+// last line of defense (suppression can happen any time after queuing).
+const DO_NOT_SEND_STATUSES = new Set([
+  "suppressed", "archived_no_meeting", "no_match", "lost", "won", "booked",
+]);
 
 // Conservative drip. The cron runs daily (Hobby-tier limit), so this is the
 // cold-email volume PER DAY: a queue of N pitches goes out ~SEND_PER_TICK/day,
@@ -135,6 +143,23 @@ export async function GET(req: NextRequest) {
         continue;
       }
 
+      // ── Prospect must still be sendable ─────────────────────────────────
+      // A prospect can be suppressed/lost/booked AFTER its pitch was queued;
+      // without this check the cron would still email them.
+      const { data: prospectRow } = await supabase
+        .from("prospects")
+        .select("status, cooldown_until")
+        .eq("id", pitch.prospect_id)
+        .maybeSingle();
+      if (prospectRow && DO_NOT_SEND_STATUSES.has(prospectRow.status)) {
+        results.push({ pitch_id: pitch.id, status: "skipped", reason: `Prospect is ${prospectRow.status}` });
+        continue;
+      }
+      if (prospectRow?.cooldown_until && prospectRow.cooldown_until > nowIso) {
+        results.push({ pitch_id: pitch.id, status: "skipped", reason: "Prospect in cooldown" });
+        continue;
+      }
+
       // ── Resolve the contact email ───────────────────────────────────────
       if (!pitch.contact_id) {
         results.push({ pitch_id: pitch.id, status: "skipped", reason: "No contact" });
@@ -148,6 +173,12 @@ export async function GET(req: NextRequest) {
       const toEmail: string | null = contact?.email ?? null;
       if (!toEmail) {
         results.push({ pitch_id: pitch.id, status: "skipped", reason: "Contact has no email" });
+        continue;
+      }
+      // Same gate the manual send path uses — junk contacts linked before the
+      // validation hardening must never be emailed.
+      if (!hasUsableEmail(toEmail)) {
+        results.push({ pitch_id: pitch.id, status: "skipped", reason: `Unusable email: ${toEmail}` });
         continue;
       }
       const body = (pitch.body_edited ?? pitch.body_original ?? "").trim();

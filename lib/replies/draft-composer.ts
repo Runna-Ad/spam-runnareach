@@ -252,6 +252,13 @@ WHAT GOOD LOOKS LIKE:
   last email"). Plain, friendly words.
 - Write the ENTIRE message in ${langName}. Never mix languages.
 
+FACTUAL INTEGRITY (this can auto-send with no human review):
+- NEVER invent a client name, case study, metric, percentage, dollar figure, or
+  "we did X for Y" story. If it isn't in the payload or the thread, it doesn't exist.
+- NEVER state new observations about their business or website beyond the payload.
+- Capability claims are fine; RESULTS claims require a payload source. Thin and
+  honest beats rich and invented.
+
 Sign off: sender's first name on one line, agency name on the next.
 
 Output a JSON object EXACTLY matching:

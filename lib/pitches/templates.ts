@@ -92,7 +92,7 @@ const EN: PitchTemplate = {
     if (pl.includes("social") || pl.includes("content") || pl.includes("engagement"))
       return `${company_name}'s social presence`;
     if (pl.includes("website") || pl.includes("web") || pl.includes("ecommerce"))
-      return `one thing i'd change on ${company_name}.com`;
+      return `one thing i'd change on ${company_name}'s website`;
     if (pl.includes("brand"))
       return `quick thought on ${company_name}'s brand`;
     return `quick thought on ${lowercaseFirst(pain_label)} at ${company_name}`;
@@ -183,7 +183,7 @@ const ES: PitchTemplate = {
     if (pl.includes("social") || pl.includes("contenido") || pl.includes("engagement"))
       return `la presencia social de ${company_name}`;
     if (pl.includes("sitio") || pl.includes("web") || pl.includes("ecommerce"))
-      return `algo que cambiaría en ${company_name}.com`;
+      return `algo que cambiaría en el sitio de ${company_name}`;
     if (pl.includes("marca"))
       return `una idea sobre la marca de ${company_name}`;
     return `una idea sobre ${lowercaseFirst(pain_label)} en ${company_name}`;

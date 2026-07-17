@@ -459,7 +459,10 @@ export async function generatePitch(
     })
     .eq("id", parsed.data.prospect_id)
     .eq("tenant_id", user.tenantId)
-    .in("status", ["raw", "researched"]);
+    // b_list included: a B-list prospect re-scored ≥70 gets pitched by the
+    // job worker — without advancing it here it kept status b_list and the
+    // janitor's 21-day TTL would suppress a prospect with live outreach.
+    .in("status", ["raw", "researched", "b_list"]);
 
   revalidatePath("/pitches");
   revalidatePath("/companies");

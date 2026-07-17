@@ -432,19 +432,6 @@ function PickStep({
               </p>
             )}
 
-            {/* Yelp */}
-            {preview.yelpAvailable ? (
-              <p>
-                <span className="font-mono text-[var(--color-fg-300)]">Yelp</span>{" "}
-                {preview.directoryKeywords.length} keyword{preview.directoryKeywords.length > 1 ? "s" : ""} in{" "}
-                <strong className="text-[var(--color-fg-200)]">{preview.yelpLocation}</strong>
-              </p>
-            ) : (
-              <p className="text-[var(--color-fg-600)] italic">
-                Yelp not configured (YELP_API_KEY missing)
-              </p>
-            )}
-
             {/* Google Places */}
             {preview.googlePlacesAvailable ? (
               <p>

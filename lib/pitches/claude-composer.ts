@@ -620,8 +620,11 @@ function firstNameGuess(
   if (roleBased || !email) return null;
   const local = email.split("@")[0]?.toLowerCase() ?? "";
   const seg = local.split(/[._\-+]/)[0] ?? "";
-  // Only when the first segment is a plausible given name (letters, 3–15 chars).
-  if (seg.length >= 3 && seg.length <= 15 && /^[a-zñáéíóúü]+$/.test(seg) && !GENERIC_LOCALS.has(seg)) {
+  // Only when the first segment is a plausible given name (letters, 3–9 chars).
+  // Longer runs are usually firstname+lastname glued together
+  // ("calgauthier@" is Cal Gauthier) — greeting "Hi Calgauthier," reads as a
+  // bot and torched a real lead. When in doubt, no name.
+  if (seg.length >= 3 && seg.length <= 9 && /^[a-zñáéíóúü]+$/.test(seg) && !GENERIC_LOCALS.has(seg)) {
     return cap(seg);
   }
   return null;

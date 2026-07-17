@@ -66,9 +66,27 @@ export async function GET(req: NextRequest) {
 
   if (bErr) return NextResponse.json({ ok: false, error: bErr.message }, { status: 500 });
 
+  // Sweep stuck discovery_runs too. A crawl killed mid-slice (Vercel
+  // maxDuration) leaves its run row 'running' forever — previously only the
+  // manual "Close N stuck runs" button cleared these.
+  const runCutoff = new Date(Date.now() - 30 * 60_000).toISOString();
+  const { data: staleRuns, error: runErr } = await supabase
+    .from("discovery_runs")
+    .update({
+      status: "failed",
+      error_message: "Run stalled (worker killed mid-crawl) — closed by janitor.",
+      completed_at: nowIso,
+    } as never)
+    .eq("status", "running")
+    .lt("started_at", runCutoff)
+    .select("id");
+
+  if (runErr) return NextResponse.json({ ok: false, error: runErr.message }, { status: 500 });
+
   return NextResponse.json({
     ok: true,
     failed: data?.length ?? 0,
     b_list_expired: archived?.length ?? 0,
+    stale_runs_closed: staleRuns?.length ?? 0,
   });
 }

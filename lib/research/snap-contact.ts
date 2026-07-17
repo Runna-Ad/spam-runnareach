@@ -273,6 +273,33 @@ function googleWorkspaceGuess(
   return { email, confidence: 70, method: "google_workspace_guess" };
 }
 
+// ── Export: one-shot SMTP screen for scraped emails ──────────────────────────
+
+/**
+ * Screen already-found addresses (e.g. scraped off the prospect's site)
+ * against the SMTP probe. Returns the subset that did NOT come back
+ * "invalid" — i.e. drops only addresses the mail server actively rejected
+ * (550 no-such-user class). When the probe is unavailable or inconclusive
+ * (port 25 blocked, catch-all, network error) every email is kept: this is
+ * a bounce filter, not a deliverability guarantee.
+ *
+ * Single pass with a short timeout — callers sit inside time-budgeted
+ * pipeline slices, so no greylisting retries here.
+ */
+export async function screenEmailsAgainstSmtp(
+  emails: string[],
+  domain: string,
+): Promise<string[]> {
+  if (emails.length === 0) return emails;
+  const result = await callVerifyEdgeFunction(emails, domain);
+  if (!result || result.port25_blocked || result.is_catch_all) return emails;
+  const invalid = new Set(
+    result.results.filter((r) => r.verdict === "invalid").map((r) => r.email.toLowerCase()),
+  );
+  if (invalid.size === 0) return emails;
+  return emails.filter((e) => !invalid.has(e.toLowerCase()));
+}
+
 // ── Main export: enrich a single prospect ────────────────────────────────────
 
 /**

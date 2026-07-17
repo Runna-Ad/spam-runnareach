@@ -84,10 +84,11 @@ export async function deepResearchProspect(
     website_url: string | null;
     domain: string | null;
     status: string;
+    city: string | null;
   };
   const { data: prospect, error: pErr } = await supabase
     .from("prospects")
-    .select("id, company_name, website_url, domain, status")
+    .select("id, company_name, website_url, domain, status, city")
     .eq("id", prospectId)
     .eq("tenant_id", user.tenantId)
     .maybeSingle<ProspectRow>();
@@ -120,12 +121,17 @@ export async function deepResearchProspect(
   const braveSnippets: string[] = [];
   const peopleSnippets: string[] = []; // kept separate so we can write to notes explicitly
   if (braveIsAvailable()) {
+    // Disambiguate with city (or domain) — a bare name query returns snippets
+    // about same-named businesses anywhere in the world, and those snippets
+    // become quotable "evidence" about the WRONG company.
+    const disambig = prospect.city ?? prospect.domain ?? "";
+    const scope = disambig ? ` ${disambig}` : "";
     const queries = [
-      `"${prospect.company_name}" reviews`,
-      `"${prospect.company_name}" problems OR complaints`,
-      `"${prospect.company_name}" instagram OR linkedin`,
+      `"${prospect.company_name}"${scope} reviews`,
+      `"${prospect.company_name}"${scope} problems OR complaints`,
+      `"${prospect.company_name}"${scope} instagram OR linkedin`,
       // People-intel: find founders/owners/decision-makers by name
-      `"${prospect.company_name}" founder OR owner OR CEO OR "co-founder" OR director`,
+      `"${prospect.company_name}"${scope} founder OR owner OR CEO OR "co-founder" OR director`,
     ];
 
     for (const q of queries) {
@@ -150,6 +156,18 @@ export async function deepResearchProspect(
     contextParts.push(`=== WEB INTEL (reviews & social signals) ===\n${braveSnippets.join("\n")}`);
   }
   const contextBlock = contextParts.join("\n\n").slice(0, 6_000);
+
+  // No gathered context at all (scrape failed AND Brave returned nothing) —
+  // do NOT call the model. The prompt reads "search their website, reviews…"
+  // but the model has no web access, so with an empty context it confabulates
+  // a plausible company snapshot that then flows into pitches as "facts".
+  if (!contextBlock.trim()) {
+    return {
+      ok: false,
+      error:
+        "No research material could be gathered (site unreachable, no web results) — skipping AI synthesis to avoid invented facts.",
+    };
+  }
 
   // ── Step 4a: Load pain taxonomy so Claude can tag pains directly ────────
   type TaxRow = { id: string; display_name_en: string };

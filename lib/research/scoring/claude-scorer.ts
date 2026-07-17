@@ -194,7 +194,21 @@ function clampToRubric(data: z.infer<typeof scorerSchema>): RubricResult {
     red_flag_penalty: clamp(bd.red_flag_penalty, -30, 0),
   };
 
-  const composite_score = clamp(data.composite_score, 0, 100);
+  // The composite is COMPUTED from the clamped breakdown, never trusted from
+  // the model — a response whose breakdown sums to 45 but claims
+  // composite_score 78 would otherwise cross the 70 pitch gate.
+  const composite_score = clamp(
+    breakdown.industry_fit_pts +
+      breakdown.size_fit_pts +
+      breakdown.digital_maturity_pts +
+      breakdown.pain_signal_pts +
+      breakdown.service_match_pts +
+      breakdown.contact_discoverability_pts +
+      breakdown.geo_fit_pts +
+      breakdown.red_flag_penalty,
+    0,
+    100,
+  );
   const confidence = Math.min(Math.max(Number(data.confidence) || 0.5, 0.1), 0.95);
   const reasoning = typeof data.reasoning === "string" ? data.reasoning : "Scored by Claude.";
 

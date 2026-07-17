@@ -926,3 +926,26 @@ and day boundaries. Newest entries at the bottom.
 **NOT done (deferred by Pedro):** merging the two Sonnet research calls (deep-research + pain-extraction) into one — the bigger lever but medium quality risk. Prototype behind a flag later if more savings needed.
 
 **Next step to MEASURE the win:** run one real discovery cycle, then compare `cost_tracking` run total vs the $8 baseline; confirm composer+research rows now show non-zero `cache_read_input_tokens` (were always 0); confirm new `scoring`/`research` rows exist per prospect.
+
+## 2026-07-17 10:10
+
+**Still open:**
+- [ ] Supabase: ANON + SERVICE_ROLE keys live (connection works — Phase 0 unblocked)
+- [ ] Anthropic API key + $100/mo limit
+- [ ] Google Cloud (Places API + Gmail API + OAuth consent + OAuth client + restricted Places key)
+- [ ] Name sender #1 Runna CA principal + buy both domains + add runnareach.com to Rünna Workspace + DNS (SPF/DKIM/DMARC)
+- [ ] Postmark or SES account
+- [ ] Cal.com account
+- [ ] Slack hot-lead webhook URL
+- [ ] CRON_SECRET + TOKEN_ENCRYPTION_KEY (`openssl rand -hex 32`)
+- [ ] ⏳ #7 Analytics — pitch funnel metrics, cost tracking, Claude vs template breakdown
+- [ ] ⏳ #7 Analytics — pitch funnel metrics, cost tracking, Claude vs template breakdown
+
+
+## 2026-07-17 — CRITICAL-FAIL AUDIT: fake website in pitch, bounced junk emails, MX discovery fails + full-system audit
+**What we did:** Root-caused Pedro's 3 incidents and ran a 3-agent full-system audit; fixed ~30 issues across discovery, research, contacts, composers, and all send paths. Headliners: (1) Acadian Log Works — Brave website-discovery attached an unverified, NONEXISTENT domain, scrape-failure turned it into a "your site is broken" pain, composer emailed it → lead lost. Now: name-match + liveness on discovery, DNS-dead domains cleared + routed to the honest no-website pitch, unreachable-pain restricted to verified 404/410/5xx on name-matching domains. (2) Bounces — glued postal codes/TLD run-ons/GoDaddy placeholders; shared hasUsableEmail gate (TLD allowlist, glued digits, placeholders) now enforced at extraction AND every send path, scraped emails SMTP-screened. (3) Yelp removed for real (was keyed on env var still in Vercel); Brave 402 = quota/billing; DENUE 406 = INEGI WAF vs Vercel US IP (runs never originate from your location) + browser UA. Audit round: send-time gates on drip/follow-up crons, auto-suppress on bounce NDRs, suppression pauses sequences, anti-fabrication rules in follow-up/nudge composers, "we found $X" claim removed, ghost "research"-table reads fixed, claude-search domain whitelist, scorer composite recomputed, stale-domain enrichment fix, janitor closes stuck runs, atomic watchdog claim, hostname-derived name repair, DENUE legal-suffix strip, + more (tasks/todo.md has the full list).
+**Current state:** All built + verified locally (next build ✓, 170/170 tests ✓, tsc ✓, eslint ✓). NOT deployed — needs Pedro's approval.
+**Uncommitted work:** everything above (one logical changeset, uncommitted).
+**Decisions made:** never let auto-discovered data harden into email "facts"; catch-all-guess auto-send + Hunter 50-69 threshold left as-is pending Pedro's call; generatePitch not status-gated (pipeline re-runs on suppressed prospects are deliberate; send-time gates are the backstop).
+**Pick up next session:** (1) Pedro: Brave billing (402), DENUE token regen, optionally remove YELP_API_KEY from Vercel, run scripts/audit-2026-07-17-review.sql, approve deploy. (2) Decide the 6 "known-open" items in todo.md. (3) Consider per-source slicing for the discovering phase.
+**Environment changes:** none (code only). yelp.ts deleted; tests/email-utils.test.ts added.

@@ -30,6 +30,7 @@ import { composeFollowupWithClaude } from "@/lib/pitches/followup-composer";
 import { bumpSendsTodayPayload, effectiveSendsToday } from "@/lib/pitches/daily-cap";
 import { ANTHROPIC_DEFAULT_MODEL, claudeIsAvailable } from "@/lib/anthropic/client";
 import { isUnderDailyCap, recordClaudeCall } from "@/lib/anthropic/cost-tracking";
+import { hasUsableEmail } from "@/lib/research/email-utils";
 
 // ── Auth guard ─────────────────────────────────────────────────────────────────
 
@@ -63,7 +64,16 @@ type ProspectRow = {
   industry: string | null;
   city: string | null;
   language: string | null;
+  status: string;
+  cooldown_until: string | null;
 };
+
+// Prospect states that must never receive an automated follow-up. Manual/bulk
+// suppression doesn't touch pitches.sequence_paused_at, so the cron re-checks
+// the prospect itself — the last line of defense.
+const DO_NOT_SEND_STATUSES = new Set([
+  "suppressed", "archived_no_meeting", "no_match", "lost", "won", "booked",
+]);
 
 type ContactRow = {
   id: string;
@@ -113,12 +123,18 @@ async function processFollowup(pitch: DuePitchRow): Promise<FollowupResult> {
   // ── 1. Load prospect ──────────────────────────────────────────────────────
   const { data: prospect } = await supabase
     .from("prospects")
-    .select("id, company_name, market, industry, city, language")
+    .select("id, company_name, market, industry, city, language, status, cooldown_until")
     .eq("id", pitch.prospect_id)
     .maybeSingle<ProspectRow>();
 
   if (!prospect) {
     return { pitch_id: pitch.id, prospect: "unknown", step: nextStep, status: "skipped", reason: "Prospect not found" };
+  }
+  if (DO_NOT_SEND_STATUSES.has(prospect.status)) {
+    return { pitch_id: pitch.id, prospect: prospect.company_name, step: nextStep, status: "skipped", reason: `Prospect is ${prospect.status}` };
+  }
+  if (prospect.cooldown_until && prospect.cooldown_until > new Date().toISOString()) {
+    return { pitch_id: pitch.id, prospect: prospect.company_name, step: nextStep, status: "skipped", reason: "Prospect in cooldown" };
   }
 
   // ── 2. Load contact ───────────────────────────────────────────────────────
@@ -144,6 +160,9 @@ async function processFollowup(pitch: DuePitchRow): Promise<FollowupResult> {
   if (!contactEmail) {
     return { pitch_id: pitch.id, prospect: prospect.company_name, step: nextStep, status: "skipped", reason: "No contact email" };
   }
+  if (!hasUsableEmail(contactEmail)) {
+    return { pitch_id: pitch.id, prospect: prospect.company_name, step: nextStep, status: "skipped", reason: `Unusable email: ${contactEmail}` };
+  }
 
   // ── 3. Load research for pain summary + AI personalisation context ────────
   let painSummary: string | null = null;
@@ -151,21 +170,21 @@ async function processFollowup(pitch: DuePitchRow): Promise<FollowupResult> {
   let whatTheyDo: string | null = null;
   let techStack: string[] = [];
 
-  // research table not yet in generated types — cast to any for raw access
+  // NOTE: this must read prospect_research (the table every writer uses) —
+  // it previously queried the legacy 0001 "research" table, which is never
+  // written, so follow-ups composed with zero grounded context.
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const { data: research } = await (supabase as any)
-    .from("research")
+    .from("prospect_research")
     .select("pain_points, what_they_do, tech_stack")
     .eq("prospect_id", pitch.prospect_id)
-    .is("superseded_at", null)
-    .order("generated_at", { ascending: false })
-    .limit(1)
     .maybeSingle() as { data: ResearchRow | null };
 
   if (research?.pain_points && research.pain_points.length > 0) {
     const firstPain = research.pain_points[0];
     const quote = firstPain?.evidence_quote ?? firstPain?.quote ?? null;
-    if (quote) {
+    // Same evidence bar as the first pitch: a real quote, not a recycled label.
+    if (quote && quote.trim().length >= 20) {
       evidenceQuote = quote;
       // Trim to a concise phrase — max 80 chars
       painSummary = quote.slice(0, 80).replace(/\.$/, "");
@@ -183,29 +202,14 @@ async function processFollowup(pitch: DuePitchRow): Promise<FollowupResult> {
     .maybeSingle() as { data: { body_original: string | null; body_sent: string | null } | null };
   const originalBody = originalPitch?.body_sent ?? originalPitch?.body_original ?? null;
 
-  // ── 4. Load hunter scan value for this prospect's website ─────────────────
-  let hunterValue: number | null = null;
-
-  const { data: prospectFull } = await supabase
-    .from("prospects")
-    .select("website_url")
-    .eq("id", pitch.prospect_id)
-    .maybeSingle<{ website_url: string | null }>();
-
-  if (prospectFull?.website_url) {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const { data: scan } = await (supabase as any)
-      .from("hunter_scans")
-      .select("results")
-      .eq("website_url", prospectFull.website_url)
-      .order("created_at", { ascending: false })
-      .limit(1)
-      .maybeSingle() as { data: { results: { total?: number } | null } | null };
-
-    if (scan?.results?.total && scan.results.total > 0) {
-      hunterValue = scan.results.total;
-    }
-  }
+  // ── 4. Hunter scan value — DELIBERATELY NOT USED ──────────────────────────
+  // hunter_scans rows are matched by website_url only; there is no way to know
+  // WHO ran the scan or with what inputs (an anonymous visitor, a test, a
+  // deep-link pre-filled with our own guesses). Asserting that number as
+  // "we found $X in recoverable revenue" fabricates an audit we never
+  // performed — the exact class of claim that lost the Acadian lead. The
+  // follow-up invites them to run the audit themselves instead.
+  const hunterValue: number | null = null;
 
   // ── 5. Load sender inbox ──────────────────────────────────────────────────
   if (!pitch.sender_inbox_id) {

@@ -34,6 +34,7 @@ export type BraveSearchResult =
 export type BraveErrorCode =
   | "no_key"
   | "rate_limit"
+  | "quota"
   | "auth"
   | "http_error"
   | "network";
@@ -107,6 +108,17 @@ export async function searchBrave(
         ok: false,
         error: "Brave rate limit exceeded — wait before retrying",
         code: "rate_limit",
+      };
+    }
+    if (res.status === 402) {
+      // Payment Required — the monthly free quota is exhausted or the
+      // subscription lapsed. Deep research fires ~4-6 Brave queries per
+      // prospect, so the 2,000/month free tier can run dry mid-month.
+      return {
+        ok: false,
+        error:
+          "Brave quota exhausted or subscription expired (HTTP 402) — check billing/usage at api-dashboard.search.brave.com",
+        code: "quota",
       };
     }
     if (res.status === 401) {
