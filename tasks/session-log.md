@@ -949,3 +949,30 @@ and day boundaries. Newest entries at the bottom.
 **Decisions made:** never let auto-discovered data harden into email "facts"; catch-all-guess auto-send + Hunter 50-69 threshold left as-is pending Pedro's call; generatePitch not status-gated (pipeline re-runs on suppressed prospects are deliberate; send-time gates are the backstop).
 **Pick up next session:** (1) Pedro: Brave billing (402), DENUE token regen, optionally remove YELP_API_KEY from Vercel, run scripts/audit-2026-07-17-review.sql, approve deploy. (2) Decide the 6 "known-open" items in todo.md. (3) Consider per-source slicing for the discovering phase.
 **Environment changes:** none (code only). yelp.ts deleted; tests/email-utils.test.ts added.
+
+**DEPLOYED 2026-07-17:** commit 38e04e4 shipped to prod via `vercel --prod` (alias https://spam-runnareach.vercel.app live, 307 auth-gate healthy) + pushed to origin/main. DENUE_API_KEY overridden in Vercel prod (token 10fa44b8… — INEGI-confirmed valid; stored Sensitive). PENDING Pedro live-verify: run an MX discovery to exercise DENUE (new token + browser UA from Vercel's egress IP) — 406 again = INEGI IP-blocks Vercel's datacenter (needs MX proxy or leave off); data = fixed. Cleanup DELETE in scripts/audit-2026-07-17-review.sql not yet run.
+
+## 2026-07-17 11:10
+**Shipped (recent commits):**
+  - fix(integrity): stop unverified/fabricated data reaching sent emails + hardening sweep
+
+**Still open:**
+- [ ] Supabase: ANON + SERVICE_ROLE keys live (connection works — Phase 0 unblocked)
+- [ ] Anthropic API key + $100/mo limit
+- [ ] Google Cloud (Places API + Gmail API + OAuth consent + OAuth client + restricted Places key)
+- [ ] Name sender #1 Runna CA principal + buy both domains + add runnareach.com to Rünna Workspace + DNS (SPF/DKIM/DMARC)
+- [ ] Postmark or SES account
+- [ ] Cal.com account
+- [ ] Slack hot-lead webhook URL
+- [ ] CRON_SECRET + TOKEN_ENCRYPTION_KEY (`openssl rand -hex 32`)
+- [ ] ⏳ #7 Analytics — pitch funnel metrics, cost tracking, Claude vs template breakdown
+- [ ] ⏳ #7 Analytics — pitch funnel metrics, cost tracking, Claude vs template breakdown
+
+
+## 2026-07-17 Session — Critical-fail audit + full-system hardening [SHIPPED]
+**What we did:** Root-caused 3 field incidents (fake website in a sent pitch that lost the Acadian Log Works lead; fabricated/glued emails bouncing; MX discovery failing on Yelp/Brave/DENUE), then ran a 3-agent parallel audit that surfaced ~20 more instances of the same root patterns. ~30 fixes total across discovery, research, contacts, all composers, and every send path. Shipped commit 38e04e4 to prod + pushed. Set DENUE_API_KEY in Vercel (Pedro ran it — harness blocks credential writes). Requested/recovered the INEGI token via browser + Gmail.
+**Current state:** DEPLOYED & healthy (spam-runnareach.vercel.app 307). 172/172 tests, tsc/lint/build clean. Git in sync with prod.
+**Uncommitted work:** none after this wrap-up commit.
+**Decisions made:** (1) never let auto-discovered data harden into email "facts" — verify at point of entry, every downstream stage trusts upstream blindly. (2) One shared email gate at extraction AND send. (3) Same-domain TLD-glue is repaired; foreign-domain glue stays rejected (scam-comment gmails must never be truncated into a stranger's real inbox). (4) Kept catch-all-guess auto-send + Hunter 50-69 as-is pending Pedro's call. (5) Committed to main (project's established Vercel-CLI-from-main workflow) rather than branch — preview deploys here are SSO-blocked so prod-and-verify-live is the documented pattern.
+**Pick up next session:** (1) Pedro to run an MX discovery → confirm DENUE (data = fixed / 406 = Vercel-IP-blocked, needs proxy or leave off). (2) Brave billing (402). (3) Run the cleanup DELETE in scripts/audit-2026-07-17-review.sql, then re-scrape affected prospects to recover real contacts. (4) Report back query-1 + query-3 results (only query-2 was shared). (5) The 6 "Known-open" design decisions in todo.md.
+**Environment changes:** DENUE_API_KEY overridden in Vercel prod (Sensitive). yelp.ts deleted. tests/email-utils.test.ts added. YELP_API_KEY in Vercel now inert (safe to delete).
