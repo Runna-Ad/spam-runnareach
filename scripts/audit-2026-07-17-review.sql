@@ -74,3 +74,19 @@ join prospect_contacts c on c.id = p.contact_id
 where p.sent_at is null
   and p.status in ('draft','queued_for_approval','approved')
   and position(split_part(c.email,'@',2) in split_part(c.email,'@',1)) = 1;
+
+-- ─────────────────────────────────────────────────────────────────────────────
+-- REMEDIATION for the one affected prospect (Julien & Cormier, 2026-07-21).
+-- The real addresses were confirmed live on julien-cormier.ca:
+--   pjcormier@julien-cormier.ca · rgjulien@julien-cormier.ca · vfournier@julien-cormier.ca
+-- Step 1: delete the draft pitch built on the garbage address.
+delete from pitches where id = 'b6f8a98f-165b-469b-80bd-4d9e2590abca';
+
+-- Step 2: delete the glued contact (the re-scrape will insert the real ones).
+delete from prospect_contacts
+where position(split_part(email,'@',2) in split_part(email,'@',1)) = 1;
+
+-- Step 3: in the app, open Julien & Cormier → "Re-enrich contacts" (or re-run
+-- the pipeline on it), then "Generate pitches". With the fixes deployed the
+-- scraper recovers vfournier@julien-cormier.ca and the greeting addresses the
+-- ACTUAL recipient (or the firm, since these are initial+surname locals).

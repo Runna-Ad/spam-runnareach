@@ -608,7 +608,7 @@ const GENERIC_LOCALS = new Set([
  * (miguel@ → "Miguel"), but never for role inboxes (info@, ventas@) or when the
  * contact is role-based. Returns null when there's no confident name.
  */
-function firstNameGuess(
+export function firstNameGuess(
   fullName: string | null,
   email: string | null,
   roleBased: boolean,
@@ -620,15 +620,22 @@ function firstNameGuess(
   }
   if (roleBased || !email) return null;
   const local = email.split("@")[0]?.toLowerCase() ?? "";
-  const seg = local.split(/[._\-+]/)[0] ?? "";
-  // Only when the first segment is a plausible given name (letters, 3–9 chars).
-  // Longer runs are usually firstname+lastname glued together
-  // ("calgauthier@" is Cal Gauthier) — greeting "Hi Calgauthier," reads as a
-  // bot and torched a real lead. When in doubt, no name.
-  if (seg.length >= 3 && seg.length <= 9 && /^[a-zñáéíóúü]+$/.test(seg) && !GENERIC_LOCALS.has(seg)) {
-    return cap(seg);
-  }
-  return null;
+  const segments = local.split(/[._\-+]/);
+  const seg = segments[0] ?? "";
+  if (!(seg.length >= 3 && /^[a-zñáéíóúü]+$/.test(seg)) || GENERIC_LOCALS.has(seg)) return null;
+
+  // With an explicit separator the first segment is reliably the given name
+  // (john.sipos -> John, ana.lopez -> Ana).
+  if (segments.length > 1) return cap(seg);
+
+  // WITHOUT a separator the local-part is ambiguous, and the common law-firm /
+  // professional shape is initial(s)+surname: vfournier = V. Fournier,
+  // rgjulien = R.G. Julien, calgauthier = Cal Gauthier. Greeting those as
+  // "Hi Vfournier," / "Hi Calgauthier," reads as a bot and already cost a real
+  // lead. Only accept a short token that can only plausibly BE a given name
+  // (miguel, carmen, ana, pedro); anything longer greets the company instead.
+  // Losing "alexandra@" to the team greeting is far cheaper than one "Hi Vfournier,".
+  return seg.length <= 6 ? cap(seg) : null;
 }
 
 function buildStage2UserPrompt(

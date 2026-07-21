@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { __test__ } from "../lib/anthropic/client.ts";
-import { composePitchWithClaude } from "../lib/pitches/claude-composer.ts";
+import { composePitchWithClaude, firstNameGuess } from "../lib/pitches/claude-composer.ts";
 import type { GeneratorInputs } from "../lib/pitches/generator.ts";
 
 // Set a fake API key so getClient() doesn't refuse to construct.
@@ -363,4 +363,39 @@ test("composePitchWithClaude: classifies abort as timeout", async () => {
   } finally {
     teardown();
   }
+});
+
+// ── firstNameGuess — greeting safety ─────────────────────────────────────────
+// A wrong greeting is the same class of failure as a wrong fact: it reads as a
+// bot and has already cost a real lead ("Hi Calgauthier,"). Fixtures below are
+// REAL addresses seen in production.
+
+test("firstNameGuess: prefers the contact's actual full_name", () => {
+  assert.equal(firstNameGuess("Miguel Ángel Ruiz", "info@x.com", false), "Miguel");
+  assert.equal(firstNameGuess("Mark Jones", null, false), "Mark");
+});
+
+test("firstNameGuess: separator makes the given name unambiguous", () => {
+  assert.equal(firstNameGuess(null, "john.sipos@waglaw.net", false), "John");
+  assert.equal(firstNameGuess(null, "ana.lopez@x.mx", false), "Ana");
+});
+
+test("firstNameGuess: refuses initial+surname locals (real firm addresses)", () => {
+  // julien-cormier.ca partners — greeting "Hi Vfournier," would be a bot tell.
+  assert.equal(firstNameGuess(null, "vfournier@julien-cormier.ca", false), null);
+  assert.equal(firstNameGuess(null, "rgjulien@julien-cormier.ca", false), null);
+  assert.equal(firstNameGuess(null, "pjcormier@julien-cormier.ca", false), null);
+  // The lead this originally cost.
+  assert.equal(firstNameGuess(null, "calgauthier@gmail.com", false), null);
+});
+
+test("firstNameGuess: accepts a short unambiguous given name", () => {
+  assert.equal(firstNameGuess(null, "miguel@saucedoa.com", false), "Miguel");
+  assert.equal(firstNameGuess(null, "carmen@cgc.mx", false), "Carmen");
+});
+
+test("firstNameGuess: never greets a role inbox by name", () => {
+  assert.equal(firstNameGuess(null, "info@x.com", true), null);
+  assert.equal(firstNameGuess(null, "ventas@x.mx", false), null);
+  assert.equal(firstNameGuess(null, null, false), null);
 });
