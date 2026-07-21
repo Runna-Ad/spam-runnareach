@@ -13,7 +13,7 @@
 - **Sibling repo:** `runna-hunter` (separate Vercel project) — the self-serve Inefficiency Hunter the pitch CTA deep-links to.
 
 ## What's deployed
-- Prod = commit **`38e04e4`** (2026-07-17). `origin/main` in sync.
+- Prod = commit **`0781cd4`** (2026-07-21). `origin/main` in sync, working tree clean.
 - Warmup engine live (pedro@runnareach.com, ramped to 50/day across 7 buddy inboxes).
 - Full pipeline live: discovery → scrape → deep research → SnapVerify → pain extraction → score → triage (<50 suppress / 50-69 B-list / ≥70 enrich+pitch) → drip send → reply funnel.
 
@@ -22,8 +22,8 @@
 |---|---|
 | Anthropic (Claude) | ✅ working |
 | Google Places | ✅ working (primary discovery source) |
-| Brave Search | ⚠️ **HTTP 402 — quota/subscription exhausted.** Needs billing at api-dashboard.search.brave.com. Powers deep research + AI Search + no-website discovery. |
-| DENUE (INEGI, MX) | ⚠️ **HTTP 406 — INEGI WAF blocking Vercel's US datacenter IP.** New token set 2026-07-17 (`10fa44b8…`); browser-UA fix deployed. If still 406 after an MX run, needs a MX proxy or leave off. |
+| Brave Search | ⚠️ HTTP 402 (quota). **No longer critical** — per-prospect calls went 6 → 0 on 2026-07-21. Now used ONLY by the two user-triggered discovery sources; research is 100% first-party. |
+| DENUE (INEGI, MX) | ⚠️ HTTP 406 — INEGI WAF vs Vercel's US IP. Token `10fa44b8…` set in Vercel + browser-UA fix deployed, but **still untested** (needs an MX discovery run). If it 406s, needs a MX proxy or leave off. |
 | Hunter.io | ✅ working (contact tier 3) |
 | Anymail Finder | ✅ working (contact tier 2) |
 | Gmail API (OAuth) | ✅ working (send + reply poll + DMARC ingest) |
@@ -32,6 +32,11 @@
 ## Key DB tables
 `prospects` · `prospect_research` (pain_points, what_they_do, tech_stack) · `prospect_contacts` (priority_rank: 0 manual > 1 verified > 2 scraped > 3-5 role/guess) · `pitches` · `scores` · `discovery_runs` · `discovery_jobs` (self-chaining worker) · `replies` · `icps` · `case_studies` · `pain_taxonomy` · `sender_inboxes` · `cost_tracking` · `audit_log` · `hunter_scans` · `do_not_contact_list` · `blackout_dates`.
 
+## Automation status (2026-07-21)
+- **Pre-send verification gate** — built (`lib/pitches/send-gate.ts`, pure, 15 tests) and running in **DRY RUN**: every generated pitch is evaluated and the verdict logged to `audit_log` (`action='pitch.gate_dryrun'`). It blocks nothing.
+- **Decision point:** run `scripts/gate-dryrun-review.sql`. Query 3 (pitches the gate would have held that Pedro sent anyway) decides whether auto-send is enabled. Pedro has chosen AUTO-SEND for PASS once it proves out.
+- Gate rules: recipient usable + verified provenance (catch-all guesses never auto-send) · greeting == recipient · no website claim unless fetched · company name matches the site · metrics must appear in stored evidence.
+
 ## Known issues / tech debt (open, deliberate — need Pedro's call)
 - Catch-all *guessed* addresses (`snapverify_catchall_guess`) still auto-send when they're the only contact.
 - Hunter confidence 50-69 addresses still inserted (rank 3).
@@ -39,9 +44,13 @@
 - LATAM market mapping is contradictory (run-all → CA, crawl insert → MX).
 - Suppression is per-prospect, not per-email-address (a bounced address on a duplicate prospect could be re-emailed).
 - Website-pitch fallback template is English-only (the Claude path localizes).
-- 55 legacy junk contacts still in DB (unsendable; cleanup DELETE ready in `scripts/audit-2026-07-17-review.sql`).
+- `prospect_research` doesn't persist the scraped `site_name`, so the gate's company-name rule is skipped in the dry run.
+- /companies loads max 500 prospects — silent truncation above that.
+- Julien & Cormier: one draft pitch on a garbage address; remediation SQL ready (real addresses confirmed live).
+- Google Places reviews/rating as a web-intel signal — NOT wired; different SKU, pricing unverified.
 
 ## Recent sessions
+- **2026-07-21** — Pitch integrity (greeting≠recipient across 3 composers; glued-domain addresses; initial+surname greetings), bulk-job UI resume, honest status filter, **Brave removed from the per-prospect path (6→0)**, and the **send-gate + dry run** shipped. 7 commits. (this session)
 - **2026-07-17** — Critical-fail audit: fixed the Acadian fake-website pitch, email-bounce root causes, Yelp/Brave/DENUE, + ~20 more via a 3-agent full-system audit. Shipped `38e04e4`. (this session)
 - **2026-07-09** — Cost reduction: prompt caching, closed a cap hole, cut redundant scoring (~20-35% cheaper/run).
 - **2026-06-25** — Pitch↔Hunter handoff (P1-P4), reply nudge, bounce→suppress, triage tiers, discovery time-budgeting.

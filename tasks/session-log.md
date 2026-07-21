@@ -1050,3 +1050,16 @@ and day boundaries. Newest entries at the bottom.
 - [ ] ⏳ #7 Analytics — pitch funnel metrics, cost tracking, Claude vs template breakdown
 - [ ] ⏳ #7 Analytics — pitch funnel metrics, cost tracking, Claude vs template breakdown
 
+
+## 2026-07-21 Session — Pitch integrity, Brave removal, send-gate dry run [SHIPPED]
+**What we did:** Started from three Pedro reports and ended with the automation foundation.
+(1) "Run pipeline on b_list resets/fails" — job data disproved it: the run COMPLETED (4/4, 0 errors, 4 pitched) over 11 min. Real bug was UI: hand-picked jobs use icp_id=NULL so getActiveJobForIcp could never re-attach; the job id lived only in React state, so any refresh mid-run killed the poller AND the router.refresh(), leaving stale rows. Added getActiveBulkPipelineJob() + mount resume. Also: the completion toast excluded error_count, so an all-failed run reported "done - 0 processed" in green; worker also discarded error strings. Both fixed.
+(2) Status filter showed 8 of 19 statuses and "All statuses" was really an active-work list -> prospects in no_match/ghosted/bounced/archived were unreachable from ANY option. Renamed to "Active (needs action)", added real "Everything (no filter)", listed every status.
+(3) Pitch integrity (CRITICAL): a draft addressed to john.sipos@waglaw.net opened "Hi Mark," — greeting and recipient were chosen by DIFFERENT rules in THREE composers. One shared pickAddressContact() now used by all. And julien-cormier.cavfournier@julien-cormier.ca (the firm's domain glued onto vfournier@) passed every guard and reached a draft; now rejected + repaired at extraction. VERIFIED the repair against the live site, which exposed a THIRD bug about to ship: "vfournier" is 9 chars so the greeting logic would have produced "Hi Vfournier," — firstNameGuess now refuses separator-less locals over 6 chars.
+(4) Brave: counted call sites before shopping for a replacement — 6 queries PER PROSPECT (~280 prospects/month ceiling), and the data was already in our own scrape (About/Team text in notes) or Places (websiteUri). Per-prospect Brave calls 6 -> 0. Bonus: those were name-matched queries returning same-named businesses elsewhere = a fabrication path, now closed.
+(5) Built the pre-send verification GATE (pure, 15 tests, every fixture a real failure) + DRY RUN logging to audit_log. Blocks nothing yet.
+**Current state:** ALL DEPLOYED (7 commits, 2e2cfc1..0781cd4), prod healthy, git in sync, working tree clean. 205/205 tests, tsc + eslint + build clean.
+**Uncommitted work:** none.
+**Decisions made:** Pedro chose AUTO-SEND for pitches that pass the gate (not review-only), gate first, Brave must go. US market stays in the ICP selector; LATAM retired. Gate is dry-run FIRST — auto-send only after the false-positive count proves it agrees with Pedro. Places reviews/rating deliberately NOT wired (different SKU, pricing unverified).
+**Pick up next session:** see tasks/next-session-prompt.md — Pedro runs scripts/gate-dryrun-review.sql (query 3 = the deciding number) and pastes results.
+**Environment changes:** none this session (DENUE_API_KEY was set 2026-07-17). New files: lib/pitches/send-gate.ts, lib/pitches/gate-dryrun.ts, lib/replies/bounce-parse.ts, lib/discover/dnc-check.ts, scripts/gate-dryrun-review.sql, tasks/next-session-prompt.md.

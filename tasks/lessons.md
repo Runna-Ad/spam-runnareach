@@ -4,6 +4,26 @@ Running log of mistakes, root causes, and rules to prevent recurrence. Newest at
 
 ---
 
+[2026-07-21] WIN: verifying a fix against reality caught a THIRD bug the fix would have shipped
+WHAT: repaired julien-cormier.cavfournier@julien-cormier.ca -> vfournier@julien-cormier.ca. Instead of trusting the repair logic, I fetched the live site: it publishes pjcormier@, rgjulien@ and vfournier@ — repair confirmed. That same page showed all three addresses are INITIAL+SURNAME, which meant the greeting logic (9-char cap, set earlier the same day) would produce "Hi Vfournier,". The fix for one bot-tell was about to ship another.
+WHY IT WORKED: the verification target was the SOURCE OF TRUTH (the firm's own site), not my own code's output. Checking "does my function return what I expect" would have passed; checking "is what it returns actually real" surfaced the next problem.
+REPLICABLE: YES. After fixing data-extraction logic, verify the OUTPUT against the real-world source it claims to represent — fetch the page, check the record. Cheap (one curl) and it tests the whole chain rather than one function. See [[well-formed-but-wrong]].
+TAGS: #win #verification #replicable #source-of-truth
+
+[2026-07-21] LESSON: a passing test can encode the bug as correct behaviour
+WHAT: fixing the greeting/recipient divergence broke "composePitchHeuristic: prefers non-role-based contact when both exist". Its fixture listed the role inbox FIRST — impossible in production (role inboxes insert at priority_rank 5, personal at 1-2). Under that ordering the OLD code would have mailed info@ while greeting "Maria". The test had been asserting the bug for months and passing.
+ROOT CAUSE: the fixture was hand-built without the ordering invariant the real query guarantees (.order("priority_rank")). Once the fixture is unrealistic, the assertion it protects can be exactly backwards.
+RULE: when a fix breaks an existing test, do NOT assume the fix is wrong. Check whether the FIXTURE is reachable in production — if a query guarantees an ordering/shape, the fixture must honour it, or the test is asserting behaviour on data that can't exist. Fixtures should be built from what the real query returns, not from what's convenient to type.
+TAGS: #lesson #testing #fixtures #invariants
+
+[2026-07-21] LESSON: "nothing happened" is usually a REPORTING failure, not a work failure
+WHAT: Pedro reported "Run pipeline just resets/fails and nothing happens". The job row showed status=done, cursor 4/4, 0 errors, 4 pitched — it had worked perfectly, for 11 minutes. The UI had simply forgotten it: the job id lived only in React state, so a refresh mid-run killed the poller and the completion router.refresh(), leaving stale rows on screen. Separately the completion toast excluded error_count entirely, so an all-failed run would ALSO have said "done - 0 processed" in green.
+ROOT CAUSE: no resume path for hand-picked jobs (icp_id=NULL, and the existing resume helper required an icp_id), plus a summary that counted only successes.
+RULE: for any long-running background job, ephemeral client state is not a handle — provide a server-side "find my in-flight job" query and re-attach on mount. And a completion summary must include the failure count and reasons; a summary that sums only successes reports total failure as a cheerful zero. When a user says "nothing happened", check what the system RECORDED before believing the work didn't run.
+TAGS: #lesson #ux #background-jobs #observability #silent-failure
+
+---
+
 [2026-07-21] WIN/FIX: Brave quota (HTTP 402) wasn't a vendor problem — we were paying to fetch data we already had
 CONTEXT (Pedro): "brave costing has become useless, we need other free options or build our own." Before shopping for a replacement I counted the actual call sites.
 THE NUMBERS: 6 Brave queries PER PROSPECT — 4 in deep-research (reviews / complaints / social / founders) + 2 in SnapVerify (people-intel) — plus ~1 for website discovery. On the 2,000/month free tier that is a hard ceiling of ~280 prospects/month, and RESEARCH (not discovery) was ~85% of consumption. No cheaper vendor fixes a per-prospect fan-out that large.
