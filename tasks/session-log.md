@@ -1065,3 +1065,27 @@ and day boundaries. Newest entries at the bottom.
 **Environment changes:** none this session (DENUE_API_KEY was set 2026-07-17). New files: lib/pitches/send-gate.ts, lib/pitches/gate-dryrun.ts, lib/replies/bounce-parse.ts, lib/discover/dnc-check.ts, scripts/gate-dryrun-review.sql, tasks/next-session-prompt.md.
 
 **ADDENDUM (post-wrap, 2026-07-21):** Pedro caught `emailsrgjulien@julien-cormier.ca` on a pitched prospect. Root cause was NOT another glue variant to patch — cheerio's `$("body").text()` has no element separator, so on a normal contact page EVERY plaintext email match was garbage, and my own TLD-repair had half-fixed one into a new fake address that passed all guards. Fixed at the extractor (`textWithBoundaries`), verified against the live page (4 garbage matches -> the 3 real addresses). Also: `reEnrichProspectContacts` never re-scraped, so the obvious "fix this contact" button could never consult the site's own mailto links — it now re-scrapes first and skips the paid waterfall when the site answers. Narrow label guard added for legacy rows (caught my own first version rejecting Spanish `contactenos@`/`escribenos@`). Deployed b740008. 207/207 tests.
+
+## 2026-07-21 14:03
+**Shipped (recent commits):**
+  - docs: log the cheerio text-boundary root cause + re-enrich gap
+  - fix(scraper): preserve element boundaries when extracting text
+  - docs(project-state): retire known-issues that were fixed this session
+  - docs: wrap up 2026-07-21 session (gate dry run live, Brave removed)
+  - docs(todo): record gate dry-run deploy + review plan
+  - feat(gate): dry-run the send gate on every generated pitch
+  - perf(research): remove Brave from the per-prospect path (6 calls -> 0)
+  - feat(gate): pre-send verification engine (pure + tested)
+
+**Still open:**
+- [ ] Supabase: ANON + SERVICE_ROLE keys live (connection works — Phase 0 unblocked)
+- [ ] Anthropic API key + $100/mo limit
+- [ ] Google Cloud (Places API + Gmail API + OAuth consent + OAuth client + restricted Places key)
+- [ ] Name sender #1 Runna CA principal + buy both domains + add runnareach.com to Rünna Workspace + DNS (SPF/DKIM/DMARC)
+- [ ] Postmark or SES account
+- [ ] Cal.com account
+- [ ] Slack hot-lead webhook URL
+- [ ] CRON_SECRET + TOKEN_ENCRYPTION_KEY (`openssl rand -hex 32`)
+- [ ] ⏳ #7 Analytics — pitch funnel metrics, cost tracking, Claude vs template breakdown
+- [ ] ⏳ #7 Analytics — pitch funnel metrics, cost tracking, Claude vs template breakdown
+
