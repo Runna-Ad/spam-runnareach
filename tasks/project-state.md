@@ -38,19 +38,22 @@
 - Gate rules: recipient usable + verified provenance (catch-all guesses never auto-send) · greeting == recipient · no website claim unless fetched · company name matches the site · metrics must appear in stored evidence.
 
 ## Known issues / tech debt (open, deliberate — need Pedro's call)
-- Catch-all *guessed* addresses (`snapverify_catchall_guess`) still auto-send when they're the only contact.
-- Hunter confidence 50-69 addresses still inserted (rank 3).
-- Discovery "discovering" phase is still one slice — can exceed 120s on 5-keyword ICPs (janitor now auto-closes the stuck run; per-source slicing deferred).
-- LATAM market mapping is contradictory (run-all → CA, crawl insert → MX).
-- Suppression is per-prospect, not per-email-address (a bounced address on a duplicate prospect could be re-emailed).
-- Website-pitch fallback template is English-only (the Claude path localizes).
+- Catch-all *guessed* addresses (`snapverify_catchall_guess`) are still inserted and can be approved by hand — but they are flagged "guessed address" on /pitches and the gate refuses to AUTO-send them.
+- Discovery "discovering" phase is still one slice — can exceed 120s on 5-keyword ICPs (janitor auto-closes the stuck run; per-source slicing deferred by Pedro).
 - `prospect_research` doesn't persist the scraped `site_name`, so the gate's company-name rule is skipped in the dry run.
 - /companies loads max 500 prospects — silent truncation above that.
 - Julien & Cormier: one draft pitch on a garbage address; remediation SQL ready (real addresses confirmed live).
 - Google Places reviews/rating as a web-intel signal — NOT wired; different SKU, pricing unverified.
 
+## Recently CLOSED (do not re-open)
+- Hunter 50-69 confidence → now SMTP-screened before insert (2026-07-21).
+- LATAM mapping contradiction → LATAM retired from the ICP selector and maps to MX everywhere (2026-07-21).
+- Per-email suppression → `do_not_contact_list` now enforced in all 3 send paths; bounces auto-add the dead mailbox (2026-07-21).
+- Website-pitch fallback English-only → full ES template + localized greeting (2026-07-21).
+- Greeting/recipient divergence, glued-domain addresses, initial+surname greetings → fixed with shared predicates + tests (2026-07-21).
+
 ## Recent sessions
 - **2026-07-21** — Pitch integrity (greeting≠recipient across 3 composers; glued-domain addresses; initial+surname greetings), bulk-job UI resume, honest status filter, **Brave removed from the per-prospect path (6→0)**, and the **send-gate + dry run** shipped. 7 commits. (this session)
-- **2026-07-17** — Critical-fail audit: fixed the Acadian fake-website pitch, email-bounce root causes, Yelp/Brave/DENUE, + ~20 more via a 3-agent full-system audit. Shipped `38e04e4`. (this session)
+- **2026-07-17** — Critical-fail audit: fixed the Acadian fake-website pitch, email-bounce root causes, Yelp/Brave/DENUE, + ~20 more via a 3-agent full-system audit. Shipped `38e04e4`.
 - **2026-07-09** — Cost reduction: prompt caching, closed a cap hole, cut redundant scoring (~20-35% cheaper/run).
 - **2026-06-25** — Pitch↔Hunter handoff (P1-P4), reply nudge, bounce→suppress, triage tiers, discovery time-budgeting.
