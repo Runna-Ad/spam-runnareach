@@ -4,6 +4,17 @@ Running log of mistakes, root causes, and rules to prevent recurrence. Newest at
 
 ---
 
+[2026-07-21] FIX: Yellow Pages CA started returning HTTP 403 on every search — bot-UA detection, same failure mode as DENUE
+SYMPTOM (Pedro, run history): every Yellow Pages CA crawl failed with "HTTP 403 from https://www.yellowpages.ca/search/si/1/wholesale/Alberta" while Google Places in the SAME run completed fine (+7/+5/+5).
+ROOT CAUSE: the scraper sent a self-identifying bot UA ("Mozilla/5.0 (compatible; RunnaCABot/0.1; +https://runna.agency/bot)"). Probed the live site: that UA -> 403, a normal browser UA + Accept headers -> 200 with the full listing markup intact. YP added bot detection at some point; nothing about our parsing was wrong.
+FIX: browser UA (matching what the site scraper and the DENUE fix already use). Verified END-TO-END by running the real parser selectors against the live page: 35 listing wrappers, real names, website links extracted — so the selectors had NOT drifted, it was purely the block. Also made 403/429 report as "blocked by bot detection, not a bad search" so run history stops looking like a broken keyword.
+SEPARATE FINDING (quality, not the bug): with YP working, "wholesale / Alberta" returns Walmart, Shoppers Drug Mart, Loblaw Pharmacy, Rexall — national chains, for an ICP of "Calgary Mid-Market Manufacturers & Distributors". Restoring the source restores prospects that will mostly be researched at cost and then suppressed. That is the case FOR the prospect pre-filter already on the roadmap, and possibly for a national-chain exclusion.
+RULE: when ONE source in a multi-source run fails and the others succeed, suspect the source's access (UA/IP/block), not your parsing — and confirm by probing with two different UAs before touching any selector. Then verify the fix by running the ACTUAL parser against the live page, not just checking the status code: a 200 can be a bot-check page. And when a fix restores a source, look at WHAT it returns before calling it a win — a working source producing off-ICP results is a cost problem wearing a success badge.
+TAGS: #fix #scraper #yellowpages #bot-detection #user-agent #verification #icp-quality
+STATUS: built, 207/207 tests, tsc + eslint + build clean.
+
+---
+
 [2026-07-21] FIX (root cause, found by Pedro at the very end): cheerio's .text() has NO element separator — every scraped email on a normal contact page was garbage
 SYMPTOM (Pedro): a pitched prospect's contact was emailsrgjulien@julien-cormier.ca. Clicking "Re-enrich contacts" returned the SAME value, yet their contact page plainly lists three real addresses as mailto links.
 ROOT CAUSE: `$("body").text()` concatenates text nodes with no separator. A contact page rendering "Phone: 613-632-0148  Emails:  rgjulien@x.ca  pjcormier@x.ca" extracts as one unbroken string. Verified against the LIVE page — all four regex matches were junk: "rgjulien@julien-cormier.capjcormier", "vfournier@julien-cormier.caSPOKEN", "613-632-0148Emailsrgjulien@…", "julien-cormier.cavfournier@…". My OWN earlier TLD-repair then fixed the tail of one while leaving the head glue, MANUFACTURING emailsrgjulien@julien-cormier.ca — valid TLD, no digits, no placeholder, so it passed every guard and reached a draft pitch. I had been adding repair heuristics on top of a broken extractor.

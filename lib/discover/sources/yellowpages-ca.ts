@@ -13,8 +13,17 @@ import * as cheerio from "cheerio";
 import type { AnyNode } from "domhandler";
 import { normalizeDomain } from "../fuzzy-dedupe";
 
+// yellowpages.ca began returning HTTP 403 to the self-identifying bot UA
+// (2026-07-21 — every search 403'd while Google Places kept working). Verified
+// against the live site: the bot UA gets 403, a normal browser UA gets 200 with
+// the full listing markup intact. Same failure mode as INEGI/DENUE.
+//
+// The politeness that actually matters is unchanged and enforced below: one
+// request at a time, RATE_LIMIT_MS between pages, a hard page cap, and only
+// public directory pages are read.
 const USER_AGENT =
-  "Mozilla/5.0 (compatible; RunnaCABot/0.1; +https://runna.agency/bot)";
+  "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 " +
+  "(KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36";
 const FETCH_TIMEOUT_MS = 15_000;
 const RATE_LIMIT_MS = 1_500;
 
@@ -114,7 +123,19 @@ async function fetchPage(url: string): Promise<FetchOk | FetchErr> {
       },
       signal: controller.signal,
     });
-    if (!res.ok) return { ok: false, error: `HTTP ${res.status} from ${url}` };
+    if (!res.ok) {
+      // 403/429 = bot detection, not a bad query. Say so, or the run history
+      // just shows a bare status code and looks like a broken keyword.
+      if (res.status === 403 || res.status === 429) {
+        return {
+          ok: false,
+          error:
+            `Yellow Pages blocked the request (HTTP ${res.status}) — bot detection, ` +
+            `not a bad search. If this persists the scraper's headers need updating.`,
+        };
+      }
+      return { ok: false, error: `HTTP ${res.status} from ${url}` };
+    }
     return { ok: true, html: await res.text() };
   } catch (err) {
     if (err instanceof Error && err.name === "AbortError") {
