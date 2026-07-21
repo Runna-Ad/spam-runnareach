@@ -87,6 +87,9 @@ order by a.created_at desc limit 50;
 - **DENUE** — token `10fa44b8-ad44-962e-08fa-9720704db56d` is set in Vercel.
   Untested: run an MX discovery. A 406 means INEGI blocks Vercel's US IP →
   needs a Mexican proxy, or leave DENUE off.
+- **Label-glued contacts** — `scripts/audit-2026-07-17-review.sql` (bottom) lists
+  contacts like `emailsrgjulien@…`. Already unsendable; delete them, then
+  Re-enrich (which now re-scrapes first and will recover the real addresses).
 - **Julien & Cormier remediation** — run the cleanup at the bottom of
   `scripts/audit-2026-07-17-review.sql`, then Re-enrich contacts →
   Generate pitches. Real addresses confirmed live: `pjcormier@`, `rgjulien@`,

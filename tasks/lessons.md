@@ -4,6 +4,17 @@ Running log of mistakes, root causes, and rules to prevent recurrence. Newest at
 
 ---
 
+[2026-07-21] FIX (root cause, found by Pedro at the very end): cheerio's .text() has NO element separator — every scraped email on a normal contact page was garbage
+SYMPTOM (Pedro): a pitched prospect's contact was emailsrgjulien@julien-cormier.ca. Clicking "Re-enrich contacts" returned the SAME value, yet their contact page plainly lists three real addresses as mailto links.
+ROOT CAUSE: `$("body").text()` concatenates text nodes with no separator. A contact page rendering "Phone: 613-632-0148  Emails:  rgjulien@x.ca  pjcormier@x.ca" extracts as one unbroken string. Verified against the LIVE page — all four regex matches were junk: "rgjulien@julien-cormier.capjcormier", "vfournier@julien-cormier.caSPOKEN", "613-632-0148Emailsrgjulien@…", "julien-cormier.cavfournier@…". My OWN earlier TLD-repair then fixed the tail of one while leaving the head glue, MANUFACTURING emailsrgjulien@julien-cormier.ca — valid TLD, no digits, no placeholder, so it passed every guard and reached a draft pitch. I had been adding repair heuristics on top of a broken extractor.
+SECOND BUG (same report): reEnrichProspectContacts went straight to the paid finders (SnapVerify→Anymail→Hunter) and never re-scraped. So the one button a user would press to fix a bad contact could not consult the best source — the prospect's own mailto links. Pedro pressed exactly the right button and it was incapable of helping.
+FIX: textWithBoundaries() appends a separator at element boundaries before the regex runs (verified on the real page: 4 garbage matches -> exactly the 3 real addresses). hasGluedLabelPrefix() rejects label-fused locals so rows already in the DB stay unsendable — deliberately NARROW after I caught my own first version flagging "contactenos@" and "escribenos@", ordinary Spanish role inboxes, in a market that is half our volume. Re-enrich now re-scrapes first and short-circuits the paid waterfall when the site yields a usable address (cheaper AND better).
+RULE: when you find yourself writing a SECOND repair heuristic for the same data source, stop and check the EXTRACTOR. Repairs stack into a system that manufactures plausible-but-wrong values — mine literally created a new fake address by half-fixing a broken one. Also: a "fix this record" action must re-consult the SOURCE, not just re-run the enrichment vendors; free first-party data belongs before paid lookups. And when writing a defensive blocklist, test it against the OTHER language you operate in before shipping.
+TAGS: #fix #root-cause #scraper #cheerio #repair-heuristics #i18n #false-positive #first-party-data
+STATUS: built, 207/207 tests, tsc + eslint + build clean, DEPLOYED (b740008).
+
+---
+
 [2026-07-21] WIN: verifying a fix against reality caught a THIRD bug the fix would have shipped
 WHAT: repaired julien-cormier.cavfournier@julien-cormier.ca -> vfournier@julien-cormier.ca. Instead of trusting the repair logic, I fetched the live site: it publishes pjcormier@, rgjulien@ and vfournier@ — repair confirmed. That same page showed all three addresses are INITIAL+SURNAME, which meant the greeting logic (9-char cap, set earlier the same day) would produce "Hi Vfournier,". The fix for one bot-tell was about to ship another.
 WHY IT WORKED: the verification target was the SOURCE OF TRUTH (the firm's own site), not my own code's output. Checking "does my function return what I expect" would have passed; checking "is what it returns actually real" surfaced the next problem.
