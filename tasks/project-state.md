@@ -24,7 +24,7 @@
 | Google Places | ✅ working (primary discovery source — carried the 2026-07-21 runs) |
 | Yellow Pages CA | ✅ working — was 403'ing on a bot UA (2026-07-21), fixed with a browser UA. Free, no key. If it 403s again the headers need refreshing, NOT the selectors. |
 | Brave Search | ⚠️ HTTP 402 (quota). **No longer critical** — per-prospect calls went 6 → 0 on 2026-07-21. Now used ONLY by the two user-triggered discovery sources; research is 100% first-party. |
-| DENUE (INEGI, MX) | ⚠️ HTTP 406 — INEGI WAF vs Vercel's US IP. Token `10fa44b8…` set in Vercel + browser-UA fix deployed, but **still untested** (needs an MX discovery run). If it 406s, needs a MX proxy or leave off. |
+| DENUE (INEGI, MX) | ⚠️ **Never returned a row since it was written.** The 406 was OUR `Accept: application/json` header (reproduced from a residential IP — the old "Vercel datacenter IP block" note was WRONG), and the URL matched no documented method (`Buscar` is a GEO search). Both fixed 2026-07-21 → now uses `BuscarEntidad`. STILL UNVERIFIED: INEGI emits malformed HTTP responses intermittently. **Recommendation: leave off** — Google Places covers MX. |
 | Hunter.io | ✅ working (contact tier 3) |
 | Anymail Finder | ✅ working (contact tier 2) |
 | Gmail API (OAuth) | ✅ working (send + reply poll + DMARC ingest) |
