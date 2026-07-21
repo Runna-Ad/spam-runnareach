@@ -4,6 +4,17 @@ Running log of mistakes, root causes, and rules to prevent recurrence. Newest at
 
 ---
 
+[2026-07-21] BUILD: national-chain filter at discovery insert — a working source can still be a cost problem
+CONTEXT: fixing the Yellow Pages 403 restored the source, but "wholesale / Alberta" then returned Walmart, Shoppers Drug Mart, Loblaw Pharmacy, Rexall and Petro Canada — for an ICP of "Calgary Mid-Market Manufacturers & Distributors". Left alone, each gets scraped + deep-researched + scored and THEN suppressed: the entire per-prospect cost paid for a guaranteed rejection.
+WHY IT HAPPENS: directory sources answer a KEYWORD, not an ICP. There is no field in a YP query that says "independent, 10-200 staff". So the filtering has to happen on our side, and the cheapest possible point is insert — before any enrichment spend.
+BUILT: lib/discover/chain-filter.ts (pure) — isNationalChain (distinctive CA+MX brand names, word-boundary matched, accent-folded) + isChainDomain (known chain domains incl. subdomains) + isChainListing. Wired into crawl-action beside the existing agency filter, counted as "filtered" so run stats stay honest.
+DESIGN CALL — false positives are the real risk: a wrong match deletes a real prospect AT DISCOVERY, where nobody ever sees it (unlike a bad pitch, which a human reviews). So the list deliberately excludes ambiguous single words — "Shell" would match "Shell Beach Boutique", "Bay" would match "Bay Street Dental", "Source" would match "The Source Metalworks". Brands whose names are common words are listed only in multi-word form. The test file spends MORE assertions on must-survive SMB names than on must-drop chains, and includes word-boundary traps ("Walmartinez Consulting", "Essonova Labs", "notwalmart.ca").
+RULE: when a filter's failure mode is SILENT DELETION, weight the test suite toward false positives, not true positives — the true positives are visible in run history, the false positives are invisible forever. And when a fix "restores" a source, inspect WHAT it returns before calling it a win: a working source producing off-ICP results is a cost problem wearing a success badge.
+TAGS: #build #discovery #cost #filter #false-positives #silent-deletion #icp-quality
+STATUS: built, 213/213 tests, tsc + eslint + build clean.
+
+---
+
 [2026-07-21] FIX: Yellow Pages CA started returning HTTP 403 on every search — bot-UA detection, same failure mode as DENUE
 SYMPTOM (Pedro, run history): every Yellow Pages CA crawl failed with "HTTP 403 from https://www.yellowpages.ca/search/si/1/wholesale/Alberta" while Google Places in the SAME run completed fine (+7/+5/+5).
 ROOT CAUSE: the scraper sent a self-identifying bot UA ("Mozilla/5.0 (compatible; RunnaCABot/0.1; +https://runna.agency/bot)"). Probed the live site: that UA -> 403, a normal browser UA + Accept headers -> 200 with the full listing markup intact. YP added bot detection at some point; nothing about our parsing was wrong.

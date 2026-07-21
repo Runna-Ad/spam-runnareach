@@ -7,6 +7,7 @@ import { requireUser } from "@/lib/auth";
 import { createClient } from "@/lib/supabase/server";
 import type { Database } from "@/lib/supabase/types";
 import { findDuplicate, normalizeDomain } from "./fuzzy-dedupe";
+import { isChainListing } from "./chain-filter";
 import { searchBrave, braveIsAvailable } from "./sources/brave-search";
 import { searchYellowPagesCA } from "./sources/yellowpages-ca";
 import { searchDenue, denueIsAvailable, deriveMexicoStateCode, MEXICO_STATE_CODES } from "./sources/denue";
@@ -178,6 +179,16 @@ export async function runCrawl(input: CrawlInput): Promise<CrawlResult> {
       /\b(creative|design|branding)\s*(agency|studio|firm)\b/i,
       /\b(software|tech|it)\s*(solutions|consulting|services|agency)\b/i,
     ];
+    // Skip national chains / enterprise brands. Directory sources answer a
+    // KEYWORD, not an ICP: "wholesale / Alberta" on Yellow Pages returns
+    // Walmart, Shoppers Drug Mart, Loblaw and Rexall. Left in, each is scraped,
+    // deep-researched and scored before finally being suppressed — the whole
+    // cost paid for a guaranteed rejection. Dropping them here is free.
+    if (isChainListing(listing.company_name, normalizedDomain)) {
+      candidates_duplicate++; // counted as filtered, same as the agency skip
+      continue;
+    }
+
     const isAgency = AGENCY_SIGNALS.some((re) => re.test(listing.company_name));
     if (isAgency) {
       candidates_duplicate++; // treat as filtered so stats stay accurate

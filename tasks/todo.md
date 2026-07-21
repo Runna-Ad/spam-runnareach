@@ -1079,3 +1079,9 @@ Before touching any code:
 - [ ] Pedro: generate pitches as normal for ~1-2 weeks, then run the review SQL. Decision point: if false positives ~0 -> enable auto-send for PASS; if not -> tune the rules first
 - [ ] Gap to close if the company-name rule proves valuable: persist scraped site_name on prospect_research (currently transient, so that rule is skipped in the dry run)
 - [ ] Next after the gate proves out: (a) prospect pre-filter (stop paying to research prospects that get suppressed), (b) health dashboard, (c) B-list promotion flow
+
+### Round 9 — Yellow Pages unblocked + national-chain filter (2026-07-21)
+- [x] YP was BLOCKED not broken: bot UA -> 403, browser UA -> 200. Verified by running the real parser selectors against the live page (35 listings, names + website links intact — selectors had NOT drifted). 403/429 now report as bot detection.
+- [x] National-chain filter (lib/discover/chain-filter.ts, pure + 6 tests) wired into crawl-action: drops Walmart/Shoppers/Loblaw/Rexall/OXXO/Cinepolis etc at INSERT, before any research spend. Conservative by design — test suite weighted toward must-survive SMB names because a false positive deletes a real prospect silently.
+- [ ] Watch: if a real prospect ever goes missing from discovery, check chain-filter.ts first (add a must-survive test for it).
+- [ ] Still the bigger win: the prospect PRE-FILTER (domain resolves / site live / not a competitor / ICP fit on structural signals) — chains are only one category of wasted research spend.
