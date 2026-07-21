@@ -1053,3 +1053,12 @@ Before touching any code:
 - [x] Status filter: "Active (needs action)" + real "Everything (no filter)"; all 19 statuses listed
 - [ ] Pedro: run the two new queries at the bottom of scripts/audit-2026-07-17-review.sql (glued-domain contacts + affected unsent pitches), then re-enrich those prospects
 - [ ] Known limit: /companies loads max 500 prospects — silent truncation above that. Offer pagination/indicator.
+
+### Round 6 — automation plan (2026-07-21). Pedro's calls: AUTO-SEND what passes; build the gate first; Brave must go.
+- [x] Pre-send verification gate ENGINE built: lib/pitches/send-gate.ts (pure, no DB/network) + 15 tests, every fixture a real failure from this session (Acadian website claim, "Hi Mark"→john.sipos, glued-domain address, catch-all guess, invented metric, name-vs-role-inbox, company-name mismatch)
+  Rules: recipient usable AND from verified provenance (catch-all GUESSES never auto-send) · greeting must match the actual recipient · no website claim unless we fetched the site · company name must match the site's own name · any metric must appear in stored evidence · reports ALL failures at once
+- [ ] NEXT: wire the gate — dry-run mode first (log PASS/HOLD on every generated pitch, change nothing), so we can prove it agrees with Pedro before it gates anything
+- [ ] THEN: review queue shows HOLD reasons; auto-send only PASS
+- [ ] Brave removal (task 17): 6 queries/prospect (4 deep-research + 2 SnapVerify) + ~1 website discovery = ~280 prospects/month ceiling on the free tier.
+  Replace with data we ALREADY have: people-intel from scraped About/Team sub_page_extracts; reviews/complaints signal from Google Places (VERIFY the reviews-field SKU pricing before wiring — different tier); website discovery from Places websiteUri (already in our field mask).
+  Discovery breadth alternatives that are free: Yellow Pages CA (no key), Google Places (~7k/mo credit), DENUE (free, IP-blocked from Vercel), OpenStreetMap Overpass API (free, no key).

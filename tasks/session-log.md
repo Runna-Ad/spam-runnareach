@@ -1029,3 +1029,24 @@ and day boundaries. Newest entries at the bottom.
 - [ ] ⏳ #7 Analytics — pitch funnel metrics, cost tracking, Claude vs template breakdown
 - [ ] ⏳ #7 Analytics — pitch funnel metrics, cost tracking, Claude vs template breakdown
 
+
+## 2026-07-21 13:19
+**Shipped (recent commits):**
+  - fix(pitch): never greet initial+surname locals by name
+  - fix(pitch): greeting must address the actual recipient + reject glued-domain contacts
+  - fix(companies): resume in-flight pipeline jobs + honest status filter
+  - docs(session-log): record round-4 deploy (d8bda7f)
+  - feat(deliverability): per-email suppression, guessed-address badge, ES website pitch
+
+**Still open:**
+- [ ] Supabase: ANON + SERVICE_ROLE keys live (connection works — Phase 0 unblocked)
+- [ ] Anthropic API key + $100/mo limit
+- [ ] Google Cloud (Places API + Gmail API + OAuth consent + OAuth client + restricted Places key)
+- [ ] Name sender #1 Runna CA principal + buy both domains + add runnareach.com to Rünna Workspace + DNS (SPF/DKIM/DMARC)
+- [ ] Postmark or SES account
+- [ ] Cal.com account
+- [ ] Slack hot-lead webhook URL
+- [ ] CRON_SECRET + TOKEN_ENCRYPTION_KEY (`openssl rand -hex 32`)
+- [ ] ⏳ #7 Analytics — pitch funnel metrics, cost tracking, Claude vs template breakdown
+- [ ] ⏳ #7 Analytics — pitch funnel metrics, cost tracking, Claude vs template breakdown
+
