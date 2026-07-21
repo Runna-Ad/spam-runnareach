@@ -5,7 +5,7 @@
 import type { createClient } from "@/lib/supabase/server";
 import { anymailFindDecisionMaker } from "@/lib/research/anymail-finder";
 import { hunterDomainSearch } from "@/lib/research/hunter";
-import { snapVerifyEnrich } from "@/lib/research/snap-contact";
+import { snapVerifyEnrich, screenEmailsAgainstSmtp } from "@/lib/research/snap-contact";
 import { isRoleBasedEmail, hasUsableEmail } from "@/lib/research/email-utils";
 
 /**
@@ -93,10 +93,34 @@ export async function enrichContactsForProspect(
   // ── Tier 3: Hunter.io (verified) ──────────────────────────────────────────
   const hunterResult = await hunterDomainSearch(domain);
   if (hunterResult.ok && hunterResult.contacts.length > 0) {
+    // Hunter scores each hit 0-100. Anything under 70 is frequently a PATTERN
+    // GUESS rather than a verified address, so screen those through the SMTP
+    // probe (our own edge function — no API cost) and drop the ones the mail
+    // server actively rejects. High-confidence hits are trusted as-is, and if
+    // the probe is unavailable everything is kept (screening is a bounce
+    // filter, not a delivery guarantee).
+    const lowConfidence = hunterResult.contacts
+      .filter((c) => c.confidence < 70 && hasUsableEmail(c.email))
+      .map((c) => c.email);
+    let smtpRejected = new Set<string>();
+    if (lowConfidence.length > 0) {
+      try {
+        const survived = new Set(
+          (await screenEmailsAgainstSmtp(lowConfidence, domain)).map((e) => e.toLowerCase()),
+        );
+        smtpRejected = new Set(
+          lowConfidence.map((e) => e.toLowerCase()).filter((e) => !survived.has(e)),
+        );
+      } catch {
+        // Probe unavailable — keep everything.
+      }
+    }
+
     for (const contact of hunterResult.contacts) {
       // Paid finders get the same shape gate as everything else — Hunter's
       // domain sweep occasionally returns scraped-junk patterns too.
       if (!hasUsableEmail(contact.email)) continue;
+      if (smtpRejected.has(contact.email.toLowerCase())) continue;
       const roleBased = isRoleBasedEmail(contact.email);
       // Hunter's domain sweep often returns info@/contact@ — rank those below
       // any personal hit so a real decision-maker is preferred when present.

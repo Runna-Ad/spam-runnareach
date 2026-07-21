@@ -37,6 +37,8 @@ import {
   type DraftComposerInput,
 } from "@/lib/replies/draft-composer";
 import type { ReplyIntent } from "@/lib/replies/queries";
+import { addEmailToDnc, type DncInsertClient } from "@/lib/discover/dnc-check";
+import { extractBouncedRecipient } from "@/lib/replies/bounce-parse";
 
 const MAX_REPLY_ATTEMPTS = 3;
 // Intents we draft a response for. Negatives (hard_no / wrong_person) and
@@ -230,6 +232,21 @@ export async function GET(req: NextRequest) {
         // "replied" (a bounce is not engagement). Suppress now; the inbox item
         // stays visible for review with the suppression already applied.
         if (classification.intent === "bounced") {
+          // Block the ADDRESS, not just this prospect — the same mailbox can
+          // sit on a duplicate prospect row and would otherwise be emailed
+          // again. Only block an address the NDR positively names: guessing
+          // wrong would permanently silence a perfectly good contact. If it
+          // can't be parsed, prospect-level suppression below still applies.
+          const deadAddress = extractBouncedRecipient(inbound.bodyText, inbox.email);
+          if (deadAddress) {
+            await addEmailToDnc(
+              supabase as unknown as DncInsertClient,
+              thread.tenant_id,
+              deadAddress,
+              "bounced",
+              `Auto-added ${new Date().toISOString().slice(0, 10)}: hard bounce (undeliverable).`,
+            );
+          }
           await supabase
             .from("prospects")
             .update({

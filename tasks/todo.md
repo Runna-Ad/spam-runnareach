@@ -1032,3 +1032,15 @@ Before touching any code:
 - [x] Scraper: same-domain TLD-glue repair (info@neeralta.commonday → info@neeralta.com); foreign-domain glue stays rejected (CPA4IT scam-comment gmails). 172/172 tests.
 - [x] Cleanup DELETE appended to scripts/audit-2026-07-17-review.sql (Pedro to run)
 - [ ] Pedro: compare token vs Vercel `DENUE_API_KEY`; run the DELETE; after deploy bulk re-scrape affected prospects to recover real contacts
+
+### Round 4 — Pedro's six decisions + contact-gate fix (2026-07-17, built; deploy pending)
+- [x] Pipeline no-contact gate now uses hasUsableEmail (was creating limbo prospects: gate-passed, no pitch, never suppressed)
+- [x] #1 Website-pitch fallback localized — full ES template + localized greeting; "Hi there" removed from the Claude path too
+- [x] #2 Hunter results <70 confidence SMTP-screened (free — our own edge fn, no API cost)
+- [x] #3 "guessed address" badge on /pitches for catch-all guesses (selected_by plumbed through list + detail queries)
+- [x] #4 LATAM retired: removed from the ICP selector (legacy rows still load, labelled "retired"); LATAM now maps to MX EVERYWHERE (was run-all->CA vs crawl->MX); Yellow Pages CA no longer runs for it; Brave/Places/preview all use the resolved market
+- [x] #5 Per-email suppression: lib/discover/dnc-check.ts enforced in all 3 send paths (address OR domain, fails open); bounces auto-add the dead mailbox, parsed from the NDR only when positively identified
+- [x] New pure lib/replies/bounce-parse.ts + 9 tests pinned to Pedro's real NDRs (caught a regex truncation bug: ana@clinica.mx -> ana@clinica)
+- [ ] #6 Discovery per-source slicing — DEFERRED (Pedro: "leave it at the end"). Janitor already auto-closes stuck runs.
+- VERIFIED: 180/180 tests, tsc + eslint + next build all clean.
+- OPEN QUESTION for Pedro: US market — you said "only Mexico and Canada". US is still in the ICP selector (it has no bug, unlike LATAM). Remove it too?

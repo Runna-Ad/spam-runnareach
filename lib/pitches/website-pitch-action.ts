@@ -234,7 +234,16 @@ async function callClaudeForWebsitePitch(opts: {
   caseStudyLine: string | null;
   senderName: string;
 }): Promise<{ ok: true; subject: string; body: string; cost_usd: number; usage: ClaudeUsage } | { ok: false }> {
-  const greeting = opts.firstName ? `Hi ${opts.firstName},` : "Hi there,";
+  // Localized greeting. "Hi there," is banned project-wide (reads as a mail
+  // merge); fall back to the team form, in the prospect's own language.
+  const greeting =
+    opts.language === "es"
+      ? opts.firstName
+        ? `Hola ${opts.firstName},`
+        : `Hola equipo de ${opts.companyName},`
+      : opts.firstName
+        ? `Hi ${opts.firstName},`
+        : `Hi ${opts.companyName} team,`;
   const marketLabel =
     opts.market === "MX" ? "Mexico" : opts.market === "US" ? "the US" : "Canada";
   const caseStudyBlock = opts.caseStudyLine
@@ -342,7 +351,14 @@ function buildFallbackPitch(opts: {
   caseStudyLine: string | null;
   senderName: string;
 }): { subject: string; body: string } {
-  const greeting = opts.firstName ? `Hi ${opts.firstName},` : "Hi there,";
+  // Spanish prospects must never receive the English template just because
+  // Claude was unavailable (API error or daily cap) — the fallback is exactly
+  // when a Mexican owner would get an out-of-language cold email.
+  if (opts.language === "es") return buildFallbackPitchEs(opts);
+
+  const greeting = opts.firstName
+    ? `Hi ${opts.firstName},`
+    : `Hi ${opts.companyName} team,`;
   const caseStudyBlock = opts.caseStudyLine
     ? `\n\n${opts.caseStudyLine}\n`
     : "";
@@ -368,6 +384,48 @@ What a good website does for a ${opts.industry} business:
 If you've been meaning to get this done, I'd love to make it easy. Happy to show you an example or two from ${opts.industry} businesses we've built for.
 
 Worth a quick chat?
+
+${opts.senderName}
+Rünna Advertising
+runna.agency`;
+
+  return { subject, body };
+}
+
+/** Spanish twin of buildFallbackPitch — MX/LATAM prospects, natural business register. */
+function buildFallbackPitchEs(opts: {
+  companyName: string;
+  industry: string;
+  firstName: string | null;
+  caseStudyLine: string | null;
+  senderName: string;
+}): { subject: string; body: string } {
+  const greeting = opts.firstName
+    ? `Hola ${opts.firstName},`
+    : `Hola equipo de ${opts.companyName},`;
+  const caseStudyBlock = opts.caseStudyLine ? `\n\n${opts.caseStudyLine}\n` : "";
+
+  const subject = `Una pregunta sobre ${opts.companyName}`;
+  const body = `${greeting}
+
+Trabajo con negocios de ${opts.industry} ayudándoles a tener presencia en internet y atraer más clientes, y hace poco me encontré con su negocio.
+
+Quería preguntarles: ¿no tener sitio web es una decisión deliberada, o simplemente algo que no ha pasado todavía?
+
+Lo pregunto porque la mayoría de los dueños con los que hablo en ${opts.industry} me dicen lo mismo: saben que lo necesitan, pero siempre se siente caro, lento o complicado. Y así se va posponiendo.
+
+En Rünna construimos justo para resolver eso. Ponemos en línea a negocios de ${opts.industry} en 2 o 3 semanas, a un costo que tiene sentido para un negocio en crecimiento, y hecho para traer clientes reales, no solo para verse bonito.
+
+Lo que un buen sitio web hace por un negocio de ${opts.industry}:
+✓ Aparecen cuando alguien cerca busca lo que ustedes ofrecen
+✓ Genera confianza inmediata (la gente los busca en Google antes de llamar)
+✓ Trabaja como su vendedor 24/7, capturando clientes mientras duermen
+✓ Les da algo real a dónde dirigir a sus seguidores en redes
+✓ Los posiciona como la opción profesional y obvia frente a la competencia${caseStudyBlock}
+
+Si han tenido esto pendiente, con gusto se los hago fácil. Puedo mostrarles un par de ejemplos de negocios de ${opts.industry} que hemos construido.
+
+¿Vale la pena una llamada corta?
 
 ${opts.senderName}
 Rünna Advertising

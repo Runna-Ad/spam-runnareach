@@ -1,5 +1,5 @@
 import { createClient } from "@/lib/supabase/server";
-import { pickTopUsableContact } from "@/lib/pitches/contacts";
+import { pickTopUsableContact, isGuessedContact } from "@/lib/pitches/contacts";
 
 export type PitchStatus =
   | "draft"
@@ -26,6 +26,8 @@ export type PitchListRow = {
   quality_self_score: number | null;
   contact_email: string | null;
   contact_name: string | null;
+  /** True when the address is an unverified catch-all guess, not a confirmed contact. */
+  contact_is_guess: boolean;
   pain_label: string | null;
   approved_at: string | null;
   /** Set when queued into the drip-send queue (status stays 'approved' until the cron sends). */
@@ -60,7 +62,7 @@ export async function listPitches(tenantId: string): Promise<PitchListRow[]> {
       company_name: string;
       market: "CA" | "MX" | "US" | "LATAM";
       language: "en" | "es";
-      prospect_contacts: { full_name: string | null; email: string | null; priority_rank: number | null }[] | null;
+      prospect_contacts: { full_name: string | null; email: string | null; priority_rank: number | null; selected_by: string | null }[] | null;
     } | null;
     case_studies: { client_name: string } | null;
     pain_taxonomy: { display_name_en: string } | null;
@@ -72,7 +74,7 @@ export async function listPitches(tenantId: string): Promise<PitchListRow[]> {
       `
       id, prospect_id, case_study_id, status, subject, variant_index,
       quality_self_score, pain_id, approved_at, scheduled_send_at, sent_at,
-      prospects(company_name, market, language, prospect_contacts(full_name, email, priority_rank)),
+      prospects(company_name, market, language, prospect_contacts(full_name, email, priority_rank, selected_by)),
       case_studies(client_name),
       pain_taxonomy:pain_id(display_name_en)
     `,
@@ -102,6 +104,7 @@ export async function listPitches(tenantId: string): Promise<PitchListRow[]> {
     quality_self_score: r.quality_self_score,
     contact_email: topContact?.email ?? null,
     contact_name: topContact?.full_name ?? null,
+    contact_is_guess: isGuessedContact(topContact?.selected_by),
     pain_label: r.pain_taxonomy?.display_name_en ?? null,
     approved_at: r.approved_at,
     scheduled_send_at: r.scheduled_send_at ?? null,
@@ -150,7 +153,7 @@ export async function getPitch(
       company_name: string;
       market: "CA" | "MX" | "US" | "LATAM";
       language: "en" | "es";
-      prospect_contacts: { full_name: string | null; email: string | null; priority_rank: number | null }[] | null;
+      prospect_contacts: { full_name: string | null; email: string | null; priority_rank: number | null; selected_by: string | null }[] | null;
     } | null;
     case_studies: { client_name: string } | null;
     pain_taxonomy: { display_name_en: string } | null;
@@ -165,7 +168,7 @@ export async function getPitch(
       body_original, body_edited, body_sent,
       measurable_result_included, auto_rejected, auto_rejected_reason,
       rejection_reason,
-      prospects(company_name, market, language, prospect_contacts(full_name, email, priority_rank)),
+      prospects(company_name, market, language, prospect_contacts(full_name, email, priority_rank, selected_by)),
       case_studies(client_name),
       pain_taxonomy:pain_id(display_name_en)
     `,
@@ -194,6 +197,7 @@ export async function getPitch(
     quality_self_score: r.quality_self_score,
     contact_email: topContact?.email ?? null,
     contact_name: topContact?.full_name ?? null,
+    contact_is_guess: isGuessedContact(topContact?.selected_by),
     pain_label: r.pain_taxonomy?.display_name_en ?? null,
     approved_at: r.approved_at,
     scheduled_send_at: r.scheduled_send_at ?? null,

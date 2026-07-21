@@ -144,9 +144,13 @@ export async function runAllSources(icpId: string): Promise<RunAllResult> {
     return { ok: false, error: icpErr?.message ?? "ICP not found." };
   }
 
-  const market = icp.market === "LATAM" ? "CA" : (icp.market as "CA" | "MX" | "US");
+  // LATAM is retired (removed from the ICP selector 2026-07-17). Legacy rows
+  // map to MX — matching crawl-action's marketToCountry, which already stored
+  // LATAM prospects as Mexican. The old CA mapping here meant a LATAM ICP
+  // searched Canadian directories and then labelled the results Mexican.
+  const market = icp.market === "LATAM" ? "MX" : (icp.market as "CA" | "MX" | "US");
   const ypLocation = deriveYpLocation(icp.geo_regions);
-  const braveQuery = deriveBraveQuery(icp);
+  const braveQuery = deriveBraveQuery({ ...icp, market });
   const directoryKeywords = deriveDirectoryKeywords(icp);
   const firstKeyword = directoryKeywords[0]!;
 
@@ -173,7 +177,9 @@ export async function runAllSources(icpId: string): Promise<RunAllResult> {
 
   for (const kw of directoryKeywords) {
     // Yellow Pages CA (CA market)
-    if (icp.market === "CA" || icp.market === "LATAM") {
+    // Yellow Pages CA is Canada-only. (LATAM used to be included here —
+    // wrong, now that LATAM maps to MX.)
+    if (icp.market === "CA") {
       collect(
         await runCrawl({
           source: "yellowpages_ca",
@@ -191,8 +197,8 @@ export async function runAllSources(icpId: string): Promise<RunAllResult> {
     // Google Places (all markets)
     if (googlePlacesIsAvailable()) {
       const googleLocation =
-        icp.market === "MX" ? "Mexico"
-        : icp.market === "US" ? "United States"
+        market === "MX" ? "Mexico"
+        : market === "US" ? "United States"
         : ypLocation !== "Canada" ? `${ypLocation}, Canada`
         : "Canada";
 
@@ -306,9 +312,11 @@ export async function previewRunAllSources(icpId: string): Promise<RunAllPreview
     : scianCode !== "0" ? `SCIAN ${scianCode}` : "all industries";
 
   const ypLoc = deriveYpLocation(icp.geo_regions);
+  // Preview must show the same market the run will actually use (LATAM -> MX).
+  const previewMarket = icp.market === "LATAM" ? "MX" : icp.market;
   const googleLocation =
-    icp.market === "MX" ? "Mexico"
-    : icp.market === "US" ? "United States"
+    previewMarket === "MX" ? "Mexico"
+    : previewMarket === "US" ? "United States"
     : ypLoc !== "Canada" ? `${ypLoc}, Canada`
     : "Canada";
 
@@ -316,7 +324,7 @@ export async function previewRunAllSources(icpId: string): Promise<RunAllPreview
 
   // Count how many directory sources are active
   let activeDirSources = 0;
-  if (icp.market === "CA" || icp.market === "LATAM") activeDirSources += 1; // YP
+  if (icp.market === "CA") activeDirSources += 1; // YP (Canada-only)
   if (googlePlacesIsAvailable()) activeDirSources += 1;
 
   return {
@@ -324,7 +332,7 @@ export async function previewRunAllSources(icpId: string): Promise<RunAllPreview
     directoryKeywords,
     ypLocation: ypLoc,
     totalDirectoryCrawls: directoryKeywords.length * activeDirSources,
-    braveQuery: deriveBraveQuery(icp),
+    braveQuery: deriveBraveQuery({ ...icp, market: previewMarket }),
     braveAvailable: braveIsAvailable(),
     denueAvailable: denueIsAvailable(),
     denueActivity,

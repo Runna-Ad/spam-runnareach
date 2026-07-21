@@ -16,6 +16,7 @@ import { createServiceRoleClient } from "@/lib/supabase/service-role";
 import { getAccessToken, sendGmailMessage } from "@/lib/gmail/client";
 import { effectiveSendsToday, utcToday } from "@/lib/pitches/daily-cap";
 import { hasUsableEmail } from "@/lib/research/email-utils";
+import { isEmailOnDncList, type DncClient } from "@/lib/discover/dnc-check";
 
 // Prospect states that must never receive a queued cold pitch, even if the
 // pitch was approved before the state changed. Checked at send time — the
@@ -179,6 +180,14 @@ export async function GET(req: NextRequest) {
       // validation hardening must never be emailed.
       if (!hasUsableEmail(toEmail)) {
         results.push({ pitch_id: pitch.id, status: "skipped", reason: `Unusable email: ${toEmail}` });
+        continue;
+      }
+      // Per-ADDRESS suppression (bounced mailboxes, existing clients,
+      // competitors) — catches an address that lives on a duplicate prospect
+      // row the prospect-level status check can't see.
+      const dnc = await isEmailOnDncList(supabase as unknown as DncClient, pitch.tenant_id, toEmail);
+      if (dnc.blocked) {
+        results.push({ pitch_id: pitch.id, status: "skipped", reason: dnc.reason });
         continue;
       }
       const body = (pitch.body_edited ?? pitch.body_original ?? "").trim();

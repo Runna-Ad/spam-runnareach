@@ -31,6 +31,7 @@ import { bumpSendsTodayPayload, effectiveSendsToday } from "@/lib/pitches/daily-
 import { ANTHROPIC_DEFAULT_MODEL, claudeIsAvailable } from "@/lib/anthropic/client";
 import { isUnderDailyCap, recordClaudeCall } from "@/lib/anthropic/cost-tracking";
 import { hasUsableEmail } from "@/lib/research/email-utils";
+import { isEmailOnDncList, type DncClient } from "@/lib/discover/dnc-check";
 
 // ── Auth guard ─────────────────────────────────────────────────────────────────
 
@@ -162,6 +163,12 @@ async function processFollowup(pitch: DuePitchRow): Promise<FollowupResult> {
   }
   if (!hasUsableEmail(contactEmail)) {
     return { pitch_id: pitch.id, prospect: prospect.company_name, step: nextStep, status: "skipped", reason: `Unusable email: ${contactEmail}` };
+  }
+  // Per-ADDRESS suppression — a bounced mailbox stays blocked even if it
+  // reappears on a duplicate prospect row.
+  const dnc = await isEmailOnDncList(supabase as unknown as DncClient, pitch.tenant_id, contactEmail);
+  if (dnc.blocked) {
+    return { pitch_id: pitch.id, prospect: prospect.company_name, step: nextStep, status: "skipped", reason: dnc.reason };
   }
 
   // ── 3. Load research for pain summary + AI personalisation context ────────

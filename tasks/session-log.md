@@ -976,3 +976,18 @@ and day boundaries. Newest entries at the bottom.
 **Decisions made:** (1) never let auto-discovered data harden into email "facts" — verify at point of entry, every downstream stage trusts upstream blindly. (2) One shared email gate at extraction AND send. (3) Same-domain TLD-glue is repaired; foreign-domain glue stays rejected (scam-comment gmails must never be truncated into a stranger's real inbox). (4) Kept catch-all-guess auto-send + Hunter 50-69 as-is pending Pedro's call. (5) Committed to main (project's established Vercel-CLI-from-main workflow) rather than branch — preview deploys here are SSO-blocked so prod-and-verify-live is the documented pattern.
 **Pick up next session:** (1) Pedro to run an MX discovery → confirm DENUE (data = fixed / 406 = Vercel-IP-blocked, needs proxy or leave off). (2) Brave billing (402). (3) Run the cleanup DELETE in scripts/audit-2026-07-17-review.sql, then re-scrape affected prospects to recover real contacts. (4) Report back query-1 + query-3 results (only query-2 was shared). (5) The 6 "Known-open" design decisions in todo.md.
 **Environment changes:** DENUE_API_KEY overridden in Vercel prod (Sensitive). yelp.ts deleted. tests/email-utils.test.ts added. YELP_API_KEY in Vercel now inert (safe to delete).
+
+## 2026-07-21 10:41
+
+**Still open:**
+- [ ] Supabase: ANON + SERVICE_ROLE keys live (connection works — Phase 0 unblocked)
+- [ ] Anthropic API key + $100/mo limit
+- [ ] Google Cloud (Places API + Gmail API + OAuth consent + OAuth client + restricted Places key)
+- [ ] Name sender #1 Runna CA principal + buy both domains + add runnareach.com to Rünna Workspace + DNS (SPF/DKIM/DMARC)
+- [ ] Postmark or SES account
+- [ ] Cal.com account
+- [ ] Slack hot-lead webhook URL
+- [ ] CRON_SECRET + TOKEN_ENCRYPTION_KEY (`openssl rand -hex 32`)
+- [ ] ⏳ #7 Analytics — pitch funnel metrics, cost tracking, Claude vs template breakdown
+- [ ] ⏳ #7 Analytics — pitch funnel metrics, cost tracking, Claude vs template breakdown
+

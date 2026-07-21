@@ -4,6 +4,22 @@ Running log of mistakes, root causes, and rules to prevent recurrence. Newest at
 
 ---
 
+[2026-07-17] FIX (round 4): a "do we have a contact?" gate that didn't use the usable-email predicate created silent limbo prospects
+SYMPTOM (found while explaining the cleanup to Pedro, not reported): prospects scored >=70, marked pitch_gate_passed, but with no pitch and never suppressed.
+ROOT CAUSE: the pipeline's no-contact gate asked `email is not null` while generatePitch and every send path ask `hasUsableEmail(email)`. A junk contact (glued TLD, builder placeholder) satisfied the first and failed the second, so the prospect passed the gate, failed pitch generation, and landed in a state no branch owns — not suppressed (we "had" a contact), not pitched (the contact was refusable).
+FIX: the gate now filters with hasUsableEmail and logs contacts_rejected_unusable to audit_log, so the outcome is honest either way (real contact -> pitch; junk only -> suppressed as unreachable).
+RULE: the moment you introduce a validity predicate for a thing, EVERY gate that asks "do we have one?" must use that same predicate. A gate that counts rows while the consumer counts VALID rows manufactures states no code path handles — and those states are invisible because nothing errors. Grep for the other readers whenever you add a validity check.
+TAGS: #fix #gate-consistency #limbo-state #predicate-drift
+
+[2026-07-17] FIX (round 4): do_not_contact_list existed since day one and was never consulted before sending
+SYMPTOM (Pedro: "been getting a lot of bounces"): suppression was per-PROSPECT only, so a dead address on a duplicate prospect row could be emailed again, and the DNC screen was decorative.
+ROOT CAUSE: the table + CRUD UI shipped in Phase 1a with a note that send-time enforcement "lives in Phase 4" — Phase 4 shipped without it. Nothing read the table at the decision point, so it was data entry with no consumer.
+FIX: shared lib/discover/dnc-check.ts (isEmailOnDncList / addEmailToDnc) wired into all three send paths (manual, drip cron, follow-up cron), matching address OR whole domain, failing OPEN on query error (a DB blip must not halt all outreach). Bounce NDRs now auto-add the dead mailbox — parsed from the NDR itself (RFC 3464 Final-Recipient, then Gmail/Exchange phrasings) and ONLY when positively identified: guessing would permanently block a valid contact. Never returns our own sender or a daemon address.
+RULE: a table with no read path at the moment of decision is decoration, not a feature. When deferring enforcement to "a later phase", write the check as a no-op stub at the call site NOW so the gap is visible in code review instead of surviving three phases. And when auto-blocking something permanently, only act on positively-parsed evidence — return null rather than guess.
+TAGS: #fix #dnc #suppression #deliverability #built-but-not-wired #fail-open
+
+---
+
 [2026-07-17] WIN: after fixing 4 reported incidents, a 3-agent parallel audit found ~20 MORE of the same disease
 WHAT WORKED: Pedro reported 4 symptoms (fake website, bounces, Yelp/Brave/DENUE). Instead of fixing only those, I fanned out 3 read-only audit subagents scoped by subsystem — (a) outbound-content integrity across ALL composers, (b) contact+send flow across every insert/send path, (c) discovery+pipeline correctness. Each returned CRITICAL findings the 4 symptoms only hinted at: the drip/follow-up crons validated nothing at send time, follow-up/nudge composers had zero anti-fabrication rules, 4 routes read a dead DB table, claude-search could store hallucinated domains, the scorer trusted its own total, discovered-website prospects were being silently suppressed. Fixing the reported 4 would have left ~20 live.
 WHY IT WORKED: the reported bugs were instances of a few ROOT PATTERNS (unverified data hardening into "facts", send-time being the only real gate, auto-send composers lacking the flagship's rules). Scoping one agent per subsystem with the concrete incident as the "smell" let each hunt the pattern, not the instance. Parallel = the whole sweep cost one wall-clock pass.

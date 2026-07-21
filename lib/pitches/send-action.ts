@@ -16,6 +16,7 @@ import { writeAuditLog } from "@/lib/audit/log";
 import { bumpSendsTodayPayload, effectiveSendsToday } from "@/lib/pitches/daily-cap";
 import { fetchTopUsableContact } from "@/lib/pitches/contacts";
 import { hasUsableEmail } from "@/lib/research/email-utils";
+import { isEmailOnDncList, type DncClient } from "@/lib/discover/dnc-check";
 import { requireUser } from "@/lib/auth";
 import { getAccessToken, sendGmailMessage } from "@/lib/gmail/client";
 import { createClient } from "@/lib/supabase/server";
@@ -91,6 +92,14 @@ export async function sendPitch(input: {
   }
   if (!toEmail) {
     return { ok: false, error: "No usable contact email — add or find one on the prospect page first." };
+  }
+
+  // Per-ADDRESS suppression (bounced mailbox, existing client, competitor).
+  // Blocks even a manual send, and catches an address sitting on a duplicate
+  // prospect row that the prospect-level status check can't see.
+  const dnc = await isEmailOnDncList(supabase as unknown as DncClient, user.tenantId, toEmail);
+  if (dnc.blocked) {
+    return { ok: false, error: dnc.reason };
   }
 
   const body = pitch.body_edited ?? pitch.body_original ?? "";

@@ -26,7 +26,7 @@ import { writeAuditLog } from "@/lib/audit/log";
 import { requireUser } from "@/lib/auth";
 import { createClient } from "@/lib/supabase/server";
 import { snapVerifyEnrich } from "@/lib/research/snap-contact";
-import { isRoleBasedEmail } from "@/lib/research/email-utils";
+import { isRoleBasedEmail, hasUsableEmail } from "@/lib/research/email-utils";
 import { enrichContactsForProspect } from "@/lib/discover/enrich-contacts";
 import { scrapeWebsite } from "@/lib/research/scrape-action";
 import { runStructuredResearch } from "@/lib/research/structured-research-action";
@@ -510,15 +510,21 @@ export async function processSingleProspect(
   }
 
   // ── No-contact gate ───────────────────────────────────────────────────────
-  type ContactRow = { email: string };
-  const { data: validContacts, error: contactGateErr } = await supabase
+  // Must use the SAME usable-email test as pitch generation and the send paths.
+  // Checking only "an email row exists" let junk contacts (glued TLDs, builder
+  // placeholders) pass the gate, after which generatePitch refused them — so
+  // the prospect landed in limbo: scored, gate-passed, no pitch, never
+  // suppressed. Filter here so the outcome is honest either way.
+  type ContactRow = { email: string | null };
+  const { data: contactRows, error: contactGateErr } = await supabase
     .from("prospect_contacts")
     .select("email")
     .eq("prospect_id", prospectId)
     .eq("tenant_id", user.tenantId)
     .not("email", "is", null)
-    .limit(1)
     .returns<ContactRow[]>();
+
+  const validContacts = (contactRows ?? []).filter((c) => hasUsableEmail(c.email));
 
   // Write contact gate result to audit_log so we can diagnose from DB
   await writeAuditLog({
@@ -529,13 +535,14 @@ export async function processSingleProspect(
     entityId: prospectId,
     metadata: {
       kind: "contact_gate",
-      contacts_found: validContacts?.length ?? 0,
+      contacts_found: validContacts.length,
+      contacts_rejected_unusable: (contactRows ?? []).length - validContacts.length,
       gate_error: contactGateErr?.message ?? null,
       score,
     },
   });
 
-  if (!validContacts || validContacts.length === 0) {
+  if (validContacts.length === 0) {
     // ≥70 but unreachable: we ran the full enrichment waterfall and still found no
     // email — "if we didn't get it in the pipeline, we aren't getting it" — so
     // suppress rather than park it in a worklist nobody clears.

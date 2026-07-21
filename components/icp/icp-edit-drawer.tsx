@@ -520,10 +520,17 @@ export function IcpEditDrawer({
                           value={field.value}
                           onChange={(e) => field.onChange(e.target.value as IcpMarket)}
                         >
+                          {/* Focus is Canada + Mexico. LATAM was removed
+                              2026-07-17: it searched Canadian directories but
+                              stored prospects as Mexican. Legacy LATAM ICPs
+                              still load (the option renders below) and are
+                              treated as MX everywhere. */}
                           <option value="CA">🇨🇦 Canada</option>
                           <option value="MX">🇲🇽 Mexico</option>
                           <option value="US">🇺🇸 United States</option>
-                          <option value="LATAM">🌎 LATAM</option>
+                          {field.value === "LATAM" && (
+                            <option value="LATAM">🌎 LATAM (retired — switch to Mexico)</option>
+                          )}
                         </Select>
                       )}
                     />

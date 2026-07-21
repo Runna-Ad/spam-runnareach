@@ -14,7 +14,19 @@ export type MiniContact = {
   email: string | null;
   full_name: string | null;
   priority_rank?: number | null;
+  /** How the address was obtained — 'scraper', 'anymail', 'hunter', 'manual'… */
+  selected_by?: string | null;
 };
+
+/**
+ * True when the address was never verified — a firstname@domain GUESS kept only
+ * because the domain is catch-all (so it can't hard-bounce). It may still go
+ * nowhere. Surfaced in the UI so a human never approves a guess believing it's
+ * a confirmed contact.
+ */
+export function isGuessedContact(selectedBy: string | null | undefined): boolean {
+  return selectedBy === "snapverify_catchall_guess";
+}
 
 /** Pick the highest-priority contact that has a usable email, from an in-memory list. */
 export function pickTopUsableContact<T extends MiniContact>(

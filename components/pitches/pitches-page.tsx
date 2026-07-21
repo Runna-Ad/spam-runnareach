@@ -654,6 +654,17 @@ function PitchDetail({
                   {pitch.contact_email}
                 </span>
                 {pitch.contact_name ? ` (${pitch.contact_name})` : ""}
+                {/* An unverified firstname@domain guess kept only because the
+                    domain is catch-all. Flagged so a guess is never approved
+                    in the belief it's a confirmed address. */}
+                {pitch.contact_is_guess ? (
+                  <span
+                    className="ml-1.5 rounded-sm border border-[var(--color-warning-300)]/40 px-1 py-px font-medium text-[var(--color-warning-300)]"
+                    title="Unverified guess: no confirmed address was found, so this is firstname@domain on a catch-all mail server. It won't bounce, but it may not reach anyone."
+                  >
+                    guessed address
+                  </span>
+                ) : null}
               </span>
             ) : (
               <span className="text-[var(--color-warning-300)]">
