@@ -171,16 +171,26 @@ export async function searchDenue(input: DenueSearchInput): Promise<DenueSearchR
     return { ok: false, error: "DENUE_API_KEY not set — register at inegi.org.mx/servicios/api_denue.html (or email atencion@inegi.org.mx)" };
   }
 
-  const stateCode = input.stateCode ?? "0";
+  // State code: the API wants "01".."32", or "00" for the whole country.
+  // Our callers pass "0" for "all Mexico" — translate it.
+  const rawState = input.stateCode ?? "0";
+  const stateCode = rawState === "0" || rawState === "" ? "00" : rawState.padStart(2, "0");
   const maxResults = Math.min(input.maxResults ?? 100, 1000);
 
-  // Auto-detect: numeric keyword → SCIAN activity code; text → business name
-  const isScianCode = /^\d{2,6}$/.test(input.keyword.trim());
-  const nombreEstab = isScianCode ? "0" : encodeURIComponent(input.keyword.trim());
-  const codigoAct = isScianCode ? input.keyword.trim() : "0";
-
-  // DENUE uses tipo=0 (all sizes) — we cast wide for discovery
-  const url = `${BASE_URL}/Buscar/${nombreEstab}/${codigoAct}/${stateCode}/0/0/${maxResults}/${apiKey}`;
+  // BuscarEntidad/{condition}/{state}/{start}/{end}/{token} — a keyword search
+  // scoped to one state.
+  //
+  // The previous URL was /Buscar/{name}/{scian}/{state}/0/0/{max}/{token}, which
+  // matches NO documented DENUE v1 method — `Buscar` is actually a GEOGRAPHIC
+  // search (condition/lat,lon/radius/token). INEGI answered it with its HTML
+  // "Página no encontrada" page, which is why this source has never returned a
+  // single row. Verified against INEGI's own API documentation.
+  //
+  // A numeric SCIAN code isn't usable here (that needs BuscarAreaAct's 14
+  // positional parameters); callers pass a text keyword, which is what
+  // BuscarEntidad wants anyway.
+  const condition = encodeURIComponent(input.keyword.trim() || "todos");
+  const url = `${BASE_URL}/BuscarEntidad/${condition}/${stateCode}/1/${maxResults}/${apiKey}`;
 
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
@@ -188,9 +198,10 @@ export async function searchDenue(input: DenueSearchInput): Promise<DenueSearchR
   try {
     const res = await fetch(url, {
       headers: {
-        Accept: "application/json",
-        // Plain browser UA — INEGI's WAF rejects bot-styled UAs (HTTP 406),
-        // especially from datacenter IPs like Vercel's.
+        // NO Accept header. Sending `Accept: application/json` makes INEGI
+        // answer 406 Not Acceptable — reproduced from a residential IP, so it
+        // is content negotiation, NOT the datacenter-IP block previously
+        // assumed here. The endpoint returns JSON regardless.
         "User-Agent":
           "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
       },
@@ -207,10 +218,27 @@ export async function searchDenue(input: DenueSearchInput): Promise<DenueSearchR
             "DENUE API returned 404 — the token is likely invalid/expired (INEGI serves a 404 page for bad tokens). Regenerate it at inegi.org.mx/servicios/api_denue.html and update DENUE_API_KEY.",
         };
       }
-      if (res.status === 406 || res.status === 403) {
+      if (res.status === 406) {
+        // Caused by sending `Accept: application/json` (reproduced from a
+        // residential IP — it is NOT a datacenter/IP block, as this message
+        // previously claimed). We no longer send that header, so a 406 here
+        // means something re-introduced it.
         return {
           ok: false,
-          error: `DENUE API rejected the request (HTTP ${res.status}) — INEGI's firewall is blocking the server's IP or user-agent. Note: discovery runs from Vercel's US datacenter, NOT your location, so running it "from Mexico" doesn't change the source IP. If this persists, the token may also need regenerating.`,
+          error:
+            "DENUE returned 406 Not Acceptable — this happens when an Accept header is sent. " +
+            "The request should send no Accept header at all.",
+        };
+      }
+      if (res.status === 403) {
+        return { ok: false, error: "DENUE rejected the request (HTTP 403)." };
+      }
+      if (res.status === 501) {
+        return {
+          ok: false,
+          error:
+            "DENUE rejected the query parameters (HTTP 501 'Consulta incorrecta') — " +
+            "the endpoint path or its positional parameters are wrong for this method.",
         };
       }
       return { ok: false, error: `DENUE API returned HTTP ${res.status}` };
@@ -270,12 +298,17 @@ export async function searchDenue(input: DenueSearchInput): Promise<DenueSearchR
       return { ok: false, error: "DENUE request timed out (20 s)" };
     }
     const msg = err instanceof Error ? err.message : String(err);
-    // INEGI API returns non-standard HTTP 000 status when accessed from non-MX IPs
-    // Node's fetch rejects this status code with "fetch failed"
+    // INEGI intermittently emits a MALFORMED HTTP response that no standard
+    // client can parse (curl: "Unsupported response code in HTTP response";
+    // Node fetch: "fetch failed"). Reproduced from a residential IP minutes
+    // after the same endpoint answered normally — it is a server-side fault on
+    // INEGI's end, not a geo/IP restriction as previously assumed here.
     if (msg.includes("fetch failed") || msg.includes("network") || msg.includes("ECONNRESET")) {
       return {
         ok: false,
-        error: "DENUE API unreachable — INEGI may restrict access to Mexican IP addresses. Try from a MX server or VPN.",
+        error:
+          "DENUE sent a malformed HTTP response (INEGI server fault — intermittent). " +
+          "Nothing to fix on our side; retry later or leave DENUE disabled.",
       };
     }
     return { ok: false, error: `DENUE error: ${msg}` };

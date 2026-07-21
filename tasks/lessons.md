@@ -4,6 +4,23 @@ Running log of mistakes, root causes, and rules to prevent recurrence. Newest at
 
 ---
 
+[2026-07-21] LESSON (I was wrong, twice): the DENUE "406 / IP block" diagnosis was fabricated reasoning — and I shipped it as a user-facing error message
+WHAT HAPPENED: Pedro's friend ran discovery from Mexico and hit my error text: "INEGI's firewall is blocking the server's IP or user-agent. Note: discovery runs from Vercel's US datacenter, NOT your location…". Confident, specific, and WRONG.
+WHAT PROBING ACTUALLY SHOWED (from my own residential Canadian IP, with the real token):
+  - Accept: application/json  -> 406      <- OUR OWN HEADER causes it
+  - no Accept header          -> 200
+  So 406 was content negotiation, reproducible anywhere. Nothing to do with Vercel, datacenters, or geography.
+  - And the 200 was INEGI's HTML "Página no encontrada" page, not data — because our URL matched NO documented DENUE method. `Buscar` is a GEOGRAPHIC search (condition/lat,lon/radius/token); we were calling /Buscar/{name}/{scian}/{state}/0/0/{max}/{token}, which does not exist. That is why this source has never returned a single row since it was written.
+  - The correct method for keyword+state is BuscarEntidad/{condition}/{state}/{start}/{end}/{token} (confirmed against INEGI's own docs).
+  - Even on correct endpoints INEGI intermittently emits a MALFORMED HTTP response — curl: "Unsupported response code in HTTP response", Node fetch: "fetch failed". Same endpoint answered 501 one minute and nothing the next.
+ROOT CAUSE OF MY ERROR: I reasoned from a plausible story (datacenter IPs get blocked by government APIs — true in general) instead of testing it, then WROTE THAT STORY INTO A USER-FACING STRING where it read as established fact. A stale comment in the file already asserted the MX-IP theory and I inherited it uncritically. Two earlier sessions repeated it.
+FIXED: removed the Accept header, corrected the endpoint to BuscarEntidad, and rewrote every error message to say only what is verified — including "malformed response, INEGI server fault, nothing to fix on our side".
+RULE: an error message is a CLAIM, and it gets read by people who cannot check it. Never write a diagnosis into user-facing text that you have not reproduced — say what was observed ("returned 406 with an Accept header") not what you infer ("their firewall blocks our datacenter"). When you inherit a comment explaining a failure, treat it as a hypothesis, not a finding — especially one that conveniently explains away a broken integration. And when an integration has NEVER worked, suspect the request shape before the network.
+TAGS: #lesson #wrong-diagnosis #error-messages #honesty #denue #api #assumptions #inherited-comments
+STATUS: code fixed + verified compiling; DENUE itself still UNVERIFIED (INEGI unreachable during testing).
+
+---
+
 [2026-07-21] FIX (self-inflicted): discovery "reset itself 3 times" — the watchdog was killing a HEALTHY run, and my Yellow Pages fix is what triggered it
 SYMPTOM (Pedro, mid-run): "im running a search now and i feel like it has reseted itself 3 times".
 ROOT CAUSE: the discovering phase is a single long `await runAllSources(...)` that bumped the heartbeat ZERO times while it ran. The client watchdog resumes any job whose heartbeat is older than STALL_MS (100s). So a discovery that legitimately took longer than 100s was declared a dead chain, "resumed", and — because the discovering phase is NOT resumable — restarted runAllSources FROM SCRATCH. Every ~100s. Each lap re-ran every crawl and re-spent the API budget.

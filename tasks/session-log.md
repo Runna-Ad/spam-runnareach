@@ -1116,3 +1116,27 @@ Second finding from the same fix: the restored source returned Walmart / Shopper
 - [ ] ⏳ #7 Analytics — pitch funnel metrics, cost tracking, Claude vs template breakdown
 - [ ] ⏳ #7 Analytics — pitch funnel metrics, cost tracking, Claude vs template breakdown
 
+
+## 2026-07-21 16:01
+**Shipped (recent commits):**
+  - fix(discovery): keepalive heartbeat + bound the restart loop
+  - docs: wrap 2026-07-21 (YP unblocked, chain filter, brain updated)
+  - feat(discovery): drop national chains at insert, before research spend
+  - fix(yellowpages): browser UA — the source was blocked, not broken
+  - docs: final wrap for 2026-07-21 (extractor root cause recorded)
+  - docs: log the cheerio text-boundary root cause + re-enrich gap
+  - fix(scraper): preserve element boundaries when extracting text
+  - docs(project-state): retire known-issues that were fixed this session
+
+**Still open:**
+- [ ] Supabase: ANON + SERVICE_ROLE keys live (connection works — Phase 0 unblocked)
+- [ ] Anthropic API key + $100/mo limit
+- [ ] Google Cloud (Places API + Gmail API + OAuth consent + OAuth client + restricted Places key)
+- [ ] Name sender #1 Runna CA principal + buy both domains + add runnareach.com to Rünna Workspace + DNS (SPF/DKIM/DMARC)
+- [ ] Postmark or SES account
+- [ ] Cal.com account
+- [ ] Slack hot-lead webhook URL
+- [ ] CRON_SECRET + TOKEN_ENCRYPTION_KEY (`openssl rand -hex 32`)
+- [ ] ⏳ #7 Analytics — pitch funnel metrics, cost tracking, Claude vs template breakdown
+- [ ] ⏳ #7 Analytics — pitch funnel metrics, cost tracking, Claude vs template breakdown
+
