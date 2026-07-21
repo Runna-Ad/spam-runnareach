@@ -1070,3 +1070,12 @@ Before touching any code:
 - [x] Per-prospect Brave calls 6 -> 0. Brave remains ONLY in the 2 user-triggered discovery sources (brave_search source + AI Search)
 - [ ] Pedro: Brave quota should now last; the ~280 prospects/month ceiling is gone. Free discovery breadth still available: Yellow Pages CA (no key), Google Places (~7k/mo credit), DENUE (free, IP-blocked from Vercel), OpenStreetMap Overpass (free, no key)
 - [ ] NOT DONE (deliberate): Google Places reviews/rating as a web-intel signal — that's a different SKU and I won't wire it before verifying pricing
+
+### Round 8 — send-gate DRY RUN live (2026-07-21)
+- [x] Brave removal DEPLOYED (da99e3c) — per-prospect Brave calls 6 -> 0
+- [x] Gate dry-run DEPLOYED (256fee2): every generated pitch is evaluated and the verdict written to audit_log (action='pitch.gate_dryrun'). Blocks nothing, changes nothing.
+- [x] No migration needed — audit_log.action is plain text (verified, not assumed)
+- [x] scripts/gate-dryrun-review.sql — headline pass rate, failure reasons ranked, FALSE POSITIVES (held-but-you-sent-it), and agreements
+- [ ] Pedro: generate pitches as normal for ~1-2 weeks, then run the review SQL. Decision point: if false positives ~0 -> enable auto-send for PASS; if not -> tune the rules first
+- [ ] Gap to close if the company-name rule proves valuable: persist scraped site_name on prospect_research (currently transient, so that rule is skipped in the dry run)
+- [ ] Next after the gate proves out: (a) prospect pre-filter (stop paying to research prospects that get suppressed), (b) health dashboard, (c) B-list promotion flow
