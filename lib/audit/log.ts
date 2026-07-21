@@ -21,7 +21,11 @@ export type AuditAction =
   | "reply.sent"
   | "reply.nudge_sent"
   | "reply.nudge_held"
-  | "prospect.archived_no_meeting";
+  | "prospect.archived_no_meeting"
+  // Pre-send verification gate, dry-run mode: records what the gate WOULD have
+  // decided about a generated pitch. Changes nothing — it exists to prove the
+  // gate agrees with human judgement before it's allowed to block a send.
+  | "pitch.gate_dryrun";
 
 export type AuditPayload = {
   tenantId: string;

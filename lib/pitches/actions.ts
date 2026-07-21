@@ -1,6 +1,7 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
+import { recordGateDryRun } from "@/lib/pitches/gate-dryrun";
 import { z } from "zod";
 import { claudeIsAvailable } from "@/lib/anthropic/client";
 import { isUnderDailyCap, recordClaudeCall } from "@/lib/anthropic/cost-tracking";
@@ -444,6 +445,11 @@ export async function generatePitch(
       fallback_reason: claudeFallbackReason,
     },
   });
+
+  // Pre-send gate DRY RUN — records what the gate WOULD decide, changes nothing.
+  // Collecting this on real pitches is how we earn the right to auto-send:
+  // it shows whether the gate agrees with Pedro before it can block anything.
+  await recordGateDryRun(supabase, user.tenantId, user.id, created.id);
 
   // Advance the prospect to "pitched" so the funnel/list reflect reality.
   // Guarded to pre-pitch states only (raw/researched) via the WHERE filter, so
