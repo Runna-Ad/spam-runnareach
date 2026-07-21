@@ -16,6 +16,7 @@ import {
   isRoleBasedEmail,
   repairGluedDomainPrefix,
   pickAddressContact,
+  hasGluedLabelPrefix,
 } from "../lib/research/email-utils.ts";
 import { repairGluedTldDomain } from "../lib/research/scraper.ts";
 
@@ -132,4 +133,37 @@ test("pickAddressContact matches the send path (greeting = recipient)", () => {
   ];
   assert.equal(pickAddressContact(withJunk)?.email, "real@firm.ca");
   assert.equal(pickAddressContact([]), null);
+});
+
+test("hasGluedLabelPrefix — real case: 'Emails:' label fused onto the address", () => {
+  // julien-cormier.ca prints "Emails:" immediately before three mailto links.
+  // Cheerio's .text() dropped the boundary -> "emailsrgjulien@julien-cormier.ca",
+  // which has a valid TLD, no digits and no placeholder — it passed every check
+  // and reached a live draft pitch.
+  assert.equal(hasUsableEmail("emailsrgjulien@julien-cormier.ca"), false);
+  assert.equal(hasUsableEmail("correosventas@empresa.mx"), false);
+  // The real addresses must still pass.
+  assert.equal(hasUsableEmail("rgjulien@julien-cormier.ca"), true);
+  assert.equal(hasUsableEmail("pjcormier@julien-cormier.ca"), true);
+  assert.equal(hasUsableEmail("vfournier@julien-cormier.ca"), true);
+});
+
+test("label-prefix guard does not eat legitimate locals", () => {
+  // Locals that merely START with the same letters must survive. Asserted on
+  // the guard directly, because hasUsableEmail also applies OTHER pre-existing
+  // rules (e.g. "email" is in PLACEHOLDER_LOCALS — email@company.com is a
+  // template address — so it's rejected for an unrelated reason).
+  assert.equal(hasGluedLabelPrefix("mail"), false);
+  assert.equal(hasGluedLabelPrefix("contact"), false);
+  assert.equal(hasGluedLabelPrefix("telma"), false);
+  assert.equal(hasGluedLabelPrefix("emailyst"), false);      // plausible business local
+  // Real Spanish role inboxes — these MUST survive (MX is half the market).
+  assert.equal(hasGluedLabelPrefix("contactenos"), false);
+  assert.equal(hasGluedLabelPrefix("escribenos"), false);
+  assert.equal(hasGluedLabelPrefix("contacto"), false);
+  assert.equal(hasUsableEmail("contactenos@empresa.mx"), true);
+  assert.equal(hasUsableEmail("contacto@clinica.mx"), true);
+  assert.equal(hasUsableEmail("mail@runna.agency"), true);
+  assert.equal(hasUsableEmail("contact@runna.agency"), true);
+  assert.equal(hasUsableEmail("telma@clinica.mx"), true);
 });

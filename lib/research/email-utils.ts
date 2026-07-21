@@ -83,6 +83,36 @@ export function hasValidTld(domain: string): boolean {
 }
 
 /**
+ * Page-furniture words that sit immediately before an address on a contact
+ * page. When the extractor loses the element boundary, the label fuses onto
+ * the local-part: "Emails:" + "rgjulien@x.ca" -> "emailsrgjulien@x.ca".
+ * That is well-formed, has a valid TLD and no digits — it passed every other
+ * check and reached a live draft pitch.
+ */
+// DELIBERATELY NARROW. The root cause is fixed at extraction (the scraper now
+// preserves element boundaries), so this guard only has to protect rows already
+// in the DB. Singular labels are excluded because they legitimately START real
+// locals — "contactenos@" and "escribenos@" are ordinary Spanish role inboxes,
+// and "emailyst@" is a plausible business address. Only plural/compound label
+// forms, which essentially never begin a genuine local-part, are listed.
+const GLUED_LABEL_PREFIXES = ["emails", "correos", "telefono", "telephone", "direccion"];
+
+/**
+ * True when the local-part is a contact-page label fused onto a real address
+ * ("Emails:" + "rgjulien@…" -> "emailsrgjulien@…"). Requires a substantial
+ * remainder (≥4 chars) so a label that merely shares a prefix with a real
+ * local isn't rejected.
+ */
+export function hasGluedLabelPrefix(local: string): boolean {
+  const l = local.toLowerCase();
+  return GLUED_LABEL_PREFIXES.some((p) => {
+    if (!l.startsWith(p)) return false;
+    const rest = l.slice(p.length).replace(/^[.\-_]+/, "");
+    return rest.length >= 4 && /^[a-z]/.test(rest);
+  });
+}
+
+/**
  * True when the local-part begins with the address's OWN domain — the
  * signature of a site printing its domain immediately before an email, which
  * the extractor then swallows as one token:
@@ -170,6 +200,8 @@ export function hasUsableEmail(email: string | null | undefined): boolean {
   // The site's own domain glued onto the front of the address. Rejected here
   // too, so legacy rows already in the DB can never be emailed.
   if (hasGluedDomainPrefix(local, domain)) return false;
+  // A contact-page label fused onto the address ("Emails:" + rgjulien@…).
+  if (hasGluedLabelPrefix(local)) return false;
   return true;
 }
 

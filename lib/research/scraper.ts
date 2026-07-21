@@ -498,8 +498,17 @@ function extractContactEmails(html: string, $: cheerio.CheerioAPI, siteDomain: s
     if (email && isValidEmail(email)) found.add(email);
   });
 
-  // Plaintext scan — but only on visible text (script/style noise is a lot)
-  const visibleText = $("body").text();
+  // Plaintext scan — but only on visible text (script/style noise is a lot).
+  //
+  // NOTE: `$("body").text()` concatenates every text node with NO separator, so
+  // adjacent elements run together and the regex swallows the join. A real
+  // contact page rendered as
+  //     Phone: 613-632-0148   Emails:  rgjulien@x.ca   pjcormier@x.ca
+  // extracts as "…613-632-0148Emails:rgjulien@x.capjcormier@x.ca…", and EVERY
+  // match off that string is garbage ("emailsrgjulien@x.ca" reached a live
+  // draft pitch). Insert a separator at element boundaries first so addresses
+  // are bounded by whitespace the way they appear on screen.
+  const visibleText = textWithBoundaries($);
   const matches = visibleText.match(EMAIL_REGEX) ?? [];
   for (const raw of matches) {
     const cleaned = repairGluedTldDomain(stripLeadingPhonePrefix(raw.toLowerCase()), siteDomain);
@@ -523,6 +532,25 @@ const PLACEHOLDER_EMAIL_DOMAINS = new Set([
 const PLACEHOLDER_EMAIL_LOCALS = new Set([
   "you", "john.doe", "jane.doe",
 ]);
+
+/**
+ * Body text with element boundaries preserved as whitespace.
+ *
+ * Cheerio's `.text()` is a raw concatenation of text nodes: `<p>Emails:</p>`
+ * followed by three `<a>` addresses yields one unbroken string. Appending a
+ * space to every element restores the visual word boundaries, which is what
+ * the email regex assumes.
+ */
+export function textWithBoundaries($: cheerio.CheerioAPI): string {
+  try {
+    const $$ = cheerio.load($.html());
+    $$("script, style, noscript").remove();
+    $$("*").append(" ");
+    return $$("body").text();
+  } catch {
+    return $("body").text(); // never let text extraction break a scrape
+  }
+}
 
 /**
  * Repair run-together page text glued onto an email's domain — but ONLY when

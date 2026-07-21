@@ -643,6 +643,34 @@ export async function reEnrichProspectContacts(
     return { ok: false, error: "Prospect has no domain — can't enrich contacts" };
   }
 
+  // ── Re-scrape the site FIRST ──────────────────────────────────────────────
+  // This used to jump straight to the paid finders, so a prospect whose stored
+  // contact was junk could not be fixed by the obvious button: the best source
+  // — the firm's own contact page, with clean mailto: links — was never re-read.
+  // (Julien & Cormier published three real addresses; re-enrich kept returning
+  // the glued one.) Scraping costs nothing, so try it before spending credits.
+  try {
+    await scrapeWebsite(prospectId);
+  } catch {
+    // Non-fatal — fall through to the paid waterfall.
+  }
+
+  // If the site handed us a usable contact, we're done — no paid call needed.
+  type UsableRow = { email: string | null; selected_by: string };
+  const { data: afterScrape } = await supabase
+    .from("prospect_contacts")
+    .select("email, selected_by")
+    .eq("prospect_id", prospectId)
+    .eq("tenant_id", user.tenantId)
+    .order("priority_rank", { ascending: true })
+    .limit(12)
+    .returns<UsableRow[]>();
+  const fromSite = (afterScrape ?? []).find((c) => hasUsableEmail(c.email));
+  if (fromSite?.email) {
+    revalidatePath(`/companies/${prospectId}`);
+    return { ok: true, found: true, email: fromSite.email, method: fromSite.selected_by };
+  }
+
   try {
     await enrichContactsForProspect(user.tenantId, prospectId, p.domain, p.company_name, supabase);
   } catch (err) {

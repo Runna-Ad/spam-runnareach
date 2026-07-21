@@ -90,3 +90,17 @@ where position(split_part(email,'@',2) in split_part(email,'@',1)) = 1;
 -- the pipeline on it), then "Generate pitches". With the fixes deployed the
 -- scraper recovers vfournier@julien-cormier.ca and the greeting addresses the
 -- ACTUAL recipient (or the firm, since these are initial+surname locals).
+
+-- ─────────────────────────────────────────────────────────────────────────────
+-- 2026-07-21 (b): contact-page LABEL fused onto the address, e.g.
+--   "Emails:" + rgjulien@x.ca -> emailsrgjulien@x.ca
+-- Root cause fixed at extraction (the scraper now keeps element boundaries), so
+-- a re-scrape recovers the real addresses. These legacy rows are already
+-- unsendable; delete them, then Re-enrich (which now re-scrapes first).
+select c.id, pr.company_name, c.email, c.selected_by
+from prospect_contacts c
+join prospects pr on pr.id = c.prospect_id
+where split_part(c.email,'@',1) ~* '^(emails|correos|telefono|telephone|direccion)[a-z]{4,}';
+
+-- delete from prospect_contacts
+-- where split_part(email,'@',1) ~* '^(emails|correos|telefono|telephone|direccion)[a-z]{4,}';
