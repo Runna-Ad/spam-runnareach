@@ -4,6 +4,19 @@ Running log of mistakes, root causes, and rules to prevent recurrence. Newest at
 
 ---
 
+[2026-07-21] FIX (CRITICAL): pitch greeted "Hi Mark," while addressed to john.sipos@ — greeting and recipient chosen by DIFFERENT rules
+SYMPTOM (Pedro, from the /pitches screen): draft to john.sipos@waglaw.net opened "Hi Mark,". Also spotted a contact that is obviously not a real address: julien-cormier.cavfournier@julien-cormier.ca.
+ROOT CAUSE A (greeting): the RECIPIENT is resolved by pickTopUsableContact (order by priority_rank, first usable email). The GREETING was resolved independently in THREE composers (claude-composer, generator, industry-templates), each using `contacts.find(c => !role_based && c.full_name)` — "prefer any non-role contact that happens to have a name". On a prospect with several contacts those disagree: the top-ranked contact had no full_name, a lower-ranked one was "Mark", so we greeted Mark and mailed John. Identical class to the Acadian failure — two code paths deciding "the contact" by different rules.
+ROOT CAUSE B (fake address): the firm's site printed its own domain immediately before the address, and the extractor swallowed both as one token: "julien-cormier.ca" + "vfournier@julien-cormier.ca" -> julien-cormier.cavfournier@julien-cormier.ca. It has a valid TLD, no glued digits and is not a placeholder, so EVERY existing guard passed it and it reached a draft pitch.
+FIX A: one exported pickAddressContact() (email-utils) used by all three composers — first contact with a usable email, which given the priority_rank ordering IS exactly what the send path resolves. Regression test asserts greeting == recipient for the Waghorn shape.
+FIX B: hasGluedDomainPrefix() rejects any local-part starting with its own domain (so legacy rows already in the DB can never be emailed), plus repairGluedDomainPrefix() recovers the real address at extraction (vfournier@julien-cormier.ca) and returns null rather than guessing when the remainder is implausible.
+RULE: when two places must agree about WHICH entity an action targets, they must call ONE shared function — not two "equivalent" heuristics. Equivalent-looking selection logic silently diverges on the messy rows (missing full_name, extra contacts), and the failure is invisible in code review because each side reads correct alone. Corollary for scraped identifiers: validity checks (TLD/digits/placeholder) do NOT catch a well-formed value that is simply the WRONG value — test that the parts relate to each other (local-part must not contain its own domain).
+CAUGHT BY: an existing test whose fixture listed the role inbox first — unrealistic (role=rank 5, personal=rank 1), and under that ordering the old code would have mailed info@ while greeting Maria. Fixture corrected to priority order; the assertion it encoded was only ever safe by accident.
+TAGS: #fix #critical #pitch #greeting #contact-selection #shared-predicate #scraper #wrong-not-invalid
+STATUS: built, 185/185 tests, tsc + eslint + build clean.
+
+---
+
 [2026-07-17] FIX (round 4): a "do we have a contact?" gate that didn't use the usable-email predicate created silent limbo prospects
 SYMPTOM (found while explaining the cleanup to Pedro, not reported): prospects scored >=70, marked pitch_gate_passed, but with no pitch and never suppressed.
 ROOT CAUSE: the pipeline's no-contact gate asked `email is not null` while generatePitch and every send path ask `hasUsableEmail(email)`. A junk contact (glued TLD, builder placeholder) satisfied the first and failed the second, so the prospect passed the gate, failed pitch generation, and landed in a state no branch owns — not suppressed (we "had" a contact), not pitched (the contact was refusable).

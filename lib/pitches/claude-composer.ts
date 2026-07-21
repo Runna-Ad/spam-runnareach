@@ -19,6 +19,7 @@ import {
   type SystemBlock,
 } from "../anthropic/client.ts";
 import { RUNNA_CAPABILITIES } from "../runna/capabilities.ts";
+import { hasUsableEmail } from "../research/email-utils.ts";
 import type {
   ComposedPitch,
   GeneratorInputCaseStudy,
@@ -664,9 +665,17 @@ function buildStage2UserPrompt(
     // The single contact to address, resolved + with a derived first name so the
     // model greets the decision-maker by name instead of defaulting to "team".
     address_contact: (() => {
+      // MUST be the contact the email will actually be SENT to. `contacts` is
+      // ordered by priority_rank, so the first with a usable email is exactly
+      // what pickTopUsableContact (the send path) resolves.
+      //
+      // This previously preferred "any non-role contact that has a full_name",
+      // which on a prospect with several contacts greeted a DIFFERENT person
+      // than the recipient — a real pitch went to john.sipos@waglaw.net opening
+      // "Hi Mark,". Same class as the Acadian failure: two code paths choosing
+      // "the contact" by different rules.
       const c =
-        input.contacts.find((x) => !x.email_is_role_based && x.full_name) ??
-        input.contacts.find((x) => !x.email_is_role_based) ??
+        input.contacts.find((x) => hasUsableEmail(x.email)) ??
         input.contacts[0] ??
         null;
       if (!c) return null;

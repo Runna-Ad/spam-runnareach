@@ -83,6 +83,41 @@ export function hasValidTld(domain: string): boolean {
 }
 
 /**
+ * True when the local-part begins with the address's OWN domain — the
+ * signature of a site printing its domain immediately before an email, which
+ * the extractor then swallows as one token:
+ *
+ *   "julien-cormier.ca" + "vfournier@julien-cormier.ca"
+ *     → julien-cormier.cavfournier@julien-cormier.ca
+ *
+ * A legitimate local-part never starts with its own full domain (including the
+ * TLD), so this is safe. Caught late: such an address passes the TLD, digit and
+ * placeholder checks and would otherwise be emailed.
+ */
+export function hasGluedDomainPrefix(local: string, domain: string): boolean {
+  const l = local.toLowerCase();
+  const d = domain.toLowerCase().replace(/^www\./, "");
+  return d.length > 0 && l.startsWith(d) && l.length > d.length;
+}
+
+/**
+ * Repair the glue above by removing the leading domain, but ONLY when what
+ * remains is a plausible local-part. Returns null when it can't be repaired
+ * confidently — callers must then drop the address rather than guess.
+ */
+export function repairGluedDomainPrefix(email: string): string | null {
+  const at = email.lastIndexOf("@");
+  if (at <= 0) return null;
+  const local = email.slice(0, at);
+  const domain = email.slice(at + 1);
+  if (!hasGluedDomainPrefix(local, domain)) return null;
+  const d = domain.toLowerCase().replace(/^www\./, "");
+  const rest = local.slice(d.length).replace(/^[._-]+/, "");
+  if (rest.length < 2 || !/^[a-z0-9._%+-]+$/i.test(rest)) return null;
+  return `${rest}@${domain}`;
+}
+
+/**
  * True when the local-part starts with a glued digit run (≥5 digits directly
  * followed by letters) — the signature of a postal code (MX/US = 5 digits) or
  * phone number fused onto a real address by messy page markup ("66220store@…"
@@ -101,6 +136,24 @@ export function hasGluedDigitPrefix(local: string): boolean {
  * generation so they never disagree. (A role-based info@ IS usable — it sends
  * with the forwarding ask; that's isRoleBasedEmail's job, not this one.)
  */
+/**
+ * The ONE rule for "which contact does this pitch address?".
+ *
+ * Must agree with pickTopUsableContact (the send path): contacts arrive
+ * ordered by priority_rank, so the first with a usable email IS the recipient.
+ *
+ * Every composer previously had its own copy of this choice, preferring "the
+ * first non-role contact that happens to have a full_name" — which on a
+ * prospect with several contacts greeted a DIFFERENT person than the email was
+ * sent to (a real pitch went to john.sipos@waglaw.net opening "Hi Mark,").
+ * Keep this as the single source of truth; do not re-derive it inline.
+ */
+export function pickAddressContact<T extends { email: string | null }>(
+  contacts: T[],
+): T | null {
+  return contacts.find((c) => hasUsableEmail(c.email)) ?? contacts[0] ?? null;
+}
+
 export function hasUsableEmail(email: string | null | undefined): boolean {
   if (!email) return false;
   const e = email.trim().toLowerCase();
@@ -114,6 +167,9 @@ export function hasUsableEmail(email: string | null | undefined): boolean {
   // contacts already sitting in the DB can never be emailed.
   if (!hasValidTld(domain)) return false;
   if (hasGluedDigitPrefix(local)) return false;
+  // The site's own domain glued onto the front of the address. Rejected here
+  // too, so legacy rows already in the DB can never be emailed.
+  if (hasGluedDomainPrefix(local, domain)) return false;
   return true;
 }
 

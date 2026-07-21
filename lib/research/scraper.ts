@@ -1,5 +1,5 @@
 import * as cheerio from "cheerio";
-import { hasUsableEmail, hasValidTld } from "./email-utils.ts";
+import { hasUsableEmail, hasValidTld, repairGluedDomainPrefix } from "./email-utils.ts";
 
 /**
  * Use a realistic browser UA. Bot-style UAs (e.g. "RunnaCABot/0.1") are
@@ -502,7 +502,11 @@ function extractContactEmails(html: string, $: cheerio.CheerioAPI, siteDomain: s
   const visibleText = $("body").text();
   const matches = visibleText.match(EMAIL_REGEX) ?? [];
   for (const raw of matches) {
-    const email = repairGluedTldDomain(stripLeadingPhonePrefix(raw.toLowerCase()), siteDomain);
+    const cleaned = repairGluedTldDomain(stripLeadingPhonePrefix(raw.toLowerCase()), siteDomain);
+    // A site printing its own domain right before an address glues the two
+    // together ("julien-cormier.ca" + "vfournier@…"). Recover the real address;
+    // if it can't be repaired confidently, the isValidEmail gate drops it.
+    const email = repairGluedDomainPrefix(cleaned) ?? cleaned;
     if (isValidEmail(email)) found.add(email);
   }
 

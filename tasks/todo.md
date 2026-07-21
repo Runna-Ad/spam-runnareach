@@ -1044,3 +1044,12 @@ Before touching any code:
 - [ ] #6 Discovery per-source slicing — DEFERRED (Pedro: "leave it at the end"). Janitor already auto-closes stuck runs.
 - VERIFIED: 180/180 tests, tsc + eslint + next build all clean.
 - OPEN QUESTION for Pedro: US market — you said "only Mexico and Canada". US is still in the ICP selector (it has no bug, unlike LATAM). Remove it too?
+
+### Round 5 — pitch integrity + UI honesty (2026-07-21)
+- [x] Greeting != recipient (CRITICAL): one shared pickAddressContact() across all 3 composers; regression test on the Waghorn shape
+- [x] Glued-domain contacts (julien-cormier.cavfournier@...): rejected by hasUsableEmail (legacy rows unsendable) + repaired at extraction
+- [x] Resume in-flight bulk pipeline jobs (getActiveBulkPipelineJob) — the "nothing happens" report
+- [x] Pipeline failures no longer hidden behind "done — 0 processed"; worker keeps error reasons
+- [x] Status filter: "Active (needs action)" + real "Everything (no filter)"; all 19 statuses listed
+- [ ] Pedro: run the two new queries at the bottom of scripts/audit-2026-07-17-review.sql (glued-domain contacts + affected unsent pitches), then re-enrich those prospects
+- [ ] Known limit: /companies loads max 500 prospects — silent truncation above that. Offer pagination/indicator.

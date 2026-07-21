@@ -11,6 +11,7 @@
  */
 
 import type { ComposedPitch, GeneratorInputs } from "./generator.ts";
+import { pickAddressContact } from "../research/email-utils.ts";
 
 export const HUNTER_URL = "https://runna-hunter.vercel.app/";
 
@@ -533,11 +534,7 @@ export function renderIndustryTemplate(
   const tpl = lang === "es" ? template.es : template.en;
 
   // Contact resolution — same priority order as the main generator.
-  const contact =
-    input.contacts.find((c) => !c.email_is_role_based && c.full_name) ??
-    input.contacts.find((c) => !c.email_is_role_based) ??
-    input.contacts[0] ??
-    null;
+  const contact = pickAddressContact(input.contacts);
 
   const firstName =
     extractFirstName(contact?.full_name) ??

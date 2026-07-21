@@ -239,14 +239,34 @@ test("composePitchHeuristic: falls back to highest-strength when no industry mat
 test("composePitchHeuristic: prefers non-role-based contact when both exist", () => {
   const r = composePitchHeuristic(
     fullInputs({
+      // Contacts arrive ordered by priority_rank (both pitch call sites use
+      // .order("priority_rank")). A personal address is inserted at rank 1-2 and
+      // a role inbox at rank 5, so the human ALWAYS comes first in reality.
       contacts: [
-        { full_name: null, email: "info@x.example", email_is_role_based: true, role_title: null },
         { full_name: "Maria", email: "maria@x.example", email_is_role_based: false, role_title: null },
+        { full_name: null, email: "info@x.example", email_is_role_based: true, role_title: null },
       ],
     }),
   )!;
   assert.match(r.body, /^Hi Maria,/);
   assert.equal(r.contact_used, "maria@x.example");
+});
+
+test("composePitchHeuristic: greets the contact the email is SENT to", () => {
+  // Regression for the Waghorn Stephens bug: the pitch went to
+  // john.sipos@waglaw.net but opened "Hi Mark," because the composer preferred
+  // "any non-role contact that has a full_name" while the send path resolves the
+  // top-ranked usable contact. Both must resolve to the SAME person.
+  const r = composePitchHeuristic(
+    fullInputs({
+      contacts: [
+        { full_name: null, email: "john.sipos@waglaw.net", email_is_role_based: false, role_title: null },
+        { full_name: "Mark Jones", email: "mark@waglaw.net", email_is_role_based: false, role_title: null },
+      ],
+    }),
+  )!;
+  assert.equal(r.contact_used, "john.sipos@waglaw.net");
+  assert.doesNotMatch(r.body, /Hi Mark/);
 });
 
 test("composePitchHeuristic: falls back to 'there' when only role-based contacts exist", () => {

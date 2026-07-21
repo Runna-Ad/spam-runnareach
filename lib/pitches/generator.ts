@@ -23,6 +23,7 @@
  */
 
 import { getTemplate, type TemplateVars } from "./templates.ts";
+import { pickAddressContact } from "../research/email-utils.ts";
 import { getSolutionHint } from "./claude-composer.ts";
 
 export type GeneratorInputProspect = {
@@ -222,11 +223,9 @@ export function composePitchHeuristic(input: GeneratorInputs): ComposedPitch | n
   }
 
   // 3) Contact selection
-  const realContact =
-    input.contacts.find((c) => !c.email_is_role_based && c.full_name) ??
-    input.contacts.find((c) => !c.email_is_role_based) ??
-    input.contacts[0] ??
-    null;
+  // Shared rule — MUST match the send path, or the email greets someone other
+  // than the recipient. See pickAddressContact.
+  const realContact = pickAddressContact(input.contacts);
   // Language-aware fallback: ES gets "" (template renders "Hola,"), EN gets "there".
   // "Hola there" is a critical failure — mixing languages in the greeting kills credibility.
   const firstName = extractFirstName(realContact?.full_name)

@@ -52,3 +52,25 @@ where (
      or split_part(c.email, '@', 2) in ('godaddy.com','secureserver.net','wixsite.com')
      or split_part(c.email, '@', 1) in ('filler','placeholder')
       );
+
+-- ─────────────────────────────────────────────────────────────────────────────
+-- 2026-07-21: contacts with the site's own DOMAIN glued onto the local-part
+-- (e.g. julien-cormier.cavfournier@julien-cormier.ca — really vfournier@...).
+-- These passed every previous check and reached DRAFT PITCHES. They are now
+-- unsendable (hasUsableEmail rejects them), but review + re-scrape to recover
+-- the real address.
+select c.id, pr.company_name, c.email, c.selected_by,
+       split_part(c.email,'@',2) as domain
+from prospect_contacts c
+join prospects pr on pr.id = c.prospect_id
+where position(split_part(c.email,'@',2) in split_part(c.email,'@',1)) = 1;
+
+-- Unsent pitches whose recipient is now unusable — these would have gone to a
+-- garbage address. Review/regenerate after re-enriching the prospect.
+select p.id as pitch_id, pr.company_name, c.email, p.status, p.subject
+from pitches p
+join prospects pr on pr.id = p.prospect_id
+join prospect_contacts c on c.id = p.contact_id
+where p.sent_at is null
+  and p.status in ('draft','queued_for_approval','approved')
+  and position(split_part(c.email,'@',2) in split_part(c.email,'@',1)) = 1;

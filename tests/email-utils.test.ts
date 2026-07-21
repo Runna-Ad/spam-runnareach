@@ -14,6 +14,8 @@ import {
   hasValidTld,
   hasGluedDigitPrefix,
   isRoleBasedEmail,
+  repairGluedDomainPrefix,
+  pickAddressContact,
 } from "../lib/research/email-utils.ts";
 import { repairGluedTldDomain } from "../lib/research/scraper.ts";
 
@@ -87,4 +89,47 @@ test("hasGluedDigitPrefix", () => {
 test("role-based detection still intact after refactor", () => {
   assert.equal(isRoleBasedEmail("info@x.com"), true);
   assert.equal(isRoleBasedEmail("carmen@x.com"), false);
+});
+
+test("hasGluedDomainPrefix / repair — real case: Julien & Cormier", () => {
+  // The firm's site printed "julien-cormier.ca" immediately before the address,
+  // and the extractor swallowed both as one token. This passed the TLD, digit
+  // and placeholder checks, so it reached a draft pitch and would have been sent.
+  const bad = "julien-cormier.cavfournier@julien-cormier.ca";
+  assert.equal(hasUsableEmail(bad), false); // legacy rows can never be emailed
+  assert.equal(repairGluedDomainPrefix(bad), "vfournier@julien-cormier.ca");
+  assert.equal(hasUsableEmail("vfournier@julien-cormier.ca"), true);
+});
+
+test("glued-domain repair leaves legitimate addresses alone", () => {
+  assert.equal(repairGluedDomainPrefix("john.sipos@waglaw.net"), null);
+  // Local-part shorter than its domain can never be a glue case.
+  assert.equal(repairGluedDomainPrefix("waglaw@waglaw.net"), null);
+  assert.equal(hasUsableEmail("john.sipos@waglaw.net"), true);
+  assert.equal(hasUsableEmail("waglaw@waglaw.net"), true);
+  // (acme.com is deliberately blocklisted as a template placeholder, so it is
+  // NOT a valid "legitimate address" fixture — see PLACEHOLDER_DOMAINS.)
+});
+
+test("glued-domain repair refuses when the remainder is implausible", () => {
+  // Nothing usable left after stripping — must return null, never a guess.
+  assert.equal(repairGluedDomainPrefix("acme.comx@acme.com"), null);
+});
+
+test("pickAddressContact matches the send path (greeting = recipient)", () => {
+  // Ordered by priority_rank, exactly as the query returns them. The old logic
+  // preferred "has a full_name" and greeted Mark while sending to john.sipos.
+  const contacts = [
+    { email: "john.sipos@waglaw.net", full_name: null },
+    { email: "mark.jones@waglaw.net", full_name: "Mark Jones" },
+  ];
+  assert.equal(pickAddressContact(contacts)?.email, "john.sipos@waglaw.net");
+
+  // Unusable top contact is skipped, matching pickTopUsableContact.
+  const withJunk = [
+    { email: "filler@godaddy.com", full_name: "Fake" },
+    { email: "real@firm.ca", full_name: "Real Person" },
+  ];
+  assert.equal(pickAddressContact(withJunk)?.email, "real@firm.ca");
+  assert.equal(pickAddressContact([]), null);
 });
