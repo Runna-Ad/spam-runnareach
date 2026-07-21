@@ -13,7 +13,7 @@
 - **Sibling repo:** `runna-hunter` (separate Vercel project) — the self-serve Inefficiency Hunter the pitch CTA deep-links to.
 
 ## What's deployed
-- Prod = commit **`b740008`** (2026-07-21). `origin/main` in sync, working tree clean.
+- Prod = commit **`2bf406a`** (2026-07-21). `origin/main` in sync, working tree clean.
 - Warmup engine live (pedro@runnareach.com, ramped to 50/day across 7 buddy inboxes).
 - Full pipeline live: discovery → scrape → deep research → SnapVerify → pain extraction → score → triage (<50 suppress / 50-69 B-list / ≥70 enrich+pitch) → drip send → reply funnel.
 
@@ -21,7 +21,8 @@
 | Service | Status |
 |---|---|
 | Anthropic (Claude) | ✅ working |
-| Google Places | ✅ working (primary discovery source) |
+| Google Places | ✅ working (primary discovery source — carried the 2026-07-21 runs) |
+| Yellow Pages CA | ✅ working — was 403'ing on a bot UA (2026-07-21), fixed with a browser UA. Free, no key. If it 403s again the headers need refreshing, NOT the selectors. |
 | Brave Search | ⚠️ HTTP 402 (quota). **No longer critical** — per-prospect calls went 6 → 0 on 2026-07-21. Now used ONLY by the two user-triggered discovery sources; research is 100% first-party. |
 | DENUE (INEGI, MX) | ⚠️ HTTP 406 — INEGI WAF vs Vercel's US IP. Token `10fa44b8…` set in Vercel + browser-UA fix deployed, but **still untested** (needs an MX discovery run). If it 406s, needs a MX proxy or leave off. |
 | Hunter.io | ✅ working (contact tier 3) |
@@ -44,6 +45,7 @@
 - /companies loads max 500 prospects — silent truncation above that.
 - Julien & Cormier: one draft pitch on a garbage address; remediation SQL ready (real addresses confirmed live).
 - Google Places reviews/rating as a web-intel signal — NOT wired; different SKU, pricing unverified.
+- **National-chain filter is a silent-deletion risk.** `lib/discover/chain-filter.ts` drops chains at insert. If a REAL prospect ever goes missing from discovery, check that list first and add a must-survive test for it.
 
 ## Recently CLOSED (do not re-open)
 - Hunter 50-69 confidence → now SMTP-screened before insert (2026-07-21).
@@ -53,9 +55,10 @@
 - Greeting/recipient divergence, glued-domain addresses, initial+surname greetings → fixed with shared predicates + tests (2026-07-21).
 - **Scraped-email glue (root cause)** → cheerio's `$("body").text()` has no element separator, so on a normal contact page EVERY plaintext match was garbage and the repair layer had *manufactured* a fake address that passed all guards. Fixed at the extractor (`textWithBoundaries`), verified against the live page. Do NOT add more repair heuristics — check the extractor first (2026-07-21).
 - **"Re-enrich contacts" never re-scraped** → it now re-reads the site first and short-circuits the paid waterfall when the site yields a usable address (2026-07-21).
+- **Yellow Pages HTTP 403** → bot-UA detection, not broken selectors. Browser UA restored it; verified by parsing the live page (2026-07-21).
 
 ## Recent sessions
-- **2026-07-21** — Pitch integrity (greeting≠recipient across 3 composers; glued-domain addresses; initial+surname greetings), bulk-job UI resume, honest status filter, **Brave removed from the per-prospect path (6→0)**, the **send-gate + dry run**, and — caught by Pedro post-wrap — the cheerio text-boundary root cause behind every mangled scraped email. 11 commits. (this session)
+- **2026-07-21** — Pitch integrity (greeting≠recipient across 3 composers; glued-domain addresses; initial+surname greetings), bulk-job UI resume, honest status filter, **Brave removed from the per-prospect path (6→0)**, the **send-gate + dry run**, and — caught by Pedro post-wrap — the cheerio text-boundary root cause behind every mangled scraped email, the Yellow Pages bot-block, and a national-chain filter that drops off-ICP listings before any research spend. 14 commits. (this session)
 - **2026-07-17** — Critical-fail audit: fixed the Acadian fake-website pitch, email-bounce root causes, Yelp/Brave/DENUE, + ~20 more via a 3-agent full-system audit. Shipped `38e04e4`.
 - **2026-07-09** — Cost reduction: prompt caching, closed a cap hole, cut redundant scoring (~20-35% cheaper/run).
 - **2026-06-25** — Pitch↔Hunter handoff (P1-P4), reply nudge, bounce→suppress, triage tiers, discovery time-budgeting.
