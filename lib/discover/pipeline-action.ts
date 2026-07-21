@@ -8,9 +8,9 @@
  *   → if score < 10: suppress (sanity check — clearly wrong fit, e.g. wrong country)
  *
  * Pass 2 — full enrichment (only if structural score ≥ 20):
- *   deepResearchProspect (Brave people-intel + Claude synthesis)
- *   → snapVerifyEnrich (founder names from deep research → SMTP probe)
- *   → runStructuredResearch (pain extraction on ALL data: scrape + Brave)
+ *   deepResearchProspect (first-party site scrape + Claude synthesis)
+ *   → snapVerifyEnrich (founder names from the scraped About/Team pages → SMTP probe)
+ *   → runStructuredResearch (pain extraction on all scraped data)
  *   → final scoreProspect (pain signal + contact signal both present)
  *
  * Triage on final score:
@@ -35,6 +35,7 @@ import { scoreProspect } from "@/lib/research/score-action";
 import { generatePitch } from "@/lib/pitches/actions";
 import { generateWebsitePitch } from "@/lib/pitches/website-pitch-action";
 import { searchBrave, braveIsAvailable } from "@/lib/discover/sources/brave-search";
+import { searchGooglePlaces, googlePlacesIsAvailable } from "@/lib/discover/sources/google-places";
 import { normalizeDomain } from "@/lib/discover/fuzzy-dedupe";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -202,11 +203,11 @@ export async function processSingleProspect(
   // prospect ended up "no contact found" and was suppressed after full spend.
   let effectiveDomain = p?.domain ?? null;
 
-  // ── Website discovery via Brave (for no-website prospects like Yelp results) ─
-  // Yelp and other directory sources don't include website URLs in their search
-  // results. Before routing to the website-pitch lane, try to find the business's
-  // actual website via a targeted Brave search. If found, the prospect goes
-  // through the normal scrape → research → score pipeline instead.
+  // ── Website discovery (for prospects a directory listed without a site) ─────
+  // Some sources don't return a website. Before routing to the website-pitch
+  // lane, try Google Places (the business's OWN listed site) and fall back to
+  // Brave. If found, the prospect goes through the normal scrape → research →
+  // score pipeline instead.
   if (!hasWebsite && braveIsAvailable() && p?.company_name) {
     const discovered = await discoverWebsiteViaBrave(
       p.company_name,
@@ -750,6 +751,16 @@ async function discoverWebsiteViaBrave(
   ];
 
   const locationHint = city ? ` ${city}` : "";
+
+  // Google Places FIRST: it returns the website the business itself listed on
+  // its own Google profile — first-party, not a search guess. It also costs no
+  // Brave quota (the per-prospect Brave path was removed 2026-07-21) and the
+  // field mask already requests websiteUri.
+  const placesHit = await discoverWebsiteViaPlaces(companyName, locationHint, country, SKIP_DOMAINS);
+  if (placesHit) return placesHit;
+
+  // Brave stays only as a fallback for prospects Places can't match, and only
+  // while quota allows. Same name-match + liveness guards apply.
   const query = `"${companyName}"${locationHint} official website`;
 
   try {
@@ -779,6 +790,45 @@ async function discoverWebsiteViaBrave(
     // Non-fatal — fall through to website pitch lane
   }
 
+  return null;
+}
+
+/**
+ * Look the business up on Google Places and take the website it lists on its
+ * own profile. Subject to the SAME guards as the Brave path — a name token must
+ * appear in the domain, and the domain must resolve — because a Places text
+ * search can still return a neighbouring business.
+ */
+async function discoverWebsiteViaPlaces(
+  companyName: string,
+  locationHint: string,
+  country: "CA" | "MX" | "US",
+  skipDomains: string[],
+): Promise<{ website_url: string; domain: string } | null> {
+  if (!googlePlacesIsAvailable()) return null;
+  const region = country === "MX" ? "Mexico" : country === "US" ? "United States" : "Canada";
+  try {
+    const res = await searchGooglePlaces({
+      query: `${companyName}${locationHint} ${region}`,
+      maxResults: 5,
+      languageCode: country === "MX" ? "es" : "en",
+    });
+    if (!res.ok) return null;
+
+    for (const l of res.listings) {
+      if (!l.website_url || !l.domain) continue;
+      if (skipDomains.some((skip) => l.domain!.includes(skip))) continue;
+      if (!l.domain.includes(".")) continue;
+      if (!nameMatchesListing(companyName, l.domain, l.company_name)) continue;
+      if (!(await domainIsLive(l.website_url))) continue;
+      return {
+        website_url: l.website_url,
+        domain: normalizeDomain(l.website_url) ?? l.domain,
+      };
+    }
+  } catch {
+    // Non-fatal — fall through to the Brave fallback.
+  }
   return null;
 }
 

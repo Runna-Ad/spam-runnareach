@@ -21,7 +21,6 @@
 import { z } from "zod";
 import { ANTHROPIC_HAIKU_MODEL, structuredCall } from "@/lib/anthropic/client";
 import { isRoleBasedEmail } from "@/lib/research/email-utils";
-import { searchBrave, braveIsAvailable } from "@/lib/discover/sources/brave-search";
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
@@ -77,56 +76,31 @@ const PeopleSchema = z.object({
   people: z.array(PersonSchema).max(5),
 });
 
-// ── Step 0: Fetch Brave people-intel (2 targeted queries) ─────────────────────
-// Deep research runs market-intel queries (reviews, complaints, linkedin social).
-// SnapVerify runs its OWN people-focused queries so Haiku sees LinkedIn profiles,
-// press mentions, and team bios that never appear on the main website.
-
-async function fetchBravePeopleSnippets(companyName: string, domain: string): Promise<string> {
-  if (!braveIsAvailable()) return "";
-
-  // Scope queries with the domain to avoid homonym companies (e.g. two businesses
-  // named "Adorn Boutique" in different cities — domain disambiguates them).
-  const queries = [
-    `"${companyName}" ${domain} CEO OR founder OR owner OR director`,
-    `"${companyName}" ${domain} site:linkedin.com/in`,
-  ];
-
-  const snippets: string[] = [];
-  for (const q of queries) {
-    try {
-      const r = await searchBrave({ query: q, count: 5 });
-      if (r.ok) {
-        for (const listing of r.listings.slice(0, 4)) {
-          // Include both title-cleaned company name and description snippet
-          const text = [listing.company_name, listing.description].filter(Boolean).join(" — ");
-          if (text.length > 10) snippets.push(text);
-        }
-      }
-    } catch {
-      // Non-fatal: Brave quota exhausted or unavailable
-    }
-  }
-
-  return snippets.length > 0
-    ? `=== WEB PEOPLE INTEL (LinkedIn + press) ===\n${snippets.join("\n")}`
-    : "";
-}
-
-// ── Step 1: Extract people from stored scrape data + Brave people intel ────────
+// ── Step 1: Extract people from stored scrape data ────────────────────────────
+//
+// This used to fire 2 Brave queries per prospect for LinkedIn/press people-intel.
+// Removed 2026-07-21: combined with deep research's 4, that was 6 Brave calls per
+// prospect — a hard ceiling of ~280 prospects/month on the free tier, and the
+// quota ran out.
+//
+// The replacement was already in the payload: the scraper fetches About / Team /
+// Contact / Careers sub-pages (KEY_PAGE_PATHS, EN + ES) and persists their body
+// text into prospect_research.notes, which is passed in below. Owner and founder
+// names for an SMB live on their own About page far more reliably than in a
+// search snippet. Removing the snippets also frees the 4,000-char context budget
+// they used to consume FIRST, so Haiku now sees more of the actual site text.
 
 async function extractPeople(
   notes: string | null,
   whatTheyDo: string | null,
-  braveSnippets: string,
+  companyName: string,
 ): Promise<ExtractedPerson[]> {
-  // Priority order: Brave people-intel (LinkedIn/press) > scraped notes > what_they_do.
-  // Brave snippets go first so Haiku sees the most authoritative source before
-  // website copy that might only say "family-owned business" with no names.
-  const combined = [braveSnippets, whatTheyDo, notes]
+  // notes carries the scraped About / Team / Contact page bodies, which is where
+  // an SMB actually names its owner. The full budget now goes to that text.
+  const combined = [whatTheyDo, notes]
     .filter(Boolean)
     .join("\n\n")
-    .slice(0, 4000); // bumped from 3000 to fit Brave snippets
+    .slice(0, 4000);
 
   if (!combined || combined.trim().length < 20) return [];
 
@@ -140,7 +114,12 @@ async function extractPeople(
       "Prefer current decision-makers (CEO, GM, Director) over retired founders. " +
       "Return only people with full names (first + last). Skip generic role mentions without names. " +
       "Skip email addresses and phone numbers. Return max 3 most senior/current people.",
-    user: `Extract named decision-makers from this business content:\n\n${combined}`,
+    // Name the company explicitly: scraped pages often mention partners,
+    // suppliers or press contacts, and we only want THIS business's people.
+    user:
+      `Extract named decision-makers who work at "${companyName}" from this ` +
+      `business content. Ignore people who clearly belong to a different ` +
+      `company (suppliers, partners, journalists).\n\n${combined}`,
   });
 
   if (!result.ok) return [];
@@ -325,13 +304,8 @@ export async function snapVerifyEnrich(
     return { found: false, reason: "Invalid or social-media domain" };
   }
 
-  // Step 0: Brave people-intel queries (LinkedIn + press — finds decision-makers
-  // that don't appear on the company's own website).
-  // Domain is included in the query to avoid matching homonym companies.
-  const braveSnippets = await fetchBravePeopleSnippets(companyName, domain).catch(() => "");
-
-  // Step 1: Extract people from Brave snippets + scraped content
-  const people = await extractPeople(notes, whatTheyDo, braveSnippets).catch(() => []);
+  // Step 1: Extract people from the scraped About / Team / Contact page text.
+  const people = await extractPeople(notes, whatTheyDo, companyName).catch(() => []);
 
   if (people.length === 0) {
     return { found: false, reason: "No named people found in scraped content" };

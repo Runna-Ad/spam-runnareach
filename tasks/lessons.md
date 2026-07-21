@@ -4,6 +4,18 @@ Running log of mistakes, root causes, and rules to prevent recurrence. Newest at
 
 ---
 
+[2026-07-21] WIN/FIX: Brave quota (HTTP 402) wasn't a vendor problem — we were paying to fetch data we already had
+CONTEXT (Pedro): "brave costing has become useless, we need other free options or build our own." Before shopping for a replacement I counted the actual call sites.
+THE NUMBERS: 6 Brave queries PER PROSPECT — 4 in deep-research (reviews / complaints / social / founders) + 2 in SnapVerify (people-intel) — plus ~1 for website discovery. On the 2,000/month free tier that is a hard ceiling of ~280 prospects/month, and RESEARCH (not discovery) was ~85% of consumption. No cheaper vendor fixes a per-prospect fan-out that large.
+THE REALISATION: the scraper ALREADY fetches About / Team / Contact / Services sub-pages (KEY_PAGE_PATHS, EN+ES) and persists their body text into prospect_research.notes — which was already being passed to the people extractor. We were paying a search API to find the owner's name that sits on the prospect's own About page. Likewise Google Places already returns websiteUri in our field mask, so website discovery never needed a search engine.
+FIX: removed all 6 per-prospect calls (research is now 100% first-party site data); website discovery tries Google Places FIRST (the business's own listed site) and keeps Brave only as a fallback; Brave now survives solely in the two USER-TRIGGERED discovery sources. Per-prospect Brave calls: 6 -> 0.
+BONUS INTEGRITY WIN: those 4 deep-research queries were NAME-matched, so a same-named business in another city produced snippets the prompt then treated as quotable evidence about THIS prospect — a fabrication risk the audit had already flagged. Removing them cut cost AND removed a wrong-company evidence path. Also freed the 4,000-char context budget the snippets consumed FIRST, so the extractor now sees more real site text.
+RULE: when an external API's cost becomes the constraint, COUNT THE CALL SITES before evaluating replacements. A per-item fan-out (N calls x every item) is an architecture problem, not a pricing problem, and the usual finding is that most calls re-fetch something already in the payload. Ask "what does this call return that we don't already have?" — here the answer, for 6 of 7, was nothing.
+TAGS: #win #fix #cost #brave #architecture #first-party-data #fabrication-risk #quota
+STATUS: built, 205/205 tests, tsc + eslint + build clean.
+
+---
+
 [2026-07-21] FIX (CRITICAL): pitch greeted "Hi Mark," while addressed to john.sipos@ — greeting and recipient chosen by DIFFERENT rules
 SYMPTOM (Pedro, from the /pitches screen): draft to john.sipos@waglaw.net opened "Hi Mark,". Also spotted a contact that is obviously not a real address: julien-cormier.cavfournier@julien-cormier.ca.
 ROOT CAUSE A (greeting): the RECIPIENT is resolved by pickTopUsableContact (order by priority_rank, first usable email). The GREETING was resolved independently in THREE composers (claude-composer, generator, industry-templates), each using `contacts.find(c => !role_based && c.full_name)` — "prefer any non-role contact that happens to have a name". On a prospect with several contacts those disagree: the top-ranked contact had no full_name, a lower-ranked one was "Mark", so we greeted Mark and mailed John. Identical class to the Acadian failure — two code paths deciding "the contact" by different rules.

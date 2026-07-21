@@ -1,12 +1,12 @@
 "use server";
 
 /**
- * Deep Research — Brave web intel + Claude-sonnet synthesis.
+ * Deep Research — first-party site scrape + Claude-sonnet synthesis.
  *
- * Gathers external signals about a prospect (website scrape + Brave
- * search snippets) and feeds them to Claude with Pedro's research
- * prompt.  Claude returns a structured 5-section analysis that maps
- * directly into our DB fields:
+ * Reads the prospect's OWN site (homepage + About/Team/Contact/Services
+ * sub-pages) and feeds it to Claude with Pedro's research prompt. Claude
+ * returns a structured 5-section analysis that maps directly into our DB
+ * fields:
  *
  *   COMPANY SNAPSHOT    → what_they_do, tech_stack hints
  *   TOP 5 PAIN POINTS   → pain_points (JSONB)
@@ -17,7 +17,8 @@
  * After saving, auto-runs scoreProspect() so the score reflects the
  * enriched data immediately.
  *
- * Cost estimate: ~$0.003 Brave + ~$0.02 Claude-sonnet ≈ $0.023/prospect.
+ * Cost estimate: ~$0.02 Claude-sonnet/prospect (no search-API spend since
+ * 2026-07-21 — see Step 2).
  */
 
 import { revalidatePath } from "next/cache";
@@ -32,7 +33,6 @@ import {
 import { isUnderDailyCap, recordClaudeCall } from "@/lib/anthropic/cost-tracking";
 import { scrapeSite } from "./scraper";
 import { scoreProspect } from "./score-action";
-import { searchBrave, braveIsAvailable } from "@/lib/discover/sources/brave-search";
 import { buildDeepResearchPrompt, type TaxonomyEntry } from "./deep-research-prompt";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -63,9 +63,9 @@ export async function deepResearchProspect(
   const user = await requireUser();
   if (user.role === "viewer") return { ok: false, error: "Viewers cannot run deep research." };
 
-  // Daily-cap safety net. Deep research (scrape + 4 Brave queries + a Sonnet
-  // call) was previously invisible to the cap; gate it here so we skip the
-  // whole expensive chain when the tenant is over budget. The pipeline
+  // Daily-cap safety net. Deep research (scrape + a Sonnet call) was previously
+  // invisible to the cap; gate it here so we skip the whole expensive chain when
+  // the tenant is over budget. The pipeline
   // try/catches this and continues on already-scraped data.
   const cap = await isUnderDailyCap(user.tenantId);
   if (!cap.under) {
@@ -117,55 +117,36 @@ export async function deepResearchProspect(
     scrapedContext = parts.join("\n\n");
   }
 
-  // ── Step 2: Brave intel (4 targeted queries, including people-intel) ───────
-  const braveSnippets: string[] = [];
-  const peopleSnippets: string[] = []; // kept separate so we can write to notes explicitly
-  if (braveIsAvailable()) {
-    // Disambiguate with city (or domain) — a bare name query returns snippets
-    // about same-named businesses anywhere in the world, and those snippets
-    // become quotable "evidence" about the WRONG company.
-    const disambig = prospect.city ?? prospect.domain ?? "";
-    const scope = disambig ? ` ${disambig}` : "";
-    const queries = [
-      `"${prospect.company_name}"${scope} reviews`,
-      `"${prospect.company_name}"${scope} problems OR complaints`,
-      `"${prospect.company_name}"${scope} instagram OR linkedin`,
-      // People-intel: find founders/owners/decision-makers by name
-      `"${prospect.company_name}"${scope} founder OR owner OR CEO OR "co-founder" OR director`,
-    ];
-
-    for (const q of queries) {
-      const r = await searchBrave({ query: q, count: 5 });
-      if (r.ok) {
-        for (const listing of r.listings.slice(0, 3)) {
-          if (listing.description) {
-            const snippet = `[${listing.company_name}] ${listing.description}`;
-            braveSnippets.push(snippet);
-            // Flag people-intel snippets separately (last query)
-            if (q.includes("founder OR owner")) peopleSnippets.push(snippet);
-          }
-        }
-      }
-    }
-  }
-
+  // ── Step 2: (removed) Brave web intel ────────────────────────────────────
+  //
+  // This fired 4 Brave queries per prospect. With SnapVerify's 2 that was 6 per
+  // prospect — a ~280 prospect/month ceiling on the free tier, which the quota
+  // duly hit (HTTP 402). Removed 2026-07-21.
+  //
+  // Losing it costs less than it looks, and buys integrity: these were NAME-
+  // matched searches, so a same-named business in another city produced snippets
+  // that the prompt then treated as quotable evidence about THIS prospect. The
+  // audit flagged exactly that ("reviews" / "problems OR complaints" describing
+  // the wrong company). Every remaining source is first-party: the prospect's own
+  // site, including the About / Team / Contact sub-pages the scraper already
+  // fetches. If a web-intel signal is wanted later, Google Places carries a
+  // first-party rating for the SAME listing we discovered — verify that SKU's
+  // pricing before wiring it.
   // ── Step 3: Build context block (capped at 6,000 chars) ──────────────────
   const contextParts: string[] = [];
   if (scrapedContext) contextParts.push(`=== WEBSITE CONTENT ===\n${scrapedContext}`);
-  if (braveSnippets.length > 0) {
-    contextParts.push(`=== WEB INTEL (reviews & social signals) ===\n${braveSnippets.join("\n")}`);
-  }
   const contextBlock = contextParts.join("\n\n").slice(0, 6_000);
 
-  // No gathered context at all (scrape failed AND Brave returned nothing) —
-  // do NOT call the model. The prompt reads "search their website, reviews…"
-  // but the model has no web access, so with an empty context it confabulates
-  // a plausible company snapshot that then flows into pitches as "facts".
+  // The scrape produced nothing — do NOT call the model. The prompt reads
+  // "search their website, reviews…" but the model has no web access, so with an
+  // empty context it confabulates a plausible company snapshot that then flows
+  // into pitches as "facts". Now that the site IS the only source, this guard
+  // matters more, not less.
   if (!contextBlock.trim()) {
     return {
       ok: false,
       error:
-        "No research material could be gathered (site unreachable, no web results) — skipping AI synthesis to avoid invented facts.",
+        "Could not read the prospect's website — skipping AI synthesis to avoid invented facts.",
     };
   }
 
@@ -264,10 +245,6 @@ export async function deepResearchProspect(
     if (name && !guidancePattern.test(parsed.contactLine)) {
       peopleBlockLines.push(`Name: ${name}${title ? ` / Role: ${title}` : ""}`);
     }
-  }
-  // Add any people-intel Brave snippets that mention a real name pattern
-  for (const snippet of peopleSnippets.slice(0, 3)) {
-    peopleBlockLines.push(snippet);
   }
   const peopleBlock =
     peopleBlockLines.length > 0

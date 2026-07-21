@@ -1062,3 +1062,11 @@ Before touching any code:
 - [ ] Brave removal (task 17): 6 queries/prospect (4 deep-research + 2 SnapVerify) + ~1 website discovery = ~280 prospects/month ceiling on the free tier.
   Replace with data we ALREADY have: people-intel from scraped About/Team sub_page_extracts; reviews/complaints signal from Google Places (VERIFY the reviews-field SKU pricing before wiring — different tier); website discovery from Places websiteUri (already in our field mask).
   Discovery breadth alternatives that are free: Yellow Pages CA (no key), Google Places (~7k/mo credit), DENUE (free, IP-blocked from Vercel), OpenStreetMap Overpass API (free, no key).
+
+### Round 7 — Brave removed from the per-prospect path (2026-07-21)
+- [x] snap-contact: 2 people-intel queries removed; extraction now uses the scraped About/Team text already in notes, scoped to the company name (also frees the 4k context the snippets ate first)
+- [x] deep-research: 4 queries removed; research is now 100% first-party site data. Also kills a wrong-company evidence path (name-matched queries returned same-named businesses elsewhere)
+- [x] website discovery: Google Places FIRST (business's own listed site, already in our field mask), Brave only as fallback
+- [x] Per-prospect Brave calls 6 -> 0. Brave remains ONLY in the 2 user-triggered discovery sources (brave_search source + AI Search)
+- [ ] Pedro: Brave quota should now last; the ~280 prospects/month ceiling is gone. Free discovery breadth still available: Yellow Pages CA (no key), Google Places (~7k/mo credit), DENUE (free, IP-blocked from Vercel), OpenStreetMap Overpass (free, no key)
+- [ ] NOT DONE (deliberate): Google Places reviews/rating as a web-intel signal — that's a different SKU and I won't wire it before verifying pricing
