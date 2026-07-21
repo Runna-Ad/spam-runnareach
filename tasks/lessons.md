@@ -4,6 +4,17 @@ Running log of mistakes, root causes, and rules to prevent recurrence. Newest at
 
 ---
 
+[2026-07-21] FIX (self-inflicted): discovery "reset itself 3 times" — the watchdog was killing a HEALTHY run, and my Yellow Pages fix is what triggered it
+SYMPTOM (Pedro, mid-run): "im running a search now and i feel like it has reseted itself 3 times".
+ROOT CAUSE: the discovering phase is a single long `await runAllSources(...)` that bumped the heartbeat ZERO times while it ran. The client watchdog resumes any job whose heartbeat is older than STALL_MS (100s). So a discovery that legitimately took longer than 100s was declared a dead chain, "resumed", and — because the discovering phase is NOT resumable — restarted runAllSources FROM SCRATCH. Every ~100s. Each lap re-ran every crawl and re-spent the API budget.
+MY CONTRIBUTION: restoring Yellow Pages earlier the same day added ~22s of deliberate rate-limit sleeping (3 pages x 1.5s x N keywords) plus 600KB page fetches to that phase — pushing ordinary runs past the 100s line. The bug pre-existed; my fix made it fire.
+FIX: (1) KEEPALIVE — a 20s interval bumps the heartbeat while runAllSources is in flight, cleared in a finally (an orphaned interval keeps a serverless function alive and can push it into the maxDuration kill). The phase isn't stalled, it's working, so it now says so on the wire. (2) LOOP BOUND — stats.discover_attempts, capped at 3: if discovery genuinely can't finish inside the function cap it would be killed -> resumed -> killed forever, so the job now FAILS with "narrow the ICP's keywords" instead of burning budget in a circle.
+RULE: a liveness signal must be emitted by the work itself, not only at phase boundaries. Any phase that can run longer than the stall threshold without checkpointing needs a keepalive, or the watchdog turns a slow success into an infinite restart. And whenever a NON-RESUMABLE phase can be auto-retried, bound the retries — "restart from scratch" plus "automatic recovery" is an infinite-cost loop by construction. Also: when you speed up or restore something, re-check the timing assumptions of every watchdog downstream of it.
+TAGS: #fix #self-inflicted #watchdog #heartbeat #background-jobs #cost #liveness #serverless
+STATUS: built, 213/213 tests, tsc + eslint + build clean.
+
+---
+
 [2026-07-21] BUILD: national-chain filter at discovery insert — a working source can still be a cost problem
 CONTEXT: fixing the Yellow Pages 403 restored the source, but "wholesale / Alberta" then returned Walmart, Shoppers Drug Mart, Loblaw Pharmacy, Rexall and Petro Canada — for an ICP of "Calgary Mid-Market Manufacturers & Distributors". Left alone, each gets scraped + deep-researched + scored and THEN suppressed: the entire per-prospect cost paid for a guaranteed rejection.
 WHY IT HAPPENS: directory sources answer a KEYWORD, not an ICP. There is no field in a YP query that says "independent, 10-200 staff". So the filtering has to happen on our side, and the cheapest possible point is insert — before any enrichment spend.

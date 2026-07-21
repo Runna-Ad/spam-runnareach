@@ -36,6 +36,11 @@ import { triggerNextSlice } from "@/lib/discover/job-trigger";
 import { generatePitch } from "@/lib/pitches/actions";
 import { EMPTY_JOB_STATS, type DiscoveryJobStats } from "@/lib/discover/job-types";
 
+// A discovering phase that keeps outliving the function cap would be killed and
+// resumed forever, re-running every crawl. Three tries is generous; beyond that
+// the ICP is too broad for one slice.
+const MAX_DISCOVER_ATTEMPTS = 3;
+
 // Prospects in these states are not pitch-eligible in the pitching phase.
 const NON_PITCHABLE = ["suppressed", "no_match", "booked", "won", "lost"];
 
@@ -141,6 +146,25 @@ export async function POST(req: NextRequest) {
     if (job.phase === "discovering") {
       if (!job.icp_id) throw new Error("Job has no ICP.");
 
+      // Bound the restart loop. The discovering phase is NOT resumable: every
+      // entry re-runs all crawls from scratch. If it keeps exceeding the
+      // function's duration cap it would be killed → resumed → killed forever,
+      // re-spending the API budget each lap. Stop and say so instead.
+      const attempts = (stats.discover_attempts ?? 0) + 1;
+      stats.discover_attempts = attempts;
+      if (attempts > MAX_DISCOVER_ATTEMPTS) {
+        await patchJob(supabase, job.id, {
+          status: "failed",
+          error_message:
+            `Discovery restarted ${attempts - 1} times without finishing — stopped to protect API spend. ` +
+            `The source crawls are taking longer than one slice allows; narrow the ICP's keywords and re-run.`,
+          stats,
+          completed_at: new Date().toISOString(),
+        });
+        return NextResponse.json({ ok: false, error: "discovery_restart_loop" });
+      }
+      await patchJob(supabase, job.id, { stats });
+
       let prospectIds: string[] = [];
       let partial = false;
       let discoverErrors: string[] = [];
@@ -148,11 +172,29 @@ export async function POST(req: NextRequest) {
       let dupCount = 0;
 
       let result: Awaited<ReturnType<typeof runAllSources>>;
+      // KEEPALIVE. runAllSources is one long call (every source × every keyword)
+      // and used to bump the heartbeat exactly zero times while it ran. The
+      // client watchdog resumes any job silent longer than STALL_MS (100s), so
+      // a discovery that legitimately took longer was declared dead and
+      // RESTARTED FROM SCRATCH — repeatedly, roughly every 100s, re-running
+      // every crawl and re-spending the API budget. It looked like the run
+      // "resetting itself".
+      //
+      // Restoring Yellow Pages (2026-07-21) made this common: 3 pages/keyword
+      // at a 1.5s rate limit is ~22s of deliberate sleeping before any parsing.
+      // The phase isn't stalled, it's working — so say so on the wire.
+      const keepalive = setInterval(() => {
+        void bumpHeartbeat(supabase, job.id);
+      }, 20_000);
       try {
         result = await runAllSources(job.icp_id);
       } catch (e) {
         // A 504 / thrown server-action error — fall back to whatever was inserted.
         result = { ok: false, error: e instanceof Error ? e.message : "Discovery failed." };
+      } finally {
+        // Must always clear: an orphaned interval keeps the serverless function
+        // alive past its work and can push it into the maxDuration kill.
+        clearInterval(keepalive);
       }
 
       if (result.ok) {

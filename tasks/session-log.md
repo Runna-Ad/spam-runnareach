@@ -1092,3 +1092,27 @@ and day boundaries. Newest entries at the bottom.
 
 **ADDENDUM 2 (2026-07-21, post-wrap):** Pedro spotted every Yellow Pages CA crawl failing HTTP 403 while Google Places in the SAME run succeeded (+7/+5/+5). Diagnosed by probing the live site with two UAs: our self-identifying bot UA -> 403, browser UA -> 200 with listing markup fully intact. Access problem, not parsing — confirmed by running the REAL parser selectors against the live page (35 listing wrappers, names + website links extracted, selectors had NOT drifted). Fixed with a browser UA; 403/429 now report as bot detection rather than a bare status code.
 Second finding from the same fix: the restored source returned Walmart / Shoppers Drug Mart / Loblaw / Rexall / Petro Canada for a "Calgary Mid-Market Manufacturers & Distributors" ICP — each would be scraped, deep-researched and scored before being suppressed. Built lib/discover/chain-filter.ts (pure, 6 tests) and wired it into crawl-action so chains are dropped at INSERT, before any spend. Deliberately conservative: the failure mode is SILENT DELETION, so the test suite weights must-survive SMB names over must-drop chains and includes word-boundary traps. Deployed 2bf406a. 213/213 tests, tsc + eslint + build clean.
+
+## 2026-07-21 15:04
+**Shipped (recent commits):**
+  - docs: wrap 2026-07-21 (YP unblocked, chain filter, brain updated)
+  - feat(discovery): drop national chains at insert, before research spend
+  - fix(yellowpages): browser UA — the source was blocked, not broken
+  - docs: final wrap for 2026-07-21 (extractor root cause recorded)
+  - docs: log the cheerio text-boundary root cause + re-enrich gap
+  - fix(scraper): preserve element boundaries when extracting text
+  - docs(project-state): retire known-issues that were fixed this session
+  - docs: wrap up 2026-07-21 session (gate dry run live, Brave removed)
+
+**Still open:**
+- [ ] Supabase: ANON + SERVICE_ROLE keys live (connection works — Phase 0 unblocked)
+- [ ] Anthropic API key + $100/mo limit
+- [ ] Google Cloud (Places API + Gmail API + OAuth consent + OAuth client + restricted Places key)
+- [ ] Name sender #1 Runna CA principal + buy both domains + add runnareach.com to Rünna Workspace + DNS (SPF/DKIM/DMARC)
+- [ ] Postmark or SES account
+- [ ] Cal.com account
+- [ ] Slack hot-lead webhook URL
+- [ ] CRON_SECRET + TOKEN_ENCRYPTION_KEY (`openssl rand -hex 32`)
+- [ ] ⏳ #7 Analytics — pitch funnel metrics, cost tracking, Claude vs template breakdown
+- [ ] ⏳ #7 Analytics — pitch funnel metrics, cost tracking, Claude vs template breakdown
+

@@ -29,6 +29,15 @@ export type DiscoveryJobStats = {
   // true for a manual "run these specific prospects" job — skip the top-30 prune
   // (the user hand-picked them; don't delete any).
   skip_prune?: boolean;
+  /**
+   * How many times the DISCOVERING phase has been entered for this job.
+   *
+   * That phase isn't resumable — a restart re-runs every crawl from scratch and
+   * re-spends the API budget. If it consistently exceeds the serverless
+   * duration cap it would be killed, resumed by the watchdog, killed again…
+   * forever. This counter bounds that loop.
+   */
+  discover_attempts?: number;
 };
 
 export type DiscoveryJob = {
