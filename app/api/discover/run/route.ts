@@ -240,7 +240,7 @@ export async function POST(req: NextRequest) {
 
         const budget = Math.min(PER_PROSPECT_MAX_MS, remaining - 10_000);
         const outcomes = await Promise.all(
-          batch.map(async (id): Promise<ProspectOutcome> => {
+          batch.map(async (id): Promise<{ outcome: ProspectOutcome; error?: string }> => {
             try {
               const r = await Promise.race([
                 processSingleProspect(id),
@@ -248,9 +248,15 @@ export async function POST(req: NextRequest) {
                   setTimeout(() => reject(new Error("prospect-timeout")), budget),
                 ),
               ]);
-              return r.outcome;
-            } catch {
-              return "error"; // timed out or threw — already skipped via the advance
+              // Keep the REASON, not just the count — a run where everything
+              // errors previously reported "0 processed" with nothing to
+              // diagnose from.
+              return { outcome: r.outcome, error: r.error };
+            } catch (e) {
+              return {
+                outcome: "error",
+                error: e instanceof Error ? e.message : "unknown error",
+              }; // timed out or threw — already skipped via the advance
             } finally {
               // Keep the heartbeat fresh as each prospect settles so a long batch
               // is never mistaken for a dead chain.
@@ -259,12 +265,19 @@ export async function POST(req: NextRequest) {
           }),
         );
 
-        for (const outcome of outcomes) {
+        for (const { outcome, error } of outcomes) {
           if (outcome === "pitched") stats.pitched += 1;
           else if (outcome === "website_pitch") stats.website_pitch += 1;
           else if (outcome === "needs_review") stats.needs_review += 1;
           else if (outcome === "suppressed") stats.suppressed += 1;
-          else stats.error_count += 1;
+          else {
+            stats.error_count += 1;
+            // Keep the first few distinct reasons so the UI can show WHY.
+            const msg = error ?? "unknown error";
+            if (stats.errors.length < 5 && !stats.errors.includes(msg)) {
+              stats.errors.push(msg);
+            }
+          }
         }
         stats.processed = (stats.processed ?? 0) + batch.length;
 

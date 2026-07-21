@@ -16,6 +16,7 @@ import { bulkDeleteProspects, bulkGeneratePitches, bulkScoreProspects, bulkTrans
 import {
   startPipelineJobForProspects,
   getDiscoveryJob,
+  getActiveBulkPipelineJob,
   resumeDiscoveryJob,
 } from "@/lib/discover/job-actions";
 import type { Prospect } from "@/lib/discover/prospects-queries";
@@ -38,18 +39,45 @@ interface CompaniesPageProps {
   initialFilters?: InitialFilters;
 }
 
+// Every prospect_status the app actually writes. The dropdown previously
+// listed only 8 of the enum's values, so prospects in the others (no_match,
+// ghosted, bounced, archived_no_meeting…) were unreachable from ANY filter —
+// combined with the default view's exclusions, they were invisible entirely.
+// Keep this in sync with the prospect_status enum when a value is added.
 const STATUS_OPTIONS: string[] = [
   "raw",
   "researched",
+  "scored",
   "pitched",
   "replied",
   "booked",
   "won",
   "lost",
+  "ghosted",
+  "bounced",
+  "no_match",
+  "archived_no_meeting",
   "suppressed",
 ];
 
 const STATUS_LABEL: Record<string, string> = { b_list: "B-list" };
+
+/** Human labels for the filter dropdown (raw enum values read poorly). */
+const STATUS_FILTER_LABEL: Record<string, string> = {
+  raw: "Raw",
+  researched: "Researched",
+  scored: "Scored",
+  pitched: "Pitched",
+  replied: "Replied",
+  booked: "Booked",
+  won: "Won",
+  lost: "Lost",
+  ghosted: "Ghosted",
+  bounced: "Bounced",
+  no_match: "No match",
+  archived_no_meeting: "Archived (no meeting)",
+  suppressed: "Suppressed",
+};
 
 // "B-list" = a 50-69 scorer still in the active funnel without a pitch. Score-based
 // (not just status='b_list') so it also catches prospects scored before the b_list
@@ -123,6 +151,22 @@ export function CompaniesPage({ prospects, icps, initialFilters }: CompaniesPage
     setPage(1);
   }, [status, market, icpId, search, sort]);
 
+  // Resume an in-flight "Run pipeline" job on mount. Without this, the job id
+  // only existed in React state: a refresh or navigation during a run (they take
+  // many minutes) orphaned the UI — no progress, no completion toast, and no
+  // router.refresh(), so a successful run looked like it did nothing at all.
+  React.useEffect(() => {
+    let active = true;
+    void (async () => {
+      const j = await getActiveBulkPipelineJob();
+      if (!active || !j) return;
+      setBulkJobId((current) => current ?? j.id);
+    })();
+    return () => {
+      active = false;
+    };
+  }, []);
+
   // Watchdog + progress poller for the background "Run pipeline" job. Mirrors the
   // Run All Sources modal: poll the job every few seconds, re-kick it if the
   // self-chain dies (stale heartbeat), and refresh the table + summarise when it
@@ -137,14 +181,32 @@ export function CompaniesPage({ prospects, icps, initialFilters }: CompaniesPage
       if (!active) return;
       if (j) {
         if (j.status !== "running") {
-          const done = j.stats.pitched + j.stats.website_pitch + j.stats.needs_review + j.stats.suppressed;
+          const errored = j.stats.error_count ?? 0;
+          const done =
+            j.stats.pitched + j.stats.website_pitch + j.stats.needs_review + j.stats.suppressed;
+          // error_count was previously left OUT of this summary, so a run where
+          // every prospect errored reported "done — 0 processed" with no reason
+          // shown. Surface failures, and don't call it "done" when nothing
+          // actually succeeded.
+          const detail = [
+            `${j.stats.pitched} pitched`,
+            `${j.stats.needs_review} review`,
+            `${j.stats.suppressed} suppressed`,
+            ...(errored > 0 ? [`${errored} failed`] : []),
+          ].join(" · ");
+          const firstError = j.stats.errors?.[0] ?? j.error_message ?? null;
           setBulkToast(
             j.status === "failed"
               ? { tone: "warn", text: j.error_message ?? "Pipeline run failed — try again." }
-              : {
-                  tone: "ok",
-                  text: `Pipeline done — ${j.stats.pitched} pitched · ${j.stats.needs_review} review · ${j.stats.suppressed} suppressed (${done} processed).`,
-                },
+              : done === 0 && errored > 0
+                ? {
+                    tone: "warn",
+                    text: `Pipeline finished but every prospect failed (${errored}).${firstError ? ` First error: ${firstError}` : " Check the prospect's Activity tab for details."}`,
+                  }
+                : {
+                    tone: "ok",
+                    text: `Pipeline done — ${detail} (${done + errored} processed).`,
+                  },
           );
           setBulkJobId(null);
           router.refresh();
@@ -208,7 +270,13 @@ export function CompaniesPage({ prospects, icps, initialFilters }: CompaniesPage
       if (status === "queued_to_send") return p.pitch_status === "queued_to_send";
       if (status === "sent") return p.pitch_status === "sent";
 
-      // Default "All" view = active working list (things still needing action).
+      // "EVERYTHING" = literally no status filtering. The default view below
+      // hides several statuses by design, which made the old "All statuses"
+      // label a lie — prospects existed that NO option in the dropdown could
+      // show. This is the honest escape hatch.
+      if (status === "EVERYTHING") return true;
+
+      // Default "Active" view = working list (things still needing action).
       // Keep out (a) suppressed/archived, (b) pitches already SENT or QUEUED to
       // send (those live in their own filters), and (c) the "needs contact"
       // worklist. Each is reachable via its own filter/view.
@@ -462,14 +530,15 @@ export function CompaniesPage({ prospects, icps, initialFilters }: CompaniesPage
           onChange={(e) => setStatus(e.target.value)}
           className="h-8 max-w-[140px] py-0 text-xs"
         >
-          <option value="ALL">All statuses</option>
+          <option value="ALL">Active (needs action)</option>
+          <option value="EVERYTHING">Everything (no filter)</option>
           <option value="b_list">B-list (50-69)</option>
           <option value="needs_contact">Needs contact</option>
           <option value="queued_to_send">Queued to send</option>
           <option value="sent">Sent</option>
           {STATUS_OPTIONS.map((s) => (
             <option key={s} value={s}>
-              {s}
+              {STATUS_FILTER_LABEL[s] ?? s}
             </option>
           ))}
         </Select>

@@ -316,6 +316,32 @@ export async function getDiscoveryJob(jobId: string): Promise<DiscoveryJob | nul
   return data ? toJob(data) : null;
 }
 
+/**
+ * Resume-on-mount for the /companies "Run pipeline" bulk action.
+ *
+ * Hand-picked runs are created with icp_id = NULL, so getActiveJobForIcp can
+ * never find them. Their job id lived only in React state, and a run takes
+ * many minutes — so a refresh or a navigation mid-run orphaned the UI: the
+ * poller died, no progress or completion toast appeared, and the table was
+ * never refreshed, making a perfectly successful run look like it did nothing.
+ */
+export async function getActiveBulkPipelineJob(): Promise<DiscoveryJob | null> {
+  const user = await requireUser();
+  const supabase = await createClient();
+
+  const { data } = await supabase
+    .from("discovery_jobs")
+    .select(JOB_COLS)
+    .eq("tenant_id", user.tenantId)
+    .is("icp_id", null)
+    .eq("status", "running")
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .maybeSingle<JobRow>();
+
+  return data ? toJob(data) : null;
+}
+
 export async function getActiveJobForIcp(icpId: string): Promise<DiscoveryJob | null> {
   const idParse = z.string().uuid().safeParse(icpId);
   if (!idParse.success) return null;

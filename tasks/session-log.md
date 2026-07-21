@@ -993,3 +993,39 @@ and day boundaries. Newest entries at the bottom.
 
 
 **ROUND 4 DEPLOYED 2026-07-17:** commit d8bda7f → prod (spam-runnareach.vercel.app, Ready, 307 healthy) + pushed to origin/main. Shipped Pedro's six decisions: ES website-pitch fallback, Hunter <70 SMTP screen (free), guessed-address badge, LATAM retired (→MX everywhere; US kept per Pedro), per-email suppression via do_not_contact_list enforced in all 3 send paths + auto-add on bounce. Plus the contact-gate predicate fix (limbo prospects) found during review. #6 discovery slicing deferred. 180/180 tests, tsc/lint/build clean.
+
+## 2026-07-21 11:29
+**Shipped (recent commits):**
+  - docs(session-log): record round-4 deploy (d8bda7f)
+  - feat(deliverability): per-email suppression, guessed-address badge, ES website pitch
+
+**Still open:**
+- [ ] Supabase: ANON + SERVICE_ROLE keys live (connection works — Phase 0 unblocked)
+- [ ] Anthropic API key + $100/mo limit
+- [ ] Google Cloud (Places API + Gmail API + OAuth consent + OAuth client + restricted Places key)
+- [ ] Name sender #1 Runna CA principal + buy both domains + add runnareach.com to Rünna Workspace + DNS (SPF/DKIM/DMARC)
+- [ ] Postmark or SES account
+- [ ] Cal.com account
+- [ ] Slack hot-lead webhook URL
+- [ ] CRON_SECRET + TOKEN_ENCRYPTION_KEY (`openssl rand -hex 32`)
+- [ ] ⏳ #7 Analytics — pitch funnel metrics, cost tracking, Claude vs template breakdown
+- [ ] ⏳ #7 Analytics — pitch funnel metrics, cost tracking, Claude vs template breakdown
+
+
+## 2026-07-21 12:41
+**Shipped (recent commits):**
+  - docs(session-log): record round-4 deploy (d8bda7f)
+  - feat(deliverability): per-email suppression, guessed-address badge, ES website pitch
+
+**Still open:**
+- [ ] Supabase: ANON + SERVICE_ROLE keys live (connection works — Phase 0 unblocked)
+- [ ] Anthropic API key + $100/mo limit
+- [ ] Google Cloud (Places API + Gmail API + OAuth consent + OAuth client + restricted Places key)
+- [ ] Name sender #1 Runna CA principal + buy both domains + add runnareach.com to Rünna Workspace + DNS (SPF/DKIM/DMARC)
+- [ ] Postmark or SES account
+- [ ] Cal.com account
+- [ ] Slack hot-lead webhook URL
+- [ ] CRON_SECRET + TOKEN_ENCRYPTION_KEY (`openssl rand -hex 32`)
+- [ ] ⏳ #7 Analytics — pitch funnel metrics, cost tracking, Claude vs template breakdown
+- [ ] ⏳ #7 Analytics — pitch funnel metrics, cost tracking, Claude vs template breakdown
+
