@@ -1231,3 +1231,83 @@ Session total: 18 commits, all deployed and pushed. 213/213 tests, tsc + eslint 
 - [ ] ⏳ #7 Analytics — pitch funnel metrics, cost tracking, Claude vs template breakdown
 - [ ] ⏳ #7 Analytics — pitch funnel metrics, cost tracking, Claude vs template breakdown
 
+
+## 2026-07-22 — Unsendable pitches, contact recovery, and the benchmark library
+
+**Trigger:** Pedro spotted 11 "Approved" pitches on /pitches for prospects with
+no contact email and, in most cases, no website. "why are these even pitched
+generated? they should've either been suppressed or in just researched"
+
+**What we did (15 commits, all deployed):**
+
+1. **The pitch-gate bug.** Two pitch generators existed; only one had a gate.
+   `generatePitch` refuses without a usable email ("never generate a pitch we
+   can't send"); `generateWebsitePitch`, added later, looked up a contact only
+   for the greeting's first name and wrote the pitch anyway with
+   contact_id=null. bulkApprovePitches had no check either, and the
+   "Queue N for send" button counted pitches the queue itself filters out.
+   All gated. Pedro's call: no website AND no email -> suppress (Places returns
+   a phone but has no email field; S.P.A.M can't action a phone).
+
+2. **Email mining (Pedro's tip: emails live on /privacy and /terms).** Wider
+   than that — sub-pages were fetched for BODY TEXT only, and extractMainText
+   strips nav/header/footer and drops mailto: hrefs, so the /contact page was
+   downloaded on every scrape and its emails binned. Now mined at fetch time
+   (zero extra requests) + a legal-page pass on a 6s budget.
+
+3. **The re-scrape sweep.** 207 in scope (NOT the 512 first quoted — 213 were
+   suppressed for low score, 61 were manual suppressions). 57 contacts
+   recovered across 29 prospects.
+
+4. **INCIDENT: the sweep wrote privacy regulators as prospect contacts.**
+   generalinfo@oipc.ab.ca (Alberta Privacy Commissioner) and info@privcom.gc.ca
+   (Privacy Commissioner of Canada). Canadian privacy policies are legally
+   expected to name the oversight body, so the page most likely to hold an email
+   is also the page most likely to hold the REGULATOR's. Fixed structurally
+   (legal-page harvest is same-domain only) + a regulator domain blocklist.
+   16 bad rows deleted, 3 stranded prospects re-suppressed.
+
+5. **site_name persisted (migration 0027).** send-gate rule 4 — "stored company
+   name contradicts the site's own name" — had NEVER fired, because
+   gate-dryrun.ts hard-coded `siteName: null`. It caught a real mismatch within
+   hours of going live.
+
+6. **Named clients removed everywhere (Pedro's 2nd override).** The first
+   override changed the PROOF POLICY; every fallback underneath it still
+   name-dropped. Client names are no longer sent to the model at all.
+
+7. **The CTA button.** A literal "{hunter_url}" and no 👉 marker reached a live
+   draft. {hunter_url} is now a declared template slot that code always fills.
+
+8. **Benchmark library (migrations 0029-0031 + /benchmarks page).** Pedro's
+   correction: don't delete the numbers, source them. 8 verified rows, every
+   figure read first-hand from the publisher's page or PDF.
+
+9. **Spanish pitch quality.** Not a copy problem: Claude wrote a good Spanish
+   pitch and structuredCall threw it away on a single JSON.parse. Added
+   repairJsonStrings() + raised max_tokens (Spanish tokenizes ~15-20% worse, so
+   it truncated where English fit). Template fallbacks are now VISIBLE.
+
+**Current state:** all deployed and verified (alias mvxpkhmek). 284 tests.
+Migrations 0027-0031 applied to prod. Working tree clean.
+
+**Decisions made:**
+- No website + no email -> suppress, not a call list. Places has no email field.
+- Capability + expertise as proof; no named clients, no unsourced numbers.
+- Benchmarks size THEIR problem, never prove OUR results. Inert until Pedro
+  activates each row — he defends the number if a prospect asks.
+
+**Pick up next session:**
+1. Generate one fresh Spanish pitch and confirm: Claude-written (no "template"
+   chip), Spanish button, working CTA. That validates 4 fixes at once.
+2. Activate benchmark rows on /benchmarks after reading the caveats. HBR is the
+   most persuasive and most fragile (2011, US, vendor co-author); CFIB is safest.
+3. NO benchmark source found for wholesale/distribution (140 prospects) or
+   accounting firms (105), and NOTHING Mexico-specific — half the market.
+4. Upstream gap: crawl-action.ts:225 takes the source listing's domain verbatim
+   with no name check, which is how Corvex ended up on linamar.com.
+
+**Environment changes:** migrations 0027 (site_name), 0028 (renumbered from a
+duplicate 0005), 0029 (benchmarks), 0030+0031 (benchmark seeds). NOTE: the
+0005 collision had been silently blocking EVERY CLI migration in this repo
+since it was written — `db push` works normally now.
