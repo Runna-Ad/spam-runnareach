@@ -148,6 +148,11 @@ Want me to send a 5-min video showing exactly what we'd build? No call, no commi
 ${v.sender_signature}`;
   },
 
+  // The only body variant still reachable (generator.ts). Capability + industry,
+  // never a client name, never a number we can't source — Pedro's override,
+  // 2026-07-22. The em dash that used to sit on the proof and sign-off lines is
+  // gone too: it's banned project-wide and the Claude path strips it, so leaving
+  // it here made the fallback the one place it survived.
   bodyNoCase: (v) => {
     const solution = v.solution_hint
       ?? `a targeted approach built for your specific stack and market`;
@@ -157,11 +162,11 @@ ${opener(v, "en")}
 
 What we'd do: ${solution}.
 
-We've solved this for brands like yours across DTC, ${v.industry} and professional services.
+We build ${v.industry} businesses the systems that fix this, the work is finding the one thing that actually moves for you, then making sure everything points at it.
 
 Want me to send a 5-min video showing exactly what we'd build? No call, no commitment.${v.deep_pitch_link_block}
 
-— ${v.sender_first_name}
+${v.sender_first_name}
 ${v.sender_signature}`;
   },
 };
@@ -239,6 +244,8 @@ Te mando un video de 5 min mostrándote exactamente qué construiríamos. Sin co
 ${v.sender_signature}`;
   },
 
+  // Spanish twin of the EN capability body. Same rule: capability + industry,
+  // no client names, no unsourced numbers, no em dash.
   bodyNoCase: (v) => {
     const solution = v.solution_hint
       ?? `un fix especifico para tu stack y mercado`;
@@ -248,11 +255,11 @@ ${opener(v, "es")}
 
 Lo que haríamos: ${solution}.
 
-Lo hemos resuelto para marcas como la tuya en DTC, ${v.industry} y servicios profesionales en Mexico y Canada.
+Construimos para negocios de ${v.industry} los sistemas que resuelven justo esto, el trabajo está en encontrar lo único que de verdad mueve la aguja para ustedes, y luego hacer que todo apunte ahí.
 
 Te mando un video de 5 min mostrándote exactamente qué construiríamos. Sin compromiso, sin llamada.${v.deep_pitch_link_block}
 
-— ${v.sender_first_name}
+${v.sender_first_name}
 ${v.sender_signature}`;
   },
 };

@@ -274,15 +274,17 @@ export function composePitchHeuristic(input: GeneratorInputs): ComposedPitch | n
 
   const subject = tpl.subject(vars);
   const preview_text = tpl.previewText(vars);
-  // Render the appropriate tier body:
-  //   Tier 1 (chosenCase)  → tpl.body          "We helped {client} ({metric})."
-  //   Tier 2 (tier2Client) → tpl.bodyTier2      "{client} for {X}+ years in your industry..."
-  //   Tier 3 / none        → tpl.bodyNoCase     generic capability + name-drop hook
-  const body = chosenCase
-    ? tpl.body(vars)
-    : tier2Client
-      ? tpl.bodyTier2(vars)
-      : tpl.bodyNoCase(vars);
+  // ALWAYS the capability body. The tier ladder used to pick tpl.body ("We did
+  // this for {client}") or tpl.bodyTier2 ("We've done similar work with
+  // {client}") whenever a case study or industry-matched client existed —
+  // i.e. exactly the named-example pitches Pedro's campaigns show underperform
+  // (override 2026-07-22). bodyTier1/bodyTier2 are now unreachable and kept
+  // only so the tier reasoning below still explains what was CONSIDERED.
+  //
+  // Note this is the heuristic fallback used when Claude is unavailable or over
+  // the daily cap — it must follow the same rule as the Claude path, or the
+  // fallback quietly reintroduces the behaviour we just removed.
+  const body = tpl.bodyNoCase(vars);
 
   // 5) Quality self-score
   const score = computeSelfScore({
@@ -295,17 +297,34 @@ export function composePitchHeuristic(input: GeneratorInputs): ComposedPitch | n
   });
 
   return {
-    subject,
-    preview_text,
-    body,
+    subject: stripEmDashes(subject),
+    preview_text: stripEmDashes(preview_text),
+    body: stripEmDashes(body),
     pain_id: chosenPain?.pain_id ?? null,
     case_study_id: chosenCase?.id ?? null,
     contact_used: realContact?.email ?? null,
-    measurable_result_included:
-      heroMetric !== "(metric pending)" && heroMetric !== "(no case)",
+    // Always false now: the capability body carries no case metric, and an
+    // unsourced number is exactly what the send gate holds a pitch for.
+    measurable_result_included: false,
     quality_self_score: score,
     reasoning: reasoning.join(" "),
   };
+}
+
+/**
+ * Em dashes are banned project-wide — they read corporate and trip spam
+ * filters. The Claude path has stripped them since forever, but this heuristic
+ * fallback never did, so em dashes survived in exactly the path nobody looks
+ * at: the one used when Claude is down or over the daily cap. They arrive from
+ * the solution hints and the opener, not from the templates alone, so the strip
+ * has to happen here on the assembled text.
+ */
+function stripEmDashes(text: string): string {
+  return text
+    .replace(/\s*—\s*/g, ", ")
+    .replace(/—/g, " ")
+    .replace(/ {2,}/g, " ")
+    .trim();
 }
 
 // Re-export so external callers can use the same industry-match logic.

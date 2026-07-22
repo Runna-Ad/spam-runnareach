@@ -26,6 +26,8 @@ export type GateFailure = {
     | "company_name_unverified"
     | "unverifiable_website_claim"
     | "unsourced_metric"
+    | "unresolved_placeholder"
+    | "broken_cta"
     | "empty_body";
   /** Human-readable, specific enough to act on without opening the code. */
   detail: string;
@@ -210,7 +212,33 @@ export function evaluateSendGate(input: GateInput): GateResult {
     }
   }
 
-  // ── 6. Sanity ────────────────────────────────────────────────────────────
+  // ── 6. No unresolved template tokens ─────────────────────────────────────
+  // A literal "{hunter_url}" reached a live draft on 2026-07-22: the composer's
+  // CTA examples contained the token, the model copied it verbatim, and nothing
+  // substituted it. resolveCtaLink now fills it, so anything still here is a
+  // placeholder the recipient would read as-is — the most obviously broken
+  // thing an email can contain.
+  const placeholder = input.body.match(/[{[]{1,2}\s*[a-z_]{3,30}\s*[}\]]{1,2}/i);
+  if (placeholder) {
+    failures.push({
+      code: "unresolved_placeholder",
+      detail: `Body contains the literal placeholder "${placeholder[0]}" — it was never substituted.`,
+    });
+  }
+
+  // ── 7. The CTA must actually render as a button ──────────────────────────
+  // buildHtmlBody only makes a button from a line that starts with 👉 AND holds
+  // an http(s) URL. Both failed in the same draft, so the reader got a plain
+  // sentence with a placeholder where the button should have been.
+  const hasUrl = /https?:\/\//.test(input.body);
+  if (hasUrl && !input.body.includes("👉")) {
+    failures.push({
+      code: "broken_cta",
+      detail: "Body has a link but no 👉 marker, so it renders as plain text and the CTA button disappears.",
+    });
+  }
+
+  // ── 8. Sanity ────────────────────────────────────────────────────────────
   if (input.body.trim().length < 80) {
     failures.push({ code: "empty_body", detail: "Body is too short to be a real pitch." });
   }

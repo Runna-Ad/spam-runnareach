@@ -19,11 +19,11 @@ import {
   type SystemBlock,
 } from "../anthropic/client.ts";
 import { RUNNA_CAPABILITIES } from "../runna/capabilities.ts";
+import { HUNTER_URL } from "./industry-templates.ts";
 import { hasUsableEmail } from "../research/email-utils.ts";
 import type {
   ComposedPitch,
   GeneratorInputCaseStudy,
-  GeneratorInputNotableClient,
   GeneratorInputs,
 } from "./generator.ts";
 
@@ -129,7 +129,7 @@ export async function composePitchWithClaude(
     {
       text:
         buildSystemPrompt(lang, size) +
-        buildNotableClientsTierContext(input.notable_clients, lang),
+        buildCredibilityContext(lang),
       cache: true,
     },
   ];
@@ -219,7 +219,7 @@ export async function composePitchWithClaude(
     .replace(/—/g, " ")
     .replace(/ {2,}/g, " ")
     .trim();
-  const finalBody = cleanBody;
+  const finalBody = resolveCtaLink(cleanBody, input.deep_pitch_url ?? HUNTER_URL);
 
   return {
     ok: true,
@@ -322,7 +322,7 @@ Wrong: 'Vi "Outdated website — no e-commerce functionality..."'
 Right (ES): "Revisé [company].com — sin checkout, sin ficha de producto real."
 Right (EN): "Checked [company].com — no product pages, no checkout path."
 
-⚙️ THE ENGINE OF EVERY PITCH (what the email is actually built on): their RESEARCHED pain (industry + what_they_do + tech_stack + evidence) → the specific RUNNA SERVICE that fixes it → the concrete OUTCOME for them (more revenue, hours saved, faster, less leaking). That pain→service→outcome chain IS the pitch. Use industry BENCHMARKS for any numbers (e.g. "firms that automate first contact recover 20-30% more enquiries") — never a fabricated client metric. Case studies do NOT drive or shape the email; the pitch must stand fully on its own without one (it usually will).
+⚙️ THE ENGINE OF EVERY PITCH (what the email is actually built on): their RESEARCHED pain (industry + what_they_do + tech_stack + evidence) → the specific RUNNA SERVICE that fixes it → the concrete OUTCOME for them (more revenue, hours saved, faster, less leaking). That pain→service→outcome chain IS the pitch. NO NUMBERS. Not client metrics, and not "industry benchmarks" either — this instruction used to invite them ("firms that automate first contact recover 20-30% more enquiries") and that is exactly how an invented 20-30% statistic reached a live draft. If a figure is not in the payload it does not exist. State the outcome qualitatively (more enquiries answered, hours back, less leaking) and let the free audit produce the real numbers. Case studies do NOT drive or shape the email; the pitch must stand fully on its own without one (it usually will).
 
 REQUIRED EMAIL STRUCTURE — follow this exactly, no additions, no reordering:
 1. Salutation (see voice rules for format)
@@ -340,8 +340,10 @@ REQUIRED EMAIL STRUCTURE — follow this exactly, no additions, no reordering:
    - Tailor it to their stack, market, and industry. If they're on Shopify → mention
      Klaviyo flows. If they run paid ads already → mention creative refresh + attribution.
      If MX market → reference MX consumer habits. If CA → Canadian shopper behaviour.
-   - Include a real benchmark when confident: "DTC brands recover 15-25% of abandoned carts
-     with this setup", "well-run Meta retargeting averages 3-5x ROAS for this category."
+   - ⛔ No benchmarks, no percentages, no multiples. "DTC brands recover 15-25% of abandoned
+     carts", "well-run Meta retargeting averages 3-5x ROAS" — these read as researched and are
+     invented. Describe the MECHANISM instead ("a sequence that reaches everyone who left
+     something behind"), and let the free audit produce real numbers from their own data.
    - Use solution_hints in the payload as a starting point, then go further using what
      you know about current trends, platforms, and what actually works for this industry.
 5. Proof line — DEFAULT to capability proof (b). Using a case study (a) is the exception, not the rule, and must clear a HIGH bar:
@@ -445,9 +447,9 @@ PREVIEW TEXT — the 1–2 lines shown under the subject in Gmail/Outlook:
 - Subject is curiosity gap → preview names the specific observation
   ("no cart recovery running, that's daily revenue walking out" /
    "sin flujo de recuperación activo, eso son ventas que se van cada día")
-- Subject names the pain → preview names the fix + benchmark
-  ("3-email Klaviyo sequence, DTC brands recover 15-25% of those carts" /
-   "secuencia de 3 correos, las marcas D2C recuperan 15-25% de esos carritos")
+- Subject names the pain → preview names the fix (no numbers)
+  ("a 3-email Klaviyo sequence that catches the ones who left" /
+   "una secuencia de 3 correos que alcanza a quienes se fueron sin comprar")
 - Never use: "I'd love to connect", "Let me know if you're interested", "Hope this finds you well"
 
 Output the final pitch as a JSON object with EXACTLY these fields:
@@ -547,51 +549,77 @@ Voice rules (Canadian market):
   their OWN company; (2) they'll SEE for themselves, in the data, where [this email's pain] is costing
   them (manual admin → "how much time it's quietly eating"; checkout → "where mobile shoppers drop
   off"; ad spend → "which dollars aren't pulling weight"); (3) it's not us saying it — the numbers do;
-  (4) no strings, no signup, ~30 seconds; (5) include {hunter_url}; (6) reach out AFTER only if they
-  want to — no harm if not.
+  (4) no strings, no signup, ~30 seconds; (5) write the token {hunter_url} EXACTLY, verbatim, where the
+  link belongs — it is a template slot replaced with the real URL before sending, so never invent a URL,
+  never write a bare domain, and never omit it; (6) reach out AFTER only if they want to — no harm if not.
   Tone directions (do NOT copy verbatim — these show the VIBE, vary it every time):
     "Don't take my word for it, take the data's — run {company} through our free tool and see for yourself where [the pain] is costing you. 30 seconds, no signup, no strings: {hunter_url}. See something worth fixing? Reach out. If not, no harm done."
     "I'd rather the numbers show you than me tell you: {hunter_url} is a free check of {company}'s own [pain], about 30 seconds, no signup. See it with your own eyes first; if you want to talk after, I'm here."
   Vary the OPENING especially — do not begin every CTA the same way. Find a fresh way in that fits
   this email's tone while keeping the "it's the data, not me; see for yourself; free; no strings" message.
-  Always start the CTA line with 👉 (it renders as the email's button). No Loom, no video, no call ask, no signup.
-- If the selected case study is a Canadian client (SnapPad, Niki, or DevFest Calgary),
-  open the bridge with "We worked with {client}, a Canadian {category}..." — local proof lands harder.
+  The CTA line MUST begin with 👉 — that marker is what turns it into the email's button. A CTA without
+  it renders as plain text and the button silently disappears. No Loom, no video, no call ask, no signup.
+- ⛔ NEVER name a specific client, past or present. Not in the proof line, not as a bridge, not as a
+  name-drop, not "we worked with X". Pedro's campaigns show named examples consistently UNDERPERFORM:
+  they invite "so what, that isn't me" instead of "that's my problem". Prove it with WHAT WE DO for
+  businesses like theirs — the capability, the kind of problem it solves, and how we approach it.
+  This is the shape to aim for:
+    "We've built positioning and campaign systems for hospitality brands trying to carve out space in
+     crowded markets, the work is finding the one defensible thing you own, then making sure every
+     touchpoint says it the same way."
+  Note what that does: names the INDUSTRY, names the WORK, describes the PROSPECT's situation. No client,
+  no metric, no boast.
 - Sign off: sender's first name on one line, agency name on the next line.`;
 }
 
-function buildNotableClientsTierContext(
-  notableClients: GeneratorInputNotableClient[],
-  lang: "en" | "es",
-): string {
-  if (notableClients.length === 0) return "";
+/**
+ * Credibility guidance for the composer.
+ *
+ * This used to be a name-drop ladder: Tier 2 anchored on a notable client
+ * ("Hemos trabajado con {name}"), Tier 3 listed four client names outright.
+ * Removed 2026-07-22 on Pedro's second override — named examples consistently
+ * underperform in his campaigns, because they make the email about someone
+ * else's win instead of about the reader's problem.
+ *
+ * The PROOF POLICY above already defaulted to capability-led after the first
+ * override (2026-06-23), but these fallbacks fired whenever the default didn't,
+ * so the old behaviour survived underneath the new policy. A default and its
+ * fallbacks are one feature.
+ *
+ * Note this no longer receives the client list at all — the names never reach
+ * the model, so they cannot leak. That is deliberate: a prompt rule alone would
+ * not hold against the model's strong prior toward social proof.
+ */
+function buildCredibilityContext(lang: "en" | "es"): string {
+  return lang === "es"
+    ? `
 
-  const tier2Candidates = notableClients.map((nc) => ({
-    name: nc.name,
-    industry_tags: nc.industry_tags,
-    relationship: nc.relationship_description,
-    key_result: nc.key_result,
-    description: lang === "es" ? (nc.description_es ?? nc.description_en) : nc.description_en,
-  }));
-  const tier3Names = notableClients.slice(0, 4).map((nc) => nc.name);
+CREDIBILIDAD, SIN NOMBRES DE CLIENTES
 
-  return `
+⛔ Nunca menciones el nombre de un cliente. Ni como prueba, ni de pasada, ni en
+una lista. No tienes nombres de clientes en este payload, a propósito.
 
-CREDIBILITY FALLBACK (use only when chosen_cases is empty):
+Prueba con la CAPACIDAD: qué hacemos para negocios como el suyo, qué tipo de
+problema resuelve, y cómo lo abordamos. Nombra la INDUSTRIA y el TRABAJO, y
+describe la situación DEL PROSPECTO.
 
-TIER 2 — Notable client with industry match:
-Use one if their industry_tags overlap with the prospect's industry.
-Anchor with: "Hemos trabajado con {name} — {relationship}" or similar.
-Do NOT invent metrics — use key_result if provided, else state relationship only.
+⛔ Tampoco inventes cifras. Nada de "negocios así ven 20-30% más". Si un número
+no viene en el payload, no existe. Una frase de capacidad sin números es más
+creíble que una estadística que no puedes respaldar.`
+    : `
 
-Candidates:
-${JSON.stringify(tier2Candidates, null, 2)}
+CREDIBILITY, WITHOUT CLIENT NAMES
 
-TIER 3 — Name-drop (use only if no Tier 2 match):
-  EN: "...including work with ${tier3Names.join(", ")}"
-  ES: "...incluyendo trabajo con ${tier3Names.join(", ")}"
+⛔ Never name a client. Not as proof, not in passing, not as a list. You have no
+client names in this payload, on purpose.
 
-Never invent clients not in these lists.`;
+Prove it with CAPABILITY: what we do for businesses like theirs, what kind of
+problem it solves, and how we approach it. Name the INDUSTRY and the WORK, and
+describe the PROSPECT's situation.
+
+⛔ Do not invent figures either. No "businesses like yours see 20-30% lifts". If
+a number is not in the payload, it does not exist. A capability sentence with no
+numbers is more credible than a statistic you cannot stand behind.`;
 }
 
 // Generic inbox local-parts that are NOT a person's name — never greet these.
@@ -723,12 +751,10 @@ function buildStage2UserPrompt(
       full_name: input.sender.full_name,
       agency_name: input.sender.tenant_display_name,
     },
-    notable_clients_for_fallback: input.notable_clients.map((nc) => ({
-      name: nc.name,
-      industry_tags: nc.industry_tags,
-      relationship_description: nc.relationship_description,
-      key_result: nc.key_result,
-    })),
+    // notable_clients deliberately NOT sent. Pedro's override (2026-07-22):
+    // named examples underperform, so the model must not have names to reach
+    // for. Withholding the data is the guard — a prompt rule alone loses to the
+    // model's prior toward social proof.
     hunter_url: input.deep_pitch_url ?? null,
   };
 
@@ -763,7 +789,7 @@ SOLUTION TAILORING — this is the most important part of the email:
 - If they're on Shopify → mention Klaviyo; Tiendanube → mention its email integrations
 - If they run paid media already → focus on creative refresh + attribution improvement
 - If they have no digital presence → website + social strategy as first step
-- Cite a real benchmark when you're confident it's accurate for this category
+- ⛔ Never cite a benchmark, percentage or multiple. Confidence is not a source; if the number is not in the payload, leave it out and describe the mechanism instead.
 - Runna's full toolkit is available: email flows, Meta/TikTok paid, AI automation, custom apps,
   UX redesign, content systems, packaging, brand — propose whatever actually fits
 
@@ -786,6 +812,50 @@ Set measurable_result_included=true only if the chosen case's hero_metric is a r
 }
 
 // ── Violation detector ────────────────────────────────────────────────────────
+
+/**
+ * Any unresolved template token. Matches {hunter_url}, {{hunter_url}},
+ * { hunter_url }, [hunter_url] — every shape the model has produced.
+ */
+const HUNTER_TOKEN_RE = /[{[]{1,2}\s*hunter_url\s*[}\]]{1,2}/gi;
+
+/** Leftover placeholder of ANY name, e.g. {company} — used by the violation check. */
+export const LEFTOVER_PLACEHOLDER_RE = /[{[]{1,2}\s*[a-z_]{3,30}\s*[}\]]{1,2}/gi;
+
+/**
+ * Guarantee the CTA is a working button.
+ *
+ * Two independent failures shipped a broken CTA to a live draft (the Great
+ * Canadian pitch, 2026-07-22): the body contained the literal text
+ * "{hunter_url}" instead of a link, AND the line did not start with 👉.
+ * buildHtmlBody only renders a button when BOTH hold — a line starting with 👉
+ * that contains an http(s) URL — so the reader got a plain sentence with a
+ * placeholder in it.
+ *
+ * The prompt now declares {hunter_url} an intentional template slot rather than
+ * something to avoid, because the token cannot be interpolated into the SYSTEM
+ * prompt without busting its cache (the URL is per-prospect). So the model is
+ * told to emit the token and this function always fills it — the accident is
+ * now the design, and it is enforced in code rather than hoped for.
+ */
+export function resolveCtaLink(body: string, hunterUrl: string): string {
+  let out = body.replace(HUNTER_TOKEN_RE, hunterUrl);
+
+  // The model sometimes writes the CTA without the 👉 marker, which silently
+  // costs the button. If a line carries the hunter link and lacks the marker,
+  // add it. Only the CTA line is touched.
+  out = out
+    .split("\n")
+    .map((line) => {
+      const trimmed = line.trim();
+      if (!trimmed || trimmed.startsWith("👉")) return line;
+      if (!trimmed.includes(hunterUrl)) return line;
+      return `👉 ${trimmed}`;
+    })
+    .join("\n");
+
+  return out;
+}
 
 export function detectViolations(body: string, lang: "en" | "es"): number {
   let count = 0;
@@ -851,6 +921,21 @@ export function detectViolations(body: string, lang: "en" | "es"): number {
     }
   }
 
+  // ── Language-independent checks ────────────────────────────────────────────
+
+  // An unresolved template token reached the body. resolveCtaLink fills
+  // {hunter_url}, so anything left here ({company}, {client}, a typo'd token)
+  // is a placeholder the reader would actually see. Weighted double: this is
+  // visibly broken, not merely off-voice.
+  const leftovers = body.match(LEFTOVER_PLACEHOLDER_RE);
+  if (leftovers) count += 2 * leftovers.length;
+
+  // A CTA link with no 👉 renders as plain text and the button disappears.
+  // resolveCtaLink repairs this, so reaching here means a link we did not
+  // recognise — still worth flagging, since the button is the whole CTA.
+  const hasLink = /https?:\/\//.test(body);
+  if (hasLink && !body.includes("👉")) count++;
+
   return count;
 }
 
@@ -859,15 +944,15 @@ export function detectViolations(body: string, lang: "en" | "es"): number {
 // Claude uses these as a starting point and tailors them to the specific prospect.
 
 const SOLUTION_HINTS_EN: [string, string][] = [
-  ["abandoned_cart", "automatically reaching back out to everyone who added things and left without buying — most stores get 15-25% of those sales back"],
+  ["abandoned_cart", "automatically reaching back out to everyone who added things and left without buying, so those sales stop quietly disappearing"],
   ["cart", "automatic reminders that follow up with people who added things and left — showing them exactly what they left behind"],
-  ["mobile conversion", "fixing the parts of your site where phone shoppers give up — most brands get 20-30% more sales from the same traffic once those are fixed"],
+  ["mobile conversion", "fixing the parts of your site where phone shoppers give up, so the traffic you already pay for actually converts"],
   ["email", "automatic emails that follow your customers through every stage — so the right message reaches them at the right moment without you lifting a finger"],
-  ["paid media", "refreshing your ads and who they reach — when those two are dialed in, brands in your category often double what they make per dollar spent"],
+  ["paid media", "refreshing your ads and who they reach, so the budget stops funding impressions that were never going to buy"],
   ["roas", "fixing your ads so you make more for every dollar you spend — better creative, better audiences, and actually knowing what's working"],
   ["social engagement", "a content plan you can actually stick to — the brands that post consistently win, and most don't"],
   ["content velocity", "a simple system to post 4-5 times a week without it taking over your life"],
-  ["retention", "automatic messages after every purchase — a thank you, helpful tips, a reminder when they're running low — the brands that do this well make 20-40% more from each customer"],
+  ["retention", "automatic messages after every purchase, a thank you, helpful tips, a reminder when they're running low, so a first order turns into a second"],
   ["website", "making your site faster, easier to use on a phone, and easier to actually buy from"],
   ["outdated", "rebuilding your site so it loads fast, looks great on any phone, and makes buying simple"],
   ["brand", "cleaning up how your brand looks everywhere — so it feels intentional, not like five different people made it"],
@@ -882,15 +967,15 @@ const SOLUTION_HINTS_EN: [string, string][] = [
 ];
 
 const SOLUTION_HINTS_ES: [string, string][] = [
-  ["abandoned_cart", "mandarle un mensaje automático a cada persona que llenó su carrito y se fue sin comprar — la mayoría de tiendas recupera entre 15 y 25% de esas ventas"],
+  ["abandoned_cart", "mandarle un mensaje automático a cada persona que llenó su carrito y se fue sin comprar, para que esas ventas dejen de perderse solas"],
   ["carrito", "recordatorios automáticos para quien agregó cosas y se fue sin comprar — mostrándoles exactamente lo que dejaron"],
-  ["mobile", "arreglar las partes de tu sitio donde la gente se rinde desde el celular — la mayoría de tiendas recupera 20-30% más ventas del mismo tráfico una vez que se arregla eso"],
+  ["mobile", "arreglar las partes de tu sitio donde la gente se rinde desde el celular, para que el tráfico que ya pagas sí termine comprando"],
   ["email", "mensajes automáticos que acompañan a tu cliente en cada momento — para que el mensaje correcto llegue solo, sin que tú tengas que hacer nada"],
-  ["paid media", "renovar tus anuncios y a quién les llegan — cuando esos dos están bien alineados, las marcas en tu categoría suelen duplicar lo que ganan por cada peso invertido"],
+  ["paid media", "renovar tus anuncios y a quién les llegan, para que el presupuesto deje de pagar impresiones que nunca iban a comprar"],
   ["roas", "hacer que tus anuncios rindan más por cada peso que gastas — mejor creatividad, mejor selección de quién los ve y saber de verdad qué está funcionando"],
   ["engagement", "un plan de contenido que puedas mantener — las marcas que publican seguido ganan seguidores, las que publican cuando se acuerdan no"],
   ["contenido", "un sistema sencillo para publicar 4-5 veces a la semana sin que te consuma la vida"],
-  ["retención", "mensajes automáticos después de cada compra — agradecimiento, tips útiles, recordatorio cuando ya se les acabó — las tiendas que lo hacen bien ganan 20-40% más de cada cliente"],
+  ["retención", "mensajes automáticos después de cada compra, agradecimiento, tips útiles, recordatorio cuando ya se les acabó, para que una primera compra se convierta en la segunda"],
   ["sitio", "hacer tu sitio más rápido, más fácil de usar desde el celular y más fácil para comprar"],
   ["página", "reconstruir tu sitio para que cargue rápido, se vea bien en cualquier celular y comprar sea simple"],
   ["marca", "limpiar cómo se ve tu marca en todos lados — para que se sienta intencional y consistente, no como si la hubieran hecho cinco personas distintas"],

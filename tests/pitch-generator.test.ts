@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { resolveCtaLink, detectViolations } from "../lib/pitches/claude-composer.ts";
 import {
   composePitchHeuristic,
   type GeneratorInputs,
@@ -72,7 +73,7 @@ test("composePitchHeuristic: produces no-case pitch when no case studies exist",
   const r = composePitchHeuristic(fullInputs({ case_studies: [] }));
   assert.ok(r);
   assert.equal(r!.case_study_id, null);
-  assert.match(r!.body, /We've solved this for brands like yours/);
+  assert.match(r!.body, /the work is finding the one thing that actually moves for you/);
 });
 
 test("composePitchHeuristic: case_study_id=null when no case fits (strength<0.4)", () => {
@@ -98,7 +99,7 @@ test("composePitchHeuristic: case_study_id=null when no case fits (strength<0.4)
   )!;
   assert.equal(r.case_study_id, null);
   assert.doesNotMatch(r.body, /Weak Match/);
-  assert.match(r.body, /We've solved this for brands like yours/);
+  assert.match(r.body, /the work is finding the one thing that actually moves for you/);
 });
 
 test("composePitchHeuristic: case_study_id=null when no case is tagged for the pain", () => {
@@ -137,11 +138,18 @@ test("composePitchHeuristic: produces subject + body in English", () => {
   assert.ok(r.preview_text.length > 0);
   assert.match(r.body, /^Hi Sarah,/);
   assert.match(r.body, /mobile checkout takes 3 screens/);
-  assert.match(r.body, /DiDi/);
-  assert.match(r.body, /\+47% mobile checkout/);
+  // Pedro override 2026-07-22: never name a client, never quote a case metric.
+  // The heuristic path used to render bodyTier1 ("We did this for DiDi, +47%...")
+  // whenever a case study matched; it now always renders the capability body, so
+  // the fallback follows the same rule as the Claude path.
+  assert.doesNotMatch(r.body, /DiDi/, "client name leaked into the body");
+  assert.doesNotMatch(r.body, /\+47%/, "case metric leaked into the body");
+  assert.doesNotMatch(r.body, /\d+\s*%/, "an unsourced percentage leaked into the body");
+  assert.match(r.body, /the work is finding the one thing that actually moves for you/);
   assert.match(r.body, /no call, no commitment/i);
-  assert.match(r.body, /— Pedro/);
   assert.match(r.body, /Runna/);
+  // Em dash is banned project-wide; the sign-off used to carry one.
+  assert.doesNotMatch(r.body, /\u2014/, "em dash survived in the heuristic template");
 });
 
 test("composePitchHeuristic: switches to Spanish when prospect.language='es'", () => {
@@ -164,8 +172,11 @@ test("composePitchHeuristic: switches to Spanish when prospect.language='es'", (
   assert.match(r.subject, /Café CDMX/);
   assert.match(r.subject, /revis|encontr/i);
   assert.match(r.body, /^Hola Sarah,/);
-  assert.match(r.body, /\+47% checkout móvil/);
+  assert.doesNotMatch(r.body, /DiDi/, "client name leaked into the ES body");
+  assert.doesNotMatch(r.body, /\+47%/, "case metric leaked into the ES body");
+  assert.match(r.body, /el trabajo está en encontrar lo único que de verdad mueve la aguja/);
   assert.match(r.body, /5 min/);
+  assert.doesNotMatch(r.body, /\u2014/, "em dash survived in the ES heuristic template");
 });
 
 // ── Case study selection: industry match wins ──────────────────────────────
@@ -193,8 +204,12 @@ test("composePitchHeuristic: prefers industry-match case study over higher-stren
       ],
     }),
   )!;
+  // Selection still happens and is still recorded — case_study_id feeds the
+  // learning loop's (case, pain) rejection downranking. What changed is that it
+  // no longer surfaces in the copy: asserting the client name in the body was
+  // asserting the behaviour Pedro removed, not the selection logic itself.
   assert.equal(r.case_study_id, "cs-coffee");
-  assert.match(r.body, /Toronto Roasters/);
+  assert.doesNotMatch(r.body, /Toronto Roasters|DiDi/, "client name leaked into the body");
 });
 
 test("composePitchHeuristic: falls back to highest-strength when no industry match", () => {
@@ -367,4 +382,57 @@ test("composePitchHeuristic: body stays under 200 words", () => {
   const r = composePitchHeuristic(fullInputs())!;
   const words = r.body.trim().split(/\s+/).length;
   assert.ok(words < 200, `expected <200 words, got ${words}`);
+});
+
+// ── CTA button: the {hunter_url} failure ────────────────────────────────────
+//
+// The Great Canadian draft (2026-07-22) shipped with the literal text
+// "{hunter_url}" where the link belonged, and no 👉 marker. buildHtmlBody only
+// renders a button from a line that starts with 👉 AND contains an http(s) URL,
+// so both halves failed and the reader got a plain sentence with a placeholder
+// in it. The prompt's CTA examples contained the token and the model copied it
+// verbatim — a prompt rule cannot fix that, so the substitution is now code.
+
+const URL = "https://runna-hunter.vercel.app/?market=ca";
+
+test("resolveCtaLink: substitutes the {hunter_url} token", () => {
+  const out = resolveCtaLink("👉 Run it free: {hunter_url}. No signup.", URL);
+  assert.match(out, /https:\/\/runna-hunter/);
+  assert.doesNotMatch(out, /\{hunter_url\}/);
+});
+
+test("resolveCtaLink: handles every token shape the model has produced", () => {
+  for (const tok of ["{hunter_url}", "{{hunter_url}}", "{ hunter_url }", "[hunter_url]"]) {
+    const out = resolveCtaLink(`👉 See for yourself: ${tok}`, URL);
+    assert.ok(out.includes(URL), `${tok} was not substituted`);
+    assert.doesNotMatch(out, /hunter_url/, `${tok} left a residue`);
+  }
+});
+
+test("resolveCtaLink: adds the missing 👉 so the button renders", () => {
+  // Exactly the Great Canadian case: no marker, so no button.
+  const out = resolveCtaLink("Run Great Canadian through our free tool: {hunter_url}.", URL);
+  assert.match(out, /^👉 /, "CTA line did not get the button marker");
+  assert.ok(out.includes(URL));
+});
+
+test("resolveCtaLink: does not double up an existing 👉", () => {
+  const out = resolveCtaLink(`👉 Already marked: ${URL}`, URL);
+  assert.equal((out.match(/👉/g) ?? []).length, 1);
+});
+
+test("resolveCtaLink: leaves non-CTA lines alone", () => {
+  const body = `Hi there,\n\nSome context.\n\n👉 Free check: {hunter_url}\n\nPedro`;
+  const out = resolveCtaLink(body, URL);
+  assert.match(out, /^Hi there,/);
+  assert.equal((out.match(/👉/g) ?? []).length, 1);
+  assert.match(out, /Some context\./);
+});
+
+test("detectViolations: flags a leftover placeholder and a marker-less link", () => {
+  // Both are visibly broken to the reader, so they must cost quality score.
+  assert.ok(detectViolations("Hello {company}, take a look.", "en") >= 2);
+  assert.ok(detectViolations(`Take a look: ${URL}`, "en") >= 1);
+  // A correctly-formed CTA is clean.
+  assert.equal(detectViolations(`Take a look.\n👉 Free check: ${URL}`, "en"), 0);
 });

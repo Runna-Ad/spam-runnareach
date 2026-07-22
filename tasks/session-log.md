@@ -1145,3 +1145,41 @@ Second finding from the same fix: the restored source returned Walmart / Shopper
 (1) "it has reseted itself 3 times" — TRUE, and self-inflicted. The discovering phase made ONE long runAllSources() call that bumped the heartbeat zero times; the client watchdog resumes anything silent >100s, and that phase is NOT resumable, so a discovery slower than 100s was declared dead and restarted from scratch every ~100s, re-spending API budget each lap. My Yellow Pages fix (+~22s of rate-limit sleeping) is what pushed ordinary runs over the line. Fixed: 20s keepalive heartbeat (cleared in a finally — an orphaned interval can push the function into the maxDuration kill) + stats.discover_attempts capped at 3 so a genuinely-too-slow ICP fails with "narrow the keywords" instead of looping forever. Deployed 980f1d9.
 (2) A friend in Mexico hit my DENUE error text blaming "Vercel's US datacenter IP". I REPRODUCED THE 406 FROM MY OWN RESIDENTIAL CANADIAN IP — the cause was our own `Accept: application/json` header. Worse, removing it revealed a 200 that was INEGI's HTML "not found" page: our URL matched NO documented DENUE method (`Buscar` is a GEO search), which is why DENUE has never returned a single row since it was written. Fixed the header + switched to `BuscarEntidad` + rewrote every error message to state only what was observed. STILL UNVERIFIED — INEGI emits malformed HTTP responses intermittently (curl: "Unsupported response code"). Recommendation recorded: leave DENUE off; Places covers MX. Deployed c73d577, and corrected the false IP-block claim everywhere it had spread (project-state, next-session prompt) in 72f5b28.
 Session total: 18 commits, all deployed and pushed. 213/213 tests, tsc + eslint + build clean throughout.
+
+## 2026-07-22 09:16
+**Shipped (recent commits):**
+  - docs: final wrap 2026-07-21 (18 commits) + next-session prompt
+
+**Still open:**
+- [ ] Supabase: ANON + SERVICE_ROLE keys live (connection works — Phase 0 unblocked)
+- [ ] Anthropic API key + $100/mo limit
+- [ ] Google Cloud (Places API + Gmail API + OAuth consent + OAuth client + restricted Places key)
+- [ ] Name sender #1 Runna CA principal + buy both domains + add runnareach.com to Rünna Workspace + DNS (SPF/DKIM/DMARC)
+- [ ] Postmark or SES account
+- [ ] Cal.com account
+- [ ] Slack hot-lead webhook URL
+- [ ] CRON_SECRET + TOKEN_ENCRYPTION_KEY (`openssl rand -hex 32`)
+- [ ] ⏳ #7 Analytics — pitch funnel metrics, cost tracking, Claude vs template breakdown
+- [ ] ⏳ #7 Analytics — pitch funnel metrics, cost tracking, Claude vs template breakdown
+
+
+## 2026-07-22 11:05
+**Shipped (recent commits):**
+  - docs: record the 2026-07-22 sweep + the privacy-regulator incident
+  - fix(scraper): legal pages must never yield third-party or regulator addresses
+  - fix(scraper): never scrape privacy/HR/abuse inboxes as pitch contacts
+  - fix(pitches): never generate a pitch we can't send + mine sub-page emails
+  - docs: final wrap 2026-07-21 (18 commits) + next-session prompt
+
+**Still open:**
+- [ ] Supabase: ANON + SERVICE_ROLE keys live (connection works — Phase 0 unblocked)
+- [ ] Anthropic API key + $100/mo limit
+- [ ] Google Cloud (Places API + Gmail API + OAuth consent + OAuth client + restricted Places key)
+- [ ] Name sender #1 Runna CA principal + buy both domains + add runnareach.com to Rünna Workspace + DNS (SPF/DKIM/DMARC)
+- [ ] Postmark or SES account
+- [ ] Cal.com account
+- [ ] Slack hot-lead webhook URL
+- [ ] CRON_SECRET + TOKEN_ENCRYPTION_KEY (`openssl rand -hex 32`)
+- [ ] ⏳ #7 Analytics — pitch funnel metrics, cost tracking, Claude vs template breakdown
+- [ ] ⏳ #7 Analytics — pitch funnel metrics, cost tracking, Claude vs template breakdown
+

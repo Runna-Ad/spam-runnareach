@@ -87,14 +87,11 @@ export async function generateWebsitePitch(
   if (industry) {
     type CaseRow = {
       id: string;
-      client_name: string;
       industry: string | null;
-      hero_metric_en: string | null;
-      hero_metric_es: string | null;
     };
     const { data: cases } = await supabase
       .from("case_studies")
-      .select("id, client_name, industry, hero_metric_en, hero_metric_es")
+      .select("id, industry")
       .eq("tenant_id", user.tenantId)
       .eq("is_active", true)
       .returns<CaseRow[]>();
@@ -106,12 +103,16 @@ export async function generateWebsitePitch(
           industry!.toLowerCase().includes(c.industry.toLowerCase())),
     );
     if (match) {
-      const metric =
-        (prospect.language === "es" ? match.hero_metric_es : match.hero_metric_en) ??
-        match.hero_metric_en;
-      caseStudyLine = metric
-        ? `We recently helped ${match.client_name} (${match.industry}) — ${metric}.`
-        : `We recently helped ${match.client_name} (${match.industry}) get online and start winning customers.`;
+      // Named clients removed 2026-07-22 (Pedro override): named examples
+      // consistently underperform. The case study LINK is kept — case_study_id
+      // feeds the learning loop's rejection downranking — but the line now
+      // describes the WORK at industry level instead of naming who it was for.
+      // The hero metric goes with the name: a number stripped of its source
+      // reads as invented, which is worse than no number at all.
+      caseStudyLine =
+        prospect.language === "es"
+          ? `Esto lo hacemos seguido para negocios de ${match.industry ?? "este giro"}, el trabajo está en que los encuentre la gente que ya anda buscando lo que ustedes hacen.`
+          : `We do this all the time for ${match.industry ?? "businesses"} like yours, the work is getting you found by the people already looking for what you do.`;
       caseStudyId = match.id;
     }
   }
@@ -245,7 +246,7 @@ async function callClaudeForWebsitePitch(opts: {
   const marketLabel =
     opts.market === "MX" ? "Mexico" : opts.market === "US" ? "the US" : "Canada";
   const caseStudyBlock = opts.caseStudyLine
-    ? `\n\nReal example: ${opts.caseStudyLine}`
+    ? `\n\n${opts.caseStudyLine}`
     : "";
 
   const prompt = `You are a sales email writer for Rünna Advertising, a digital marketing and web design agency.
