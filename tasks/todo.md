@@ -1085,3 +1085,37 @@ Before touching any code:
 - [x] National-chain filter (lib/discover/chain-filter.ts, pure + 6 tests) wired into crawl-action: drops Walmart/Shoppers/Loblaw/Rexall/OXXO/Cinepolis etc at INSERT, before any research spend. Conservative by design — test suite weighted toward must-survive SMB names because a false positive deletes a real prospect silently.
 - [ ] Watch: if a real prospect ever goes missing from discovery, check chain-filter.ts first (add a must-survive test for it).
 - [ ] Still the bigger win: the prospect PRE-FILTER (domain resolves / site live / not a competitor / ICP fit on structural signals) — chains are only one category of wasted research spend.
+
+### Round 10 — unsendable pitches: contact gates + email mining (2026-07-22)
+**Bug Pedro caught:** /pitches showed 11 "Approved" pitches for prospects with no contact
+email and no website. Verified in prod: all 11 came from the no-website lane (pain_id=null),
+and `generateWebsitePitch` — unlike `generatePitch` — had NO "can we actually send this?" gate.
+Pedro deleted the 11 rows mid-session; the code fix stops them being recreated.
+
+**Decision (Pedro, 2026-07-22):** no website AND no email -> SUPPRESS. Do not build a call
+list — Places returns a phone but never an email (verified against Google's Place Data Fields
+docs), and S.P.A.M can't action a phone number.
+
+- [x] pipeline-action: no-website lane now requires a usable contact email before pitching
+- [x] pipeline-action: ungated Places website-discovery from `braveIsAvailable()`
+- [x] website-pitch-action: same guard as generatePitch, before the Claude call
+- [x] bulkApprovePitches: skips unreachable prospects, reports the count to the UI
+- [x] pitches-page: "Queue N for send" counts only pitches the queue will actually take
+- [x] scraper: sub-pages are now mined for emails AT FETCH TIME (zero extra requests —
+      recovers the /contact page, whose emails were being discarded), plus a legal-page
+      pass over /privacy + /terms when nothing usable was found. Measured 8/30 recovery.
+- [x] scraper: redirectedOffsite() guard — found by live-testing, gluo.mx -> orium.com was
+      returning the acquirer's address
+
+**Verified:** tsc + eslint clean, 229/229 tests (16 new). Live-scraped 30 real unreachable
+prospects: 8 recovered a usable address, 0 wrong-company addresses after the offsite guard.
+Prod audit: 0 approved pitches with contact_id=null (was 11). The 1 remaining no-contact
+pitch is a historical SENT one (Beauty Studio Mexico) — not reachable by this fix.
+
+**NOT DONE (deliberate):**
+- [ ] ~512 prospects currently sit unreachable-with-a-website. At the measured 27% recovery
+      rate a re-scrape sweep would recover ~130 contacts for free. Needs Pedro's go-ahead —
+      it's ~512 outbound scrapes, and it will move prospects out of suppressed.
+- [ ] Pre-existing gap left alone: parseSite mines the HOMEPAGE of an off-site redirect
+      before redirectedOffsite() can veto it. Currently harmless (scrapeSite drops the
+      whole set when offsite) but the guard belongs in parseSite if it's ever called direct.

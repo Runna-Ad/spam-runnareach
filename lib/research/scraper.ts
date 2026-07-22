@@ -10,8 +10,8 @@ const USER_AGENT =
   "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36";
 
 /**
- * Keep well under Vercel's default 10-second serverless function limit so
- * we surface our own "Site took too long" message instead of a generic
+ * Keep well under the route's function limit (60s for app/**, see vercel.json)
+ * so we surface our own "Site took too long" message instead of a generic
  * "fetch failed" crash when the function is killed mid-fetch.
  */
 const FETCH_TIMEOUT_MS = 8_000;
@@ -25,6 +25,38 @@ const SUBPAGE_MAX_CHARS = 2_000; // was 600 — too short to capture founder nam
 
 /** Priority order for which sub-pages to scrape (first MAX_SUBPAGES wins) */
 const SUBPAGE_PRIORITY = ["About", "Team", "Contact", "Services", "Work", "Pricing", "Plans"];
+
+/**
+ * Legal pages, opened only to hunt for an address, in the order we try them.
+ *
+ * Small-business sites very often print the only real mailbox in the legal
+ * boilerplate — "questions about this policy? email us at …" — and nowhere
+ * else (Pedro, 2026-07-22). Those pages were invisible to the email extractor,
+ * and so, for that matter, was the Contact page: sub-pages were fetched for
+ * BODY TEXT only, and extractMainText strips nav/header/footer and drops
+ * `mailto:` hrefs with every other attribute. Only the homepage was ever mined.
+ *
+ * Contact is NOT listed here — scrapeSubPages fetches it anyway and now mines
+ * it in place, so re-fetching it would just burn a second request.
+ *
+ * These labels are deliberately kept OUT of SUBPAGE_PRIORITY: legal boilerplate
+ * is worthless as research context and would crowd out About/Team in the
+ * MAX_SUBPAGES text budget.
+ */
+const EMAIL_HUNT_PRIORITY = ["Privacy", "Terms"];
+const MAX_EMAIL_HUNT_PAGES = 2;
+/**
+ * Hard wall-clock ceiling for the whole hunt.
+ *
+ * A scrape already spends up to ~8s on the homepage and ~21s on sub-pages
+ * against a 60s function limit, and the pipeline does research + scoring +
+ * Claude calls on top. Three more un-budgeted 5s fetches is how a prospect
+ * silently dies at maxDuration, so the hunt gets a fixed slice and gives up
+ * when it's gone — finding no address is a normal outcome here, timing out
+ * the whole prospect is not.
+ */
+const EMAIL_HUNT_BUDGET_MS = 6_000;
+const EMAIL_HUNT_PAGE_TIMEOUT_MS = 4_000;
 
 export type SubPageExtract = {
   label: string;  // e.g. "About", "Services", "Team"
@@ -85,8 +117,33 @@ export async function scrapeSite(rawUrl: string): Promise<ScrapeResult> {
 
     // Follow key pages (About, Services, Team) for richer content.
     // Failures are silently ignored — homepage-only is always the fallback.
-    const subPageExtracts = await scrapeSubPages(parsed.key_pages);
+    // This pass now also mines every page it fetches for addresses, at no extra
+    // request cost — that alone recovers the Contact page, whose emails used to
+    // be discarded because only body text was kept.
+    const siteDomain = domainOf(fetched.final_url);
+    const offsite = redirectedOffsite(url, fetched.final_url);
+    const { extracts: subPageExtracts, emails: subPageEmails } = await scrapeSubPages(
+      parsed.key_pages,
+      siteDomain,
+      offsite,
+    );
     const richWhatTheyDo = synthesizeWhatTheyDo(parsed.what_they_do, subPageExtracts);
+
+    // On an off-site redirect every address we can reach belongs to whoever we
+    // landed on, not to this prospect. Return none and let the caller suppress
+    // them as unreachable — that's correct, not a miss.
+    let contactEmails = offsite
+      ? []
+      : Array.from(new Set([...parsed.contact_emails, ...subPageEmails]));
+
+    // Still nothing to write to? Open the legal pages — they're excluded from
+    // the pass above (boilerplate is useless as research context) but they're
+    // often where a small site prints its only real mailbox. Skipped entirely
+    // once we have a usable address, so the common case costs no requests.
+    if (!offsite && !contactEmails.some((e) => hasUsableEmail(e))) {
+      const harvested = await harvestEmailsFromPages(parsed.key_pages, siteDomain);
+      contactEmails = Array.from(new Set([...contactEmails, ...harvested]));
+    }
 
     return {
       ok: true,
@@ -95,6 +152,7 @@ export async function scrapeSite(rawUrl: string): Promise<ScrapeResult> {
         final_url: fetched.final_url,
         http_status: fetched.status,
         ...parsed,
+        contact_emails: contactEmails,
         what_they_do: richWhatTheyDo,
         sub_page_extracts: subPageExtracts,
         scraped_at: new Date().toISOString(),
@@ -201,14 +259,37 @@ async function fetchHtml(url: string): Promise<FetchResult> {
 
 type ParsedSite = Omit<ScrapedSite, "fetched_url" | "final_url" | "http_status" | "scraped_at" | "sub_page_extracts">;
 
+/** Bare hostname of a URL ("https://www.acme.ca/x" -> "acme.ca"), null if unparseable. */
+function domainOf(rawUrl: string): string | null {
+  try {
+    return new URL(rawUrl).hostname.replace(/^www\./, "");
+  } catch {
+    return null; // glue repair simply won't run
+  }
+}
+
+/**
+ * True when following redirects landed us on someone else's domain.
+ *
+ * Acquisitions do this constantly: gluo.mx now 301s to orium.com/gluo. Mining
+ * that page hands back hello@orium.com — a real, deliverable, completely wrong
+ * address, and a pitch addressed to "Gluo" would land in the acquirer's inbox.
+ * Finding nothing and suppressing the prospect is the far cheaper mistake.
+ *
+ * Subdomains stay same-site (shop.acme.ca vs acme.ca) via a dot-boundary suffix
+ * test, which also avoids needing a public-suffix list to get acme.com.mx right.
+ */
+export function redirectedOffsite(requestedUrl: string, finalUrl: string): boolean {
+  const from = domainOf(requestedUrl);
+  const to = domainOf(finalUrl);
+  if (!from || !to) return false; // can't tell — don't invent a reason to skip
+  if (from === to) return false;
+  return !from.endsWith(`.${to}`) && !to.endsWith(`.${from}`);
+}
+
 export function parseSite(html: string, baseUrl: string): ParsedSite {
   const $ = cheerio.load(html);
-  let siteDomain: string | null = null;
-  try {
-    siteDomain = new URL(baseUrl).hostname.replace(/^www\./, "");
-  } catch {
-    /* keep null — glue repair simply won't run */
-  }
+  const siteDomain = domainOf(baseUrl);
 
   return {
     site_name: extractSiteName($),
@@ -488,7 +569,7 @@ function stripLeadingPhonePrefix(email: string): string {
   return email;
 }
 
-function extractContactEmails(html: string, $: cheerio.CheerioAPI, siteDomain: string | null): string[] {
+export function extractContactEmails(html: string, $: cheerio.CheerioAPI, siteDomain: string | null): string[] {
   const found = new Set<string>();
 
   // mailto: links
@@ -653,13 +734,21 @@ const KEY_PAGE_PATHS: Array<{ label: string; pattern: RegExp }> = [
   { label: "Case studies", pattern: /\/case-?studies?(\/|$|\?)/i },
   { label: "Work", pattern: /\/work(\/|$|\?)/i },
   { label: "Careers", pattern: /\/careers?(\/|$|\?)/i },
+  // Legal pages — discovered for the email hunt only, never for research text.
+  { label: "Privacy", pattern: /\/(privacy|privacidad|privacy-policy|aviso-de-privacidad)(\/|$|\?|-policy)/i },
+  { label: "Terms", pattern: /\/(terms|tos|terminos|legal|terms-of-service|terms-and-conditions)(\/|$|\?)/i },
   // Shopify /pages/* style paths — DTC brands almost never use /about directly
   { label: "About", pattern: /\/pages\/(about|our-story|story|about-us|about-the-brand|who-we-are|la-marca|nuestra-historia|nosotros)(\/|$|\?)/i },
   { label: "Team", pattern: /\/pages\/(team|meet-the-team|our-team|founders?|people)(\/|$|\?)/i },
   { label: "Contact", pattern: /\/pages\/(contact|contacto|contact-us)(\/|$|\?)/i },
+  { label: "Privacy", pattern: /\/pages\/(privacy|privacy-policy|privacidad|aviso-de-privacidad)(\/|$|\?)/i },
+  { label: "Terms", pattern: /\/pages\/(terms|terms-of-service|terms-and-conditions|terminos|legal)(\/|$|\?)/i },
 ];
 
-function extractKeyPages(
+/** Labels fetched only to mine addresses — excluded from the research text pass. */
+const EMAIL_ONLY_LABELS = new Set(["Privacy", "Terms"]);
+
+export function extractKeyPages(
   $: cheerio.CheerioAPI,
   baseUrl: string,
 ): { label: string; url: string }[] {
@@ -702,30 +791,101 @@ function extractKeyPages(
  */
 async function scrapeSubPages(
   keyPages: { label: string; url: string }[],
-): Promise<SubPageExtract[]> {
-  // Sort by SUBPAGE_PRIORITY order; unknown labels go last
-  const sorted = [...keyPages].sort((a, b) => {
-    const ai = SUBPAGE_PRIORITY.indexOf(a.label);
-    const bi = SUBPAGE_PRIORITY.indexOf(b.label);
-    return (ai === -1 ? 99 : ai) - (bi === -1 ? 99 : bi);
-  });
+  siteDomain: string | null,
+  /** Skip email mining — we landed on another company's site (see redirectedOffsite). */
+  offsite: boolean,
+): Promise<{ extracts: SubPageExtract[]; emails: string[] }> {
+  // Sort by SUBPAGE_PRIORITY order; unknown labels go last.
+  // Legal pages are dropped first — they're discovered for the email hunt, and
+  // their boilerplate would both pollute research context and consume slots
+  // that About/Team need.
+  const sorted = [...keyPages]
+    .filter((p) => !EMAIL_ONLY_LABELS.has(p.label))
+    .sort((a, b) => {
+      const ai = SUBPAGE_PRIORITY.indexOf(a.label);
+      const bi = SUBPAGE_PRIORITY.indexOf(b.label);
+      return (ai === -1 ? 99 : ai) - (bi === -1 ? 99 : bi);
+    });
 
   const results: SubPageExtract[] = [];
+  const emails = new Set<string>();
 
   for (const page of sorted.slice(0, MAX_SUBPAGES)) {
     if (results.length > 0) await sleep(SUBPAGE_RATE_LIMIT_MS);
-    const text = await fetchSubPageText(page.url);
+    const html = await fetchSubPageHtml(page.url, SUBPAGE_TIMEOUT_MS);
+    if (!html) continue;
+
+    // Mine addresses from the RAW html, before extractMainText runs. Two
+    // reasons it has to happen here: extractMainText strips nav/header/footer,
+    // and small-business sites put the mailbox in the footer more often than
+    // anywhere else; and it returns text, so `mailto:` hrefs are gone with the
+    // rest of the attributes. Costs nothing — we already have the bytes.
+    if (!offsite) {
+      for (const e of extractContactEmails(html, cheerio.load(html), siteDomain)) {
+        emails.add(e);
+      }
+    }
+
+    const text = extractMainText(html);
     if (text) results.push({ label: page.label, url: page.url, text });
   }
 
-  return results;
+  return { extracts: results, emails: Array.from(emails) };
 }
 
-/** Fetch one sub-page and extract its main body text (capped at SUBPAGE_MAX_CHARS). */
-async function fetchSubPageText(url: string): Promise<string | null> {
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), SUBPAGE_TIMEOUT_MS);
+/**
+ * Open the legal pages and mine them for addresses.
+ *
+ * Only called when the homepage and sub-pages yielded nothing usable, so a site
+ * that already prints its address costs no extra requests. The sites that DO
+ * reach here are exactly the ones that would otherwise fall through to the paid
+ * finders (Hunter/Snov), so on balance this should cut spend, not add it.
+ *
+ * Returns addresses in page order; the caller dedupes against what it already has.
+ */
+async function harvestEmailsFromPages(
+  keyPages: { label: string; url: string }[],
+  siteDomain: string | null,
+): Promise<string[]> {
+  const ranked = keyPages
+    .filter((p) => EMAIL_HUNT_PRIORITY.includes(p.label))
+    .sort(
+      (a, b) =>
+        EMAIL_HUNT_PRIORITY.indexOf(a.label) - EMAIL_HUNT_PRIORITY.indexOf(b.label),
+    )
+    .slice(0, MAX_EMAIL_HUNT_PAGES);
 
+  const deadline = Date.now() + EMAIL_HUNT_BUDGET_MS;
+  const found: string[] = [];
+  for (const [i, page] of ranked.entries()) {
+    if (Date.now() >= deadline) break;
+    if (i > 0) await sleep(SUBPAGE_RATE_LIMIT_MS);
+    const html = await fetchSubPageHtml(
+      page.url,
+      Math.min(EMAIL_HUNT_PAGE_TIMEOUT_MS, deadline - Date.now()),
+    );
+    if (!html) continue;
+    // Reuse the homepage extractor verbatim so every guard travels with it:
+    // the element-boundary fix, glued-TLD repair, placeholder and monitoring
+    // filters. A second, looser email regex here would reintroduce the exact
+    // garbage those guards exist to stop.
+    found.push(...extractContactEmails(html, cheerio.load(html), siteDomain));
+    // Stop at the first page that actually yields something — one real
+    // mailbox is enough, and Privacy/Terms often just repeat it.
+    if (found.some((e) => hasUsableEmail(e))) break;
+  }
+  return found;
+}
+
+/**
+ * Fetch one sub-page's raw HTML. Callers pass their own timeout: the research
+ * pass gets the full SUBPAGE_TIMEOUT_MS, the email hunt gets whatever is left
+ * of its budget, so neither can overrun the function limit.
+ */
+async function fetchSubPageHtml(url: string, timeoutMs: number): Promise<string | null> {
+  if (timeoutMs <= 0) return null;
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
     const res = await fetch(url, {
       headers: {
@@ -736,15 +896,12 @@ async function fetchSubPageText(url: string): Promise<string | null> {
       redirect: "follow",
       signal: controller.signal,
     });
-
     if (!res.ok) return null;
     const ct = res.headers.get("content-type") ?? "";
     if (!/text\/html|application\/xhtml/i.test(ct)) return null;
-
     const html = await res.text();
     if (html.length > MAX_HTML_BYTES) return null;
-
-    return extractMainText(html);
+    return html;
   } catch {
     return null;
   } finally {

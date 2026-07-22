@@ -13,6 +13,10 @@
  * Filter applied BEFORE calling this:
  *   - !domain && !website_url  (confirmed no web presence)
  *   - icp_id != null           (must be tied to a specific campaign ICP)
+ *
+ * This function ALSO re-checks that the prospect has a usable contact email and
+ * refuses otherwise — the caller's filter is not trusted, and an unreachable
+ * prospect must not cost a Claude call.
  */
 
 import { revalidatePath } from "next/cache";
@@ -26,6 +30,7 @@ import {
   type ClaudeUsage,
 } from "@/lib/anthropic/client";
 import { isUnderDailyCap, recordClaudeCall } from "@/lib/anthropic/cost-tracking";
+import { fetchTopUsableContact } from "@/lib/pitches/contacts";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -111,30 +116,23 @@ export async function generateWebsitePitch(
     }
   }
 
-  // ── Load top contact for greeting ─────────────────────────────────────────
-  type ContactRow = { full_name: string | null };
-  const { data: contactRows } = await supabase
-    .from("prospect_contacts")
-    .select("full_name")
-    .eq("tenant_id", user.tenantId)
-    .eq("prospect_id", prospectId)
-    .order("priority_rank", { ascending: true })
-    .limit(1)
-    .returns<ContactRow[]>();
+  // ── Contact gate — never generate a pitch we can't send ───────────────────
+  // Mirrors the guard in generatePitch. Without it this lane happily produced
+  // drafts with contact_id=null, which the send queue then silently refuses to
+  // pick up: 11 of them piled up on /pitches as "Approved" but unsendable.
+  // Runs BEFORE the Claude call so an unreachable prospect costs nothing.
+  //
+  // Note this reads the top USABLE contact, not merely the top-ranked row —
+  // a junk address (glued TLD, builder placeholder) is not a way to reach them.
+  const topUsable = await fetchTopUsableContact(supabase, user.tenantId, prospectId);
+  if (!topUsable) {
+    return {
+      ok: false,
+      error: "No contact email — find or add a contact before generating a pitch.",
+    };
+  }
 
-  const firstName =
-    contactRows?.[0]?.full_name?.split(" ")[0] ?? null;
-
-  // ── Load top contact id for pitch FK ──────────────────────────────────────
-  type ContactIdRow = { id: string };
-  const { data: contactIdRow } = await supabase
-    .from("prospect_contacts")
-    .select("id")
-    .eq("tenant_id", user.tenantId)
-    .eq("prospect_id", prospectId)
-    .order("priority_rank", { ascending: true })
-    .limit(1)
-    .maybeSingle<ContactIdRow>();
+  const firstName = topUsable.full_name?.split(" ")[0] ?? null;
 
   // ── Generate pitch ────────────────────────────────────────────────────────
   let subject: string;
@@ -200,7 +198,7 @@ export async function generateWebsitePitch(
     .insert({
       tenant_id: user.tenantId,
       prospect_id: prospectId,
-      contact_id: contactIdRow?.id ?? null,
+      contact_id: topUsable.id,
       case_study_id: caseStudyId,
       pain_id: null, // website pitch has no pain taxonomy entry
       subject,

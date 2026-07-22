@@ -204,12 +204,20 @@ export function PitchesPage({ pitches, counts, canEdit, inboxes }: PitchesPagePr
     startApprove(async () => {
       const res = await bulkApprovePitches({ pitch_ids: [...checked] });
       if (res.ok) {
+        // Say plainly when some were held back — silently approving fewer than
+        // the user selected is how unsendable drafts went unnoticed.
+        const skipped =
+          res.skipped_no_contact > 0
+            ? ` ${res.skipped_no_contact} skipped — no contact email.`
+            : "";
         setQueueMsg({
           tone: res.approved > 0 ? "ok" : "warn",
           text:
             res.approved > 0
-              ? `Approved ${res.approved} pitch${res.approved === 1 ? "" : "es"} — ready to queue for send.`
-              : "Nothing approvable in the selection.",
+              ? `Approved ${res.approved} pitch${res.approved === 1 ? "" : "es"} — ready to queue for send.${skipped}`
+              : skipped
+                ? `Nothing approved.${skipped}`
+                : "Nothing approvable in the selection.",
         });
         setChecked(new Set());
         router.refresh();

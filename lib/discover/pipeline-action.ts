@@ -34,7 +34,7 @@ import { deepResearchProspect } from "@/lib/research/deep-research-action";
 import { scoreProspect } from "@/lib/research/score-action";
 import { generatePitch } from "@/lib/pitches/actions";
 import { generateWebsitePitch } from "@/lib/pitches/website-pitch-action";
-import { searchBrave, braveIsAvailable } from "@/lib/discover/sources/brave-search";
+import { searchBrave } from "@/lib/discover/sources/brave-search";
 import { searchGooglePlaces, googlePlacesIsAvailable } from "@/lib/discover/sources/google-places";
 import { normalizeDomain } from "@/lib/discover/fuzzy-dedupe";
 
@@ -208,7 +208,12 @@ export async function processSingleProspect(
   // lane, try Google Places (the business's OWN listed site) and fall back to
   // Brave. If found, the prospect goes through the normal scrape → research →
   // score pipeline instead.
-  if (!hasWebsite && braveIsAvailable() && p?.company_name) {
+  // NOT gated on braveIsAvailable(): discoverWebsiteViaBrave tries Google Places
+  // FIRST (first-party, no Brave quota) and only falls back to Brave, which
+  // already no-ops without a key. Gating the whole block on the Brave key meant
+  // a tenant without one skipped Places too, and every siteless prospect fell
+  // straight into the website-pitch lane without anyone checking for a site.
+  if (!hasWebsite && p?.company_name) {
     const discovered = await discoverWebsiteViaBrave(
       p.company_name,
       p.city,
@@ -262,7 +267,40 @@ export async function processSingleProspect(
       return { prospect_id: prospectId, company_name: name, score: null, outcome: "suppressed" };
     }
 
-    // Has ICP → generate website pitch
+    // ── No-contact gate (mirrors the scored lane's gate below) ───────────────
+    // This lane used to pitch unconditionally, so 11 unsendable "Approved"
+    // drafts reached /pitches for businesses we had no way to email. There is
+    // no recovery path here: every email finder we have (SnapVerify, Hunter,
+    // Snov) is keyed on a DOMAIN, and this lane exists precisely because there
+    // isn't one. Google Places would give us a phone, but never an email — the
+    // API has no such field — and S.P.A.M sends email. So no email means
+    // unreachable, full stop (Pedro's call, 2026-07-22).
+    type NwContactRow = { email: string | null };
+    const { data: nwContacts } = await supabase
+      .from("prospect_contacts")
+      .select("email")
+      .eq("prospect_id", prospectId)
+      .eq("tenant_id", user.tenantId)
+      .not("email", "is", null)
+      .returns<NwContactRow[]>();
+
+    if (!(nwContacts ?? []).some((c) => hasUsableEmail(c.email))) {
+      await supabase
+        .from("prospects")
+        .update({
+          status: "suppressed",
+          suppressed_reason: "Auto: no website and no contact email (unreachable)",
+          suppressed_at: new Date().toISOString(),
+          pitch_gate_passed: false,
+          updated_at: new Date().toISOString(),
+        })
+        .eq("id", prospectId)
+        .eq("tenant_id", user.tenantId);
+      revalidatePath("/companies");
+      return { prospect_id: prospectId, company_name: name, score: null, outcome: "suppressed" };
+    }
+
+    // Has ICP + a reachable contact → generate website pitch
     try {
       const pitchResult = await generateWebsitePitch(prospectId);
       if (pitchResult.ok) {

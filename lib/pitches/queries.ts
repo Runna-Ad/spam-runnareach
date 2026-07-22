@@ -227,10 +227,10 @@ export async function getPitchCounts(
   sent: number;
 }> {
   const supabase = await createClient();
-  type Row = { status: PitchStatus; scheduled_send_at: string | null };
+  type Row = { status: PitchStatus; scheduled_send_at: string | null; contact_id: string | null };
   const { data, error } = await supabase
     .from("pitches")
-    .select("status, scheduled_send_at")
+    .select("status, scheduled_send_at, contact_id")
     .eq("tenant_id", tenantId)
     .returns<Row[]>();
 
@@ -241,8 +241,11 @@ export async function getPitchCounts(
     total: rows.length,
     draft: rows.filter((r) => r.status === "draft").length,
     queued: rows.filter((r) => r.status === "queued_for_approval").length,
-    // Ready to queue = approved with no scheduled_send_at yet.
-    approved: approvedRows.filter((r) => !r.scheduled_send_at).length,
+    // Ready to queue = approved, not yet scheduled, AND actually queueable.
+    // queueApprovedForSend filters on `contact_id is not null`, so counting
+    // contact-less pitches here made the button promise work it would not do:
+    // "Queue 11 for send" against 11 unsendable pitches queued exactly zero.
+    approved: approvedRows.filter((r) => !r.scheduled_send_at && r.contact_id !== null).length,
     // Already in the drip queue, awaiting the cron.
     queuedForSend: approvedRows.filter((r) => !!r.scheduled_send_at).length,
     sent: rows.filter((r) => r.status === "sent").length,

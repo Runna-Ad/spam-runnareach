@@ -796,7 +796,9 @@ const bulkApproveSchema = z.object({
 
 export async function bulkApprovePitches(
   input: z.input<typeof bulkApproveSchema>,
-): Promise<{ ok: true; approved: number } | { ok: false; error: string }> {
+): Promise<
+  { ok: true; approved: number; skipped_no_contact: number } | { ok: false; error: string }
+> {
   const user = await requireUser();
   if (user.role === "viewer") {
     return { ok: false, error: "Viewers cannot approve pitches." };
@@ -807,11 +809,47 @@ export async function bulkApprovePitches(
   }
 
   const supabase = await createClient();
+
+  // ── Skip pitches we could never send ──────────────────────────────────────
+  // Approving is a promise that the pitch is ready to go out. A pitch whose
+  // prospect has no usable email can't be queued (the send queue requires a
+  // contact_id) so approving it just parks it in the queue forever, looking
+  // ready. That is exactly how 11 unsendable drafts reached "Approved".
+  type PitchRow = { id: string; prospect_id: string };
+  const { data: candidates } = await supabase
+    .from("pitches")
+    .select("id, prospect_id")
+    .in("id", parsed.data.pitch_ids)
+    .eq("tenant_id", user.tenantId)
+    .in("status", ["draft", "queued_for_approval"])
+    .returns<PitchRow[]>();
+
+  const prospectIds = Array.from(new Set((candidates ?? []).map((p) => p.prospect_id)));
+  type ContactRow = { prospect_id: string; email: string | null };
+  const { data: contactRows } = prospectIds.length
+    ? await supabase
+        .from("prospect_contacts")
+        .select("prospect_id, email")
+        .in("prospect_id", prospectIds)
+        .eq("tenant_id", user.tenantId)
+        .returns<ContactRow[]>()
+    : { data: [] as ContactRow[] };
+
+  const reachable = new Set(
+    (contactRows ?? []).filter((c) => hasUsableEmail(c.email)).map((c) => c.prospect_id),
+  );
+  const approvable = (candidates ?? []).filter((p) => reachable.has(p.prospect_id));
+  const skippedNoContact = (candidates ?? []).length - approvable.length;
+
+  if (approvable.length === 0) {
+    return { ok: true, approved: 0, skipped_no_contact: skippedNoContact };
+  }
+
   const nowIso = new Date().toISOString();
   const { data, error } = await supabase
     .from("pitches")
     .update({ status: "approved", approved_by: user.id, approved_at: nowIso } as never)
-    .in("id", parsed.data.pitch_ids)
+    .in("id", approvable.map((p) => p.id))
     .eq("tenant_id", user.tenantId)
     .in("status", ["draft", "queued_for_approval"])
     .select("id");
@@ -819,7 +857,7 @@ export async function bulkApprovePitches(
   if (error) return { ok: false, error: `Could not approve: ${error.message}` };
 
   revalidatePath("/pitches");
-  return { ok: true, approved: (data ?? []).length };
+  return { ok: true, approved: (data ?? []).length, skipped_no_contact: skippedNoContact };
 }
 
 /**
