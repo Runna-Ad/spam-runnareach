@@ -186,3 +186,48 @@ test("reports EVERY reason, not just the first", () => {
   assert.ok(c.includes("unverifiable_website_claim"));
   assert.ok(c.length >= 2, "gate must surface all problems so one review fixes everything");
 });
+
+// ── Benchmarks make rule 5 enforceable rather than absolute ─────────────────
+//
+// Rule 5 holds any number not found in stored evidence. Before the benchmark
+// library existed, nothing was a legitimate source for a statistic, so the rule
+// was a blanket ban on numbers — which is why the composer's invented "20-30%
+// lifts" had nowhere legitimate to come from in the first place.
+
+test("holds a number that matches neither evidence nor a benchmark", () => {
+  const r = evaluateSendGate(goodPitch({
+    body: "Hi Waghorn Stephens team,\n\nCasino properties that differentiate see 20-30% lifts in visit intent.\n\nPedro",
+    evidenceQuotes: [],
+    benchmarkFigures: [],
+  }));
+  assert.equal(r.pass, false);
+  assert.ok(!r.pass && r.failures.some((f) => f.code === "unsourced_metric"));
+});
+
+test("allows a number backed by a verified benchmark", () => {
+  const r = evaluateSendGate(goodPitch({
+    body: "Hi Waghorn Stephens team,\n\nRoughly 70% of online carts are abandoned before checkout, and nothing follows up.\n\nPedro",
+    evidenceQuotes: [],
+    benchmarkFigures: ["70%"],
+  }));
+  assert.ok(!(!r.pass && r.failures.some((f) => f.code === "unsourced_metric")));
+});
+
+test("a benchmark for a DIFFERENT figure does not launder an invented one", () => {
+  // The allowlist is per-figure, not a blanket "numbers are fine now".
+  const r = evaluateSendGate(goodPitch({
+    body: "Hi Waghorn Stephens team,\n\nBusinesses like yours see 45% more repeat orders.\n\nPedro",
+    evidenceQuotes: [],
+    benchmarkFigures: ["70%"],
+  }));
+  assert.equal(r.pass, false);
+  assert.ok(!r.pass && r.failures.some((f) => f.code === "unsourced_metric"));
+});
+
+test("omitting benchmarkFigures entirely still works (back-compat)", () => {
+  const r = evaluateSendGate(goodPitch({
+    body: "Hi Waghorn Stephens team,\n\nA clean note with no numbers at all.\n\nPedro",
+    evidenceQuotes: [],
+  }));
+  assert.ok(!(!r.pass && r.failures.some((f) => f.code === "unsourced_metric")));
+});

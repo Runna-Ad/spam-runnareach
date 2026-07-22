@@ -14,6 +14,7 @@ import { composePitchWithClaude } from "./claude-composer";
 import { renderIndustryTemplate } from "./industry-templates";
 import { buildHunterUrlForPitch } from "./hunter-mapping";
 import { hasUsableEmail, isRoleBasedEmail } from "@/lib/research/email-utils";
+import { fetchBenchmarksForPitch } from "@/lib/benchmarks/queries";
 import { fetchTopUsableContact } from "@/lib/pitches/contacts";
 import {
   type ComposedPitch,
@@ -289,6 +290,15 @@ export async function generatePitch(
     ? allCases.filter((cs) => (cs.pain_strength ?? 0) >= 0.4)
     : allCases;
 
+  // Verified benchmarks matching this prospect's pain AND industry. Empty is
+  // normal and safe — with none, the composer writes the pitch without a
+  // number. Never throws; a benchmark is an enhancement, not a dependency.
+  const benchmarks = await fetchBenchmarksForPitch(supabase, user.tenantId, {
+    painIds: pains.map((p) => p.pain_id).filter((v): v is string => Boolean(v)),
+    industry: prospect.industry,
+    market: prospect.market,
+  });
+
   const generatorInputs: GeneratorInputs = {
     prospect: {
       ...prospect,
@@ -299,6 +309,7 @@ export async function generatePitch(
     contacts,
     case_studies,
     notable_clients: notableClientRows,
+    benchmarks,
     sender: {
       full_name: user.fullName,
       tenant_display_name: user.tenantDisplayName,
@@ -606,9 +617,20 @@ export async function rewritePitchWithAngle(
     }));
   } catch { /* non-fatal */ }
 
+  // Same benchmark lookup as first generation — the rewrite path must follow
+  // the same rules, or "rewrite with this angle" quietly produces a pitch the
+  // normal path could not.
+  const rewritePains = normalizePains(research?.pain_points ?? null);
+  const rewriteBenchmarks = await fetchBenchmarksForPitch(supabase, user.tenantId, {
+    painIds: rewritePains.map((p) => p.pain_id).filter((v): v is string => Boolean(v)),
+    industry: prospect.industry,
+    market: prospect.market,
+  });
+
   const generatorInputs: GeneratorInputs = {
     prospect: { ...prospect, what_they_do: research?.what_they_do ?? null, tech_stack: research?.tech_stack ?? [] },
-    pains: normalizePains(research?.pain_points ?? null),
+    pains: rewritePains,
+    benchmarks: rewriteBenchmarks,
     contacts: (contactRows ?? []).map((c) => ({
       full_name: c.full_name, email: c.email, email_is_role_based: c.email_is_role_based || (c.email ? isRoleBasedEmail(c.email) : false), role_title: c.role_title ?? null,
     })),

@@ -603,9 +603,21 @@ Prueba con la CAPACIDAD: qué hacemos para negocios como el suyo, qué tipo de
 problema resuelve, y cómo lo abordamos. Nombra la INDUSTRIA y el TRABAJO, y
 describe la situación DEL PROSPECTO.
 
-⛔ Tampoco inventes cifras. Nada de "negocios así ven 20-30% más". Si un número
-no viene en el payload, no existe. Una frase de capacidad sin números es más
-creíble que una estadística que no puedes respaldar.`
+CIFRAS: solo las de "benchmarks" en el payload.
+
+Esas filas están verificadas por una persona y tienen fuente real. Puedes citar
+una, y nada más. ⛔ No inventes nada: ni "negocios así ven 20-30% más", ni
+promedios que recuerdes, ni cifras de las que te sientas seguro. La seguridad no
+es una fuente. Si "benchmarks" viene vacío, escribe el correo SIN ningún número:
+ese es el caso normal, no una falla.
+
+CÓMO usarla, y esto importa más que si la usas:
+un benchmark dimensiona SU problema, nunca demuestra NUESTROS resultados.
+  ✅ "Cerca de 7 de cada 10 carritos se abandonan antes de pagar, y ahora mismo
+      nadie les da seguimiento."     ← su situación, diagnóstico
+  ⛔ "Subimos la recuperación 15%."  ← nuestro resultado, presumido y sin fuente
+Cita la estadística cerca del dolor que encabeza el correo, y sigue. Una como
+máximo. Nunca dos, y nunca para abrir.`
     : `
 
 CREDIBILITY, WITHOUT CLIENT NAMES
@@ -617,9 +629,21 @@ Prove it with CAPABILITY: what we do for businesses like theirs, what kind of
 problem it solves, and how we approach it. Name the INDUSTRY and the WORK, and
 describe the PROSPECT's situation.
 
-⛔ Do not invent figures either. No "businesses like yours see 20-30% lifts". If
-a number is not in the payload, it does not exist. A capability sentence with no
-numbers is more credible than a statistic you cannot stand behind.`;
+NUMBERS: only from "benchmarks" in the payload.
+
+Those rows are human-verified and carry a real citation. You may quote one, and
+nothing else. ⛔ Invent nothing: no "businesses like yours see 20-30% lifts", no
+recalled industry averages, no figure you feel confident about. Confidence is
+not a source. If "benchmarks" is empty, write the email with NO number at all —
+that is the normal case, not a failure.
+
+HOW to use one, and this matters more than whether you use one:
+a benchmark sizes THEIR problem, it never proves OUR results.
+  ✅ "Roughly 7 in 10 online carts get abandoned before checkout, and right now
+      nothing follows up with those people."   ← their situation, diagnostic
+  ⛔ "We lift cart recovery by 15%."            ← our result, a brag, and unsourced
+Quote the statistic close to the pain you're leading with, then move on. One at
+most. Never stack two, and never open with one.`;
 }
 
 // Generic inbox local-parts that are NOT a person's name — never greet these.
@@ -751,6 +775,14 @@ function buildStage2UserPrompt(
       full_name: input.sender.full_name,
       agency_name: input.sender.tenant_display_name,
     },
+    // Verified benchmarks matching this prospect's pain AND industry. Every one
+    // carries a citation and was approved by a human; the model may cite these
+    // and ONLY these. Usually empty, and empty means write it without a number.
+    benchmarks: input.benchmarks.map((b) => ({
+      statistic: b.statistic,
+      figure: b.figure,
+      publisher: b.publisher,
+    })),
     // notable_clients deliberately NOT sent. Pedro's override (2026-07-22):
     // named examples underperform, so the model must not have names to reach
     // for. Withholding the data is the guard — a prompt rule alone loses to the

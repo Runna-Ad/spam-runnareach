@@ -1158,6 +1158,60 @@ export type Database = {
       }>;
       Relationships: NoRels;
     };
+    benchmarks: {
+      Row: {
+        id: UUID;
+        tenant_id: UUID;
+        statistic: string;
+        figure: string;
+        pain_codes: string[];
+        industry_scope: string[];
+        market: string | null;
+        source_url: string;
+        publisher: string;
+        published_date: string | null;
+        is_vendor_sourced: boolean;
+        caveat: string | null;
+        verified_by: UUID | null;
+        verified_at: Timestamptz | null;
+        is_active: boolean;
+        created_at: Timestamptz;
+        updated_at: Timestamptz;
+      };
+      Insert: {
+        id?: UUID;
+        tenant_id: UUID;
+        statistic: string;
+        figure: string;
+        pain_codes?: string[];
+        industry_scope?: string[];
+        market?: string | null;
+        source_url: string;
+        publisher: string;
+        published_date?: string | null;
+        is_vendor_sourced?: boolean;
+        caveat?: string | null;
+        verified_by?: UUID | null;
+        verified_at?: Timestamptz | null;
+        is_active?: boolean;
+      };
+      Update: {
+        statistic?: string;
+        figure?: string;
+        pain_codes?: string[];
+        industry_scope?: string[];
+        market?: string | null;
+        source_url?: string;
+        publisher?: string;
+        published_date?: string | null;
+        is_vendor_sourced?: boolean;
+        caveat?: string | null;
+        verified_by?: UUID | null;
+        verified_at?: Timestamptz | null;
+        is_active?: boolean;
+      };
+      Relationships: [];
+    };
     notable_clients: {
       Row: {
         id: UUID;

@@ -109,6 +109,25 @@ export type ComposedPitch = {
   reasoning: string;
 };
 
+/**
+ * A verified third-party benchmark the composer may cite.
+ *
+ * Used DIAGNOSTICALLY — to size the prospect's problem ("roughly 7 in 10 carts
+ * are abandoned before checkout") — never as proof of Runna's results. That
+ * distinction is why benchmarks are allowed where named case-study metrics are
+ * not: one describes the reader's situation, the other brags about ours.
+ *
+ * Only rows a human verified and activated ever reach here, and every one
+ * carries a citation. See supabase/migrations/0029_benchmarks.sql.
+ */
+export type GeneratorInputBenchmark = {
+  id: string;
+  statistic: string;
+  figure: string;
+  publisher: string;
+  source_url: string;
+};
+
 export type GeneratorInputs = {
   prospect: GeneratorInputProspect;
   pains: GeneratorInputResearchPain[];
@@ -116,6 +135,12 @@ export type GeneratorInputs = {
   case_studies: GeneratorInputCaseStudy[];
   /** Notable clients for Tier 2 (industry match) and Tier 3 (name-drop) fallbacks. */
   notable_clients: GeneratorInputNotableClient[];
+  /**
+   * Benchmarks matching the prospect's pain AND industry. Empty is the normal
+   * case and must stay safe: with none, the composer writes the pitch without
+   * a number, which is what it does today.
+   */
+  benchmarks: GeneratorInputBenchmark[];
   sender: GeneratorInputSender;
   /** Optional URL pattern for deep-link to runna-website pitch. Empty = no link. */
   deep_pitch_url?: string | null;

@@ -18,6 +18,7 @@
 import type { createClient } from "@/lib/supabase/server";
 import { writeAuditLog } from "@/lib/audit/log";
 import { evaluateSendGate, type GateInput } from "./send-gate";
+import { fetchActiveBenchmarkFigures } from "@/lib/benchmarks/queries";
 
 type Client = Awaited<ReturnType<typeof createClient>>;
 
@@ -124,6 +125,9 @@ export async function recordGateDryRun(
       domain: prospect.domain,
       websiteVerified,
       evidenceQuotes: evidenceQuotesFrom(research?.pain_points),
+      // Verified benchmarks are a legitimate source for a figure — without them
+      // rule 5 flags every number, including the ones we can actually defend.
+      benchmarkFigures: await fetchActiveBenchmarkFigures(supabase, tenantId),
     };
 
     const verdict = evaluateSendGate(input);

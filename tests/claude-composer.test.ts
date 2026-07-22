@@ -86,6 +86,7 @@ function inputs(over: Partial<GeneratorInputs> = {}): GeneratorInputs {
       },
     ],
     notable_clients: [],
+    benchmarks: [],
     sender: { full_name: "Pedro De Velasco", tenant_display_name: "Runna CA" },
     deep_pitch_url: null,
     ...over,

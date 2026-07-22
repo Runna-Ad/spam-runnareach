@@ -50,8 +50,17 @@ export type GateInput = {
   domain: string | null;
   /** True when we successfully fetched the site (so claims about it are grounded). */
   websiteVerified: boolean;
-  /** Evidence quotes stored on the prospect — the only sourceable claims. */
+  /** Evidence quotes stored on the prospect — sourceable claims about THEM. */
   evidenceQuotes: string[];
+  /**
+   * Figures from active, human-verified benchmark rows.
+   *
+   * Rule 5 holds any number that appears in no stored evidence. Until
+   * benchmarks existed that rule could only ever say "no", because nothing was
+   * a legitimate source for a statistic — so it was effectively a ban. This is
+   * the allowlist that turns it into an actual check.
+   */
+  benchmarkFigures?: string[];
 };
 
 export type GateResult =
@@ -202,12 +211,16 @@ export function evaluateSendGate(input: GateInput): GateResult {
   // produced it and we cannot stand behind it.
   const metric = input.body.match(METRIC_PATTERN);
   if (metric) {
-    const haystack = fold(input.evidenceQuotes.join(" "));
+    const haystack = fold(
+      [...input.evidenceQuotes, ...(input.benchmarkFigures ?? [])].join(" "),
+    );
     const token = fold(metric[0]).trim();
     if (token && !haystack.includes(token)) {
       failures.push({
         code: "unsourced_metric",
-        detail: `Body states "${metric[0].trim()}" which appears in no stored evidence for this prospect.`,
+        detail:
+          `Body states "${metric[0].trim()}" which matches no stored evidence for this ` +
+          `prospect and no verified benchmark. Numbers must be sourceable.`,
       });
     }
   }
