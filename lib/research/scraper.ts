@@ -602,7 +602,13 @@ export function extractContactEmails(html: string, $: cheerio.CheerioAPI, siteDo
 
   // Strip obvious junk (image hashes that happen to look like emails — rare,
   // but kept simple).
-  return Array.from(found).filter((e) => !e.includes("@2x.") && !e.includes("@3x.") && !isMonitoringEmail(e));
+  return Array.from(found).filter(
+    (e) =>
+      !e.includes("@2x.") &&
+      !e.includes("@3x.") &&
+      !isMonitoringEmail(e) &&
+      !isNeverPitchEmail(e),
+  );
 }
 
 // Extra theme-template placeholders beyond the shared email-utils lists.
@@ -682,6 +688,49 @@ function isValidEmail(email: string): boolean {
 // Wix sites include Sentry DSN-style addresses like {32hexchars}@sentry.wixpress.com.
 const MONITORING_DOMAINS = ["sentry.io", "sentry.wixpress.com", "sentry-next.wixpress.com", "bugsnag.com", "rollbar.com", "datadog.com", "newrelic.com", "honeybadger.io"];
 const HEX_LOCAL_RE = /^[0-9a-f]{16,}$/i;
+
+/**
+ * Inboxes that are real and deliverable but must NEVER receive a cold pitch.
+ *
+ * Distinct from isRoleBasedEmail, which only DEPRIORITISES (rank 5): info@ and
+ * sales@ are role inboxes we're happy to pitch. These are different — they
+ * belong to the functions whose job is to police unsolicited mail, or to
+ * departments that will never buy. A privacy officer or DPO receiving cold
+ * marketing is the single likeliest source of a CASL complaint, and a complaint
+ * costs more than the lead is worth.
+ *
+ * This list earned its place immediately: mining /privacy and /terms for
+ * addresses preferentially finds privacy officers. The first sweep surfaced
+ * privacy@nygh.on.ca, privacyofficer@stegh.on.ca, hrweb@uhn.ca and
+ * patientrelations@gbgh.on.ca — every one deliverable, every one the wrong
+ * person to pitch a website to.
+ */
+const NEVER_PITCH_LOCALS = new Set([
+  // Privacy / data protection / legal / compliance
+  "privacy", "privacyofficer", "privacyoffice", "privacyteam", "dpo",
+  "dataprotection", "dataprivacy", "legal", "compliance", "counsel",
+  "privacidad", "avisodeprivacidad", "datospersonales", "juridico", "legales",
+  // Abuse / security desks
+  "abuse", "security", "postmaster", "hostmaster", "spam", "phishing",
+  // HR / recruiting — never the buyer
+  "hr", "hrweb", "humanresources", "recruiting", "recruitment", "recruiter",
+  "careers", "jobs", "hiring", "talent",
+  "recursoshumanos", "rh", "reclutamiento", "empleo", "vacantes",
+  // Unsubscribe / list management
+  "unsubscribe", "optout", "remove", "listrequest",
+  // Patient / clinical desks (hospitals surfaced these in the first sweep)
+  "patientrelations", "patientcare", "patients", "clinical", "medicalrecords",
+]);
+
+function isNeverPitchEmail(email: string): boolean {
+  const local = email.split("@")[0]?.toLowerCase();
+  if (!local) return false;
+  // Compare both raw and punctuation-stripped ("privacy.officer", "privacy-officer").
+  return (
+    NEVER_PITCH_LOCALS.has(local) ||
+    NEVER_PITCH_LOCALS.has(local.replace(/[.\-_]/g, ""))
+  );
+}
 
 function isMonitoringEmail(email: string): boolean {
   const [local, domain] = email.split("@");

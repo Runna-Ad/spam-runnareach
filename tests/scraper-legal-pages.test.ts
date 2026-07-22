@@ -95,12 +95,15 @@ test("pulls the address out of privacy-policy boilerplate", () => {
 });
 
 test("pulls a plaintext address out of terms boilerplate (no mailto:)", () => {
+  // Note the address: legal@ would be correct to find and then DROP (see the
+  // never-pitch tests below), so the fixture uses a pitchable inbox to keep
+  // this test about extraction rather than filtering.
   const html = `<html><body>
     <p>These Terms are governed by the laws of Ontario. Questions:
-       legal@weeksconstruction.ca</p>
+       office@weeksconstruction.ca</p>
   </body></html>`;
   const emails = extractContactEmails(html, cheerio.load(html), "weeksconstruction.ca");
-  assert.deepEqual(emails, ["legal@weeksconstruction.ca"]);
+  assert.deepEqual(emails, ["office@weeksconstruction.ca"]);
 });
 
 test("the element-boundary guard still applies on legal pages", () => {
@@ -126,6 +129,53 @@ test("privacy-page placeholders are still rejected", () => {
   </body></html>`;
   const emails = extractContactEmails(html, cheerio.load(html), "weeksconstruction.ca");
   assert.deepEqual(emails, []);
+});
+
+// ── Never-pitch inboxes ───────────────────────────────────────────────────────
+//
+// Mining /privacy and /terms preferentially finds privacy officers. The first
+// live sweep surfaced privacy@nygh.on.ca, privacyofficer@stegh.on.ca,
+// hrweb@uhn.ca and patientrelations@gbgh.on.ca — all deliverable, all the wrong
+// person to pitch a website to, and the privacy ones are exactly who files a
+// CASL complaint about unsolicited marketing.
+
+function emailsFrom(html: string, domain = "nygh.on.ca"): string[] {
+  return extractContactEmails(html, cheerio.load(html), domain);
+}
+
+for (const local of [
+  "privacy", "privacyofficer", "dpo", "legal", "compliance",
+  "hr", "hrweb", "careers", "jobs", "abuse", "unsubscribe",
+  "patientrelations", "recursoshumanos",
+]) {
+  test(`drops ${local}@ — deliverable but never a pitch recipient`, () => {
+    const html = `<a href="mailto:${local}@nygh.on.ca">contact</a>`;
+    assert.deepEqual(emailsFrom(html), []);
+  });
+}
+
+test("drops punctuated variants (privacy.officer@, privacy-officer@)", () => {
+  assert.deepEqual(emailsFrom('<a href="mailto:privacy.officer@nygh.on.ca">x</a>'), []);
+  assert.deepEqual(emailsFrom('<a href="mailto:privacy-officer@nygh.on.ca">x</a>'), []);
+});
+
+test("still KEEPS the role inboxes we do pitch", () => {
+  // isRoleBasedEmail deprioritises these to rank 5; it must not drop them.
+  for (const local of ["info", "hello", "contact", "sales", "admin", "ventas"]) {
+    assert.deepEqual(
+      emailsFrom(`<a href="mailto:${local}@nygh.on.ca">x</a>`),
+      [`${local}@nygh.on.ca`],
+      `${local}@ should survive`,
+    );
+  }
+});
+
+test("does not drop a person whose name merely contains a blocked word", () => {
+  // "hrishikesh" starts with "hr"; the check is whole-local, not prefix.
+  assert.deepEqual(
+    emailsFrom('<a href="mailto:hrishikesh@nygh.on.ca">x</a>'),
+    ["hrishikesh@nygh.on.ca"],
+  );
 });
 
 // ── Off-site redirect guard ───────────────────────────────────────────────────
