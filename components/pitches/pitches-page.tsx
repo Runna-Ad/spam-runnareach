@@ -480,6 +480,17 @@ function PitchRow({
               {Math.round(pitch.quality_self_score * 100)}%
             </span>
           ) : null}
+          {/* Scannable marker so a run of fallbacks is obvious from the list,
+              without opening each pitch. A whole day of these is the signature
+              of a Claude outage. */}
+          {pitch.is_template_fallback ? (
+            <span
+              className="rounded-sm border border-[var(--color-warning-300)]/40 px-1 py-px text-[9px] font-medium uppercase tracking-wide text-[var(--color-warning-300)]"
+              title="Generic template — the composer fell back, so this pitch says nothing specific about this prospect."
+            >
+              template
+            </span>
+          ) : null}
           <span className="ml-auto text-[10px] text-[var(--color-fg-700)]">
             {relativeTime(pitch.updated_at)}
           </span>
@@ -682,6 +693,27 @@ function PitchDetail({
           </div>
         </div>
       </div>
+
+      {/* Template fallback banner.
+          Claude failing is SILENT by design — the pitch still exists, it's just
+          generic. On 2026-07-08 a credit outage sent 28 prospects boilerplate
+          and nobody knew for two weeks. Surface it where the pitch is read. */}
+      {pitch.is_template_fallback ? (
+        <div className="mb-4 flex gap-2 rounded-[var(--radius-md)] border border-[var(--color-warning-300)]/40 bg-[color-mix(in_oklab,var(--color-warning-500),transparent_92%)] p-3">
+          <ShieldAlert
+            className="mt-0.5 h-3.5 w-3.5 shrink-0 text-[var(--color-warning-300)]"
+            aria-hidden
+          />
+          <p className="text-xs leading-relaxed text-[var(--color-fg-300)]">
+            <span className="font-medium text-[var(--color-warning-300)]">
+              Generic template, not written for this prospect.
+            </span>{" "}
+            The composer fell back — usually no Anthropic credit, a timeout, or a
+            malformed response. It says nothing specific about them. Regenerate
+            before sending, or rewrite it with an angle below.
+          </p>
+        </div>
+      ) : null}
 
       {/* Pitch angle advisor — suggests angles + can rewrite this pitch with one */}
       <PitchAngleAdvisor

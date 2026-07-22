@@ -28,6 +28,18 @@ export type PitchListRow = {
   contact_name: string | null;
   /** True when the address is an unverified catch-all guess, not a confirmed contact. */
   contact_is_guess: boolean;
+  /**
+   * True when this pitch came from a static industry template rather than
+   * Claude — i.e. the composer fell back.
+   *
+   * cost_usd = 0 is the reliable tell: every Claude path records spend, and
+   * the template path costs nothing. This matters because the fallback is
+   * otherwise SILENT: on 2026-07-08 an Anthropic credit outage sent 28
+   * prospects generic boilerplate and nothing surfaced it — Pedro found out
+   * two weeks later by reading a draft. A template pitch is not broken, but it
+   * is unpersonalised, and that should be visible at a glance.
+   */
+  is_template_fallback: boolean;
   pain_label: string | null;
   approved_at: string | null;
   /** Set when queued into the drip-send queue (status stays 'approved' until the cron sends). */
@@ -52,6 +64,7 @@ export async function listPitches(tenantId: string): Promise<PitchListRow[]> {
     subject: string;
     variant_index: number;
     quality_self_score: number | null;
+    cost_usd: number | null;
     pain_id: string | null;
     approved_at: string | null;
     scheduled_send_at: string | null;
@@ -73,7 +86,7 @@ export async function listPitches(tenantId: string): Promise<PitchListRow[]> {
     .select(
       `
       id, prospect_id, case_study_id, status, subject, variant_index,
-      quality_self_score, pain_id, approved_at, scheduled_send_at, sent_at,
+      quality_self_score, cost_usd, pain_id, approved_at, scheduled_send_at, sent_at,
       prospects(company_name, market, language, prospect_contacts(full_name, email, priority_rank, selected_by)),
       case_studies(client_name),
       pain_taxonomy:pain_id(display_name_en)
@@ -105,6 +118,8 @@ export async function listPitches(tenantId: string): Promise<PitchListRow[]> {
     contact_email: topContact?.email ?? null,
     contact_name: topContact?.full_name ?? null,
     contact_is_guess: isGuessedContact(topContact?.selected_by),
+    // Zero spend means Claude never produced this one — see the field docs.
+    is_template_fallback: (r.cost_usd ?? 0) === 0,
     pain_label: r.pain_taxonomy?.display_name_en ?? null,
     approved_at: r.approved_at,
     scheduled_send_at: r.scheduled_send_at ?? null,
@@ -138,6 +153,7 @@ export async function getPitch(
     subject: string;
     variant_index: number;
     quality_self_score: number | null;
+    cost_usd: number | null;
     pain_id: string | null;
     approved_at: string | null;
     scheduled_send_at: string | null;
@@ -164,7 +180,7 @@ export async function getPitch(
     .select(
       `
       id, prospect_id, case_study_id, status, subject, variant_index,
-      quality_self_score, pain_id, approved_at, scheduled_send_at, sent_at,
+      quality_self_score, cost_usd, pain_id, approved_at, scheduled_send_at, sent_at,
       body_original, body_edited, body_sent,
       measurable_result_included, auto_rejected, auto_rejected_reason,
       rejection_reason,
@@ -198,6 +214,7 @@ export async function getPitch(
     contact_email: topContact?.email ?? null,
     contact_name: topContact?.full_name ?? null,
     contact_is_guess: isGuessedContact(topContact?.selected_by),
+    is_template_fallback: (r.cost_usd ?? 0) === 0,
     pain_label: r.pain_taxonomy?.display_name_en ?? null,
     approved_at: r.approved_at,
     scheduled_send_at: r.scheduled_send_at ?? null,
