@@ -11,6 +11,7 @@ import {
   LineChart,
   ScrollText,
   Search,
+  Sigma,
   Send,
   Settings,
   ShieldCheck,
@@ -57,6 +58,7 @@ export const NAV_SECTIONS: readonly NavSection[] = [
     items: [
       { label: "Case Studies", href: "/case-studies", icon: ScrollText, phase: 0 },
       { label: "Notable Clients", href: "/notable-clients", icon: Star, phase: 0 },
+      { label: "Benchmarks", href: "/benchmarks", icon: Sigma, phase: 0 },
       { label: "ICP", href: "/icp", icon: Target, phase: 0 },
     ],
   },

@@ -76,6 +76,14 @@ create index if not exists idx_benchmarks_pain_codes
 create index if not exists idx_benchmarks_industry_scope
   on public.benchmarks using gin (industry_scope);
 
+-- updated_at trigger. 0001 attaches set_updated_at() by looping over every table
+-- that had an updated_at column AT THAT MOMENT — so a table created later never
+-- gets it, and its updated_at would silently freeze at insert time. Attach it
+-- explicitly.
+create trigger set_updated_at_benchmarks
+  before update on public.benchmarks
+  for each row execute function set_updated_at();
+
 alter table public.benchmarks enable row level security;
 
 -- Matches the tenant-isolation pattern used by every other table here

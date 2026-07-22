@@ -143,3 +143,48 @@ export async function fetchActiveBenchmarkFigures(
     return [];
   }
 }
+
+// ── Admin listing ────────────────────────────────────────────────────────────
+
+export type BenchmarkAdminRow = {
+  id: string;
+  statistic: string;
+  figure: string;
+  pain_codes: string[];
+  industry_scope: string[];
+  market: string | null;
+  source_url: string;
+  publisher: string;
+  published_date: string | null;
+  is_vendor_sourced: boolean;
+  caveat: string | null;
+  verified_at: string | null;
+  is_active: boolean;
+};
+
+/**
+ * Every benchmark for the admin page — active and inactive alike.
+ *
+ * Deliberately NOT filtered: the whole point of the page is reviewing rows that
+ * are not yet live, reading their caveats, and deciding. Uses the request-scoped
+ * client so RLS applies.
+ */
+export async function listAllBenchmarks(tenantId: string): Promise<BenchmarkAdminRow[]> {
+  const { createClient } = await import("@/lib/supabase/server");
+  const supabase = await createClient();
+  const { data, error } = await supabase
+    .from("benchmarks")
+    .select(
+      `id, statistic, figure, pain_codes, industry_scope, market, source_url,
+       publisher, published_date, is_vendor_sourced, caveat, verified_at, is_active`,
+    )
+    .eq("tenant_id", tenantId)
+    .order("is_active", { ascending: false })
+    .order("publisher", { ascending: true })
+    .returns<BenchmarkAdminRow[]>();
+
+  // The table may not exist yet (migration 0029 unapplied) — show an empty
+  // page rather than a 500.
+  if (error || !data) return [];
+  return data;
+}
