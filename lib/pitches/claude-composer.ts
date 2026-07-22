@@ -139,11 +139,19 @@ export async function composePitchWithClaude(
     model: ANTHROPIC_DEFAULT_MODEL,
     system,
     user,
-    // 1200 (was 600): the JSON carries body (≤2000 chars) + preview + a reasoning
-    // field (≤800) + the conversational CTA, so 600 truncated the string mid-body
-    // ("Unterminated string in JSON") and forced the heuristic fallback. Headroom
-    // here is cheap; an under-cap is a hard parse failure.
-    max_tokens: 1200,
+    // 1600 (was 1200, was 600): the JSON carries body (≤2000 chars) + preview +
+    // a reasoning field (≤800) + the conversational CTA. An under-cap is not a
+    // soft failure — it truncates mid-string, JSON.parse dies with
+    // "Unterminated string", and the prospect silently gets the generic
+    // template instead. Two live pitches were lost this way at 1200.
+    //
+    // Raised specifically because SPANISH is the tight case: Spanish tokenizes
+    // roughly 15-20% worse than English for the same content (accents and
+    // longer words split into more tokens), so an identical brief that fits in
+    // English overflows in Spanish. That asymmetry made truncation look random
+    // when it was actually language-correlated. Headroom is cheap; the failure
+    // is not.
+    max_tokens: 1600,
     // A larger response takes longer to generate — give it more than the 20s
     // default so a slow generation doesn't time out into the heuristic. Stays
     // well under the 60s Vercel function budget (this is the only Sonnet call).
