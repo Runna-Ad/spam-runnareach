@@ -1207,3 +1207,27 @@ Session total: 18 commits, all deployed and pushed. 213/213 tests, tsc + eslint 
 - [ ] ⏳ #7 Analytics — pitch funnel metrics, cost tracking, Claude vs template breakdown
 - [ ] ⏳ #7 Analytics — pitch funnel metrics, cost tracking, Claude vs template breakdown
 
+
+## 2026-07-22 14:21
+**Shipped (recent commits):**
+  - feat(benchmarks): /benchmarks admin page for reviewing and activating rows
+  - feat(benchmarks): 6 verified rows fitted to the real prospect base
+  - feat(benchmarks): seed the two verified rows that fit the real prospect base
+  - feat(benchmarks): sourced benchmark library — schema, wiring, gate
+  - docs: log the sourced-benchmark override + plan Round 12
+  - fix(pitches): working CTA button + capability-only proof, no client names
+  - feat(gate): persist site_name so the wrong-company rule finally fires
+  - docs: record the 2026-07-22 sweep + the privacy-regulator incident
+
+**Still open:**
+- [ ] Supabase: ANON + SERVICE_ROLE keys live (connection works — Phase 0 unblocked)
+- [ ] Anthropic API key + $100/mo limit
+- [ ] Google Cloud (Places API + Gmail API + OAuth consent + OAuth client + restricted Places key)
+- [ ] Name sender #1 Runna CA principal + buy both domains + add runnareach.com to Rünna Workspace + DNS (SPF/DKIM/DMARC)
+- [ ] Postmark or SES account
+- [ ] Cal.com account
+- [ ] Slack hot-lead webhook URL
+- [ ] CRON_SECRET + TOKEN_ENCRYPTION_KEY (`openssl rand -hex 32`)
+- [ ] ⏳ #7 Analytics — pitch funnel metrics, cost tracking, Claude vs template breakdown
+- [ ] ⏳ #7 Analytics — pitch funnel metrics, cost tracking, Claude vs template breakdown
+
