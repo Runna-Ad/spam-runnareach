@@ -1112,10 +1112,28 @@ prospects: 8 recovered a usable address, 0 wrong-company addresses after the off
 Prod audit: 0 approved pitches with contact_id=null (was 11). The 1 remaining no-contact
 pitch is a historical SENT one (Beauty Studio Mexico) — not reachable by this fix.
 
-**NOT DONE (deliberate):**
-- [ ] ~512 prospects currently sit unreachable-with-a-website. At the measured 27% recovery
-      rate a re-scrape sweep would recover ~130 contacts for free. Needs Pedro's go-ahead —
-      it's ~512 outbound scrapes, and it will move prospects out of suppressed.
+**Re-scrape sweep — RUN 2026-07-22 (Pedro approved).** Scope was 207, not the 512 I first
+quoted: 213 of those were suppressed for LOW SCORE (a contact doesn't make a bad fit good),
+61 are Pedro's manual suppressions, 1 a hard bounce. Result: 57 contacts kept across 29
+prospects, 3 reactivated. See the incident below.
+
+- [x] INCIDENT: the sweep wrote 2 privacy-commissioner addresses (oipc.ab.ca, privcom.gc.ca)
+      as prospect contacts, harvested from prospects' own privacy policies. Fixed
+      structurally (legal-page harvest is same-domain only) + regulator domain blocklist.
+      16 bad rows deleted, 3 stranded prospects re-suppressed. See tasks/lessons.md.
+- [ ] 3 legacy never-pitch contacts predate today and are still in prospect_contacts:
+      Spruce Grove Feeds abuse@company.site (Jul 6), Geraldton District Hospital
+      hr@geraldtondh.com (Jul 21), Pearson Manufacturing careers@pearsonmfg.com (Jul 21).
+      The scraper now blocks these at extraction; the old rows need a one-off delete.
+- [ ] 7 prospects have a contact found but the site's own name doesn't confirm ownership —
+      Corvex Manufacturing (site says "Linamar"), Holiday Inn Niagara (site "IHG"), Canweld
+      Group (site "Symposium Cafe"), The Desert Spa (site "Villa del Arco"), CTP
+      Distributors, Clark Pollard LLP, Orillia Soldier's Memorial. Their stored DOMAIN is
+      wrong, not just the contact — worth fixing the prospect rows.
+- [ ] 3 prospects are parked domains and should be treated as no-website: Perry's Tackle,
+      Camrose Machine & Welding, NR Accounting ("HugeDomains" / "Coming Soon").
+- [ ] ~480 prospects still sit unreachable-with-a-website, but most are low-score. Only
+      re-sweep if the scoring is revisited.
 - [ ] Pre-existing gap left alone: parseSite mines the HOMEPAGE of an off-site redirect
       before redirectedOffsite() can veto it. Currently harmless (scrapeSite drops the
       whole set when offsite) but the guard belongs in parseSite if it's ever called direct.
