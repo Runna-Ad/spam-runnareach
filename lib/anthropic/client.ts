@@ -215,19 +215,30 @@ export async function structuredCall<T>(
   };
 
   let parsedJson: unknown;
+  // Be lenient — trim accidental code fences if Claude slips up.
+  const cleaned = text
+    .replace(/^```(?:json)?\s*/i, "")
+    .replace(/\s*```$/i, "");
   try {
-    // Be lenient — trim accidental code fences if Claude slips up.
-    const cleaned = text
-      .replace(/^```(?:json)?\s*/i, "")
-      .replace(/\s*```$/i, "");
     parsedJson = JSON.parse(cleaned);
-  } catch (err) {
-    return {
-      ok: false,
-      error: `JSON parse failed: ${err instanceof Error ? err.message : String(err)}. Raw: ${text.slice(0, 200)}`,
-      usage,
-      reason: "parse",
-    };
+  } catch (firstErr) {
+    // A parse failure used to end the call, which threw away a finished,
+    // already-paid-for generation. On 2026-07-22 a genuinely good Spanish
+    // pitch ("estética orozco: cada cita que entra por whatsapp") was
+    // discarded this way and the prospect got the generic fallback template
+    // instead. The cause is almost always a stray quote or a literal newline
+    // inside a string value — the model's prose, not its structure. Repair
+    // that mechanically and try once more before giving up.
+    try {
+      parsedJson = JSON.parse(repairJsonStrings(cleaned));
+    } catch {
+      return {
+        ok: false,
+        error: `JSON parse failed: ${firstErr instanceof Error ? firstErr.message : String(firstErr)}. Raw: ${text.slice(0, 200)}`,
+        usage,
+        reason: "parse",
+      };
+    }
   }
 
   const zodResult = input.schema.safeParse(parsedJson);
@@ -275,3 +286,73 @@ export const __test__ = {
   reset() { _testClient = null; },
   setClient(c: Anthropic | null) { _testClient = c; },
 };
+
+/**
+ * Repair the two ways an LLM reliably breaks its own JSON.
+ *
+ * Both failures happen INSIDE string values — the model's prose, not its
+ * structure — so the fix is a single pass that tracks whether we are inside a
+ * string and escapes what would otherwise terminate it early:
+ *
+ *   1. A stray double quote:  "body": "he said "no" and left"
+ *      A quote only legitimately CLOSES a string when the next non-whitespace
+ *      character is one of , } ] : — otherwise it belongs to the prose.
+ *   2. A literal newline:     "body": "line one
+ *                                      line two"
+ *      JSON forbids raw control characters in strings; they must be \n.
+ *
+ * This is deliberately conservative: anything it cannot confidently repair is
+ * left alone, the second parse fails, and the caller falls back exactly as
+ * before. It can only turn a guaranteed failure into a possible success.
+ *
+ * Exported for tests — every case below is one that actually reached prod.
+ */
+export function repairJsonStrings(raw: string): string {
+  let out = "";
+  let inString = false;
+  let escaped = false;
+
+  for (let i = 0; i < raw.length; i++) {
+    const ch = raw[i]!;
+
+    if (escaped) {
+      out += ch;
+      escaped = false;
+      continue;
+    }
+    if (ch === "\\") {
+      out += ch;
+      escaped = true;
+      continue;
+    }
+
+    if (ch === '"') {
+      if (!inString) {
+        inString = true;
+        out += ch;
+        continue;
+      }
+      // Closing quote only if the next meaningful char continues the JSON.
+      let j = i + 1;
+      while (j < raw.length && /\s/.test(raw[j]!)) j++;
+      const next = raw[j];
+      if (next === undefined || next === "," || next === "}" || next === "]" || next === ":") {
+        inString = false;
+        out += ch;
+      } else {
+        // Mid-prose quote the model forgot to escape.
+        out += '\\"';
+      }
+      continue;
+    }
+
+    if (inString && (ch === "\n" || ch === "\r" || ch === "\t")) {
+      out += ch === "\n" ? "\\n" : ch === "\r" ? "\\r" : "\\t";
+      continue;
+    }
+
+    out += ch;
+  }
+
+  return out;
+}

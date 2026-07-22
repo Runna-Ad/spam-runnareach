@@ -82,6 +82,15 @@ export type SendEmailInput = {
   /** Optional Reply-To (defaults to fromEmail). */
   replyTo?: string;
   /**
+   * Recipient's language. Decides the CTA button label.
+   *
+   * Previously the label was inferred by sniffing keywords out of the CTA
+   * sentence — which silently produced an English button ("Run my free audit")
+   * on Spanish emails whenever the CTA line was a bare "👉 <link>" with no prose
+   * to sniff. The message knows its own language; guessing was never right.
+   */
+  lang?: "en" | "es";
+  /**
    * Gmail thread ID for in-reply-to threading.
    * When set, the message is appended to the existing thread.
    * Also set In-Reply-To and References headers using originalMessageId.
@@ -137,7 +146,7 @@ function buildRfc2822(input: SendEmailInput): string {
   const replyTo = input.replyTo ?? input.fromEmail;
   const date = new Date().toUTCString();
   const subject = encodeHeader(input.subject);
-  const htmlBody = buildHtmlBody(input.body);
+  const htmlBody = buildHtmlBody(input.body, input.lang);
 
   const headerLines = [
     `From: ${from}`,
@@ -190,7 +199,7 @@ function buildRfc2822(input: SendEmailInput): string {
  * - Minimal inline CSS only (no external stylesheets)
  * - multipart/alternative means spam filters score the plain-text part too
  */
-function buildHtmlBody(plainText: string): string {
+function buildHtmlBody(plainText: string, lang?: "en" | "es"): string {
   const lines = plainText.split("\n");
   const htmlLines: string[] = [];
 
@@ -214,7 +223,7 @@ function buildHtmlBody(plainText: string): string {
         const [beforeRaw = "", afterRaw = ""] = withoutEmoji.split(rawUrl);
         const before = beforeRaw.replace(/[:\s—–-]+$/, "").trim();
         const after = afterRaw.replace(/^[.,:\s—–-]+/, "").trim();
-        const buttonText = deriveButtonText(before || after);
+        const buttonText = deriveButtonText(before || after, lang);
 
         if (before) {
           htmlLines.push(`<p style="margin: 16px 0 8px;">${escapeHtml(before)}</p>`);
@@ -269,8 +278,12 @@ ${htmlLines.join("\n")}
 }
 
 /** Derive a short action-oriented button label from the CTA description text. */
-function deriveButtonText(description: string): string {
+function deriveButtonText(description: string, lang?: "en" | "es"): string {
   const lower = description.toLowerCase();
+  // Language wins over keyword sniffing — see the note in pitches-page.tsx.
+  // A bare "👉 {link}" CTA has no prose to sniff, so Spanish emails were
+  // getting the English fallback label.
+  if (lang === "es") return "Ver diagnóstico gratis →";
   // Spanish
   if (lower.includes("gratis") || lower.includes("diagnóstico") || lower.includes("auditoría") || lower.includes("auditoria")) {
     return "Ver diagnóstico gratis →";

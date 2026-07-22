@@ -563,7 +563,12 @@ export function renderIndustryTemplate(
 
   const subject = applyVars(tpl.subject, vars);
   const preview_text = applyVars(tpl.preview_text, vars);
-  const body = applyVars(tpl.body, vars);
+  // Every template opens "Hola {first_name}," / "Hi {first_name},". With no
+  // known contact name the var resolves to "" and the greeting renders as
+  // "Hola ," — a stray space before the comma that reads as a broken mail
+  // merge, which is the exact impression a cold email cannot afford. Repaired
+  // here rather than in 22 template literals so a new template inherits it.
+  const body = applyVars(tpl.body, vars).replace(/^(Hola|Hi)\s+,/, "$1,");
 
   const industryLabel = lang === "es" ? template.label_es : template.label_en;
 

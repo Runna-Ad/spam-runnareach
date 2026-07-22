@@ -731,7 +731,7 @@ function PitchDetail({
               Email preview
             </span>
             <div className="rounded-[var(--radius-md)] bg-white p-4 text-[13px] leading-relaxed text-[#1a1a1a] ring-1 ring-inset ring-[var(--color-border-default)]">
-              <EmailBodyPreview body={body} />
+              <EmailBodyPreview body={body} lang={pitch.prospect_language} />
             </div>
           </div>
         )}
@@ -915,7 +915,7 @@ function PitchDetail({
  * Renders the plain-text pitch body as React JSX so the pitch editor can
  * show exactly how the CTA line will look as a button in the recipient's inbox.
  */
-function EmailBodyPreview({ body }: { body: string }) {
+function EmailBodyPreview({ body, lang }: { body: string; lang: "en" | "es" | null }) {
   const lines = body.split("\n");
 
   return (
@@ -934,7 +934,7 @@ function EmailBodyPreview({ body }: { body: string }) {
             const [beforeRaw = "", afterRaw = ""] = withoutEmoji.split(rawUrl);
             const before = beforeRaw.replace(/[:\s—–-]+$/, "").trim();
             const after = afterRaw.replace(/^[.,:\s—–-]+/, "").trim();
-            const buttonText = deriveButtonLabel(before || after);
+            const buttonText = deriveButtonLabel(before || after, lang ?? undefined);
             return (
               <React.Fragment key={i}>
                 {before ? (
@@ -992,8 +992,14 @@ function EmailBodyPreview({ body }: { body: string }) {
   );
 }
 
-function deriveButtonLabel(description: string): string {
+function deriveButtonLabel(description: string, lang?: "en" | "es"): string {
   const lower = description.toLowerCase();
+  // Language wins over keyword sniffing. The industry templates emit a bare
+  // "👉 {link}" with no surrounding text, so every keyword check missed and a
+  // Spanish email rendered an English button ("Run my free audit →").
+  // Inferring language from prose was always the wrong signal — the pitch
+  // knows its own language.
+  if (lang === "es") return "Ver diagnóstico gratis →";
   if (
     lower.includes("gratis") ||
     lower.includes("diagnóstico") ||

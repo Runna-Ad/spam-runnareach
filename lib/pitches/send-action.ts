@@ -55,6 +55,7 @@ export async function sendPitch(input: {
     prospect_id: string;
     contact_id: string | null;
     prospect_contacts: { email: string | null; full_name: string | null } | null;
+    prospects: { language: "en" | "es" } | null;
   };
 
   const { data: pitch, error: pitchErr } = await supabase
@@ -62,7 +63,8 @@ export async function sendPitch(input: {
     .select(
       `id, status, subject, body_original, body_edited, preview_text,
        prospect_id, contact_id,
-       prospect_contacts:contact_id(email, full_name)`,
+       prospect_contacts:contact_id(email, full_name),
+       prospects:prospect_id(language)`,
     )
     .eq("id", pitch_id)
     .eq("tenant_id", user.tenantId)
@@ -169,6 +171,9 @@ export async function sendPitch(input: {
     to: toName ? `"${toName.replace(/"/g, "")}" <${toEmail}>` : toEmail,
     subject: pitch.subject,
     body,
+    // Drives the CTA button label. Without it a Spanish email ships an English
+    // button whenever the CTA line has no prose to infer the language from.
+    lang: pitch.prospects?.language ?? undefined,
   });
 
   if (!sendResult.ok) {

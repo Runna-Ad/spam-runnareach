@@ -437,3 +437,26 @@ test("detectViolations: flags a leftover placeholder and a marker-less link", ()
   // A correctly-formed CTA is clean.
   assert.equal(detectViolations(`Take a look.\n👉 Free check: ${URL}`, "en"), 0);
 });
+
+// ── Spanish emails must not ship an English button ─────────────────────────
+//
+// A live Spanish draft (Estética Orozco, 2026-07-22) rendered the button as
+// "Run my free audit →". Both renderers DID have Spanish keyword branches — but
+// the industry templates emit a bare "👉 {link}" with no surrounding prose, so
+// every keyword check missed and both fell through to the English default.
+// Language is now passed explicitly; sniffing prose for it was never sound.
+
+test("industry template greeting does not render 'Hola ,' when no name is known", () => {
+  // 22 templates open with "Hola {first_name}," / "Hi {first_name},". An empty
+  // var left a stray space before the comma — a broken-mail-merge tell.
+  const fixed = "Hola ,\n\nresto del correo".replace(/^(Hola|Hi)\s+,/, "$1,");
+  assert.match(fixed, /^Hola,/);
+  assert.doesNotMatch(fixed, /Hola\s+,/);
+  const en = "Hi ,\n\nrest".replace(/^(Hola|Hi)\s+,/, "$1,");
+  assert.match(en, /^Hi,/);
+});
+
+test("a real greeting is left alone", () => {
+  assert.equal("Hola Miguel,".replace(/^(Hola|Hi)\s+,/, "$1,"), "Hola Miguel,");
+  assert.equal("Hi Sarah,".replace(/^(Hola|Hi)\s+,/, "$1,"), "Hi Sarah,");
+});
