@@ -607,7 +607,8 @@ export function extractContactEmails(html: string, $: cheerio.CheerioAPI, siteDo
       !e.includes("@2x.") &&
       !e.includes("@3x.") &&
       !isMonitoringEmail(e) &&
-      !isNeverPitchEmail(e),
+      !isNeverPitchEmail(e) &&
+      !isRegulatorEmail(e),
   );
 }
 
@@ -725,11 +726,32 @@ const NEVER_PITCH_LOCALS = new Set([
 function isNeverPitchEmail(email: string): boolean {
   const local = email.split("@")[0]?.toLowerCase();
   if (!local) return false;
-  // Compare both raw and punctuation-stripped ("privacy.officer", "privacy-officer").
-  return (
-    NEVER_PITCH_LOCALS.has(local) ||
-    NEVER_PITCH_LOCALS.has(local.replace(/[.\-_]/g, ""))
-  );
+  if (NEVER_PITCH_LOCALS.has(local)) return true;
+  if (NEVER_PITCH_LOCALS.has(local.replace(/[.\-_]/g, ""))) return true;
+  // Institutions prefix the function: "rvh.privacy@renfrewhosp.com",
+  // "hr.recruitment@williamoslerhs.ca". Both slipped through a whole-local
+  // check, so test each dot/dash/underscore segment too.
+  return local.split(/[.\-_]/).some((seg) => NEVER_PITCH_LOCALS.has(seg));
+}
+
+/**
+ * Regulators, privacy commissioners and government bodies — never a prospect.
+ *
+ * This exists because of a live incident, not a hypothetical: the first sweep
+ * wrote generalinfo@oipc.ab.ca (Information & Privacy Commissioner of Alberta)
+ * as the contact for a wholesaler, and info@privcom.gc.ca (Privacy Commissioner
+ * of Canada) for a hotel spa. Canadian privacy policies are expected to name
+ * the oversight body and how to complain to it, so mining /privacy pages
+ * harvests the REGULATOR's address. The local parts were "generalinfo", "info"
+ * and a person's surname — nothing a local-part blocklist could ever catch.
+ * Cold-emailing the privacy commissioner is the worst outcome this system has.
+ */
+const REGULATOR_DOMAIN_RE =
+  /(?:^|\.)(?:oipc|ipc|priv|privcom|oic-ci|cai)\.[a-z.]+$|\.gc\.ca$|\.gouv\.[a-z]{2}\.ca$|\.gov(?:\.[a-z]{2})?$|\.gob\.mx$/i;
+
+function isRegulatorEmail(email: string): boolean {
+  const domain = email.split("@")[1]?.toLowerCase();
+  return !!domain && REGULATOR_DOMAIN_RE.test(domain);
 }
 
 function isMonitoringEmail(email: string): boolean {
@@ -918,7 +940,18 @@ async function harvestEmailsFromPages(
     // the element-boundary fix, glued-TLD repair, placeholder and monitoring
     // filters. A second, looser email regex here would reintroduce the exact
     // garbage those guards exist to stop.
-    found.push(...extractContactEmails(html, cheerio.load(html), siteDomain));
+    // SAME-DOMAIN ONLY on legal pages. A privacy policy's job is to name third
+    // parties — the regulator you can complain to, the parent company, the
+    // processor. Every off-domain address on that page is therefore somebody
+    // else's, and treating them as the prospect's contact is how
+    // generalinfo@oipc.ab.ca (Alberta's Privacy Commissioner) became a
+    // wholesaler's "contact". Homepage and Contact-page mining keep accepting
+    // off-domain addresses, because small businesses genuinely do run on
+    // gmail/telus — but a legal page is not evidence of that.
+    const onDomain = extractContactEmails(html, cheerio.load(html), siteDomain).filter(
+      (e) => siteDomain && e.toLowerCase().endsWith(`@${siteDomain}`),
+    );
+    found.push(...onDomain);
     // Stop at the first page that actually yields something — one real
     // mailbox is enough, and Privacy/Terms often just repeat it.
     if (found.some((e) => hasUsableEmail(e))) break;

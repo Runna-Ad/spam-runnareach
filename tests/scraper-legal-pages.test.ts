@@ -178,6 +178,49 @@ test("does not drop a person whose name merely contains a blocked word", () => {
   );
 });
 
+// ── Regulators must never become contacts ─────────────────────────────────────
+//
+// A live incident, not a hypothetical. The first sweep wrote
+// generalinfo@oipc.ab.ca (Information & Privacy Commissioner of Alberta) as a
+// wholesaler's contact, and info@privcom.gc.ca (Privacy Commissioner of Canada)
+// for a hotel spa — because Canadian privacy policies must tell you how to
+// complain to the regulator. Note the local parts: "generalinfo", "info", a
+// surname. No local-part blocklist could ever have caught these.
+
+for (const addr of [
+  "generalinfo@oipc.ab.ca",
+  "eschiman@oipc.ab.ca",
+  "info@privcom.gc.ca",
+  "info@priv.gc.ca",
+  "contact@ipc.on.ca",
+  "someone@canada.gc.ca",
+  "info@cai.gouv.qc.ca",
+  "contacto@sat.gob.mx",
+]) {
+  test(`drops regulator/government address ${addr}`, () => {
+    assert.deepEqual(emailsFrom(`<a href="mailto:${addr}">complain here</a>`), []);
+  });
+}
+
+test("a private business on a normal domain is not mistaken for a regulator", () => {
+  // The pattern must anchor on the domain's tail — "ipcanada.com" is not "ipc".
+  assert.deepEqual(
+    emailsFrom('<a href="mailto:info@ipcanada.com">x</a>'),
+    ["info@ipcanada.com"],
+  );
+  assert.deepEqual(
+    emailsFrom('<a href="mailto:sales@govan-industries.ca">x</a>'),
+    ["sales@govan-industries.ca"],
+  );
+});
+
+test("institution-prefixed function inboxes are dropped", () => {
+  // Both reached prospect_contacts in the first sweep: a whole-local check
+  // missed them because the function name is a suffix, not the whole local.
+  assert.deepEqual(emailsFrom('<a href="mailto:rvh.privacy@nygh.on.ca">x</a>'), []);
+  assert.deepEqual(emailsFrom('<a href="mailto:hr.recruitment@nygh.on.ca">x</a>'), []);
+});
+
 // ── Off-site redirect guard ───────────────────────────────────────────────────
 //
 // Caught by running the new scraper against real prospects: gluo.mx 301s to
