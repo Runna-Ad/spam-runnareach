@@ -23,6 +23,7 @@ import {
   extractKeyPages,
   parseSite,
   redirectedOffsite,
+  siteOwnership,
 } from "../lib/research/scraper.ts";
 
 const BASE = "https://weeksconstruction.ca";
@@ -265,4 +266,51 @@ test("parseSite still mines the homepage itself", () => {
   // The legal URL is collected for the hunt even when the homepage succeeded;
   // the hunt itself is what's skipped in that case.
   assert.ok(parsed.key_pages.some((p) => p.label === "Privacy"));
+});
+
+// ── siteOwnership: does the scraped site belong to this prospect? ─────────────
+//
+// Discovery attaches wrong domains. "Corvex Manufacturing" was stored against
+// linamar.com (its parent), so scraping produced a real, deliverable address
+// for a Linamar employee. Three-valued on purpose: two attempts at a boolean
+// failed in OPPOSITE directions, which is what "unsure" exists to absorb.
+
+test("siteOwnership: matching name is a confident yes", () => {
+  assert.equal(siteOwnership("Grant Marion Construction", "Grant Marion Construction", "grantmarionconstruction.com"), "yes");
+});
+
+test("siteOwnership: Ltd vs Limited still matches (the boolean-attempt-1 failure)", () => {
+  assert.equal(siteOwnership("Brewers Distributor Ltd", "Brewers Distributor Limited", "bdl.ca"), "yes");
+});
+
+test("siteOwnership: acronym domain with a self-naming site matches", () => {
+  // sbghc.on.ca IS South Bruce Grey Health Centre — domain-token matching alone
+  // rejected ~30 legitimate prospects like this.
+  assert.equal(siteOwnership("South Bruce Grey Health Centre", "South Bruce Grey Health Centre", "sbghc.on.ca"), "yes");
+});
+
+test("siteOwnership: shared GENERIC word is not a match (the boolean-attempt-2 failure)", () => {
+  // Both contain "Manufacturing" and nothing else — different companies.
+  assert.notEqual(siteOwnership("Arctic Spas Manufacturing", "Blue Falls Manufacturing", "bluefallsbrands.com"), "yes");
+});
+
+test("siteOwnership: the Corvex case is not a yes", () => {
+  assert.notEqual(siteOwnership("Corvex Manufacturing", "Linamar", "linamar.com"), "yes");
+  assert.notEqual(siteOwnership("Holiday Inn Niagara Falls", "IHG Hotels & Resorts", "ihg.com"), "yes");
+  assert.notEqual(siteOwnership("Canweld Group", "Symposium Cafe Restaurants", "symposiumcafe.com"), "yes");
+});
+
+test("siteOwnership: a tagline title still passes via the domain", () => {
+  // <title> is often a tagline that names nothing. The domain rescues it.
+  assert.equal(siteOwnership("Jones & O'Connell LLP", "Chartered Professional Accountants", "jonesoconnell.ca"), "yes");
+});
+
+test("siteOwnership: parked domains are their own verdict", () => {
+  assert.equal(siteOwnership("Perry's Tackle Wholesale", "HugeDomains", "perrystackle.com"), "parked");
+  assert.equal(siteOwnership("NR Accounting", "Coming Soon", "nraccounting.ca"), "parked");
+});
+
+test("siteOwnership: no distinctive tokens is unsure, never a false yes", () => {
+  // Every token is generic — there is nothing to match on either way.
+  assert.equal(siteOwnership("Canada Services Ltd", null, "example.com"), "unsure");
 });

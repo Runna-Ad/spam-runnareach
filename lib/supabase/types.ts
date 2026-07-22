@@ -276,6 +276,7 @@ export type Database = {
           tenant_id: UUID;
           prospect_id: UUID;
           what_they_do: string | null;
+          site_name: string | null;
           tech_stack: string[];
           pain_points: unknown;
           notes: string | null;
@@ -292,6 +293,7 @@ export type Database = {
           tenant_id: UUID;
           prospect_id: UUID;
           what_they_do?: string | null;
+          site_name?: string | null;
           tech_stack?: string[];
           pain_points?: unknown;
           notes?: string | null;
@@ -303,6 +305,7 @@ export type Database = {
         };
         Update: {
           what_they_do?: string | null;
+          site_name?: string | null;
           tech_stack?: string[];
           pain_points?: unknown;
           notes?: string | null;

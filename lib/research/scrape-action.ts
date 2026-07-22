@@ -5,7 +5,7 @@ import { z } from "zod";
 import { writeAuditLog } from "@/lib/audit/log";
 import { requireUser } from "@/lib/auth";
 import { createClient } from "@/lib/supabase/server";
-import { scrapeSite, type SubPageExtract } from "./scraper";
+import { scrapeSite, siteOwnership, type SubPageExtract } from "./scraper";
 import { isRoleBasedEmail } from "./email-utils";
 import { screenEmailsAgainstSmtp } from "./snap-contact";
 
@@ -225,6 +225,21 @@ export async function scrapeWebsite(prospectId: string): Promise<ScrapeWebsiteRe
 
   const rawSite = result.site;
 
+  // ── Parked domain = no website at all ────────────────────────────────────
+  // "HugeDomains", "Domain for sale", "Coming Soon" — the page loads with HTTP
+  // 200 so none of the error paths above fire, but there is no business site
+  // behind it. Three prospects reached the contact-harvest this way. Any
+  // address on such a page belongs to the registrar or parking service, so
+  // harvest nothing and report it; the caller clears the domain and routes the
+  // prospect to the honest no-website lane, same as the DNS-dead case.
+  if (siteOwnership(prospect.company_name, rawSite.site_name, prospect.domain) === "parked") {
+    return {
+      ok: false,
+      error: `That domain is parked ("${rawSite.site_name}") — there's no real website behind it.`,
+      domain_dead: true,
+    };
+  }
+
   // Screen same-domain scraped addresses against the SMTP probe before they
   // touch research notes or prospect_contacts — pages routinely display stale
   // addresses the mail server no longer knows ("550 No Such User Here"
@@ -269,6 +284,10 @@ export async function scrapeWebsite(prospectId: string): Promise<ScrapeWebsiteRe
       .from("prospect_research")
       .update({
         what_they_do: whatTheyDo,
+        // The name the site calls itself — feeds send-gate rule 4, which holds
+        // a pitch when the stored company name contradicts it. Extracted since
+        // forever, thrown away until now, which is why that rule never fired.
+        site_name: site.site_name,
         tech_stack: mergedTechStack,
         notes: mergedNotes,
         evidence_urls: mergedEvidence,
@@ -283,6 +302,7 @@ export async function scrapeWebsite(prospectId: string): Promise<ScrapeWebsiteRe
       tenant_id: user.tenantId,
       prospect_id: parsed.data.prospect_id,
       what_they_do: whatTheyDo,
+      site_name: site.site_name,
       tech_stack: mergedTechStack,
       notes: mergedNotes,
       evidence_urls: mergedEvidence,

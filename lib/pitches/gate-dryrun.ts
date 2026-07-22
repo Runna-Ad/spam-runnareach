@@ -34,6 +34,7 @@ type ResearchRow = {
   last_scraped_at: string | null;
   evidence_urls: string[] | null;
   pain_points: unknown;
+  site_name: string | null;
 };
 
 type ContactRow = {
@@ -81,7 +82,7 @@ export async function recordGateDryRun(
 
     const { data: research } = await supabase
       .from("prospect_research")
-      .select("last_scraped_at, evidence_urls, pain_points")
+      .select("last_scraped_at, evidence_urls, pain_points, site_name")
       .eq("prospect_id", pitch.prospect_id)
       .eq("tenant_id", tenantId)
       .maybeSingle<ResearchRow>();
@@ -113,9 +114,13 @@ export async function recordGateDryRun(
       recipientFullName: top?.full_name ?? null,
       recipientSelectedBy: top?.selected_by ?? null,
       companyName: prospect.company_name,
-      // Not persisted today — the gate skips the name-match rule when null.
-      // Worth storing on prospect_research if this rule proves valuable.
-      siteName: null,
+      // Persisted since migration 0027. Before that this was hardcoded null, so
+      // rule 4 — "stored company name contradicts the site's own name" — never
+      // fired once, despite being exactly the guard that catches a prospect
+      // whose discovered domain belongs to someone else (Corvex Manufacturing
+      // stored against linamar.com). Null for rows scraped before 0027, and the
+      // gate correctly skips the rule rather than guessing.
+      siteName: research?.site_name ?? null,
       domain: prospect.domain,
       websiteVerified,
       evidenceQuotes: evidenceQuotesFrom(research?.pain_points),
