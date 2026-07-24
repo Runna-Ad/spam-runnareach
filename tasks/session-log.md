@@ -1352,3 +1352,62 @@ since it was written — `db push` works normally now.
 - [ ] ⏳ #7 Analytics — pitch funnel metrics, cost tracking, Claude vs template breakdown
 - [ ] ⏳ #7 Analytics — pitch funnel metrics, cost tracking, Claude vs template breakdown
 
+
+## 2026-07-24 10:38
+**Shipped (recent commits):**
+  - fix(composer): humanize + simplify pitch voice — write for non-marketers
+  - docs: session-log auto-append (Stop hook)
+  - docs: log the orphaned deploy-watcher (46h infinite poll loop)
+
+**Still open:**
+- [ ] Supabase: ANON + SERVICE_ROLE keys live (connection works — Phase 0 unblocked)
+- [ ] Anthropic API key + $100/mo limit
+- [ ] Google Cloud (Places API + Gmail API + OAuth consent + OAuth client + restricted Places key)
+- [ ] Name sender #1 Runna CA principal + buy both domains + add runnareach.com to Rünna Workspace + DNS (SPF/DKIM/DMARC)
+- [ ] Postmark or SES account
+- [ ] Cal.com account
+- [ ] Slack hot-lead webhook URL
+- [ ] CRON_SECRET + TOKEN_ENCRYPTION_KEY (`openssl rand -hex 32`)
+- [ ] ⏳ #7 Analytics — pitch funnel metrics, cost tracking, Claude vs template breakdown
+- [ ] ⏳ #7 Analytics — pitch funnel metrics, cost tracking, Claude vs template breakdown
+
+
+## 2026-07-24 — Cleanup + pitch voice humanization
+
+**Short session, two things:**
+
+1. **Killed an orphaned deploy-watcher** that had been "waiting for deploy" for
+   46 hours. It was the first watcher from the 2026-07-22 wrap-up, whose `until`
+   loop grepped `sed -n '6p'` of `vercel ls` — line 6 is the TABLE HEADER, which
+   never matches "● Ready", so the loop could never exit. I'd spotted the bug at
+   the time, relaunched a corrected watcher, but never stopped the broken one.
+   Zero impact (idle polling, no writes). Lesson logged: stop-on-relaunch, and
+   never launch an until-grep whose pattern can't appear in the stream.
+
+2. **Humanized + simplified the pitch voice** (Pedro: "write to people who know
+   nothing about marketing or very little"). The Claude path was producing
+   agency register — a real draft said "without burning HR bandwidth", "that's
+   not a staffing problem, it's a systems problem", "smart intake", "the
+   qualified ones route directly", "an AI that triages incoming messages".
+   Root cause: the banned-jargon list was ecommerce-only and missed the
+   AI/ops/consultant words that leak for service businesses.
+   Fix (prompt + guard): a "who you're writing to" block, a widened banned list
+   with plain-word swaps, a HUMANIZE block (short sentences, contractions, "you"
+   over "we"), and the jargon words added to detectViolations in both languages.
+   Pedro confirmed "much better now" on regenerated pitches.
+
+**Current state:** all deployed and verified (alias 825bl82a5). 284 tests.
+Working tree clean. Nothing pending.
+
+**Known tradeoff (watch):** for hospital prospects, "intake"/"triage" are
+legitimate words, so the jargon guard may soft-ding a plain hospital pitch. It
+lowers the quality score, never blocks. Scope those two words to
+marketing-context only if it bites.
+
+**Pick up next session:**
+1. Activate more benchmark rows on /benchmarks as comfort grows (Pedro has done
+   the ones he liked).
+2. Coverage gaps still open: NO benchmark source for wholesale/distribution
+   (140 prospects) or accounting firms (105), and NOTHING Mexico-specific.
+3. Upstream: crawl-action.ts:225 takes the source listing's domain verbatim with
+   no name check (how Corvex ended up on linamar.com).
