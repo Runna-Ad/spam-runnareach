@@ -304,21 +304,47 @@ ${RUNNA_CAPABILITIES}
 
 PROOF POLICY (important): a specific success story is NOT required, and the DEFAULT is to use NONE. Lead with the most relevant Runna CAPABILITY for this prospect (AI tools/automation, optimization, custom dashboards, asset creation, video/ad production, design, growth) and use Runna's years of expertise + real in-house builds as proof. A capability-led pitch with NO case study is the norm and is usually STRONGER. Cite a specific case study ONLY when it clears a HIGH bar: the case must be about the SAME KIND OF WORK you're proposing in this email — same industry is NOT enough, and the metric must be genuinely impressive. ⛔ NEVER bridge a case about a DIFFERENT service onto this solution (e.g. do not cite a paid-ads / Meta-ads / clicks result to prove an AI chatbot; do not cite a web-design result to prove email automation). A mismatched or weak case is a non-sequitur that makes the email LESS credible — when in doubt, leave it out and go capability-led. The ONE hard rule: never fabricate a client name, metric, or geography that isn't in the payload.
 
-Your job: write a cold email that reads like a real human wrote it — conversational, specific,
-warm. Think of it like introducing yourself to someone at a bar: you notice something about
-them, mention it genuinely, show you can help with one specific thing, then ask if they want
-to grab a coffee. 70-100 words max. Get them curious enough to reply — not close a deal.
+Your job: write a cold email that reads like a real person typed it, quickly, to another
+person. Conversational, specific, warm. Like introducing yourself to someone at a bar: you
+notice something about them, mention it genuinely, show you can help with one thing, then ask
+if they want to grab a coffee. 70-100 words max. Get them curious enough to reply, not close a deal.
+
+WHO YOU ARE WRITING TO — read this twice.
+Your reader runs a hospital, a law firm, a machine shop, a wholesale warehouse, a spa. They
+know their trade cold and know almost NOTHING about marketing or software, and they don't want
+to. Every insider word you use makes them feel talked-down-to or sold-at, and they stop reading.
+Write the way you'd explain it to a smart friend who isn't in the business. If a 60-year-old
+shop owner would have to stop and wonder what a word means, it's the wrong word.
 
 ABSOLUTE FORMAT RULES (violations will fail QA):
 - NO em dashes (—). Use commas, periods, or restructure the sentence.
-- NO marketing/tech jargon. Write for a business owner who has never heard of: retargeting,
-  funnel, LTV, ROAS, nurture sequence, drip campaign, attribution, segmentation, CRM, UTM,
-  dynamic ads, lookalike audiences, win-back, churn, conversion rate optimization, UX audit.
-  Instead: describe what changes for them in plain language. "People who almost bought come
-  back and buy" not "cart recovery retargeting." "Your ads make more per peso" not "improved ROAS."
+- NO jargon, marketing OR tech. Banned, with what to say instead (say the plain thing, ALWAYS):
+    intake / smart intake / triage / route / routing / workflow / pipeline / funnel
+      -> just say what happens: "someone gets back to them right away", "the message lands
+         with the right person", "nothing slips through"
+    qualify / qualified lead / lead / lead capture / lead-gen / conversion / convert
+      -> "the people worth calling back", "more of them actually book"
+    bandwidth / capacity (as a stand-in for time or staff) -> "time", "without hiring anyone"
+    optimize / optimization / streamline / seamless / robust / solution / systems / leverage
+      -> cut the word, describe the result: "faster", "less manual work", "you stop losing X"
+    retargeting / nurture / drip / lifecycle / attribution / segmentation / CRM / ROAS / LTV /
+      churn / win-back / UX audit -> describe the OUTCOME in plain words
+  Test each sentence: would that shop owner understand every word without stopping? If not, swap it.
+- NO clever consultant lines. "That's not a staffing problem, it's a systems problem" sounds
+  smart and tells the reader nothing. Cut that kind of line entirely.
 - NO corporate labels: no "El fix aqui", no "Lo que mueve la aguja", no "diagnosticar el patron".
 - NO language mixing: the entire email must be in one language.
 - NO greeting with "there" in Spanish: "Hola there" is a critical failure.
+
+HUMANIZE — it must sound typed by a person, not assembled by an agency:
+- Short sentences. One idea each. If a sentence leans on two commas to hold itself up, split it.
+- Contractions always (you're, it's, they're, don't). Nobody writes "it is" in a real email.
+- Talk about THEIR world in THEIR words, not about what "we build". Less "we", more "you".
+- Plain verbs: "answer", "reach", "fix", "lose", "miss", "book". Not "facilitate", "enable",
+  "deliver", "implement", "deploy".
+- Read it in your head as if saying it out loud. If you'd never say it to someone's face, redo it.
+The same bar applies in Spanish: the everyday words a "tendero" or "dueño" actually uses, never
+agency Spanish.
 ${voiceRules}
 
 CRITICAL — pain translation handling:
@@ -924,6 +950,15 @@ export function detectViolations(body: string, lang: "en" | "es"): number {
       // Anglicisms that slip through in MX marketing context
       " leads",      // "tus leads", "generar leads" — space prefix avoids matching "liderazgo"
       "engagement",  // no Spanish equivalent so Claude borrows the English word
+      // English tech/marketing jargon that leaks into Spanish emails — each is
+      // both jargon AND language-mixing (Pedro, 2026-07-24).
+      "intake",
+      "triage",
+      "workflow",
+      "pipeline",
+      "onboarding",
+      "lead capture",
+      "smart intake",
     ];
     for (const term of forbidden) {
       if (lower.includes(term)) count++;
@@ -955,6 +990,26 @@ export function detectViolations(body: string, lang: "en" | "es"): number {
       "i hope this finds you",
       "just reaching out",
       "quick question",
+      // Marketing/tech jargon a business owner doesn't speak (Pedro, 2026-07-24:
+      // "write to people who know nothing about marketing"). The prompt bans
+      // these; this is the backstop, because a prompt rule alone leaks. Chosen
+      // to be substring-safe — no term here hides inside a common ordinary word.
+      "intake",
+      "triage",
+      "workflow",
+      "routing",
+      "lead capture",
+      "lead-gen",
+      "lead gen",
+      "qualified lead",
+      "bandwidth",
+      "streamline",
+      "seamless",
+      "optimize",
+      "optimization",
+      "conversion",
+      "systems problem",
+      "leverage",
     ];
     for (const term of forbidden) {
       if (lower.includes(term)) count++;

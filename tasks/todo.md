@@ -1151,29 +1151,29 @@ this step" — about THEM, reads as diagnosis. Same number, opposite job. So
 benchmarks size the PROSPECT's problem in the pain line; they never prove Runna's
 competence. This is why benchmarks can work where named case studies didn't.
 
-- [ ] Migration 0029: `benchmarks` table — statistic, value, pain_id[],
+- [x] Migration 0029: `benchmarks` table — statistic, value, pain_id[],
       industry_scope[], market, source_url (NOT NULL), publisher,
       published_date, verified_by, verified_at, is_active
-- [ ] source_url NOT NULL is the whole point: a benchmark table without a
+- [x] source_url NOT NULL is the whole point: a benchmark table without a
       citation per row is the same fabrication laundered through a database,
       and worse because it looks authoritative
-- [ ] Composer: fetch benchmarks matching chosen pain AND prospect industry.
+- [x] Composer: fetch benchmarks matching chosen pain AND prospect industry.
       No match -> no number (the "describe the mechanism" instruction already
       handles it). NEVER a cross-industry benchmark — that's the same
       non-sequitur the prompt already bans for case studies.
-- [ ] send-gate rule 5 becomes enforceable: a metric passes if it appears in
+- [x] send-gate rule 5 becomes enforceable: a metric passes if it appears in
       evidence OR matches an active benchmark row. Today it can only say no,
       because no legitimate source for a number exists.
-- [ ] Prompt: benchmarks size THEIR problem, never prove OUR results
-- [ ] Seed 10-15 rows for the top pains only, NOT the whole taxonomy. Claude
+- [x] Prompt: benchmarks size THEIR problem, never prove OUR results
+- [x] Seed 10-15 rows for the top pains only, NOT the whole taxonomy. Claude
       researches + drafts candidates with citations; Pedro approves each row
       (he's the one who defends the number if a prospect asks).
-- [ ] Then MEASURE: reply rate with benchmarks vs the no-number version now
+- [x] Then MEASURE: reply rate with benchmarks vs the no-number version now
       live. Pedro's own evidence says numbers-about-others underperform, so
       this is a hypothesis to test, not a certainty.
-- [ ] Watch: most "marketing benchmarks" online are vendor blog posts citing
+- [x] Watch: most "marketing benchmarks" online are vendor blog posts citing
       each other. Prefer primary studies (Baymard for checkout UX, Littledata
       for Shopify conversion). Expect solid sources for ~1/3 of the taxonomy.
-- [ ] Don't let benchmarks substitute for the Hunter audit — that gives the
+- [x] Don't let benchmarks substitute for the Hunter audit — that gives the
       prospect their OWN real number, which beats any benchmark. Benchmark
       sizes the problem, Hunter delivers their actual figure.
