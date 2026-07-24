@@ -1311,3 +1311,44 @@ Migrations 0027-0031 applied to prod. Working tree clean.
 duplicate 0005), 0029 (benchmarks), 0030+0031 (benchmark seeds). NOTE: the
 0005 collision had been silently blocking EVERY CLI migration in this repo
 since it was written — `db push` works normally now.
+
+## 2026-07-22 16:19
+**Shipped (recent commits):**
+  - docs: wrap 2026-07-22 — session log, 3 lessons, project state
+  - feat(pitches): surface template fallbacks instead of failing silently
+  - fix(composer): raise max_tokens to 1600 — Spanish was the tight case
+  - fix(pitches): stop discarding good Spanish pitches on a JSON parse error
+  - docs: log the settled-state verification failure + the 0001 trigger-loop trap
+  - feat(benchmarks): /benchmarks admin page for reviewing and activating rows
+  - feat(benchmarks): 6 verified rows fitted to the real prospect base
+  - feat(benchmarks): seed the two verified rows that fit the real prospect base
+
+**Still open:**
+- [ ] Supabase: ANON + SERVICE_ROLE keys live (connection works — Phase 0 unblocked)
+- [ ] Anthropic API key + $100/mo limit
+- [ ] Google Cloud (Places API + Gmail API + OAuth consent + OAuth client + restricted Places key)
+- [ ] Name sender #1 Runna CA principal + buy both domains + add runnareach.com to Rünna Workspace + DNS (SPF/DKIM/DMARC)
+- [ ] Postmark or SES account
+- [ ] Cal.com account
+- [ ] Slack hot-lead webhook URL
+- [ ] CRON_SECRET + TOKEN_ENCRYPTION_KEY (`openssl rand -hex 32`)
+- [ ] ⏳ #7 Analytics — pitch funnel metrics, cost tracking, Claude vs template breakdown
+- [ ] ⏳ #7 Analytics — pitch funnel metrics, cost tracking, Claude vs template breakdown
+
+
+## 2026-07-24 09:25
+**Shipped (recent commits):**
+  - docs: log the orphaned deploy-watcher (46h infinite poll loop)
+
+**Still open:**
+- [ ] Supabase: ANON + SERVICE_ROLE keys live (connection works — Phase 0 unblocked)
+- [ ] Anthropic API key + $100/mo limit
+- [ ] Google Cloud (Places API + Gmail API + OAuth consent + OAuth client + restricted Places key)
+- [ ] Name sender #1 Runna CA principal + buy both domains + add runnareach.com to Rünna Workspace + DNS (SPF/DKIM/DMARC)
+- [ ] Postmark or SES account
+- [ ] Cal.com account
+- [ ] Slack hot-lead webhook URL
+- [ ] CRON_SECRET + TOKEN_ENCRYPTION_KEY (`openssl rand -hex 32`)
+- [ ] ⏳ #7 Analytics — pitch funnel metrics, cost tracking, Claude vs template breakdown
+- [ ] ⏳ #7 Analytics — pitch funnel metrics, cost tracking, Claude vs template breakdown
+
