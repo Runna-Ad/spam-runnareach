@@ -54,6 +54,11 @@ export async function updateWarmupConfigDay(
       | "last_buddy_index"
       | "status"
       | "pause_reason"
+      | "rewarm_started_at"
+      | "rewarm_day"
+      | "rewarm_reason"
+      | "healthy_streak"
+      | "last_health_eval_date"
     >
   >,
 ): Promise<void> {

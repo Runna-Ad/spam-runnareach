@@ -60,6 +60,10 @@
     {
       "path": "/api/warmup/dmarc-sync",
       "schedule": "0 9 * * *"
+    },
+    {
+      "path": "/api/warmup/reactivation",
+      "schedule": "30 13 * * *"
     }
   ]
 }

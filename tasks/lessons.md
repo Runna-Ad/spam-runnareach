@@ -4,6 +4,17 @@ Running log of mistakes, root causes, and rules to prevent recurrence. Newest at
 
 ---
 
+[2026-08-14] LESSON: the warmup dashboard's red "Domain listed on dbl.spamhaus.org" was a FALSE POSITIVE — a DNSBL return-code the code misread — and it was feeding both the domain-health grade and (nearly) an auto-reactivation trigger
+WHAT HAPPENED: Pedro reported "spam issues", and the dashboard showed a red Spamhaus DBL blocklist listing for runnareach.com. Reproduced with dig BEFORE trusting it: querying `runnareach.com.dbl.spamhaus.org` via Cloudflare (1.1.1.1) returned `127.255.255.254` + TXT "Error: open resolver", and via Google DNS (8.8.8.8) returned nothing. The control `test.dbl.spamhaus.org` returned `127.0.1.2` (a real listing code), proving the DNS path worked. The domain was NEVER listed.
+ROOT CAUSE: `checkBlocklists()` in lib/warmup/deliverability.ts used a resolver pinned to public DNS (8.8.8.8 / 1.1.1.1) and treated ANY `127.*` answer as a hit (`ip.startsWith("127.")`). But DNSBLs (Spamhaus DBL, SURBL) REFUSE queries arriving via big public resolvers and answer with an error sentinel in `127.255.255.0/24` — NOT a listing. Real listings are `127.0.1.2–127.0.1.106` (DBL) / `127.0.0.x` bitmask (SURBL). So the "open resolver" refusal was read as "you're blocklisted."
+BLAST RADIUS: the fake `fail` was pushed as a hard `0` into deriveDomainHealth (dragging the grade from ~GOOD down to FAIR), and I was about to wire an auto-reactivation loop that watches blocklist status — it would have re-warmed forever on a phantom listing.
+FIXED: added `classifyBlocklistAnswer()` (pure, tested) that only counts `127.0.x.x` as listed and maps `127.255.255.x` → "error" → dashboard status "unknown" (grey, non-penalizing, never a listing). Blocklist lookups now use the SYSTEM default resolver, not public DNS. 8 unit tests.
+RULE: a DNSBL answer is a RETURN CODE, not a boolean — `127.0.0.2` ≠ `127.255.255.254`. Never `startsWith("127.")`. And never query Spamhaus/SURBL through 8.8.8.8 or 1.1.1.1 — they block public resolvers by design. Same family as the DENUE lesson: reproduce a scary external signal with a raw tool (`dig`, one control query) before believing it, ESPECIALLY before an automated system acts on it. A false "fail" that feeds automation is worse than one a human just reads.
+TAGS: #lesson #false-positive #dnsbl #spamhaus #deliverability #warmup #verification #automation-safety
+STATUS: fixed + 8 tests; 312/312 suite green, tsc + lint + build clean. Migration 0032 + deploy PENDING Pedro's ship.
+
+---
+
 [2026-07-21] LESSON (I was wrong, twice): the DENUE "406 / IP block" diagnosis was fabricated reasoning — and I shipped it as a user-facing error message
 WHAT HAPPENED: Pedro's friend ran discovery from Mexico and hit my error text: "INEGI's firewall is blocking the server's IP or user-agent. Note: discovery runs from Vercel's US datacenter, NOT your location…". Confident, specific, and WRONG.
 WHAT PROBING ACTUALLY SHOWED (from my own residential Canadian IP, with the real token):

@@ -25,11 +25,18 @@ import type {
   WarmupLogEntry,
   DomainHealth,
 } from "@/lib/warmup/types";
-import { getRampPhase, getDailyTarget, RAMP_SCHEDULE, MAINTENANCE_DAILY_TARGET } from "@/lib/warmup/types";
+import {
+  resolveDailyTarget,
+  resolvePhaseLabel,
+  isRewarming,
+  RAMP_SCHEDULE,
+  MAINTENANCE_DAILY_TARGET,
+} from "@/lib/warmup/types";
+import { deriveDomainHealth } from "@/lib/warmup/health-score";
 import { analyzeSpamRate, buildAlerts } from "@/lib/warmup/intelligence";
 import type { DeliverabilityHealth } from "@/lib/warmup/deliverability";
 import type { DmarcSummary } from "@/lib/warmup/dmarc-summary";
-import { pauseWarmup, resumeWarmup, triggerEngineManually } from "./warmup-actions";
+import { pauseWarmup, resumeWarmup, triggerEngineManually, rewarmNow, stopRewarm } from "./warmup-actions";
 
 // ── Props ──────────────────────────────────────────────────────────────────────
 
@@ -270,63 +277,10 @@ function RingGauge({
 }
 
 // ── Derived domain health (used when Postmaster reputation is still UNKNOWN) ───
-// At low volume Postmaster gives nothing, so we grade the domain from the
-// signals we DO have: DMARC alignment pass rate + live DNS auth (SPF/DKIM/DMARC)
-// + domain blocklist status. Honest, available from email #1.
-
-type DerivedHealth = {
-  grade: "STRONG" | "GOOD" | "FAIR" | "AT RISK";
-  score: number; // 0..1
-  color: string;
-  basis: string;
-};
-
-const STATUS_WEIGHT: Record<string, number> = { pass: 1, warn: 0.5, fail: 0, unknown: 0.5 };
-
-function deriveDomainHealth(
-  dmarc: DmarcSummary | null,
-  deliverability: DeliverabilityHealth | null,
-): DerivedHealth | null {
-  const parts: number[] = [];
-  let basisCount = 0;
-
-  if (deliverability) {
-    parts.push(STATUS_WEIGHT[deliverability.spf.status] ?? 0.5);
-    parts.push(STATUS_WEIGHT[deliverability.dkim.status] ?? 0.5);
-    parts.push(STATUS_WEIGHT[deliverability.dmarc.status] ?? 0.5);
-    // Blocklist is pass/fail and heavily weighted (a listing tanks the domain).
-    parts.push(deliverability.blocklist.status === "fail" ? 0 : 1);
-    basisCount += 4;
-  }
-  if (dmarc && dmarc.total_messages > 0 && dmarc.pass_rate !== null) {
-    // DMARC alignment pass rate, double-weighted (it's the strongest real signal).
-    parts.push(dmarc.pass_rate, dmarc.pass_rate);
-    basisCount += 1;
-    // Any unauthorized source is a hard penalty.
-    if (dmarc.failed_alignment.length > 0) parts.push(0);
-  }
-
-  if (parts.length === 0) return null;
-  const score = parts.reduce((a, b) => a + b, 0) / parts.length;
-
-  const grade: DerivedHealth["grade"] =
-    score >= 0.9 ? "STRONG" : score >= 0.75 ? "GOOD" : score >= 0.55 ? "FAIR" : "AT RISK";
-  const color =
-    grade === "STRONG"
-      ? "#22c55e"
-      : grade === "GOOD"
-        ? "#84cc16"
-        : grade === "FAIR"
-          ? "#eab308"
-          : "#ef4444";
-
-  const basisBits: string[] = [];
-  if (dmarc && dmarc.total_messages > 0) basisBits.push("DMARC");
-  if (deliverability) basisBits.push("DNS auth");
-  const basis = basisCount > 0 ? `from ${basisBits.join(" + ")}` : "";
-
-  return { grade, score, color, basis };
-}
+// At low volume Postmaster gives nothing, so we grade the domain from the signals
+// we DO have: DMARC alignment pass rate + live DNS auth (SPF/DKIM/DMARC) + domain
+// blocklist status. The scoring lives in lib/warmup/health-score.ts so the grade
+// shown here and the grade the auto-reactivation loop acts on are the SAME number.
 
 // ── Log entry row ─────────────────────────────────────────────────────────────
 
@@ -430,8 +384,9 @@ export function WarmupDashboard({
       l.direction === "sent" &&
       l.created_at.startsWith(todayUTC),
   ).length;
-  const targetToday = config ? getDailyTarget(config.current_day) : 5;
-  const phase = config ? getRampPhase(config.current_day) : "—";
+  const targetToday = config ? resolveDailyTarget(config) : 5;
+  const phase = config ? resolvePhaseLabel(config) : "—";
+  const rewarming = config ? isRewarming(config) : false;
 
   // Empty state
   if (!config) {
@@ -494,6 +449,26 @@ export function WarmupDashboard({
     });
   }
 
+  function handleRewarm() {
+    startTransition(async () => {
+      setMessage(null);
+      const result = await rewarmNow(config!.id);
+      setMessage(
+        result.ok
+          ? `Re-warm started at ${result.target}/day — climbing back to full volume.`
+          : `Error: ${result.error}`,
+      );
+    });
+  }
+
+  function handleStopRewarm() {
+    startTransition(async () => {
+      setMessage(null);
+      const result = await stopRewarm(config!.id);
+      setMessage(result.ok ? "Re-warm stopped — back to maintenance." : `Error: ${result.error}`);
+    });
+  }
+
   function handleManualTick() {
     startTransition(async () => {
       setMessage(null);
@@ -550,6 +525,29 @@ export function WarmupDashboard({
               Resume
             </Button>
           ) : null}
+          {rewarming ? (
+            <Button
+              variant="secondary"
+              onClick={handleStopRewarm}
+              disabled={isPending}
+              className="gap-1.5"
+              title="Stop re-warming and return to the maintenance schedule"
+            >
+              <Flame className="size-3.5 text-amber-500" />
+              Stop re-warm
+            </Button>
+          ) : (
+            <Button
+              variant="secondary"
+              onClick={handleRewarm}
+              disabled={isPending}
+              className="gap-1.5"
+              title="Pull the domain off the maintenance floor into a gentle re-warm ramp"
+            >
+              <Flame className="size-3.5 text-orange-500" />
+              Re-warm now
+            </Button>
+          )}
           <Button
             variant="secondary"
             onClick={handleManualTick}
@@ -866,6 +864,18 @@ export function WarmupDashboard({
           </span>
           <span className="text-orange-700 dark:text-orange-400">
             {config.pause_reason}
+          </span>
+        </div>
+      )}
+
+      {rewarming && (
+        <div className="rounded-md bg-amber-50 dark:bg-amber-950/20 border border-amber-200 dark:border-amber-900/40 px-4 py-3 text-sm">
+          <span className="font-semibold text-amber-800 dark:text-amber-300">
+            Re-warming ({targetToday}/day):{" "}
+          </span>
+          <span className="text-amber-700 dark:text-amber-400">
+            {config.rewarm_reason ?? "deliverability dip detected"} · climbing back
+            to full volume, then settles to maintenance once inbox placement recovers.
           </span>
         </div>
       )}

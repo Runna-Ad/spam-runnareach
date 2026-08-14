@@ -1411,3 +1411,23 @@ marketing-context only if it bites.
    (140 prospects) or accounting firms (105), and NOTHING Mexico-specific.
 3. Upstream: crawl-action.ts:225 takes the source listing's domain verbatim with
    no name check (how Corvex ended up on linamar.com).
+
+## 2026-07-24 11:49
+**Shipped (recent commits):**
+  - docs: wrap 2026-07-24 — session log + voice-jargon lesson
+  - fix(composer): humanize + simplify pitch voice — write for non-marketers
+  - docs: session-log auto-append (Stop hook)
+  - docs: log the orphaned deploy-watcher (46h infinite poll loop)
+
+**Still open:**
+- [ ] Supabase: ANON + SERVICE_ROLE keys live (connection works — Phase 0 unblocked)
+- [ ] Anthropic API key + $100/mo limit
+- [ ] Google Cloud (Places API + Gmail API + OAuth consent + OAuth client + restricted Places key)
+- [ ] Name sender #1 Runna CA principal + buy both domains + add runnareach.com to Rünna Workspace + DNS (SPF/DKIM/DMARC)
+- [ ] Postmark or SES account
+- [ ] Cal.com account
+- [ ] Slack hot-lead webhook URL
+- [ ] CRON_SECRET + TOKEN_ENCRYPTION_KEY (`openssl rand -hex 32`)
+- [ ] ⏳ #7 Analytics — pitch funnel metrics, cost tracking, Claude vs template breakdown
+- [ ] ⏳ #7 Analytics — pitch funnel metrics, cost tracking, Claude vs template breakdown
+

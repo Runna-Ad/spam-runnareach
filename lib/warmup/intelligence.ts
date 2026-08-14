@@ -4,7 +4,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 import type { WarmupConfig, WarmupLogEntry, DomainHealth } from "./types";
-import { getDailyTarget, getRampPhase } from "./types";
+import { resolveDailyTarget, resolvePhaseLabel } from "./types";
 
 // ── Thresholds ─────────────────────────────────────────────────────────────────
 
@@ -104,14 +104,16 @@ export function computeDayPlan(config: WarmupConfig): DayPlan {
   const isNewDay = config.last_reset_date !== today;
 
   const emailsSentToday = isNewDay ? 0 : config.emails_sent_today;
-  const targetForToday = getDailyTarget(config.current_day);
+  // Re-warm-aware: while re-warming this returns the re-warm curve target, not
+  // the day-79 maintenance floor.
+  const targetForToday = resolveDailyTarget(config);
   const remainingToday = Math.max(0, targetForToday - emailsSentToday);
 
   return {
     targetForToday,
     remainingToday,
     shouldSend: remainingToday > 0,
-    phase: getRampPhase(config.current_day),
+    phase: resolvePhaseLabel(config),
   };
 }
 

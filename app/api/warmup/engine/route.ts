@@ -41,7 +41,7 @@ import {
   computeDayPlan,
   pickNextBuddyIndex,
 } from "@/lib/warmup/intelligence";
-import { getDailyTarget } from "@/lib/warmup/types";
+import { resolveDailyTarget } from "@/lib/warmup/types";
 import type { EngineTickResult, WarmupConfig } from "@/lib/warmup/types";
 
 // ── Auth guard ─────────────────────────────────────────────────────────────────
@@ -107,15 +107,16 @@ async function processConfig(config: WarmupConfig): Promise<EngineTickResult> {
     // ── Step 1: Reset daily count + advance day counter on new calendar day
     if (isNewDay) {
       const newDay = config.current_day + 1;
-      await resetDailyCount(config.id);
-      await updateWarmupConfigDay(config.id, {
-        current_day: newDay,
-        daily_target: getDailyTarget(newDay),
-      });
-      // Update local copy for this tick
+      // Update local copy FIRST so resolveDailyTarget sees the new day + any
+      // active re-warm overlay (the re-warm curve overrides the day-based target).
       config.current_day = newDay;
       config.emails_sent_today = 0;
       config.last_reset_date = today;
+      await resetDailyCount(config.id);
+      await updateWarmupConfigDay(config.id, {
+        current_day: newDay,
+        daily_target: resolveDailyTarget(config),
+      });
     }
 
     // ── Step 2: IMAP check of previous sends (landed in inbox vs spam?)

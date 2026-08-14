@@ -36,6 +36,40 @@ function resolver(): Resolver {
   return r;
 }
 
+// Blocklist lookups get a SEPARATE resolver that uses the platform's default
+// DNS, NOT 8.8.8.8 / 1.1.1.1. Spamhaus (and SURBL) deliberately REFUSE queries
+// that arrive via large public resolvers and answer with an error sentinel in
+// 127.255.255.0/24 instead of a real result. Using the system resolver avoids
+// that refusal; the return-code guard below is the backstop if it can't.
+function blocklistResolver(): Resolver {
+  return new Resolver({ timeout: 4000, tries: 2 });
+}
+
+export type BlocklistVerdict = "listed" | "not_listed" | "error";
+
+/**
+ * Classify a DNSBL A-record answer. PURE — unit-tested.
+ *
+ * DNSBLs encode their meaning in the returned 127.x.x.x address:
+ *   • Spamhaus DBL listings  → 127.0.1.2 … 127.0.1.106
+ *   • SURBL listings         → 127.0.0.x bitmask (127.0.0.2, .4, .8, .16, .64…)
+ *   • Query ERRORS           → 127.255.255.0/24  (e.g. .254 "open resolver",
+ *                              .252 "typing error / anonymous query",
+ *                              .255 "excessive queries") — NOT a listing.
+ *
+ * The old code treated ANY 127.* answer as a hit, so an "open resolver" error
+ * (127.255.255.254) — which is what you get querying Spamhaus via 8.8.8.8/1.1.1.1 —
+ * was misread as "your domain is blocklisted". This distinguishes the two.
+ */
+export function classifyBlocklistAnswer(ips: string[]): BlocklistVerdict {
+  if (ips.length === 0) return "not_listed";
+  const isError = (ip: string) => ip.startsWith("127.255.255.");
+  const isRealListing = (ip: string) => ip.startsWith("127.") && !isError(ip);
+  if (ips.some(isRealListing)) return "listed";
+  if (ips.every(isError)) return "error";
+  return "error";
+}
+
 async function txt(name: string): Promise<string[]> {
   try {
     const records = await resolver().resolveTxt(name);
@@ -100,14 +134,18 @@ async function checkDmarc(domain: string): Promise<DeliverabilityHealth["dmarc"]
 }
 
 async function checkBlocklists(domain: string): Promise<DeliverabilityHealth["blocklist"]> {
-  const r = resolver();
+  const r = blocklistResolver();
   const listedOn: string[] = [];
+  let errored = 0;
   await Promise.all(
     DOMAIN_BLOCKLISTS.map(async (bl) => {
       try {
-        // A hit resolves to a 127.0.0.x address; a miss is NXDOMAIN (throws).
+        // A listing resolves to a 127.0.x.x address; a miss is NXDOMAIN (throws);
+        // a refused query resolves to a 127.255.255.x error sentinel.
         const res = await r.resolve4(`${domain}.${bl}`);
-        if (res.some((ip) => ip.startsWith("127."))) listedOn.push(bl);
+        const verdict = classifyBlocklistAnswer(res);
+        if (verdict === "listed") listedOn.push(bl);
+        else if (verdict === "error") errored++;
       } catch {
         // NXDOMAIN / no answer = not listed.
       }
@@ -115,6 +153,16 @@ async function checkBlocklists(domain: string): Promise<DeliverabilityHealth["bl
   );
   if (listedOn.length > 0) {
     return { status: "fail", detail: `Domain listed on ${listedOn.join(", ")}`, listed_on: listedOn };
+  }
+  // Every provider refused the query (public-resolver block / rate limit). We
+  // genuinely don't know — report "unknown", never "listed". A false "listed"
+  // here tanks the domain-health grade and, worse, would trip auto-reactivation.
+  if (errored === DOMAIN_BLOCKLISTS.length) {
+    return {
+      status: "unknown",
+      detail: "Blocklist check inconclusive — the DNS provider refused the query (DNSBLs block public resolvers). Not treated as a listing.",
+      listed_on: [],
+    };
   }
   return { status: "pass", detail: "Not on Spamhaus DBL / SURBL", listed_on: [] };
 }
