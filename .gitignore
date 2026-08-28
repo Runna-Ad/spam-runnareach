@@ -48,3 +48,6 @@ supabase/.env
 # testing
 coverage/
 .nyc_output/
+
+# Claude Code scratch worktrees — live git worktrees, never track as gitlinks
+.claude/worktrees/
