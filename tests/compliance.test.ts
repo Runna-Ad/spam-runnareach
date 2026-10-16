@@ -55,32 +55,54 @@ test("footer: identity + address + unsubscribe, both languages, no em dash", () 
   for (const f of [en, es]) assert.doesNotMatch(f, /—/);
 });
 
-test("outbound compliance fails closed without a mailing address", () => {
-  const saved = { addr: process.env.RUNNA_MAILING_ADDRESS, key: process.env.TOKEN_ENCRYPTION_KEY };
+test("footer contact line: website and email between identity and unsubscribe", () => {
+  const f = buildComplianceFooter({
+    lang: "en",
+    senderEntity: "Rünna",
+    mailingAddress: "Tizapán San Ángel, 01090 Mexico City, Mexico",
+    website: "runnik.ca",
+    contactEmail: "hola@runna.mx",
+    unsubscribeUrl: "https://x/u",
+    privacyUrl: "https://runna.com.mx/avisop",
+  });
+  assert.equal(
+    f,
+    "Rünna · Tizapán San Ángel, 01090 Mexico City, Mexico\nrunnik.ca · hola@runna.mx\nTo stop receiving these emails: https://x/u",
+    "English: no Spanish privacy notice",
+  );
+});
+
+test("outbound compliance: Pedro's details by default, env overrides, fails closed without a signing key", () => {
+  const keys = ["RUNNA_MAILING_ADDRESS", "TOKEN_ENCRYPTION_KEY", "UNSUBSCRIBE_BASE_URL", "RUNNA_WEBSITE_EN"] as const;
+  const saved = Object.fromEntries(keys.map((k) => [k, process.env[k]]));
   try {
-    process.env.TOKEN_ENCRYPTION_KEY = "k";
-    delete process.env.RUNNA_MAILING_ADDRESS;
+    for (const k of keys) delete process.env[k];
+
+    // No signing key → nothing may be sent.
     const blocked = getOutboundCompliance(PAYLOAD);
     assert.equal(blocked.ok, false);
-    assert.match(blocked.ok ? "" : blocked.error, /RUNNA_MAILING_ADDRESS/);
-
-    process.env.RUNNA_MAILING_ADDRESS = "123 Main St SW, Calgary, AB";
-    delete process.env.TOKEN_ENCRYPTION_KEY;
-    assert.equal(getOutboundCompliance(PAYLOAD).ok, false, "no signing key → blocked");
+    assert.match(blocked.ok ? "" : blocked.error, /TOKEN_ENCRYPTION_KEY/);
 
     process.env.TOKEN_ENCRYPTION_KEY = "k";
     process.env.UNSUBSCRIBE_BASE_URL = "https://go.example.com/";
-    const ok = getOutboundCompliance(PAYLOAD);
-    assert.ok(ok.ok);
-    if (ok.ok) {
-      assert.match(ok.value.listUnsubscribe.url, /^https:\/\/go\.example\.com\/api\/unsubscribe\?t=/);
-      assert.ok(ok.value.footer.includes(ok.value.listUnsubscribe.url));
+    const es = getOutboundCompliance(PAYLOAD);
+    assert.ok(es.ok);
+    if (es.ok) {
+      assert.match(es.value.listUnsubscribe.url, /^https:\/\/go\.example\.com\/api\/unsubscribe\?t=/);
+      assert.ok(es.value.footer.includes(es.value.listUnsubscribe.url));
+      assert.ok(es.value.footer.startsWith("Rünna · Tizapán San Ángel, Loreto y Campamento, Álvaro Obregón, 01090 Mexico City, Mexico\n"));
+      assert.match(es.value.footer, /\nrunna\.com\.mx · hola@runna\.mx\n/);
+      assert.match(es.value.footer, /Aviso de privacidad: https:\/\/runna\.com\.mx\/avisop$/);
     }
+
+    process.env.RUNNA_WEBSITE_EN = "example.ca";
+    const en = getOutboundCompliance({ ...PAYLOAD, lang: "en" });
+    assert.ok(en.ok && en.value.footer.includes("\nexample.ca · hola@runna.mx\n"), "env override wins");
+    assert.ok(en.ok && !en.value.footer.includes("Aviso"), "no Spanish notice on English emails");
   } finally {
-    if (saved.addr === undefined) delete process.env.RUNNA_MAILING_ADDRESS;
-    else process.env.RUNNA_MAILING_ADDRESS = saved.addr;
-    if (saved.key === undefined) delete process.env.TOKEN_ENCRYPTION_KEY;
-    else process.env.TOKEN_ENCRYPTION_KEY = saved.key;
-    delete process.env.UNSUBSCRIBE_BASE_URL;
+    for (const k of keys) {
+      if (saved[k] === undefined) delete process.env[k];
+      else process.env[k] = saved[k];
+    }
   }
 });
