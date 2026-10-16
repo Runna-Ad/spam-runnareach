@@ -1,5 +1,13 @@
-import { createClient } from "@/lib/supabase/server";
+import { createServiceRoleClient } from "@/lib/supabase/service-role";
 import type { ClaudeUsage } from "./client";
+
+/*
+ * Service-role client, scoped by the explicit tenantId every caller passes.
+ * The cookie client this used to create only works inside a logged-in
+ * request: in cron routes (follow-ups, reply poll, nudges) RLS saw no user,
+ * so the cap READ returned zero rows (always "under the cap") and the cost
+ * INSERT was rejected. Cron AI spend was uncapped and unrecorded.
+ */
 
 export type CostRecordInput = {
   tenantId: string;
@@ -24,13 +32,10 @@ function getDailyCap(): number {
   return Number.isFinite(n) && n > 0 ? n : DAILY_USD_CAP_DEFAULT;
 }
 
-/**
- * Record a Claude API call to cost_tracking. Best-effort — never throws.
- * Uses a fresh server-bound client so it works inside server actions.
- */
+/** Record a Claude API call to cost_tracking. Best-effort — never throws. */
 export async function recordClaudeCall(input: CostRecordInput): Promise<void> {
   try {
-    const supabase = await createClient();
+    const supabase = createServiceRoleClient();
     const { error } = await supabase.from("cost_tracking").insert({
       tenant_id: input.tenantId,
       category: "anthropic",
@@ -68,23 +73,32 @@ export async function isUnderDailyCap(tenantId: string): Promise<{
 }> {
   const cap = getDailyCap();
   try {
-    const supabase = await createClient();
+    const supabase = createServiceRoleClient();
     const sinceIso = new Date(Date.now() - 24 * 3600 * 1000).toISOString();
     type Row = { cost_usd: number };
-    const { data, error } = await supabase
-      .from("cost_tracking")
-      .select("cost_usd")
-      .eq("tenant_id", tenantId)
-      .eq("category", "anthropic")
-      .gte("incurred_at", sinceIso)
-      .returns<Row[]>();
-    if (error) {
-      console.warn(`[cost-tracking] daily-cap check failed: ${error.message}`);
-      // Fail-open: if we can't read, allow the call. Cost-tracking insert
-      // failure on the actual call would be the deeper issue.
-      return { under: true, spent_today_usd: 0, cap_usd: cap };
+    // Paged: PostgREST returns at most 1000 rows per request, so one select
+    // silently undercounted any day with more calls than that.
+    const PAGE = 1000;
+    let spent = 0;
+    for (let from = 0; ; from += PAGE) {
+      const { data, error } = await supabase
+        .from("cost_tracking")
+        .select("cost_usd")
+        .eq("tenant_id", tenantId)
+        .eq("category", "anthropic")
+        .gte("incurred_at", sinceIso)
+        .order("incurred_at", { ascending: true })
+        .range(from, from + PAGE - 1)
+        .returns<Row[]>();
+      if (error) {
+        console.warn(`[cost-tracking] daily-cap check failed: ${error.message}`);
+        // Fail-open on a transient read error: a DB blip must not halt every
+        // AI step. The cap is a runaway guard, not the primary cost control.
+        return { under: true, spent_today_usd: spent, cap_usd: cap };
+      }
+      spent += (data ?? []).reduce((a, r) => a + Number(r.cost_usd), 0);
+      if ((data ?? []).length < PAGE) break;
     }
-    const spent = (data ?? []).reduce((a, r) => a + Number(r.cost_usd), 0);
     return { under: spent < cap, spent_today_usd: spent, cap_usd: cap };
   } catch (err) {
     console.warn("[cost-tracking] daily-cap check threw:", err);

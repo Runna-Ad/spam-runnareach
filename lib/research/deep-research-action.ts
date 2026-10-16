@@ -180,7 +180,13 @@ export async function deepResearchProspect(
       .filter((b) => b.type === "text")
       .map((b) => (b as { type: "text"; text: string }).text)
       .join("");
-    costUsd = computeCostUsd(ANTHROPIC_DEFAULT_MODEL, msg.usage.input_tokens, msg.usage.output_tokens);
+    costUsd = computeCostUsd(
+      ANTHROPIC_DEFAULT_MODEL,
+      msg.usage.input_tokens,
+      msg.usage.output_tokens,
+      msg.usage.cache_read_input_tokens ?? 0,
+      msg.usage.cache_creation_input_tokens ?? 0,
+    );
     // Record to cost_tracking so the daily cap accounts for deep research —
     // previously this (one Sonnet call per prospect) was entirely uncapped.
     await recordClaudeCall({

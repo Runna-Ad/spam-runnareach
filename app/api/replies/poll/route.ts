@@ -32,7 +32,7 @@ import {
   ANTHROPIC_HAIKU_MODEL,
   claudeIsAvailable,
 } from "@/lib/anthropic/client";
-import { recordClaudeCall } from "@/lib/anthropic/cost-tracking";
+import { isUnderDailyCap, recordClaudeCall } from "@/lib/anthropic/cost-tracking";
 import { classifyReplyWithClaude } from "@/lib/replies/claude-classifier";
 import {
   classifyReplyHeuristic,
@@ -458,6 +458,8 @@ async function classifyReplyRaw(
   inbound: InboundReply,
 ): Promise<ClassifyResult> {
   if (!claudeIsAvailable()) return classifyReplyHeuristic(input);
+  // Every AI call sits under the daily cap (CLAUDE.md) — crons included.
+  if (!(await isUnderDailyCap(tenantId)).under) return classifyReplyHeuristic(input);
 
   const result = await classifyReplyWithClaude(input);
   if (result.ok) {
@@ -546,7 +548,7 @@ async function draftResponse(
     agencyName: "Runna",
   };
 
-  if (claudeIsAvailable()) {
+  if (claudeIsAvailable() && (await isUnderDailyCap(thread.tenant_id)).under) {
     const result = await composeReplyDraftWithClaude(draftInput);
     if (result.ok) {
       await recordClaudeCall({

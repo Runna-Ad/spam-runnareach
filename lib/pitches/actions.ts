@@ -3,7 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { recordGateDryRun } from "@/lib/pitches/gate-dryrun";
 import { z } from "zod";
-import { claudeIsAvailable } from "@/lib/anthropic/client";
+import { claudeIsAvailable, type ClaudeUsage } from "@/lib/anthropic/client";
 import { isUnderDailyCap, recordClaudeCall } from "@/lib/anthropic/cost-tracking";
 import { writeAuditLog } from "@/lib/audit/log";
 import { requireUser } from "@/lib/auth";
@@ -335,7 +335,7 @@ export async function generatePitch(
   // to the deterministic heuristic so the user still gets a draft.
   let composed: ComposedPitch | null = null;
   let method: "heuristic" | "claude" = "heuristic";
-  let claudeUsage: { input_tokens: number; output_tokens: number; cost_usd: number } | null = null;
+  let claudeUsage: ClaudeUsage | null = null;
   let claudeModel: string | null = null;
   let claudeFallbackReason: string | null = null;
 
@@ -434,7 +434,7 @@ export async function generatePitch(
       model: claudeModel,
       entity_type: "pitch",
       entity_id: created.id,
-      usage: { ...claudeUsage, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 },
+      usage: claudeUsage,
       metadata: { pitch_id: created.id, prospect_id: parsed.data.prospect_id },
     });
   }
@@ -686,7 +686,7 @@ export async function rewritePitchWithAngle(
     model: result.result.model,
     entity_type: "pitch",
     entity_id: parsed.data.pitch_id,
-    usage: { ...result.result.usage, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 },
+    usage: result.result.usage,
     metadata: { kind: "pitch.rewritten_with_angle", pitch_id: parsed.data.pitch_id, pain_label: parsed.data.pain_label, case_study_id: composed.case_study_id },
   });
 

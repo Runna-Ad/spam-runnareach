@@ -14,7 +14,7 @@
 
 import { type NextRequest, NextResponse } from "next/server";
 import { claudeIsAvailable } from "@/lib/anthropic/client";
-import { recordClaudeCall } from "@/lib/anthropic/cost-tracking";
+import { isUnderDailyCap, recordClaudeCall } from "@/lib/anthropic/cost-tracking";
 import { writeAuditLog } from "@/lib/audit/log";
 import { getAccessToken, sendGmailMessage } from "@/lib/gmail/client";
 import { getOutboundCompliance } from "@/lib/compliance/outbound";
@@ -204,7 +204,8 @@ export async function GET(req: NextRequest) {
     let body: string;
     let subject: string;
     let claudeOk = false;
-    if (claudeIsAvailable()) {
+    // Over the daily cap → template, which is never confident, so it's held for review.
+    if (claudeIsAvailable() && (await isUnderDailyCap(tenantId)).under) {
       const r = await composeNudgeWithClaude(composerInput);
       if (r.ok) {
         body = r.draft.body;

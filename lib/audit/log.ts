@@ -1,4 +1,4 @@
-import { createClient } from "@/lib/supabase/server";
+import { createServiceRoleClient } from "@/lib/supabase/service-role";
 
 /**
  * Canonical action codes. Keep these stable — they show up in the activity
@@ -44,12 +44,13 @@ export type AuditPayload = {
  * we couldn't log it, so we rolled back" which is worse than a missing
  * audit entry).
  *
- * RLS on audit_log enforces tenant_id = current_tenant_id() so the row
- * is automatically tagged correctly.
+ * Service-role client with the caller's explicit tenantId. The cookie client
+ * used before only worked inside a logged-in request, so every audit write
+ * from a cron (nudge sent/held, etc.) was silently rejected by RLS.
  */
 export async function writeAuditLog(p: AuditPayload): Promise<void> {
   try {
-    const supabase = await createClient();
+    const supabase = createServiceRoleClient();
     const { error } = await supabase.from("audit_log").insert({
       tenant_id: p.tenantId,
       actor_id: p.actorId,

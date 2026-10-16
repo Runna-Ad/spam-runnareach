@@ -79,13 +79,23 @@ const PRICING: Record<string, { input_per_mtok: number; output_per_mtok: number 
   "claude-haiku-4-5": { input_per_mtok: 1, output_per_mtok: 5 },
 };
 
+/**
+ * USD for one call. `input_tokens` from the API EXCLUDES cached tokens, which
+ * are billed separately: cache writes at 1.25× the input price (5-min TTL),
+ * cache reads at 0.1×. Leaving them out made every cached call look cheaper
+ * than it was, so the daily cap undercounted.
+ */
 export function computeCostUsd(
   model: string,
   input_tokens: number,
   output_tokens: number,
+  cache_read_input_tokens = 0,
+  cache_creation_input_tokens = 0,
 ): number {
   const p = PRICING[model] ?? PRICING[ANTHROPIC_DEFAULT_MODEL]!;
   const cost = (input_tokens / 1_000_000) * p.input_per_mtok +
+    (cache_creation_input_tokens / 1_000_000) * p.input_per_mtok * 1.25 +
+    (cache_read_input_tokens / 1_000_000) * p.input_per_mtok * 0.1 +
     (output_tokens / 1_000_000) * p.output_per_mtok;
   // 6 decimal places matches the cost_tracking column precision (numeric(10,6)).
   return Math.round(cost * 1_000_000) / 1_000_000;
@@ -211,6 +221,8 @@ export async function structuredCall<T>(
       model,
       response.usage.input_tokens,
       response.usage.output_tokens,
+      response.usage.cache_read_input_tokens ?? 0,
+      response.usage.cache_creation_input_tokens ?? 0,
     ),
   };
 
