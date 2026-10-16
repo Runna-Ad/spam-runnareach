@@ -29,8 +29,8 @@
 - **SPAM Verify** (`lib/research/verify-recipient.ts`): free verifier (format, never-pitch, regulators, DNS with a control query, ownership, provenance, bounce memory). "drop" never sends.
 
 Still open after the ship:
-- Pedro: send one EN + one ES test (to pedrojr22@gmail.com and an Outlook address) and check accents, footer, unsubscribe link + Gmail's unsubscribe button. Not done by Claude (no Gmail access from the session).
-- Pedro: Sentry → warmup-engine monitor ON, postmaster-sync OFF.
+- Pedro: Settings → Sending → "Send a test email" (EN + ES, +tag address, plus Outlook); check accents, button, footer links, unsubscribe. Not done by Claude (no Gmail access from the session).
+- Sentry: already correct (warmup-engine active; postmaster-sync, dmarc-sync, reactivation disabled). warmup-engine's first post-fix check-in expected ~14:22 UTC 2026-10-17.
 - Optional: unsubscribe links still read `spam-runnareach.vercel.app/...` — a free `go.runnareach.com` CNAME + `UNSUBSCRIBE_BASE_URL` fixes the look.
 - pedrojr22@gmail.com is Pedro's (confirmed) → the GYMVMT "reply" was a test; exclude from metrics.
 
