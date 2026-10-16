@@ -20,3 +20,4 @@ Vercel project `spam-runnareach` → https://spam-runnareach.vercel.app. Repo `R
 - Supabase project is SHARED with runna-hunter (`hunter_scans`) — never assume a table is SPAM-only.
 - Background jobs self-chain via `after()` + fetch (Vercel daily-cron tier), not queues; long routes have custom `maxDuration` in `vercel.json`.
 - AI calls are cost-tracked + daily-capped — keep new calls inside that wrapper.
+- **Cost rule (Pedro, 2026-10-16):** until S.P.A.M. is proven to make money, stay as close to free as possible. AI API spend is fine; paid external platforms/SaaS are not. Build or solve it internally (our own data, DNS, Postgres, Supabase `pg_cron`, Gmail API) unless there is truly no other way, and ask before adding any paid service. Scheduler = Supabase `pg_cron` + `pg_net`, not Vercel Pro.
