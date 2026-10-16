@@ -27,6 +27,7 @@ import { writeAuditLog } from "@/lib/audit/log";
 import { requireUser } from "@/lib/auth";
 import { getAccessToken, sendGmailMessage } from "@/lib/gmail/client";
 import { getOutboundCompliance } from "@/lib/compliance/outbound";
+import { reconcileSignOff, senderIdentity } from "@/lib/pitches/sender-identity";
 import { isEmailOnDncList, type DncClient } from "@/lib/discover/dnc-check";
 import { createServiceRoleClient } from "@/lib/supabase/service-role";
 import {
@@ -147,6 +148,11 @@ export async function approveAndSendReply(
   if (dnc.blocked) return { ok: false, error: dnc.reason };
 
   const lang: "en" | "es" = prospect.language === "es" ? "es" : "en";
+  // An unedited auto-draft from before the Nils/Henry switch still ends "Pedro";
+  // match the From line. A body the human edited is sent as they wrote it.
+  // (The inbox always sends the textarea back, so "edited" means it differs.)
+  const humanEdited = edited_body !== undefined && edited_body !== (reply.auto_draft_body ?? "").trim();
+  const finalBody = humanEdited ? body : reconcileSignOff(body, lang);
   const compliance = getOutboundCompliance({
     tenantId: user.tenantId,
     prospectId: prospect.id,
@@ -194,10 +200,10 @@ export async function approveAndSendReply(
   const sendResult = await sendGmailMessage({
     accessToken: tokenResult.accessToken,
     fromEmail: inbox.email,
-    fromName: inbox.display_name,
+    fromName: senderIdentity(lang).displayName,
     to: reply.from_email,
     subject: /^re:/i.test(subject) ? subject : `Re: ${subject}`,
-    body,
+    body: finalBody,
     lang,
     footer: compliance.value.footer,
     listUnsubscribe: compliance.value.listUnsubscribe,
@@ -216,7 +222,7 @@ export async function approveAndSendReply(
       draft_status: "sent",
       draft_sent_at: now,
       draft_gmail_message_id: sendResult.gmailMessageId,
-      auto_draft_body: body, // persist the final (possibly edited) text
+      auto_draft_body: finalBody, // persist the final (possibly edited) text
       draft_subject: subject,
       handled_by: user.id,
       handled_at: now,
@@ -330,8 +336,8 @@ export async function regenerateReplyDraft(
     originalPitchBody,
     whatTheyDo,
     painSummary,
-    senderFirstName: user.fullName?.trim().split(/\s+/)[0] || "Pedro",
-    agencyName: user.tenantDisplayName || "Runna",
+    senderFirstName: senderIdentity(language).firstName,
+    agencyName: senderIdentity(language).agency,
   };
 
   let body: string;

@@ -23,6 +23,7 @@ import { createClient } from "@/lib/supabase/server";
 import { bodyWithFooter, getOutboundCompliance } from "@/lib/compliance/outbound";
 import { firstTouchConflict } from "@/lib/pitches/send-guards";
 import { verifyRecipient } from "@/lib/research/verify-recipient";
+import { reconcileSignOff, senderIdentity } from "@/lib/pitches/sender-identity";
 
 /** Same set the send-queue cron refuses (app/api/pitches/send-queue/route.ts). */
 const MANUAL_DO_NOT_SEND = new Set([
@@ -128,6 +129,8 @@ export async function sendPitch(input: {
 
   // CASL footer + unsubscribe link. Fails closed: no mailing address, no send.
   const lang: "en" | "es" = pitch.prospects?.language === "es" ? "es" : "en";
+  // A draft from before the Nils/Henry switch still ends "Pedro"; match the From line.
+  const signedBody = reconcileSignOff(body, lang);
   const compliance = getOutboundCompliance({
     tenantId: user.tenantId,
     prospectId: pitch.prospect_id,
@@ -222,10 +225,10 @@ export async function sendPitch(input: {
   const sendResult = await sendGmailMessage({
     accessToken: tokenResult.accessToken,
     fromEmail: inbox.email,
-    fromName: inbox.display_name,
+    fromName: senderIdentity(lang).displayName,
     to: toName ? `"${toName.replace(/"/g, "")}" <${toEmail}>` : toEmail,
     subject: pitch.subject,
-    body,
+    body: signedBody,
     // Drives the CTA button label. Without it a Spanish email ships an English
     // button whenever the CTA line has no prose to infer the language from.
     lang,
@@ -251,7 +254,7 @@ export async function sendPitch(input: {
     .update({
       status: "sent",
       sent_at: now,
-      body_sent: bodyWithFooter(body, compliance.value.footer),
+      body_sent: bodyWithFooter(signedBody, compliance.value.footer),
       sender_inbox_id: inbox_id,
       // Re-link to the contact we actually resolved/sent to, if it was a fallback.
       ...(resolvedContactId ? { contact_id: resolvedContactId } : {}),

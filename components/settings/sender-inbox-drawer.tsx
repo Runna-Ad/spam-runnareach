@@ -203,6 +203,10 @@ export function SenderInboxDrawer({ mode, brands, open, onOpenChange }: SenderIn
                         {errors.display_name.message}
                       </p>
                     )}
+                    <p className="text-[11px] text-[var(--color-fg-500)]">
+                      Used for warmup only. Prospect emails show &quot;Nils · Runna Advertising&quot;
+                      (Spanish) or &quot;Henry · Runna Advertising&quot; (English).
+                    </p>
                   </Field>
                   <Field label="LinkedIn URL">
                     <Input

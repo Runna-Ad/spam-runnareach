@@ -23,6 +23,7 @@ import { createServiceRoleClient } from "@/lib/supabase/service-role";
 import { getAccessToken, sendGmailMessage } from "@/lib/gmail/client";
 import { bodyWithFooter, getOutboundCompliance } from "@/lib/compliance/outbound";
 import { threadBlocksSend } from "@/lib/pitches/send-guards";
+import { senderIdentity, senderSignature } from "@/lib/pitches/sender-identity";
 import {
   buildFollowup1,
   buildFollowup2,
@@ -91,7 +92,7 @@ type ContactRow = {
 };
 
 type ResearchRow = {
-  pain_points: Array<{ pain_code?: string; quote?: string; evidence_quote?: string }> | null;
+  pain_points: Array<{ pain_code?: string; pain_label?: string; quote?: string; evidence_quote?: string }> | null;
   what_they_do: string | null;
   tech_stack: string[] | null;
 };
@@ -287,13 +288,22 @@ async function processFollowup(pitch: DuePitchRow): Promise<FollowupResult> {
   }
 
   // ── 7. Build template ─────────────────────────────────────────────────────
+  // The fallback template only names the pain when the label is a short, clean
+  // English phrase: labels are English even for MX prospects (Spanglish) and
+  // some are junk ("(ranked by pitch urgency)").
+  const rawLabel = research?.pain_points?.[0]?.pain_label?.trim() ?? "";
+  const painLabel =
+    lang === "en" && /^[A-Za-z][A-Za-z ,'-]{3,40}$/.test(rawLabel)
+      ? rawLabel.charAt(0).toLowerCase() + rawLabel.slice(1)
+      : null;
+  const sender = senderIdentity(lang);
   const ctx: FollowupContext = {
     prospectName: prospect.company_name,
     contactName: contactFirstName,
     originalSubject: pitch.subject,
-    painSummary,
-    hunterValue,
-    market: resolveMarket(prospect.market),
+    painLabel,
+    lang,
+    signature: senderSignature(lang),
   };
 
   // Deterministic template — the always-available fallback.
@@ -320,8 +330,8 @@ async function processFollowup(pitch: DuePitchRow): Promise<FollowupResult> {
         whatTheyDo,
         techStack,
         hunterValue,
-        senderFirstName: inbox.display_name.trim().split(/\s+/)[0] || "Pedro",
-        agencyName: "Runna",
+        senderFirstName: sender.firstName,
+        agencyName: sender.agency,
       });
       if (ai.ok) {
         email = { subject: ai.followup.subject, body: ai.followup.body };
@@ -370,7 +380,7 @@ async function processFollowup(pitch: DuePitchRow): Promise<FollowupResult> {
   const sendResult = await sendGmailMessage({
     accessToken: tokenResult.accessToken,
     fromEmail: inbox.email,
-    fromName: inbox.display_name,
+    fromName: sender.displayName,
     to: contactEmail,
     subject: email.subject,
     body: email.body,

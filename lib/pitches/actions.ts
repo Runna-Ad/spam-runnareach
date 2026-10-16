@@ -13,6 +13,7 @@ import type { Database } from "@/lib/supabase/types";
 import { composePitchWithClaude } from "./claude-composer";
 import { renderIndustryTemplate } from "./industry-templates";
 import { buildHunterUrlForPitch } from "./hunter-mapping";
+import { senderForGenerator } from "./sender-identity";
 import { hasUsableEmail, isRoleBasedEmail } from "@/lib/research/email-utils";
 import { fetchBenchmarksForPitch } from "@/lib/benchmarks/queries";
 import { fetchTopUsableContact } from "@/lib/pitches/contacts";
@@ -310,10 +311,9 @@ export async function generatePitch(
     case_studies,
     notable_clients: notableClientRows,
     benchmarks,
-    sender: {
-      full_name: user.fullName,
-      tenant_display_name: user.tenantDisplayName,
-    },
+    // Signed by the per-language sender (Nils ES / Henry EN · Runna Advertising),
+    // never the name of whoever clicked "Generate".
+    sender: senderForGenerator(prospect.language),
     // Inefficiency Hunter CTA — pre-fills the audit + pins the email's hero play.
     // Derived from the prospect + chosen pain; degrades gracefully on the Hunter
     // side if any param is missing/unknown.
@@ -636,7 +636,7 @@ export async function rewritePitchWithAngle(
     })),
     case_studies: chosenCases,
     notable_clients: notableClientRows,
-    sender: { full_name: user.fullName, tenant_display_name: user.tenantDisplayName },
+    sender: senderForGenerator(prospect.language),
     // Hunter CTA leads with the forced angle's pain as the pinned hero finding.
     deep_pitch_url: buildHunterUrlForPitch({
       language: prospect.language,

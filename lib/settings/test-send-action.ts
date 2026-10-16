@@ -17,6 +17,7 @@ import { requireUser } from "@/lib/auth";
 import { getOutboundCompliance } from "@/lib/compliance/outbound";
 import { getAccessToken, sendGmailMessage } from "@/lib/gmail/client";
 import { buildHunterUrl } from "@/lib/pitches/hunter-mapping";
+import { senderIdentity } from "@/lib/pitches/sender-identity";
 import { createClient } from "@/lib/supabase/server";
 
 const schema = z.object({
@@ -32,7 +33,7 @@ const SAMPLE = {
       `Hi ${name},\n\n` +
       "This is a test of exactly what a prospect receives from S.P.A.M. It checks three things: accents survive the trip (Montréal, São Paulo, según, café, Ñuñoa), the call to action below shows up as a button, and the footer shows the address, website, contact email and an unsubscribe link.\n\n" +
       `👉 See it for yourself: ${url}\n\n` +
-      `${name}\nRunna`,
+      `${name}\n${senderIdentity("en").agency}`,
   },
   es: {
     subject: "[Prueba] Revisión de correo S.P.A.M.",
@@ -40,7 +41,7 @@ const SAMPLE = {
       `Hola ${name},\n\n` +
       "Esta es una prueba de lo que recibe exactamente un prospecto desde S.P.A.M. Revisa tres cosas: que los acentos lleguen bien (según, información, año, José María Núñez, pingüino), que el llamado a la acción de abajo se vea como botón y que el pie de correo muestre la dirección, el sitio, el correo de contacto y el enlace para darse de baja.\n\n" +
       `👉 Revísalo tú mismo: ${url}\n\n` +
-      `${name}\nRunna`,
+      `${name}\n${senderIdentity("es").agency}`,
   },
 } as const;
 
@@ -71,12 +72,13 @@ export async function sendTestEmail(
   const token = await getAccessToken(inbox.gmail_refresh_token_encrypted);
   if (!token.ok) return { ok: false, error: `Gmail auth failed: ${token.error}` };
 
-  const firstName = inbox.display_name?.trim().split(/\s+/)[0] || "Pedro";
+  const sender = senderIdentity(lang);
+  const firstName = sender.firstName;
   const sample = SAMPLE[lang];
   const sent = await sendGmailMessage({
     accessToken: token.accessToken,
     fromEmail: inbox.email,
-    fromName: inbox.display_name,
+    fromName: sender.displayName,
     to,
     subject: sample.subject,
     body: sample.body(firstName, buildHunterUrl({ market: lang === "es" ? "mx" : "ca" })),

@@ -8,10 +8,12 @@
  *   - Works in both EN (CA market) and ES (MX market)
  *
  * Templates authored by Pedro De Velasco. Do not edit body copy without his review.
+ * The sign-off is {sender_name}/{agency} (lib/pitches/sender-identity), per Pedro.
  */
 
 import type { ComposedPitch, GeneratorInputs } from "./generator.ts";
 import { pickAddressContact } from "../research/email-utils.ts";
+import { senderIdentity } from "./sender-identity.ts";
 
 export const HUNTER_URL = "https://runna-hunter.vercel.app/";
 
@@ -101,8 +103,8 @@ Rünna has spent 12 years making marketing produce measurable results. This show
 
 👉 Your number is here: {link}
 
-Pedro
-Rünna`,
+{sender_name}
+{agency}`,
     },
     es: {
       subject: "el dinero que tu marca pierde cada mes",
@@ -117,8 +119,8 @@ En Rünna llevamos 12 años haciendo que el marketing genere resultados medibles
 
 👉 Tu número está aquí: {link}
 
-Pedro
-Rünna`,
+{sender_name}
+{agency}`,
     },
   },
 
@@ -139,8 +141,8 @@ Rünna produces marketing that sells, not just marketing that looks good. But fi
 
 👉 {link}
 
-Pedro
-Rünna`,
+{sender_name}
+{agency}`,
     },
     es: {
       subject: "cuánto te cuesta el marketing improvisado",
@@ -155,8 +157,8 @@ En Rünna producimos marketing que vende, no que solo se ve bonito. Pero primero
 
 👉 {link}
 
-Pedro
-Rünna`,
+{sender_name}
+{agency}`,
     },
   },
 
@@ -177,8 +179,8 @@ Rünna has spent 12 years turning marketing into measurable results. This shows 
 
 👉 Calculate your leak: {link}
 
-Pedro
-Rünna`,
+{sender_name}
+{agency}`,
     },
     es: {
       subject: "los leads que {company} está dejando ir",
@@ -193,8 +195,8 @@ Rünna lleva 12 años convirtiendo marketing en resultados medibles. Esto te mue
 
 👉 Calcula tu fuga: {link}
 
-Pedro
-Rünna`,
+{sender_name}
+{agency}`,
     },
   },
 
@@ -215,8 +217,8 @@ At Rünna we work by one rule: if you can't measure it, it doesn't count. Start 
 
 👉 {link}
 
-Pedro
-Rünna`,
+{sender_name}
+{agency}`,
     },
     es: {
       subject: "¿el marketing de {company} genera retorno o solo gasto?",
@@ -231,8 +233,8 @@ En Rünna trabajamos bajo una regla: si no se puede medir, no sirve. Empieza por
 
 👉 {link}
 
-Pedro
-Rünna`,
+{sender_name}
+{agency}`,
     },
   },
 
@@ -253,8 +255,8 @@ Rünna has spent 12 years producing marketing that drives results. See where you
 
 👉 Your number here: {link}
 
-Pedro
-Rünna`,
+{sender_name}
+{agency}`,
     },
     es: {
       subject: "lo que una marca dispersa le cuesta a {company}",
@@ -269,8 +271,8 @@ Rünna lleva 12 años produciendo marketing que genera resultados. Mira primero 
 
 👉 Tu número aquí: {link}
 
-Pedro
-Rünna`,
+{sender_name}
+{agency}`,
     },
   },
 
@@ -291,8 +293,8 @@ Rünna has spent 12 years building measurable marketing for demanding brands. Th
 
 👉 {link}
 
-Pedro
-Rünna`,
+{sender_name}
+{agency}`,
     },
     es: {
       subject: "el dinero atorado en los procesos de {company}",
@@ -307,8 +309,8 @@ Rünna lleva 12 años haciendo marketing medible para marcas exigentes. Esto te 
 
 👉 {link}
 
-Pedro
-Rünna`,
+{sender_name}
+{agency}`,
     },
   },
 
@@ -329,8 +331,8 @@ Rünna has spent 12 years turning marketing into measurable results. Start by se
 
 👉 {link}
 
-Pedro
-Rünna`,
+{sender_name}
+{agency}`,
     },
     es: {
       subject: "{company}: pacientes que miran y nunca agendan",
@@ -345,8 +347,8 @@ Rünna lleva 12 años convirtiendo marketing en resultados medibles. Empieza vie
 
 👉 {link}
 
-Pedro
-Rünna`,
+{sender_name}
+{agency}`,
     },
   },
 
@@ -371,8 +373,8 @@ Rünna has 12 years producing marketing that drives measurable results. And we o
 
 👉 See {company}'s recapture number: {link}
 
-Pedro
-Rünna`,
+{sender_name}
+{agency}`,
     },
     es: {
       subject: "La comisión de OTA de {company}, recuperada",
@@ -387,8 +389,8 @@ En Rünna llevamos 12 años produciendo marketing que genera resultados medibles
 
 👉 Ve el número de {company}: {link}
 
-Pedro
-Rünna`,
+{sender_name}
+{agency}`,
     },
   },
 
@@ -409,8 +411,8 @@ Rünna operates in both Mexico and Canada — we don't just produce marketing th
 
 👉 {link}
 
-Pedro
-Rünna`,
+{sender_name}
+{agency}`,
     },
     es: {
       subject: "Los turistas que pasan de largo de {company}",
@@ -425,8 +427,8 @@ En Rünna operamos en México y Canadá — no solo producimos marketing, conoce
 
 👉 {link}
 
-Pedro
-Rünna`,
+{sender_name}
+{agency}`,
     },
   },
 
@@ -447,8 +449,8 @@ Rünna has 12 years of measurable creative work, and we operate on both sides of
 
 👉 See your number: {link}
 
-Pedro
-Rünna`,
+{sender_name}
+{agency}`,
     },
     es: {
       subject: "Lo que valen las noches vacías de {company}",
@@ -463,8 +465,8 @@ En Rünna llevamos 12 años de trabajo creativo medible, y operamos a ambos lado
 
 👉 Ve tu número: {link}
 
-Pedro
-Rünna`,
+{sender_name}
+{agency}`,
     },
   },
 
@@ -485,8 +487,8 @@ Rünna has spent 12 years producing marketing that drives measurable results. Th
 
 👉 {link}
 
-Pedro
-Rünna`,
+{sender_name}
+{agency}`,
     },
     es: {
       subject: "¿dónde se está yendo el dinero de {company}?",
@@ -501,8 +503,8 @@ Rünna lleva 12 años produciendo marketing que genera resultados medibles. Esto
 
 👉 {link}
 
-Pedro
-Rünna`,
+{sender_name}
+{agency}`,
     },
   },
 ];
@@ -555,10 +557,14 @@ export function renderIndustryTemplate(
 
   const link = input.deep_pitch_url ?? HUNTER_URL;
 
+  // Signed by the per-language sender (Nils for ES, Henry for EN), not "Pedro".
+  const sender = senderIdentity(lang);
   const vars = {
     first_name: salutationFirstName,
     company,
     link,
+    sender_name: sender.firstName,
+    agency: sender.agency,
   };
 
   const subject = applyVars(tpl.subject, vars);

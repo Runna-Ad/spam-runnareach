@@ -1,29 +1,33 @@
 /**
  * lib/pitches/followup-templates.ts
  *
- * Follow-up email templates for the 3-step outreach sequence.
- * No AI generation — hand-crafted with variable substitution.
- * Steps 2 and 3 reply in the original thread (Re: [subject]).
+ * Deterministic follow-up emails — the fallback when the AI follow-up composer
+ * fails or the daily cap is hit. Steps 2 and 3 reply in the original thread
+ * (Re: [subject]).
  *
  * Sequence:
- *   Step 1 — initial pitch          (handled by send-action.ts)
- *   Step 2 — soft check-in          (follow_up_step = 1, day ~3-4)
- *   Step 3 — final + coffee offer   (follow_up_step = 2, day ~8-9)
+ *   Step 1 — initial pitch          (send-queue / send-action)
+ *   Step 2 — soft check-in          (follow_up_step = 1, day ~3)
+ *   Step 3 — final + coffee offer   (follow_up_step = 2, day ~8)
+ *
+ * Both languages, signed by the per-language sender (lib/pitches/sender-identity),
+ * no em dashes (the pitch voice bans them), no numbers (nothing here is sourced).
+ * These used to be English-only and signed "— Pedro", so a Spanish prospect got
+ * English whenever the AI composer failed.
  */
 
 export type FollowupContext = {
   /** Company name (e.g. "Tienda Norte") */
   prospectName: string;
-  /** Contact first name if known — falls back to company name salutation */
+  /** Contact first name if known — otherwise the greeting addresses the team. */
   contactName: string | null;
   /** Subject line from the original pitch — used to form "Re: [subject]" */
   originalSubject: string;
-  /** One-line pain from original pitch notes, e.g. "abandoned cart recovery gaps" */
-  painSummary: string | null;
-  /** Dollar/peso amount found in hunter scan. null if not available. */
-  hunterValue: number | null;
-  /** Determines currency label: CAD for CA, MXN for MX */
-  market: "CA" | "MX";
+  /** Short pain label, e.g. "online booking" — a noun phrase, never a raw quote. */
+  painLabel: string | null;
+  lang: "en" | "es";
+  /** Sign-off block, e.g. "Henry\nRunna Advertising". */
+  signature: string;
 };
 
 export type FollowupEmail = {
@@ -34,20 +38,8 @@ export type FollowupEmail = {
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
 function greeting(ctx: FollowupContext): string {
-  return ctx.contactName ? `Hi ${ctx.contactName}` : `Hi there`;
-}
-
-function currencyLabel(market: "CA" | "MX"): string {
-  return market === "CA" ? "CAD" : "MXN";
-}
-
-function formatValue(value: number, market: "CA" | "MX"): string {
-  const currency = currencyLabel(market);
-  const formatted = new Intl.NumberFormat("en-US", {
-    style: "decimal",
-    maximumFractionDigits: 0,
-  }).format(value);
-  return `$${formatted} ${currency}`;
+  if (ctx.lang === "es") return ctx.contactName ? `Hola ${ctx.contactName}` : `Hola, equipo de ${ctx.prospectName}`;
+  return ctx.contactName ? `Hi ${ctx.contactName}` : `Hi ${ctx.prospectName} team`;
 }
 
 function reSubject(originalSubject: string): string {
@@ -58,69 +50,38 @@ function reSubject(originalSubject: string): string {
   return `Re: ${originalSubject.trim()}`;
 }
 
-// ── Follow-up #1 — Soft check-in (day ~3-4) ─────────────────────────────────
+// ── Follow-up #1 — Soft check-in (day ~3) ───────────────────────────────────
 
-/**
- * Step 2 of the sequence (follow_up_step = 1).
- * Short, human, no pressure. References the specific pain or dollar amount if
- * available — makes it feel like you actually looked at their business.
- */
+/** Step 2 (follow_up_step = 1): short, human, no pressure. */
 export function buildFollowup1(ctx: FollowupContext): FollowupEmail {
-  const hi = greeting(ctx);
   const subject = reSubject(ctx.originalSubject);
-
-  let valueHook = "";
-  if (ctx.hunterValue !== null) {
-    // hunterValue is currently always null (scan provenance can't be verified —
-    // asserting "we found $X" would fabricate an audit we never ran). Kept as a
-    // soft reference in case a verified per-prospect scan ever exists.
-    valueHook = `The quick self-serve audit for ${ctx.prospectName} pointed at roughly ${formatValue(ctx.hunterValue, ctx.market)} in recoverable inefficiencies — wanted to make sure this landed in the right place.`;
-  } else if (ctx.painSummary) {
-    valueHook = `Wanted to make sure my note about ${ctx.painSummary} at ${ctx.prospectName} didn't get buried.`;
-  } else {
-    valueHook = `Wanted to make sure my note about ${ctx.prospectName} didn't get buried.`;
-  }
-
-  const body = `${hi},
-
-${valueHook}
-
-Still worth a 20-minute chat?
-
-— Pedro`;
-
-  return { subject, body };
+  const es = ctx.lang === "es";
+  const hook = es
+    ? ctx.painLabel
+      ? `Solo quería asegurarme de que mi correo sobre ${ctx.painLabel} en ${ctx.prospectName} no se perdiera.`
+      : `Solo quería asegurarme de que mi correo sobre ${ctx.prospectName} no se perdiera.`
+    : ctx.painLabel
+      ? `Just making sure my note about ${ctx.painLabel} at ${ctx.prospectName} didn't get buried.`
+      : `Just making sure my note about ${ctx.prospectName} didn't get buried.`;
+  const ask = es ? "¿Vale la pena una llamada de 20 minutos?" : "Worth a 20-minute chat?";
+  return { subject, body: `${greeting(ctx)},\n\n${hook}\n\n${ask}\n\n${ctx.signature}` };
 }
 
-// ── Follow-up #2 — Final + coffee offer (day ~8-9) ───────────────────────────
+// ── Follow-up #2 — Final + coffee offer (day ~8) ────────────────────────────
 
-/**
- * Step 3 of the sequence (follow_up_step = 2).
- * Last touch. References the dollar amount prominently. Coffee-on-me offer.
- * Explicitly acknowledges it's the final email — no desperation, just honesty.
- */
+/** Step 3 (follow_up_step = 2): the last touch, and it says so. */
 export function buildFollowup2(ctx: FollowupContext): FollowupEmail {
-  const hi = greeting(ctx);
   const subject = reSubject(ctx.originalSubject);
-
-  let valueIntro = "";
-  if (ctx.hunterValue !== null) {
-    valueIntro = `The self-serve audit for ${ctx.prospectName} pointed at roughly ${formatValue(ctx.hunterValue, ctx.market)} in recoverable inefficiencies.`;
-  } else if (ctx.painSummary) {
-    valueIntro = `When we looked at ${ctx.prospectName} we spotted a real gap around ${ctx.painSummary} — the kind that quietly costs you revenue every month.`;
-  } else {
-    valueIntro = `When we looked at ${ctx.prospectName}, we found opportunities I think are worth 20 minutes of your time.`;
-  }
-
-  const body = `${hi},
-
-Last note — I promise.
-
-${valueIntro}
-
-If you get on a 20-minute call and don't find it worth your time, coffee's on me. After this I'll leave you alone.
-
-— Pedro`;
-
+  const es = ctx.lang === "es";
+  const intro = es
+    ? ctx.painLabel
+      ? `Cuando revisamos ${ctx.prospectName}, vimos un hueco en ${ctx.painLabel}, de esos que cuestan ventas cada mes sin que se note.`
+      : `Cuando revisamos ${ctx.prospectName}, encontramos un par de cosas que creo valen 20 minutos.`
+    : ctx.painLabel
+      ? `When we looked at ${ctx.prospectName}, we spotted a gap around ${ctx.painLabel}, the kind that quietly costs revenue every month.`
+      : `When we looked at ${ctx.prospectName}, we found a couple of things I think are worth 20 minutes.`;
+  const body = es
+    ? `${greeting(ctx)},\n\nÚltimo correo, lo prometo.\n\n${intro}\n\nSi la llamada no te sirve, el café va por mi cuenta. Después de esto no te escribo más.\n\n${ctx.signature}`
+    : `${greeting(ctx)},\n\nLast note, I promise.\n\n${intro}\n\nIf the call isn't worth your time, coffee's on me. After this I'll leave you alone.\n\n${ctx.signature}`;
   return { subject, body };
 }

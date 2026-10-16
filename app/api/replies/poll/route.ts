@@ -42,6 +42,7 @@ import {
   type ClassifyResult,
 } from "@/lib/replies/classify";
 import { recordOptOut } from "@/lib/compliance/opt-out";
+import { senderIdentity } from "@/lib/pitches/sender-identity";
 import {
   composeReplyDraftHeuristic,
   composeReplyDraftWithClaude,
@@ -352,7 +353,6 @@ export async function GET(req: NextRequest) {
             prospect,
             inbound,
             classification.intent,
-            inbox.display_name,
           );
           if (draft) {
             await supabase
@@ -494,10 +494,11 @@ async function draftResponse(
   prospect: { company_name: string; language: string },
   inbound: InboundReply,
   intent: ReplyIntent,
-  senderDisplayName: string,
 ): Promise<{ body: string; subject: string; model: string; cost_usd: number | null } | null> {
   const language: "en" | "es" = prospect.language === "es" ? "es" : "en";
-  const senderFirstName = senderDisplayName.trim().split(/\s+/)[0] || "Pedro";
+  // Signed by the per-language sender (Nils / Henry), never the inbox owner.
+  const sender = senderIdentity(language);
+  const senderFirstName = sender.firstName;
 
   // Best-effort contact first name from the thread reply.
   const contactFirstName = inbound.fromName?.trim().split(/\s+/)[0] ?? null;
@@ -545,7 +546,7 @@ async function draftResponse(
     whatTheyDo,
     painSummary,
     senderFirstName,
-    agencyName: "Runna",
+    agencyName: sender.agency,
   };
 
   if (claudeIsAvailable() && (await isUnderDailyCap(thread.tenant_id)).under) {

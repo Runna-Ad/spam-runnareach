@@ -19,6 +19,7 @@ import { writeAuditLog } from "@/lib/audit/log";
 import { getAccessToken, sendGmailMessage } from "@/lib/gmail/client";
 import { getOutboundCompliance } from "@/lib/compliance/outbound";
 import { threadBlocksSend } from "@/lib/pitches/send-guards";
+import { senderIdentity } from "@/lib/pitches/sender-identity";
 import { isEmailOnDncList, type DncClient } from "@/lib/discover/dnc-check";
 import { createServiceRoleClient } from "@/lib/supabase/service-role";
 import {
@@ -197,8 +198,8 @@ export async function GET(req: NextRequest) {
       whatTheyDo,
       painSummary,
       attemptNumber,
-      senderFirstName: inbox.display_name?.trim().split(/\s+/)[0] || "Pedro",
-      agencyName: "Runna",
+      senderFirstName: senderIdentity(language).firstName,
+      agencyName: senderIdentity(language).agency,
     };
 
     let body: string;
@@ -281,7 +282,7 @@ export async function GET(req: NextRequest) {
     const sendResult = await sendGmailMessage({
       accessToken: tokenResult.accessToken,
       fromEmail: inbox.email,
-      fromName: inbox.display_name,
+      fromName: senderIdentity(language).displayName,
       to: toAddress,
       subject: /^re:/i.test(subject) ? subject : `Re: ${subject}`,
       body,

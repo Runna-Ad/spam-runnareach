@@ -21,11 +21,17 @@ import {
 import { RUNNA_CAPABILITIES } from "../runna/capabilities.ts";
 import { HUNTER_URL } from "./industry-templates.ts";
 import { hasUsableEmail } from "../research/email-utils.ts";
+import { senderIdentity } from "./sender-identity.ts";
 import type {
   ComposedPitch,
   GeneratorInputCaseStudy,
   GeneratorInputs,
 } from "./generator.ts";
+
+// Who the intro line names. Resolved once at module load so each language's
+// system prompt stays byte-identical across calls (it is prompt-cached).
+const EN_SENDER = senderIdentity("en");
+const ES_SENDER = senderIdentity("es");
 
 // ── Zod schema (unchanged from v1) ───────────────────────────────────────────
 
@@ -361,8 +367,8 @@ Right (EN): "Checked [company].com — no product pages, no checkout path."
 REQUIRED EMAIL STRUCTURE — follow this exactly, no additions, no reordering:
 1. Salutation (see voice rules for format)
 2. One-liner intro — who is writing and why they're reaching out. Brief and warm, not a pitch.
-   EN: "Pedro from Runna here — we help independent retailers grow without burning their ad budget."
-   EN: "Quick note from Pedro at Runna — we work with Canadian ecommerce brands on exactly this."
+   EN: "${EN_SENDER.firstName} from ${EN_SENDER.agency} here. We help independent retailers grow without burning their ad budget."
+   EN: "Quick note from ${EN_SENDER.firstName} at ${EN_SENDER.agency}. We work with Canadian ecommerce brands on exactly this."
    Keep it to ONE sentence. This is the "who the hell is this person" moment. Required.
 3. Opening hook — one concrete, specific observation about THIS prospect's situation.
    Pull from: what_they_do, tech_stack, city, translated_pain. Be specific, not generic.
@@ -548,8 +554,8 @@ ${register}
   "oportunidades de venta". Aunque el pain_label traiga jerga (p. ej. "lead process"),
   NO la copies — tradúcela a cómo lo diría un dueño de negocio normal.
 - One-liner intro (required, step 2 of structure):
-  "Pedro de Runna — ayudamos a marcas independientes a crecer sin quemar presupuesto en ads."
-  or "Soy Pedro, de Runna — trabajamos con tiendas en línea en exactamente esto."
+  "${ES_SENDER.firstName}, de ${ES_SENDER.agency}. Ayudamos a marcas independientes a crecer sin quemar presupuesto en ads."
+  or "Soy ${ES_SENDER.firstName}, de ${ES_SENDER.agency}. Trabajamos con tiendas en línea en exactamente esto."
   One sentence only. Warm and direct.
 - Sign off: sender's first name on one line, agency name on the next line.`;
 }

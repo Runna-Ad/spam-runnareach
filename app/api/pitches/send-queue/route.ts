@@ -21,6 +21,7 @@ import { isEmailOnDncList, type DncClient } from "@/lib/discover/dnc-check";
 import { findSentMessage } from "@/lib/gmail/read";
 import { firstTouchConflict } from "@/lib/pitches/send-guards";
 import { verifyRecipient } from "@/lib/research/verify-recipient";
+import { reconcileSignOff, senderIdentity } from "@/lib/pitches/sender-identity";
 
 // Prospect states that must never receive a queued cold pitch, even if the
 // pitch was approved before the state changed. Checked at send time — the
@@ -324,6 +325,8 @@ export async function GET(req: NextRequest) {
 
         // CASL footer + unsubscribe link. Fails closed: no mailing address, no send.
         const lang: "en" | "es" = prospectRow?.language === "es" ? "es" : "en";
+        // A draft from before the Nils/Henry switch still ends "Pedro"; match the From line.
+        const signedBody = reconcileSignOff(body, lang);
         const compliance = getOutboundCompliance({
           tenantId: pitch.tenant_id,
           prospectId: pitch.prospect_id,
@@ -364,10 +367,10 @@ export async function GET(req: NextRequest) {
         const sendResult = await sendGmailMessage({
           accessToken: tokenResult.accessToken,
           fromEmail: inbox.email,
-          fromName: inbox.display_name,
+          fromName: senderIdentity(lang).displayName,
           to: toName ? `"${String(toName).replace(/"/g, "")}" <${toEmail}>` : toEmail,
           subject: pitch.subject,
-          body,
+          body: signedBody,
           lang,
           footer: compliance.value.footer,
           listUnsubscribe: compliance.value.listUnsubscribe,
@@ -386,7 +389,7 @@ export async function GET(req: NextRequest) {
           .update({
             status: "sent",
             sent_at: sentAt,
-            body_sent: bodyWithFooter(body, compliance.value.footer),
+            body_sent: bodyWithFooter(signedBody, compliance.value.footer),
             gmail_message_id: sendResult.gmailMessageId,
             gmail_thread_id: sendResult.threadId ?? null,
             sequence_step: 1,

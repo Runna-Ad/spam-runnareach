@@ -25,6 +25,7 @@
 import { getTemplate, type TemplateVars } from "./templates.ts";
 import { pickAddressContact } from "../research/email-utils.ts";
 import { getSolutionHint } from "./claude-composer.ts";
+import { senderIdentity } from "./sender-identity.ts";
 
 export type GeneratorInputProspect = {
   id: string;
@@ -269,9 +270,9 @@ export function composePitchHeuristic(input: GeneratorInputs): ComposedPitch | n
     : "(no case)";
 
   const evidenceQuote = trimQuote(chosenPain?.evidence_quote ?? null);
-  const senderFirst = extractFirstName(input.sender.full_name) ?? "Pedro";
-  const senderSignature = buildSignature(input.sender);
   const lang = input.prospect.language;
+  const senderFirst = extractFirstName(input.sender.full_name) ?? senderIdentity(lang).firstName;
+  const senderSignature = buildSignature(input.sender, lang);
 
   const tpl = getTemplate(lang);
   const solutionHint = getSolutionHint(chosenPain?.pain_label ?? null, lang);
@@ -404,9 +405,10 @@ function trimQuote(quote: string | null): string {
   return cleaned.slice(0, 117).trim() + "...";
 }
 
-function buildSignature(sender: GeneratorInputSender): string {
-  const name = sender.full_name?.trim() || "Pedro De Velasco";
-  return `${name}\n${sender.tenant_display_name}`;
+function buildSignature(sender: GeneratorInputSender, lang: string): string {
+  const fallback = senderIdentity(lang);
+  const name = sender.full_name?.trim() || fallback.firstName;
+  return `${name}\n${sender.tenant_display_name || fallback.agency}`;
 }
 
 function computeSelfScore(flags: {

@@ -31,6 +31,7 @@ import {
 } from "@/lib/anthropic/client";
 import { isUnderDailyCap, recordClaudeCall } from "@/lib/anthropic/cost-tracking";
 import { fetchTopUsableContact } from "@/lib/pitches/contacts";
+import { senderSignature } from "@/lib/pitches/sender-identity";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -152,7 +153,7 @@ export async function generateWebsitePitch(
       language: prospect.language,
       firstName,
       caseStudyLine,
-      senderName: user.fullName ?? "Rünna Team",
+      signature: senderSignature(prospect.language),
     });
     if (result.ok) {
       subject = result.subject;
@@ -175,7 +176,7 @@ export async function generateWebsitePitch(
         language: prospect.language,
         firstName,
         caseStudyLine,
-        senderName: user.fullName ?? "Rünna Team",
+        signature: senderSignature(prospect.language),
       });
       subject = fallback.subject;
       body = fallback.body;
@@ -187,7 +188,7 @@ export async function generateWebsitePitch(
       language: prospect.language,
       firstName,
       caseStudyLine,
-      senderName: user.fullName ?? "Rünna Team",
+      signature: senderSignature(prospect.language),
     });
     subject = fallback.subject;
     body = fallback.body;
@@ -231,7 +232,8 @@ async function callClaudeForWebsitePitch(opts: {
   language: "en" | "es";
   firstName: string | null;
   caseStudyLine: string | null;
-  senderName: string;
+  /** Two-line sign-off, e.g. "Nils\nRunna Advertising" (lib/pitches/sender-identity). */
+  signature: string;
 }): Promise<{ ok: true; subject: string; body: string; cost_usd: number; usage: ClaudeUsage } | { ok: false }> {
   // Localized greeting. "Hi there," is banned project-wide (reads as a mail
   // merge); fall back to the team form, in the prospect's own language.
@@ -281,9 +283,7 @@ If you've been meaning to get this done, I'd love to make it easy. Happy to show
 
 Worth a quick chat?
 
-${opts.senderName}
-Rünna Advertising
-runna.agency
+${opts.signature}
 
 Rules:
 - Replace every [${opts.industry}] placeholder with industry-specific, natural-sounding language
@@ -348,7 +348,8 @@ function buildFallbackPitch(opts: {
   language: "en" | "es";
   firstName: string | null;
   caseStudyLine: string | null;
-  senderName: string;
+  /** Two-line sign-off, e.g. "Nils\nRunna Advertising" (lib/pitches/sender-identity). */
+  signature: string;
 }): { subject: string; body: string } {
   // Spanish prospects must never receive the English template just because
   // Claude was unavailable (API error or daily cap) — the fallback is exactly
@@ -384,9 +385,7 @@ If you've been meaning to get this done, I'd love to make it easy. Happy to show
 
 Worth a quick chat?
 
-${opts.senderName}
-Rünna Advertising
-runna.agency`;
+${opts.signature}`;
 
   return { subject, body };
 }
@@ -397,7 +396,8 @@ function buildFallbackPitchEs(opts: {
   industry: string;
   firstName: string | null;
   caseStudyLine: string | null;
-  senderName: string;
+  /** Two-line sign-off, e.g. "Nils\nRunna Advertising" (lib/pitches/sender-identity). */
+  signature: string;
 }): { subject: string; body: string } {
   const greeting = opts.firstName
     ? `Hola ${opts.firstName},`
@@ -426,9 +426,7 @@ Si han tenido esto pendiente, con gusto se los hago fácil. Puedo mostrarles un 
 
 ¿Vale la pena una llamada corta?
 
-${opts.senderName}
-Rünna Advertising
-runna.agency`;
+${opts.signature}`;
 
   return { subject, body };
 }
