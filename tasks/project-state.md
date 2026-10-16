@@ -34,6 +34,16 @@ Still open after the ship:
 - Optional: unsubscribe links still read `spam-runnareach.vercel.app/...` — a free `go.runnareach.com` CNAME + `UNSUBSCRIBE_BASE_URL` fixes the look.
 - pedrojr22@gmail.com is Pedro's (confirmed) → the GYMVMT "reply" was a test; exclude from metrics.
 
+## Phase 1 — "make good measurable" (IN PROGRESS on `claude/great-planck-w6w25t`, NOT shipped)
+392 tests, build green. Commits on the branch (prod is still Phase 0):
+- **P1.1 `1741bc9` Sender identity**: prospect emails come from "Nils · Runna Advertising" (ES) / "Henry · Runna Advertising" (EN), signed the same (Pedro, 2026-10-16: both real team members; sending address stays pedro@runnareach.com). `lib/pitches/sender-identity.ts`; env overrides RUNNA_SENDER_NAME_EN / _ES / RUNNA_AGENCY_NAME. Legacy "Pedro" sign-offs are swapped at send time (`reconcileSignOff`). Follow-up templates now bilingual.
+- **P1.2 `cb26785` Pitch prompt v2** (`PITCH_PROMPT_VERSION = pitch-v2-2026-10-16`): one rule per topic, no contradictions. Never a client (case studies no longer sent to the model; case_study_id always null), numbers only from verified benchmarks + "about 30 seconds", no internal product names (`RUNNA_CAPABILITIES_FOR_PITCHES`).
+- **P1.3 `50afda4` Send gate v2** (`lib/pitches/send-gate.ts` pure, `lib/pitches/gate.ts` DB): block vs review severity; enforced at approve (review = "Approve anyway", audited), bulk approve (pass only), send-queue + Send now (exact body/recipient), follow-ups (template fallback, else pause), nudges (review lane). Verdict stored on `pitches.gate_verdict`, shown on /pitches. Replay over the last 60 sent emails: 30 blocked (all real violations), 16 review, 14 pass.
+
+**Ship order (on Pedro's "ship it"):** apply migration **0036** (pitches.gate_verdict + gate_override) to prod FIRST, then fast-forward main. The new code selects those columns: deployed without them, every send is skipped (fails closed) and /pitches can't load a pitch body.
+
+Next: P1.4 AI critic + auto-revise, P1.5 decision record per pitch, P1.6 warmup placement / chain filter / domain ownership.
+
 ## API integrations
 | Service | Status |
 |---|---|
