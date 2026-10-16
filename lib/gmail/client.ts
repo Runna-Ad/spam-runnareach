@@ -5,13 +5,12 @@
  *   1. Exchange a decrypted refresh token for a short-lived access token.
  *   2. Send a multipart email via the Gmail REST API.
  *
- * Email format: multipart/alternative with text/plain + text/html parts.
- * The HTML part renders the CTA line (starting with 👉) as a styled button
- * while keeping the rest of the email plain-text-like for deliverability.
- * The text/plain fallback is identical in content — spam filters read both.
+ * The message itself (headers, quoted-printable parts, HTML rendering, footer,
+ * List-Unsubscribe) is built by the pure, unit-tested ./mime.ts.
  */
 
 import { decryptToken } from "./crypto";
+import { buildRfc2822, type MimeMessageInput } from "./mime.ts";
 
 const TOKEN_ENDPOINT = "https://oauth2.googleapis.com/token";
 const GMAIL_SEND_URL = "https://gmail.googleapis.com/gmail/v1/users/me/messages/send";
@@ -64,44 +63,13 @@ export async function getAccessToken(
 
 // ── Send email ────────────────────────────────────────────────────────────────
 
-export type SendEmailInput = {
+export type SendEmailInput = MimeMessageInput & {
   accessToken: string;
-  /** The Gmail address authorised to send (inbox.email). */
-  fromEmail: string;
-  /** Display name shown to recipient, e.g. "Pedro De Velasco". */
-  fromName: string;
-  /** Recipient email address. */
-  to: string;
-  subject: string;
   /**
-   * Plain-text body — line breaks (\n) preserved.
-   * Lines starting with 👉 are automatically converted to a CTA button
-   * in the HTML version. The plain text version is unchanged.
-   */
-  body: string;
-  /** Optional Reply-To (defaults to fromEmail). */
-  replyTo?: string;
-  /**
-   * Recipient's language. Decides the CTA button label.
-   *
-   * Previously the label was inferred by sniffing keywords out of the CTA
-   * sentence — which silently produced an English button ("Run my free audit")
-   * on Spanish emails whenever the CTA line was a bare "👉 <link>" with no prose
-   * to sniff. The message knows its own language; guessing was never right.
-   */
-  lang?: "en" | "es";
-  /**
-   * Gmail thread ID for in-reply-to threading.
-   * When set, the message is appended to the existing thread.
-   * Also set In-Reply-To and References headers using originalMessageId.
+   * Gmail thread ID. When set, the message is appended to the existing thread;
+   * pair it with originalMessageId (the RFC 5322 Message-ID) for client threading.
    */
   threadId?: string;
-  /**
-   * Gmail message ID of the message being replied to (the <...@mail.gmail.com> value).
-   * Used to set RFC 2822 In-Reply-To and References headers for proper threading.
-   * Required when threadId is provided for full client threading support.
-   */
-  originalMessageId?: string;
 };
 
 export type SendEmailResult =
@@ -133,233 +101,4 @@ export async function sendGmailMessage(input: SendEmailInput): Promise<SendEmail
 
   const json = (await res.json()) as { id?: string; threadId?: string };
   return { ok: true, gmailMessageId: json.id ?? "", threadId: json.threadId };
-}
-
-// ── RFC 2822 builder (multipart/alternative) ─────────────────────────────────
-
-const MIME_BOUNDARY = "==Runna_Outreach_Boundary==";
-
-function buildRfc2822(input: SendEmailInput): string {
-  const from = input.fromName
-    ? `"${input.fromName.replace(/"/g, "")}" <${input.fromEmail}>`
-    : input.fromEmail;
-  const replyTo = input.replyTo ?? input.fromEmail;
-  const date = new Date().toUTCString();
-  const subject = encodeHeader(input.subject);
-  const htmlBody = buildHtmlBody(input.body, input.lang);
-
-  const headerLines = [
-    `From: ${from}`,
-    `To: ${input.to}`,
-    `Reply-To: ${replyTo}`,
-    `Subject: ${subject}`,
-    `Date: ${date}`,
-    `MIME-Version: 1.0`,
-    `Content-Type: multipart/alternative; boundary="${MIME_BOUNDARY}"`,
-  ];
-
-  // RFC 2822 threading headers — required for proper threading in email clients
-  if (input.originalMessageId) {
-    headerLines.push(`In-Reply-To: <${input.originalMessageId}>`);
-    headerLines.push(`References: <${input.originalMessageId}>`);
-  }
-
-  const headers = headerLines.join("\r\n");
-
-  const textPart = [
-    `--${MIME_BOUNDARY}`,
-    `Content-Type: text/plain; charset=UTF-8`,
-    `Content-Transfer-Encoding: quoted-printable`,
-    ``,
-    encodeQP(input.body),
-  ].join("\r\n");
-
-  const htmlPart = [
-    `--${MIME_BOUNDARY}`,
-    `Content-Type: text/html; charset=UTF-8`,
-    `Content-Transfer-Encoding: quoted-printable`,
-    ``,
-    encodeQP(htmlBody),
-  ].join("\r\n");
-
-  const closing = `--${MIME_BOUNDARY}--`;
-
-  return `${headers}\r\n\r\n${textPart}\r\n\r\n${htmlPart}\r\n\r\n${closing}`;
-}
-
-// ── HTML body builder ─────────────────────────────────────────────────────────
-
-/**
- * Converts the plain-text pitch body into a minimal HTML email.
- * The email looks like a plain-text message — no images, no complex layout —
- * but lines starting with 👉 are rendered as a styled CTA button.
- *
- * Deliverability notes:
- * - No tracking pixels, no external images
- * - Minimal inline CSS only (no external stylesheets)
- * - multipart/alternative means spam filters score the plain-text part too
- */
-function buildHtmlBody(plainText: string, lang?: "en" | "es"): string {
-  const lines = plainText.split("\n");
-  const htmlLines: string[] = [];
-
-  for (const line of lines) {
-    const trimmed = line.trim();
-
-    // CTA line — render as button
-    if (trimmed.startsWith("👉")) {
-      const withoutEmoji = trimmed.replace(/^👉\s*/, "");
-      // Extract the URL from ANYWHERE in the line (the CTA is now conversational,
-      // so the link sits mid-sentence with text after it). Strip trailing
-      // sentence punctuation that the greedy \S+ match swallows (e.g. the period
-      // after "...?market=ca.").
-      const rawMatch = withoutEmoji.match(/https?:\/\/\S+/);
-      const rawUrl = rawMatch ? rawMatch[0] : null;
-      const url = rawUrl ? rawUrl.replace(/[.,;:!?)\]]+$/, "") : null;
-
-      if (rawUrl && url) {
-        // Split the line into lead-in (before the link) and closer (after it),
-        // so it renders: description → button → "reach out / no harm" closer.
-        const [beforeRaw = "", afterRaw = ""] = withoutEmoji.split(rawUrl);
-        const before = beforeRaw.replace(/[:\s—–-]+$/, "").trim();
-        const after = afterRaw.replace(/^[.,:\s—–-]+/, "").trim();
-        const buttonText = deriveButtonText(before || after, lang);
-
-        if (before) {
-          htmlLines.push(`<p style="margin: 16px 0 8px;">${escapeHtml(before)}</p>`);
-        }
-        // Wrap the label in a <span> with its own color. Apple Mail (and some
-        // dark-mode clients) override the text color on an <a> with their accent
-        // blue and add an underline — the inner span with explicit color +
-        // text-decoration:none keeps the button white-on-dark everywhere.
-        htmlLines.push(
-          `<p style="margin: 16px 0;">` +
-          `<a href="${escapeHtml(url)}" ` +
-          `style="display: inline-block; background-color: #775cbf; border-radius: 8px; ` +
-          `text-decoration: none;">` +
-          `<span style="display: inline-block; padding: 13px 26px; color: #ffffff; ` +
-          `text-decoration: none; font-size: 15px; font-weight: 600; letter-spacing: -0.01em; ` +
-          `font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif;">` +
-          `${escapeHtml(buttonText)}` +
-          `</span></a></p>`,
-        );
-        // The closing line (e.g. "See something worth fixing? Reach out. If not,
-        // no harm done.") renders under the button — keeps the low-pressure ask visible.
-        if (after) {
-          htmlLines.push(`<p style="margin: 8px 0 0; line-height: 1.6;">${escapeHtml(after)}</p>`);
-        }
-      } else {
-        // No URL found — render as plain line
-        htmlLines.push(`<p style="margin: 8px 0;">${escapeHtml(withoutEmoji)}</p>`);
-      }
-      continue;
-    }
-
-    // Empty line — paragraph break (skip, handled by paragraph wrapping)
-    if (trimmed === "") {
-      htmlLines.push(`<p style="margin: 0; line-height: 1.6;">&nbsp;</p>`);
-      continue;
-    }
-
-    // Regular line
-    htmlLines.push(`<p style="margin: 0; line-height: 1.6;">${escapeHtml(trimmed)}</p>`);
-  }
-
-  return `<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-</head>
-<body style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif; color: #1a1a1a; max-width: 560px; margin: 0 auto; padding: 24px 20px; font-size: 15px; background: #ffffff;">
-${htmlLines.join("\n")}
-</body>
-</html>`;
-}
-
-/** Derive a short action-oriented button label from the CTA description text. */
-function deriveButtonText(description: string, lang?: "en" | "es"): string {
-  const lower = description.toLowerCase();
-  // Language wins over keyword sniffing — see the note in pitches-page.tsx.
-  // A bare "👉 {link}" CTA has no prose to sniff, so Spanish emails were
-  // getting the English fallback label.
-  if (lang === "es") return "Ver diagnóstico gratis →";
-  // Spanish
-  if (lower.includes("gratis") || lower.includes("diagnóstico") || lower.includes("auditoría") || lower.includes("auditoria")) {
-    return "Ver diagnóstico gratis →";
-  }
-  if (lower.includes("fugas") || lower.includes("pierde") || lower.includes("número")) {
-    return "Ver diagnóstico gratis →";
-  }
-  // English — lean into the self-serve "see for yourself, it's the data" framing.
-  if (lower.includes("see for yourself") || lower.includes("the data") || lower.includes("free tool") || lower.includes("free platform")) {
-    return "See it for yourself →";
-  }
-  if (lower.includes("audit") || lower.includes("leak") || lower.includes("losing")) {
-    return "Run my free audit →";
-  }
-  if (lower.includes("number") || lower.includes("revenue")) {
-    return "See your store's number →";
-  }
-  // Fallback
-  return "Run my free audit →";
-}
-
-function escapeHtml(text: string): string {
-  return text
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;");
-}
-
-/** Encode a header value as RFC 2047 UTF-8 base64 if it contains non-ASCII. */
-function encodeHeader(value: string): string {
-  // eslint-disable-next-line no-control-regex
-  if (/^[\x00-\x7F]*$/.test(value)) return value; // pure ASCII — no encoding needed
-  return `=?UTF-8?B?${Buffer.from(value, "utf8").toString("base64")}?=`;
-}
-
-/**
- * Minimal quoted-printable encoder for plain text bodies.
- * Encodes non-ASCII bytes and lines longer than 76 chars.
- */
-function encodeQP(text: string): string {
-  // Encode each line independently
-  return text
-    .split("\n")
-    .map((line) => {
-      // Encode non-ASCII and special QP chars byte by byte
-      let encoded = "";
-      for (const char of line) {
-        const code = char.codePointAt(0) ?? 0;
-        if (code > 127 || char === "=") {
-          // Multi-byte: encode each byte
-          const bytes = Buffer.from(char, "utf8");
-          for (const byte of bytes) {
-            encoded += `=${byte.toString(16).toUpperCase().padStart(2, "0")}`;
-          }
-        } else {
-          encoded += char;
-        }
-      }
-      // Soft line breaks at 76 chars
-      return wrapQP(encoded);
-    })
-    .join("\r\n");
-}
-
-function wrapQP(line: string): string {
-  if (line.length <= 76) return line;
-  const chunks: string[] = [];
-  let i = 0;
-  while (i < line.length) {
-    if (i + 76 >= line.length) {
-      chunks.push(line.slice(i));
-      break;
-    }
-    chunks.push(line.slice(i, i + 75) + "=");
-    i += 75;
-  }
-  return chunks.join("\r\n");
 }
