@@ -22,6 +22,8 @@ export type AuditAction =
   | "reply.nudge_sent"
   | "reply.nudge_held"
   | "prospect.archived_no_meeting"
+  // Opt-out from the unsubscribe link, one-click header, or an opt-out reply.
+  | "prospect.opted_out"
   // Pre-send verification gate, dry-run mode: records what the gate WOULD have
   // decided about a generated pitch. Changes nothing — it exists to prove the
   // gate agrees with human judgement before it's allowed to block a send.

@@ -17,6 +17,8 @@ import { claudeIsAvailable } from "@/lib/anthropic/client";
 import { recordClaudeCall } from "@/lib/anthropic/cost-tracking";
 import { writeAuditLog } from "@/lib/audit/log";
 import { getAccessToken, sendGmailMessage } from "@/lib/gmail/client";
+import { getOutboundCompliance } from "@/lib/compliance/outbound";
+import { isEmailOnDncList, type DncClient } from "@/lib/discover/dnc-check";
 import { createServiceRoleClient } from "@/lib/supabase/service-role";
 import {
   effectiveSendsToday,
@@ -168,6 +170,21 @@ export async function GET(req: NextRequest) {
       continue;
     }
 
+    // ── Address-level opt-out + CASL footer (checked before any AI spend) ──
+    // Nudges used to skip the do-not-contact list entirely, so an address that
+    // unsubscribed or bounced could still get one.
+    const toAddress = reply.from_email as string;
+    const dnc = await isEmailOnDncList(supabase as unknown as DncClient, tenantId, toAddress);
+    if (dnc.blocked) {
+      results.push({ prospect: prospect.company_name, action: "skipped", reason: dnc.reason });
+      continue;
+    }
+    const compliance = getOutboundCompliance({ tenantId, prospectId, email: toAddress, lang: language });
+    if (!compliance.ok) {
+      results.push({ prospect: prospect.company_name, action: "skipped", reason: compliance.error });
+      continue;
+    }
+
     // ── Compose ─────────────────────────────────────────────────────────────
     const composerInput: NudgeComposerInput = {
       contactFirstName: null,
@@ -245,9 +262,12 @@ export async function GET(req: NextRequest) {
       accessToken: tokenResult.accessToken,
       fromEmail: inbox.email,
       fromName: inbox.display_name,
-      to: reply.from_email as string,
+      to: toAddress,
       subject: /^re:/i.test(subject) ? subject : `Re: ${subject}`,
       body,
+      lang: language,
+      footer: compliance.value.footer,
+      listUnsubscribe: compliance.value.listUnsubscribe,
       threadId: (pitch.gmail_thread_id as string | null) ?? undefined,
       originalMessageId: (reply.gmail_rfc_message_id as string | null) ?? (pitch.gmail_message_id as string | null) ?? undefined,
     });

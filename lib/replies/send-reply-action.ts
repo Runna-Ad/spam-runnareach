@@ -26,6 +26,8 @@ import { recordClaudeCall } from "@/lib/anthropic/cost-tracking";
 import { writeAuditLog } from "@/lib/audit/log";
 import { requireUser } from "@/lib/auth";
 import { getAccessToken, sendGmailMessage } from "@/lib/gmail/client";
+import { getOutboundCompliance } from "@/lib/compliance/outbound";
+import { isEmailOnDncList, type DncClient } from "@/lib/discover/dnc-check";
 import { createServiceRoleClient } from "@/lib/supabase/service-role";
 import {
   composeReplyDraftWithClaude,
@@ -127,11 +129,31 @@ export async function approveAndSendReply(
   // ── Enforce the 3-reply cap ────────────────────────────────────────────────
   const { data: prospectData } = await supabase
     .from("prospects")
-    .select("id, company_name, status, reply_attempts")
+    .select("id, company_name, status, reply_attempts, language")
     .eq("id", reply.prospect_id)
     .maybeSingle();
-  const prospect = prospectData as { id: string; company_name: string; status: string; reply_attempts: number | null } | null;
+  const prospect = prospectData as {
+    id: string;
+    company_name: string;
+    status: string;
+    reply_attempts: number | null;
+    language: string | null;
+  } | null;
   if (!prospect) return { ok: false, error: "Prospect not found." };
+
+  // An address that opted out (or bounced) is never emailed again, not even by
+  // a hand-approved reply. Prospect status is left to the human here.
+  const dnc = await isEmailOnDncList(supabase as unknown as DncClient, user.tenantId, reply.from_email);
+  if (dnc.blocked) return { ok: false, error: dnc.reason };
+
+  const lang: "en" | "es" = prospect.language === "es" ? "es" : "en";
+  const compliance = getOutboundCompliance({
+    tenantId: user.tenantId,
+    prospectId: prospect.id,
+    email: reply.from_email,
+    lang,
+  });
+  if (!compliance.ok) return { ok: false, error: compliance.error };
 
   const attempts = prospect.reply_attempts ?? 0;
   if (attempts >= MAX_REPLY_ATTEMPTS) {
@@ -176,6 +198,9 @@ export async function approveAndSendReply(
     to: reply.from_email,
     subject: /^re:/i.test(subject) ? subject : `Re: ${subject}`,
     body,
+    lang,
+    footer: compliance.value.footer,
+    listUnsubscribe: compliance.value.listUnsubscribe,
     threadId,
     originalMessageId,
   });

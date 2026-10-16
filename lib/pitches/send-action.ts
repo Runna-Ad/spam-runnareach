@@ -20,6 +20,12 @@ import { isEmailOnDncList, type DncClient } from "@/lib/discover/dnc-check";
 import { requireUser } from "@/lib/auth";
 import { getAccessToken, sendGmailMessage } from "@/lib/gmail/client";
 import { createClient } from "@/lib/supabase/server";
+import { bodyWithFooter, getOutboundCompliance } from "@/lib/compliance/outbound";
+
+/** Same set the send-queue cron refuses (app/api/pitches/send-queue/route.ts). */
+const MANUAL_DO_NOT_SEND = new Set([
+  "suppressed", "archived_no_meeting", "no_match", "lost", "won", "booked",
+]);
 
 const sendSchema = z.object({
   pitch_id: z.string().uuid(),
@@ -55,7 +61,7 @@ export async function sendPitch(input: {
     prospect_id: string;
     contact_id: string | null;
     prospect_contacts: { email: string | null; full_name: string | null } | null;
-    prospects: { language: "en" | "es" } | null;
+    prospects: { language: "en" | "es"; status: string; cooldown_until: string | null } | null;
   };
 
   const { data: pitch, error: pitchErr } = await supabase
@@ -64,7 +70,7 @@ export async function sendPitch(input: {
       `id, status, subject, body_original, body_edited, preview_text,
        prospect_id, contact_id,
        prospect_contacts:contact_id(email, full_name),
-       prospects:prospect_id(language)`,
+       prospects:prospect_id(language, status, cooldown_until)`,
     )
     .eq("id", pitch_id)
     .eq("tenant_id", user.tenantId)
@@ -73,6 +79,15 @@ export async function sendPitch(input: {
   if (pitchErr || !pitch) return { ok: false, error: "Pitch not found." };
   if (pitch.status !== "approved") {
     return { ok: false, error: `Pitch must be approved before sending (status: ${pitch.status}).` };
+  }
+  // The cron checks this; the manual button didn't — a prospect suppressed,
+  // opted out or booked after approval must not be emailed by a click either.
+  const prospectStatus = pitch.prospects?.status ?? null;
+  if (prospectStatus && MANUAL_DO_NOT_SEND.has(prospectStatus)) {
+    return { ok: false, error: `Prospect is ${prospectStatus} — not sending.` };
+  }
+  if (pitch.prospects?.cooldown_until && pitch.prospects.cooldown_until > new Date().toISOString()) {
+    return { ok: false, error: "Prospect is in cooldown — not sending." };
   }
 
   // Resolve the recipient from the pitch's contact FK if it's usable; otherwise
@@ -106,6 +121,16 @@ export async function sendPitch(input: {
 
   const body = pitch.body_edited ?? pitch.body_original ?? "";
   if (!body.trim()) return { ok: false, error: "Pitch body is empty." };
+
+  // CASL footer + unsubscribe link. Fails closed: no mailing address, no send.
+  const lang: "en" | "es" = pitch.prospects?.language === "es" ? "es" : "en";
+  const compliance = getOutboundCompliance({
+    tenantId: user.tenantId,
+    prospectId: pitch.prospect_id,
+    email: toEmail,
+    lang,
+  });
+  if (!compliance.ok) return { ok: false, error: compliance.error };
 
   // ── 2. Load inbox (must belong to tenant, not paused, Gmail connected) ─────
   type InboxRow = {
@@ -142,14 +167,19 @@ export async function sendPitch(input: {
   }
 
   // ── 3. Mark pitch as "sending" (optimistic lock) ───────────────────────────
-  const { error: lockErr } = await supabase
+  // .select() matters: without it a lost race (double-click, or the cron's
+  // send-queue claiming the same row) returns no error and both sides send.
+  const { data: locked, error: lockErr } = await supabase
     .from("pitches")
     .update({ status: "sending" })
     .eq("id", pitch_id)
     .eq("tenant_id", user.tenantId)
-    .eq("status", "approved"); // only move if still approved (idempotency guard)
+    .eq("status", "approved") // only move if still approved (idempotency guard)
+    .select("id")
+    .maybeSingle();
 
   if (lockErr) return { ok: false, error: "Could not lock pitch for sending." };
+  if (!locked) return { ok: false, error: "This pitch is already being sent." };
 
   // ── 4. Exchange refresh token → access token ───────────────────────────────
   const tokenResult = await getAccessToken(inbox.gmail_refresh_token_encrypted);
@@ -173,7 +203,9 @@ export async function sendPitch(input: {
     body,
     // Drives the CTA button label. Without it a Spanish email ships an English
     // button whenever the CTA line has no prose to infer the language from.
-    lang: pitch.prospects?.language ?? undefined,
+    lang,
+    footer: compliance.value.footer,
+    listUnsubscribe: compliance.value.listUnsubscribe,
   });
 
   if (!sendResult.ok) {
@@ -194,6 +226,7 @@ export async function sendPitch(input: {
     .update({
       status: "sent",
       sent_at: now,
+      body_sent: bodyWithFooter(body, compliance.value.footer),
       sender_inbox_id: inbox_id,
       // Re-link to the contact we actually resolved/sent to, if it was a fallback.
       ...(resolvedContactId ? { contact_id: resolvedContactId } : {}),

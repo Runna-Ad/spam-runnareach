@@ -14,6 +14,7 @@
 import { type NextRequest, NextResponse } from "next/server";
 import { createServiceRoleClient } from "@/lib/supabase/service-role";
 import { getAccessToken, sendGmailMessage } from "@/lib/gmail/client";
+import { bodyWithFooter, getOutboundCompliance } from "@/lib/compliance/outbound";
 import { effectiveSendsToday, utcToday } from "@/lib/pitches/daily-cap";
 import { hasUsableEmail } from "@/lib/research/email-utils";
 import { isEmailOnDncList, type DncClient } from "@/lib/discover/dnc-check";
@@ -149,7 +150,7 @@ export async function GET(req: NextRequest) {
       // without this check the cron would still email them.
       const { data: prospectRow } = await supabase
         .from("prospects")
-        .select("status, cooldown_until")
+        .select("status, cooldown_until, language")
         .eq("id", pitch.prospect_id)
         .maybeSingle();
       if (prospectRow && DO_NOT_SEND_STATUSES.has(prospectRow.status)) {
@@ -196,6 +197,19 @@ export async function GET(req: NextRequest) {
         continue;
       }
 
+      // CASL footer + unsubscribe link. Fails closed: no mailing address, no send.
+      const lang: "en" | "es" = prospectRow?.language === "es" ? "es" : "en";
+      const compliance = getOutboundCompliance({
+        tenantId: pitch.tenant_id,
+        prospectId: pitch.prospect_id,
+        email: toEmail,
+        lang,
+      });
+      if (!compliance.ok) {
+        results.push({ pitch_id: pitch.id, status: "skipped", reason: compliance.error });
+        continue;
+      }
+
       // ── Optimistic lock: claim the pitch (approved → sending) ────────────
       const { data: locked } = await supabase
         .from("pitches")
@@ -229,6 +243,9 @@ export async function GET(req: NextRequest) {
         to: toName ? `"${String(toName).replace(/"/g, "")}" <${toEmail}>` : toEmail,
         subject: pitch.subject,
         body,
+        lang,
+        footer: compliance.value.footer,
+        listUnsubscribe: compliance.value.listUnsubscribe,
       });
 
       if (!sendResult.ok) {
@@ -244,6 +261,7 @@ export async function GET(req: NextRequest) {
         .update({
           status: "sent",
           sent_at: sentAt,
+          body_sent: bodyWithFooter(body, compliance.value.footer),
           gmail_message_id: sendResult.gmailMessageId,
           gmail_thread_id: sendResult.threadId ?? null,
           sequence_step: 1,

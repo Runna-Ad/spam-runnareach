@@ -21,6 +21,7 @@
 import { type NextRequest, NextResponse } from "next/server";
 import { createServiceRoleClient } from "@/lib/supabase/service-role";
 import { getAccessToken, sendGmailMessage } from "@/lib/gmail/client";
+import { bodyWithFooter, getOutboundCompliance } from "@/lib/compliance/outbound";
 import {
   buildFollowup1,
   buildFollowup2,
@@ -171,6 +172,19 @@ async function processFollowup(pitch: DuePitchRow): Promise<FollowupResult> {
     return { pitch_id: pitch.id, prospect: prospect.company_name, step: nextStep, status: "skipped", reason: dnc.reason };
   }
 
+  // CASL footer + unsubscribe. Checked before any AI spend: without a mailing
+  // address nothing may be sent, so there's no point composing.
+  const lang: "en" | "es" = prospect.language === "es" ? "es" : "en";
+  const compliance = getOutboundCompliance({
+    tenantId: pitch.tenant_id,
+    prospectId: pitch.prospect_id,
+    email: contactEmail,
+    lang,
+  });
+  if (!compliance.ok) {
+    return { pitch_id: pitch.id, prospect: prospect.company_name, step: nextStep, status: "skipped", reason: compliance.error };
+  }
+
   // ── 3. Load research for pain summary + AI personalisation context ────────
   let painSummary: string | null = null;
   let evidenceQuote: string | null = null;
@@ -319,6 +333,9 @@ async function processFollowup(pitch: DuePitchRow): Promise<FollowupResult> {
     to: contactEmail,
     subject: email.subject,
     body: email.body,
+    lang,
+    footer: compliance.value.footer,
+    listUnsubscribe: compliance.value.listUnsubscribe,
     threadId: pitch.gmail_thread_id ?? undefined,
     originalMessageId: pitch.gmail_message_id ?? undefined,
   });
@@ -345,7 +362,7 @@ async function processFollowup(pitch: DuePitchRow): Promise<FollowupResult> {
       pain_id: pitch.pain_id,
       subject: email.subject,
       body_original: email.body,
-      body_sent: email.body,
+      body_sent: bodyWithFooter(email.body, compliance.value.footer),
       status: "sent",
       sent_at: now,
       parent_pitch_id: pitch.id,
