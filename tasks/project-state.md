@@ -13,25 +13,26 @@
 - **Sibling repo:** `runna-hunter` (separate Vercel project) — the self-serve Inefficiency Hunter the pitch CTA deep-links to.
 
 ## What's deployed
-- Prod = commit **`5a4f326`** (2026-10-16, Sentry cron flush). `main` = prod.
-- **Phase 0 (2026-10-16) is on branch `claude/great-planck-w6w25t`, NOT deployed and NOT merged.** See "Phase 0" below.
+- Prod = commit **`52ccc1e`** (2026-10-16, Phase 0 shipped on Pedro's "ship it"). `main` = prod.
+- Migration **0035** applied to prod 2026-10-16 (RLS on warmup_buddies / warmup_templates / dmarc_reports / dmarc_report_records; anon + authenticated grants revoked; recorded as version 0035).
 - Warmup engine live (pedro@runnareach.com, now 5/day maintenance; 7 buddy inboxes). Inbox placement has never been measured (Message-ID bug, see audit).
 - Pipeline: discovery → scrape → deep research → SnapVerify → score → triage → draft. **Nothing has run since Jul 21 (discovery) / Aug 16 (last send)** — discovery is manual-only.
 - Full audit + autopilot/learning plan: `tasks/audit-2026-10-16.md` (read it first).
 
-## Phase 0 — "stop the bleeding" (branch, awaiting Pedro's ship-it)
-Done, 360 tests, build green:
-- **CASL**: footer (entity + mailing address + unsubscribe link) + List-Unsubscribe / one-click on every prospect-facing send; `/api/unsubscribe` (HMAC token, GET = confirm page, POST = opt out → DNC + suppress + stop sequences). **Fails closed: no `RUNNA_MAILING_ADDRESS` → nothing sends.**
+## Phase 0 — "stop the bleeding" (SHIPPED 2026-10-16)
+361 tests, build green:
+- **CASL**: footer (Rünna · Mexico City address · runnik.ca or runna.com.mx · hola@runna.mx · unsubscribe link; ES adds the aviso de privacidad) + List-Unsubscribe / one-click on every prospect-facing send; `/api/unsubscribe` (HMAC token, GET = confirm page, POST = opt out → DNC + suppress + stop sequences). Sender details are code defaults in `lib/compliance/outbound.ts` (env overrides). **Fails closed without `TOKEN_ENCRYPTION_KEY`.**
 - **Encoding**: QP encoder no longer splits `=C3=BA` (was garbling ~39% of long Spanish lines); header injection blocked.
 - **Replies**: classify only their own text (quoted thread stripped); EN/ES/FR opt-outs auto-honoured (DNC); bounce suppression no longer undone; OOO postpones instead of killing the sequence; "Delivery incomplete" ≠ bounce; replies keyed on the thread's first send.
 - **Send safety**: Gmail thread re-read right before every follow-up/nudge; follow-ups at-most-once (claim before send); one first email per prospect/address; stuck `sending` rows resolved from Gmail Sent; unsendable pitches leave the queue.
 - **Cost**: cost-tracking + audit log use the service-role client (cron AI spend was uncapped and unrecorded); cache tokens billed; cap sum paged.
 - **SPAM Verify** (`lib/research/verify-recipient.ts`): free verifier (format, never-pitch, regulators, DNS with a control query, ownership, provenance, bounce memory). "drop" never sends.
 
-To ship (needs Pedro):
-1. Set Vercel env `RUNNA_MAILING_ADDRESS` (required), optionally `RUNNA_PRIVACY_URL`, `UNSUBSCRIBE_BASE_URL`.
-2. Apply migration `0035_lock_down_warmup_dmarc_tables.sql` (RLS on the 4 anon-writable tables).
-3. Merge the branch → deploy.
+Still open after the ship:
+- Pedro: send one EN + one ES test (to pedrojr22@gmail.com and an Outlook address) and check accents, footer, unsubscribe link + Gmail's unsubscribe button. Not done by Claude (no Gmail access from the session).
+- Pedro: Sentry → warmup-engine monitor ON, postmaster-sync OFF.
+- Optional: unsubscribe links still read `spam-runnareach.vercel.app/...` — a free `go.runnareach.com` CNAME + `UNSUBSCRIBE_BASE_URL` fixes the look.
+- pedrojr22@gmail.com is Pedro's (confirmed) → the GYMVMT "reply" was a test; exclude from metrics.
 
 ## API integrations
 | Service | Status |
