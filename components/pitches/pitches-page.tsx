@@ -34,6 +34,8 @@ import {
 import { bulkDeleteProspects } from "@/lib/discover/bulk-actions";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { sendPitch, queueApprovedForSend } from "@/lib/pitches/send-action";
+import type { StoredGateVerdict } from "@/lib/pitches/gate";
+import type { GateFailure } from "@/lib/pitches/send-gate";
 import { PitchAngleAdvisor } from "@/components/pitches/pitch-angle-advisor";
 import type { PitchListRow, PitchStatus } from "@/lib/pitches/queries";
 import type { SenderInbox } from "@/lib/settings/sending-queries";
@@ -207,9 +209,10 @@ export function PitchesPage({ pitches, counts, canEdit, inboxes }: PitchesPagePr
         // Say plainly when some were held back — silently approving fewer than
         // the user selected is how unsendable drafts went unnoticed.
         const skipped =
-          res.skipped_no_contact > 0
-            ? ` ${res.skipped_no_contact} skipped — no contact email.`
-            : "";
+          (res.skipped_no_contact > 0 ? ` ${res.skipped_no_contact} skipped: no contact email.` : "") +
+          (res.skipped_gate > 0
+            ? ` ${res.skipped_gate} held by the quality check: open each one to see what to fix.`
+            : "");
         setQueueMsg({
           tone: res.approved > 0 ? "ok" : "warn",
           text:
@@ -542,6 +545,10 @@ function PitchDetail({
     "wrong_case" | "wrong_pain" | "tone_off" | "wrong_contact" | "other"
   >("wrong_case");
   const [confirmingReject, setConfirmingReject] = React.useState(false);
+  // Send gate v2: the stored verdict for the current text, and the review-level
+  // flags an approve attempt came back with (shown with "Approve anyway").
+  const [gate, setGate] = React.useState<StoredGateVerdict | null>(null);
+  const [pendingAccept, setPendingAccept] = React.useState<GateFailure[] | null>(null);
 
   // Inbox selector for the Send panel
   const connectedInboxes = inboxes.filter((i) => i.gmail_connected && !i.paused);
@@ -569,10 +576,12 @@ function PitchDetail({
     setBodyLoaded(false);
     fetch(`/api/pitches/${pitch.id}/body`)
       .then((r) => (r.ok ? r.json() : Promise.reject(r.statusText)))
-      .then((d: { subject: string; body: string }) => {
+      .then((d: { subject: string; body: string; gate_verdict: StoredGateVerdict | null }) => {
         if (cancelled) return;
         setSubject(d.subject);
         setBody(d.body);
+        setGate(d.gate_verdict ?? null);
+        setPendingAccept(null);
         setBodyLoaded(true);
       })
       .catch(() => {
@@ -605,6 +614,8 @@ function PitchDetail({
       if (res.ok) {
         setSavedFlash(true);
         window.setTimeout(() => setSavedFlash(false), 2200);
+        // The save re-ran the quality check; reload to show the new verdict.
+        setReloadKey((k) => k + 1);
         onChange();
       } else {
         setError(res.error);
@@ -612,7 +623,10 @@ function PitchDetail({
     });
   };
 
-  const transition = (next: "queued_for_approval" | "approved" | "reviewer_rejected") => {
+  const transition = (
+    next: "queued_for_approval" | "approved" | "reviewer_rejected",
+    acceptGateCodes?: string[],
+  ) => {
     setError(null);
     startTransition(async () => {
       const res = await transitionPitchStatus({
@@ -620,11 +634,20 @@ function PitchDetail({
         next_status: next,
         rejection_reason: next === "reviewer_rejected" ? rejectReason || "no reason" : null,
         rejection_reason_kind: next === "reviewer_rejected" ? rejectKind : undefined,
+        accept_gate_codes: acceptGateCodes,
       });
       if (res.ok) {
         setConfirmingReject(false);
         setRejectReason("");
+        setPendingAccept(null);
         onChange();
+      } else if (res.gate) {
+        // The quality check refused. Show its verdict; offer "Approve anyway"
+        // only when every outstanding flag is review-level.
+        setGate(res.gate.verdict);
+        const onlyReview = res.gate.outstanding.every((f) => f.severity === "review");
+        setPendingAccept(onlyReview ? res.gate.outstanding : null);
+        setError(onlyReview ? null : "Fix the red items below, save, then approve.");
       } else {
         setError(res.error);
       }
@@ -768,6 +791,17 @@ function PitchDetail({
           </div>
         )}
       </div>
+
+      {!isLocked ? (
+        <GatePanel
+          gate={gate}
+          pendingAccept={pendingAccept}
+          busy={transitioning}
+          canEdit={canEdit}
+          onApproveAnyway={(codes) => transition("approved", codes)}
+          onCancel={() => setPendingAccept(null)}
+        />
+      ) : null}
 
       {/* Action bar */}
       {canEdit && !isLocked ? (
@@ -1055,3 +1089,85 @@ function deriveButtonLabel(description: string, lang?: "en" | "es"): string {
   return "Run my free audit →";
 }
 
+/**
+ * Send gate v2 verdict for the open pitch. Red = must be fixed (nobody can
+ * approve or send it as is); amber = needs a person's eyes, and can be approved
+ * anyway once read. The same check re-runs at send time on the exact text and
+ * address going out.
+ */
+function GatePanel({
+  gate,
+  pendingAccept,
+  busy,
+  canEdit,
+  onApproveAnyway,
+  onCancel,
+}: {
+  gate: StoredGateVerdict | null;
+  pendingAccept: GateFailure[] | null;
+  busy: boolean;
+  canEdit: boolean;
+  onApproveAnyway: (codes: string[]) => void;
+  onCancel: () => void;
+}) {
+  if (!gate) {
+    return (
+      <p className="rounded-[var(--radius-md)] bg-[var(--color-bg-800)] px-3 py-2 text-[11px] text-[var(--color-fg-500)] ring-1 ring-inset ring-[var(--color-border-default)]">
+        Quality check: not run yet. It runs when you save edits or approve.
+      </p>
+    );
+  }
+  if (gate.pass) {
+    return (
+      <p className="flex items-center gap-1.5 rounded-[var(--radius-md)] bg-[var(--color-bg-800)] px-3 py-2 text-[11px] text-[var(--color-success-300)] ring-1 ring-inset ring-[var(--color-border-default)]">
+        <CheckCircle2 className="h-3.5 w-3.5" aria-hidden /> Passes the quality check.
+      </p>
+    );
+  }
+  const blocks = gate.failures.filter((f) => f.severity === "block");
+  const reviews = gate.failures.filter((f) => f.severity === "review");
+  return (
+    <div className="flex flex-col gap-2 rounded-[var(--radius-md)] bg-[var(--color-bg-800)] p-3 ring-1 ring-inset ring-[var(--color-border-default)]">
+      <div className="flex items-center gap-1.5 text-[11px] font-medium text-[var(--color-fg-300)]">
+        <ShieldAlert className="h-3.5 w-3.5 text-[var(--color-warning-300)]" aria-hidden />
+        Quality check: {blocks.length ? `${blocks.length} must be fixed` : ""}
+        {blocks.length && reviews.length ? ", " : ""}
+        {reviews.length ? `${reviews.length} to look at` : ""}
+      </div>
+      <ul className="flex flex-col gap-1">
+        {[...blocks, ...reviews].map((f, i) => (
+          <li key={`${f.code}-${i}`} className="flex gap-2 text-[11px] leading-relaxed">
+            <span
+              className={
+                f.severity === "block"
+                  ? "shrink-0 font-medium text-[var(--color-danger-300)]"
+                  : "shrink-0 font-medium text-[var(--color-warning-300)]"
+              }
+            >
+              {f.severity === "block" ? "Fix" : "Check"}
+            </span>
+            <span className="text-[var(--color-fg-300)]">{f.detail}</span>
+          </li>
+        ))}
+      </ul>
+      {pendingAccept && canEdit ? (
+        <div className="flex flex-wrap items-center gap-2 border-t border-[var(--color-border-default)] pt-2">
+          <span className="mr-auto text-[11px] text-[var(--color-fg-500)]">
+            Read the flags above? Approving records that you accepted them.
+          </span>
+          <Button type="button" variant="ghost" onClick={onCancel} disabled={busy}>
+            <X className="h-3.5 w-3.5" /> Cancel
+          </Button>
+          <Button
+            type="button"
+            variant="primary"
+            onClick={() => onApproveAnyway(pendingAccept.map((f) => f.code))}
+            disabled={busy}
+          >
+            <CheckCircle2 className="h-3.5 w-3.5" /> Approve anyway
+          </Button>
+        </div>
+      ) : null}
+    </div>
+  );
+}

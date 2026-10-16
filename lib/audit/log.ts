@@ -27,7 +27,11 @@ export type AuditAction =
   // Pre-send verification gate, dry-run mode: records what the gate WOULD have
   // decided about a generated pitch. Changes nothing — it exists to prove the
   // gate agrees with human judgement before it's allowed to block a send.
-  | "pitch.gate_dryrun";
+  | "pitch.gate_dryrun"
+  // Gate v2 (enforced): a send path refused a pitch, and a person approved a
+  // pitch with review-level flags ("approve anyway").
+  | "pitch.gate_held"
+  | "pitch.gate_override";
 
 export type AuditPayload = {
   tenantId: string;

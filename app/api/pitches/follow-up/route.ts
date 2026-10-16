@@ -23,6 +23,8 @@ import { createServiceRoleClient } from "@/lib/supabase/service-role";
 import { getAccessToken, sendGmailMessage } from "@/lib/gmail/client";
 import { bodyWithFooter, getOutboundCompliance } from "@/lib/compliance/outbound";
 import { threadBlocksSend } from "@/lib/pitches/send-guards";
+import { auditGateHold, gateInputFor, loadGateContext } from "@/lib/pitches/gate";
+import { evaluateSendGate, describeFailures, type GateResult } from "@/lib/pitches/send-gate";
 import { senderIdentity, senderSignature } from "@/lib/pitches/sender-identity";
 import {
   buildFollowup1,
@@ -150,6 +152,7 @@ async function processFollowup(pitch: DuePitchRow): Promise<FollowupResult> {
   // ── 2. Load contact ───────────────────────────────────────────────────────
   let contactEmail: string | null = null;
   let contactFirstName: string | null = null;
+  let contactFullName: string | null = null;
 
   if (pitch.contact_id) {
     const { data: contact } = await supabase
@@ -160,6 +163,7 @@ async function processFollowup(pitch: DuePitchRow): Promise<FollowupResult> {
 
     if (contact) {
       contactEmail = contact.email;
+      contactFullName = contact.full_name;
       // Extract first name from full name
       if (contact.full_name) {
         contactFirstName = contact.full_name.trim().split(/\s+/)[0] ?? null;
@@ -356,6 +360,55 @@ async function processFollowup(pitch: DuePitchRow): Promise<FollowupResult> {
         });
       }
     }
+  }
+
+  // ── 7b'. Send gate v2 (content) ─────────────────────────────────────────
+  // Same rules as a first email: every number sourced, no client names, no
+  // jargon, no placeholders, greeting matches the recipient. Provenance isn't
+  // re-checked (the first email already went to this address). Nobody reviews
+  // a follow-up before it goes, so any failure counts: a failing AI draft falls
+  // back to the template; a failing template pauses the sequence for a person.
+  const gateCtx = await loadGateContext(supabase, pitch.tenant_id, pitch.prospect_id);
+  const gateFor = (e: { subject: string; body: string }): GateResult | null =>
+    gateCtx
+      ? evaluateSendGate(
+          gateInputFor(gateCtx, {
+            subject: e.subject,
+            body: e.body,
+            recipient: { email: contactEmail, full_name: contactFullName, selected_by: null },
+            checkRecipientSource: false,
+          }),
+        )
+      : null;
+  let gate = gateFor(email);
+  if (composedBy === "claude" && !gate?.pass) {
+    email = template;
+    composedBy = "template";
+    gate = gateFor(email);
+  }
+  if (!gate) {
+    return { pitch_id: pitch.id, prospect: prospect.company_name, step: nextStep, status: "skipped", reason: "Quality gate unavailable — not sent" };
+  }
+  if (!gate.pass) {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    await (supabase as any)
+      .from("pitches")
+      .update({ sequence_paused_at: new Date().toISOString() })
+      .eq("id", pitch.id);
+    await auditGateHold({
+      tenantId: pitch.tenant_id,
+      actorId: null,
+      pitchId: pitch.id,
+      path: `follow-up step ${nextStep}`,
+      failures: gate.failures,
+    });
+    return {
+      pitch_id: pitch.id,
+      prospect: prospect.company_name,
+      step: nextStep,
+      status: "skipped",
+      reason: `Quality gate (sequence paused): ${describeFailures(gate.failures)}`.slice(0, 500),
+    };
   }
 
   // ── 7c. Claim this step (at most once) ──────────────────────────────────

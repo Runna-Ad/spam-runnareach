@@ -19,6 +19,8 @@ import { writeAuditLog } from "@/lib/audit/log";
 import { getAccessToken, sendGmailMessage } from "@/lib/gmail/client";
 import { getOutboundCompliance } from "@/lib/compliance/outbound";
 import { threadBlocksSend } from "@/lib/pitches/send-guards";
+import { gateInputFor, loadGateContext } from "@/lib/pitches/gate";
+import { evaluateSendGate } from "@/lib/pitches/send-gate";
 import { senderIdentity } from "@/lib/pitches/sender-identity";
 import { isEmailOnDncList, type DncClient } from "@/lib/discover/dnc-check";
 import { createServiceRoleClient } from "@/lib/supabase/service-role";
@@ -225,7 +227,22 @@ export async function GET(req: NextRequest) {
       body = f.body; subject = f.subject;
     }
 
-    const confident = claudeOk && nudgeLooksSafeToSend(body);
+    // Send gate v2 (content): an auto-sent nudge meets the same bar as a first
+    // email. Anything it flags goes to the review lane below, never out.
+    const gateCtx = await loadGateContext(supabase, tenantId, prospectId);
+    const gate = gateCtx
+      ? evaluateSendGate(
+          gateInputFor(gateCtx, {
+            subject,
+            body,
+            recipient: { email: toAddress, full_name: null, selected_by: null },
+            checkRecipientSource: false,
+          }),
+        )
+      : null;
+    const gatePassed = gate?.pass === true;
+
+    const confident = claudeOk && nudgeLooksSafeToSend(body) && gatePassed;
     const nowIso = new Date().toISOString();
 
     // ── Low confidence → HOLD for review (reopen the latest reply as a draft) ─
@@ -249,7 +266,12 @@ export async function GET(req: NextRequest) {
         .eq("tenant_id", tenantId);
       await writeAuditLog({
         tenantId, actorId: null, action: "reply.nudge_held", entityType: "prospect",
-        entityId: prospectId, metadata: { reason: claudeOk ? "failed_sanity" : "claude_fallback", attempt: attemptNumber },
+        entityId: prospectId,
+        metadata: {
+          reason: !claudeOk ? "claude_fallback" : !gatePassed ? "failed_gate" : "failed_sanity",
+          gate_failures: gate && !gate.pass ? gate.failures.map((f) => f.code) : [],
+          attempt: attemptNumber,
+        },
       }).catch(() => {});
       results.push({ prospect: prospect.company_name, action: "held_for_review" });
       continue;

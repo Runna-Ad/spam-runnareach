@@ -20,6 +20,7 @@ import {
 import { RUNNA_CAPABILITIES_FOR_PITCHES } from "../runna/capabilities.ts";
 import { HUNTER_URL } from "./industry-templates.ts";
 import { hasUsableEmail } from "../research/email-utils.ts";
+import { findBannedTerms } from "./content-rules.ts";
 import { senderIdentity } from "./sender-identity.ts";
 import type { ComposedPitch, GeneratorInputs } from "./generator.ts";
 
@@ -595,8 +596,12 @@ Using the payload:
  */
 const HUNTER_TOKEN_RE = /[{[]{1,2}\s*hunter_url\s*[}\]]{1,2}/gi;
 
-/** Leftover placeholder of ANY name, e.g. {company} — used by the violation check. */
-export const LEFTOVER_PLACEHOLDER_RE = /[{[]{1,2}\s*[a-z_]{3,30}\s*[}\]]{1,2}/gi;
+/**
+ * Leftover placeholder of ANY name: {company}, [company], [the pain],
+ * [el dolor] — used by the violation check. The prompt's examples use brackets,
+ * and a copied one must never read as finished text.
+ */
+export const LEFTOVER_PLACEHOLDER_RE = /[{[]{1,2}\s*[a-záéíóúñü_' ]{3,40}?\s*[}\]]{1,2}/gi;
 
 /**
  * Guarantee the CTA is a working button.
@@ -634,97 +639,11 @@ export function resolveCtaLink(body: string, hunterUrl: string): string {
 }
 
 export function detectViolations(body: string, lang: "en" | "es"): number {
-  let count = 0;
-  const lower = body.toLowerCase();
-
-  if (lang === "es") {
-    const forbidden = [
-      // Language mixing / template openers
-      "hola there",
-      // Em dash — banned per Pedro. Reads corporate, triggers spam filters.
-      "—",
-      // English jargon in Spanish emails
-      "abandonment",
-      "retention automation",
-      "default setup",
-      "meta pixel",
-      "woocommerce",
-      "shopify",
-      "funnel",
-      "el fix aquí",
-      "el fix aqui",
-      "diagnosticar el patrón",
-      "i hope",
-      "best regards",
-      "dear ",
-      // Anglicisms that slip through in MX marketing context
-      " leads",      // "tus leads", "generar leads" — space prefix avoids matching "liderazgo"
-      "engagement",  // no Spanish equivalent so Claude borrows the English word
-      // English tech/marketing jargon that leaks into Spanish emails — each is
-      // both jargon AND language-mixing (Pedro, 2026-07-24).
-      "intake",
-      "triage",
-      "workflow",
-      "pipeline",
-      "onboarding",
-      "lead capture",
-      "smart intake",
-    ];
-    for (const term of forbidden) {
-      if (lower.includes(term)) count++;
-    }
-  } else {
-    // "hola" needs word-boundary check — includes("hola") false-positives on
-    // company names like "HolaFly", "Shola", "Enholabuena" etc.
-    if (/\bhola\b/.test(lower)) count++;
-
-    const forbidden = [
-      // Em dash — banned per Pedro. Reads corporate, triggers spam filters.
-      "—",
-      // Spanish bleed-through
-      "vale la pena",
-      "marca",
-      "tienda",
-      // Corporate / American hype — banned in system prompt
-      "synergy",
-      "leverage the",
-      "best-in-class",
-      "circle back",
-      "thought leader",
-      // Hype verbs the system prompt explicitly bans
-      "unlock ",
-      "supercharge",
-      "game-changer",
-      "game changer",
-      // Forbidden openers
-      "i hope this finds you",
-      "just reaching out",
-      "quick question",
-      // Marketing/tech jargon a business owner doesn't speak (Pedro, 2026-07-24:
-      // "write to people who know nothing about marketing"). The prompt bans
-      // these; this is the backstop, because a prompt rule alone leaks. Chosen
-      // to be substring-safe — no term here hides inside a common ordinary word.
-      "intake",
-      "triage",
-      "workflow",
-      "routing",
-      "lead capture",
-      "lead-gen",
-      "lead gen",
-      "qualified lead",
-      "bandwidth",
-      "streamline",
-      "seamless",
-      "optimize",
-      "optimization",
-      "conversion",
-      "systems problem",
-      "leverage",
-    ];
-    for (const term of forbidden) {
-      if (lower.includes(term)) count++;
-    }
-  }
+  // Banned jargon, hype, stock openers and the other language bleeding in, plus
+  // the em dash Pedro banned (reads corporate, trips spam filters). Same list
+  // the send gate holds on (lib/pitches/content-rules.ts).
+  let count = findBannedTerms(body, lang).length;
+  if (body.includes("—")) count++;
 
   // ── Language-independent checks ────────────────────────────────────────────
 

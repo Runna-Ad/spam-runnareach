@@ -1,5 +1,6 @@
 import { createClient } from "@/lib/supabase/server";
 import { pickTopUsableContact, isGuessedContact } from "@/lib/pitches/contacts";
+import { parseGateOverride, parseGateVerdict, type StoredGateVerdict } from "@/lib/pitches/gate";
 
 export type PitchStatus =
   | "draft"
@@ -138,6 +139,10 @@ export type PitchDetail = PitchListRow & {
   auto_rejected: boolean;
   auto_rejected_reason: string | null;
   rejection_reason: string | null;
+  /** Send gate v2 verdict for the current text; null = not checked yet. */
+  gate_verdict: StoredGateVerdict | null;
+  /** Review-level codes a person accepted with "Approve anyway". */
+  gate_override_codes: string[];
 };
 
 export async function getPitch(
@@ -165,6 +170,8 @@ export async function getPitch(
     auto_rejected: boolean;
     auto_rejected_reason: string | null;
     rejection_reason: string | null;
+    gate_verdict: unknown;
+    gate_override: unknown;
     prospects: {
       company_name: string;
       market: "CA" | "MX" | "US" | "LATAM";
@@ -183,7 +190,7 @@ export async function getPitch(
       quality_self_score, cost_usd, pain_id, approved_at, scheduled_send_at, sent_at,
       body_original, body_edited, body_sent,
       measurable_result_included, auto_rejected, auto_rejected_reason,
-      rejection_reason,
+      rejection_reason, gate_verdict, gate_override,
       prospects(company_name, market, language, prospect_contacts(full_name, email, priority_rank, selected_by)),
       case_studies(client_name),
       pain_taxonomy:pain_id(display_name_en)
@@ -228,6 +235,8 @@ export async function getPitch(
     auto_rejected: r.auto_rejected,
     auto_rejected_reason: r.auto_rejected_reason,
     rejection_reason: r.rejection_reason,
+    gate_verdict: parseGateVerdict(r.gate_verdict),
+    gate_override_codes: parseGateOverride(r.gate_override)?.codes ?? [],
   };
 }
 

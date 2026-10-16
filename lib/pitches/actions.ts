@@ -1,7 +1,13 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
-import { recordGateDryRun } from "@/lib/pitches/gate-dryrun";
+import {
+  checkPitchGate,
+  loadGateShared,
+  refreshGateAfterChange,
+  type StoredGateVerdict,
+} from "@/lib/pitches/gate";
+import { GATE_SEVERITY, describeFailures, gateAllows, type GateFailure } from "@/lib/pitches/send-gate";
 import { z } from "zod";
 import { claudeIsAvailable, type ClaudeUsage } from "@/lib/anthropic/client";
 import { isUnderDailyCap, recordClaudeCall } from "@/lib/anthropic/cost-tracking";
@@ -56,6 +62,11 @@ const transitionSchema = z.object({
   ]),
   rejection_reason: z.string().trim().max(500).nullable().optional(),
   rejection_reason_kind: z.enum(REJECTION_REASON_KINDS).optional(),
+  /**
+   * Review-level gate codes the person read and accepts ("Approve anyway").
+   * Block-level codes are never accepted, whatever is sent here.
+   */
+  accept_gate_codes: z.array(z.string().max(60)).max(20).optional(),
 });
 
 export type GeneratePitchResult =
@@ -68,7 +79,14 @@ export type GeneratePitchResult =
     }
   | { ok: false; error: string };
 
-export type PitchActionResult = { ok: true } | { ok: false; error: string };
+export type PitchActionResult =
+  | { ok: true }
+  | {
+      ok: false;
+      error: string;
+      /** Set when the send gate refused: the failures still standing. */
+      gate?: { outstanding: GateFailure[]; verdict: StoredGateVerdict };
+    };
 
 /**
  * Generate a draft pitch for a prospect. Reads research + contacts +
@@ -457,10 +475,9 @@ export async function generatePitch(
     },
   });
 
-  // Pre-send gate DRY RUN — records what the gate WOULD decide, changes nothing.
-  // Collecting this on real pitches is how we earn the right to auto-send:
-  // it shows whether the gate agrees with Pedro before it can block anything.
-  await recordGateDryRun(supabase, user.tenantId, user.id, created.id);
+  // Send gate v2: store the verdict so /pitches shows what needs fixing before
+  // anyone tries to approve. Approve and send re-check; this is for display.
+  await refreshGateAfterChange(supabase, user.tenantId, created.id);
 
   // Advance the prospect to "pitched" so the funnel/list reflect reality.
   // Guarded to pre-pitch states only (raw/researched) via the WHERE filter, so
@@ -680,6 +697,7 @@ export async function rewritePitchWithAngle(
     .eq("id", parsed.data.pitch_id)
     .eq("tenant_id", user.tenantId);
   if (updErr) return { ok: false, error: `Could not save rewrite: ${updErr.message}` };
+  await refreshGateAfterChange(supabase, user.tenantId, parsed.data.pitch_id);
 
   await recordClaudeCall({
     tenantId: user.tenantId,
@@ -720,6 +738,9 @@ export async function savePitchEdit(
     .eq("tenant_id", user.tenantId);
 
   if (error) return { ok: false, error: `Could not save: ${error.message}` };
+  // The edited text gets a fresh verdict, and any "approve anyway" is dropped:
+  // it accepted flags on text that no longer exists.
+  await refreshGateAfterChange(supabase, user.tenantId, parsed.data.pitch_id);
   revalidatePath("/pitches");
   return { ok: true };
 }
@@ -748,7 +769,32 @@ export async function transitionPitchStatus(
   if (parsed.data.next_status === "queued_for_approval") {
     payload.queued_at = nowIso;
   }
+  // ── Send gate v2 at approve ────────────────────────────────────────────────
+  // Approving is a promise the email may go out. Block-level failures (an
+  // invented number, a client name, a broken link) can't be approved at all;
+  // review-level ones need the person to accept each flag by code.
+  let acceptedOverride: { by: string; at: string; codes: string[] } | null = null;
   if (parsed.data.next_status === "approved") {
+    const check = await checkPitchGate(supabase, user.tenantId, parsed.data.pitch_id);
+    if (!check) {
+      return { ok: false, error: "Couldn't run the quality check on this pitch. Try again." };
+    }
+    const accepted = (parsed.data.accept_gate_codes ?? []).filter(
+      (c) => (GATE_SEVERITY as Record<string, string>)[c] === "review",
+    );
+    const allowed = gateAllows(check.result, accepted);
+    if (!allowed.ok) {
+      const blocking = allowed.outstanding.filter((f) => f.severity === "block");
+      return {
+        ok: false,
+        error: blocking.length
+          ? `Fix before approving: ${describeFailures(blocking)}`
+          : `Needs a look before approving: ${describeFailures(allowed.outstanding)}`,
+        gate: { outstanding: allowed.outstanding, verdict: check.verdict },
+      };
+    }
+    const reviewCodes = check.result.pass ? [] : check.result.failures.map((f) => f.code);
+    acceptedOverride = reviewCodes.length ? { by: user.id, at: nowIso, codes: reviewCodes } : null;
     payload.approved_by = user.id;
     payload.approved_at = nowIso;
   }
@@ -777,11 +823,26 @@ export async function transitionPitchStatus(
 
   const { error } = await supabase
     .from("pitches")
-    .update(payload)
+    .update(
+      (parsed.data.next_status === "approved"
+        ? { ...payload, gate_override: acceptedOverride }
+        : payload) as never,
+    )
     .eq("id", parsed.data.pitch_id)
     .eq("tenant_id", user.tenantId);
 
   if (error) return { ok: false, error: `Could not transition: ${error.message}` };
+
+  if (acceptedOverride) {
+    await writeAuditLog({
+      tenantId: user.tenantId,
+      actorId: user.id,
+      action: "pitch.gate_override",
+      entityType: "pitch",
+      entityId: parsed.data.pitch_id,
+      metadata: { accepted_codes: acceptedOverride.codes },
+    });
+  }
 
   // Audit-log rejections so the generator's downrank query can see them.
   if (parsed.data.next_status === "reviewer_rejected") {
@@ -819,7 +880,8 @@ const bulkApproveSchema = z.object({
 export async function bulkApprovePitches(
   input: z.input<typeof bulkApproveSchema>,
 ): Promise<
-  { ok: true; approved: number; skipped_no_contact: number } | { ok: false; error: string }
+  | { ok: true; approved: number; skipped_no_contact: number; skipped_gate: number }
+  | { ok: false; error: string }
 > {
   const user = await requireUser();
   if (user.role === "viewer") {
@@ -864,14 +926,37 @@ export async function bulkApprovePitches(
   const skippedNoContact = (candidates ?? []).length - approvable.length;
 
   if (approvable.length === 0) {
-    return { ok: true, approved: 0, skipped_no_contact: skippedNoContact };
+    return { ok: true, approved: 0, skipped_no_contact: skippedNoContact, skipped_gate: 0 };
+  }
+
+  // ── Send gate v2 ──────────────────────────────────────────────────────────
+  // Bulk approve never accepts a flag on the person's behalf: only pitches the
+  // gate passes outright are approved. Flagged ones stay drafts with their
+  // verdict stored, to be read and approved one by one. (v1 bulk-approved up
+  // to 200 at once with only a contact check.)
+  const shared = await loadGateShared(supabase, user.tenantId);
+  if (!shared) return { ok: false, error: "Couldn't run the quality check. Try again." };
+  const passing: string[] = [];
+  for (let i = 0; i < approvable.length; i += 10) {
+    const batch = approvable.slice(i, i + 10);
+    const checks = await Promise.all(
+      batch.map((p) => checkPitchGate(supabase, user.tenantId, p.id, { shared })),
+    );
+    checks.forEach((c, j) => {
+      if (c?.result.pass) passing.push(batch[j]!.id);
+    });
+  }
+  const skippedGate = approvable.length - passing.length;
+  if (passing.length === 0) {
+    revalidatePath("/pitches");
+    return { ok: true, approved: 0, skipped_no_contact: skippedNoContact, skipped_gate: skippedGate };
   }
 
   const nowIso = new Date().toISOString();
   const { data, error } = await supabase
     .from("pitches")
-    .update({ status: "approved", approved_by: user.id, approved_at: nowIso } as never)
-    .in("id", approvable.map((p) => p.id))
+    .update({ status: "approved", approved_by: user.id, approved_at: nowIso, gate_override: null } as never)
+    .in("id", passing)
     .eq("tenant_id", user.tenantId)
     .in("status", ["draft", "queued_for_approval"])
     .select("id");
@@ -879,7 +964,12 @@ export async function bulkApprovePitches(
   if (error) return { ok: false, error: `Could not approve: ${error.message}` };
 
   revalidatePath("/pitches");
-  return { ok: true, approved: (data ?? []).length, skipped_no_contact: skippedNoContact };
+  return {
+    ok: true,
+    approved: (data ?? []).length,
+    skipped_no_contact: skippedNoContact,
+    skipped_gate: skippedGate,
+  };
 }
 
 /**

@@ -22,6 +22,8 @@ import { findSentMessage } from "@/lib/gmail/read";
 import { firstTouchConflict } from "@/lib/pitches/send-guards";
 import { verifyRecipient } from "@/lib/research/verify-recipient";
 import { reconcileSignOff, senderIdentity } from "@/lib/pitches/sender-identity";
+import { auditGateHold, checkPitchGate } from "@/lib/pitches/gate";
+import { describeFailures, gateAllows } from "@/lib/pitches/send-gate";
 
 // Prospect states that must never receive a queued cold pitch, even if the
 // pitch was approved before the state changed. Checked at send time — the
@@ -52,6 +54,20 @@ async function dropFromQueue(supabase: AnySupabase, pitchId: string, reason: str
   await supabase
     .from("pitches")
     .update({ status: "auto_rejected", auto_rejected: true, auto_rejected_reason: reason })
+    .eq("id", pitchId)
+    .eq("status", "approved");
+}
+
+/**
+ * Send it back to the drafts. Used when the quality gate holds an approved
+ * pitch at send time: unlike a do-not-contact hit, that is fixable, so it goes
+ * back where a person will see it (its gate verdict is already stored, and
+ * /pitches shows the flags) instead of into auto_rejected.
+ */
+async function returnToDraft(supabase: AnySupabase, pitchId: string): Promise<void> {
+  await supabase
+    .from("pitches")
+    .update({ status: "draft", scheduled_send_at: null, approved_at: null, gate_override: null })
     .eq("id", pitchId)
     .eq("status", "approved");
 }
@@ -335,6 +351,34 @@ export async function GET(req: NextRequest) {
         });
         if (!compliance.ok) {
           results.push({ pitch_id: pitch.id, status: "skipped", reason: compliance.error });
+          continue;
+        }
+
+        // Send gate v2, on the exact text and address going out. Approval
+        // checked the draft; since then the contact may have changed or the
+        // body been edited. Block-level failures, or review-level ones nobody
+        // accepted, take it out of the queue with the reasons. If the check
+        // can't run, it stays queued and is not sent (fails closed).
+        const gate = await checkPitchGate(supabase, pitch.tenant_id, pitch.id, {
+          body: signedBody,
+          recipient: { email: toEmail, full_name: contact?.full_name ?? null, selected_by: contact?.selected_by ?? null },
+        });
+        if (!gate) {
+          results.push({ pitch_id: pitch.id, status: "skipped", reason: "Quality gate unavailable — not sent" });
+          continue;
+        }
+        const allowed = gateAllows(gate.result, gate.override?.codes);
+        if (!allowed.ok) {
+          const reason = `Quality gate: ${describeFailures(allowed.outstanding)}`.slice(0, 1000);
+          await returnToDraft(supabase, pitch.id);
+          await auditGateHold({
+            tenantId: pitch.tenant_id,
+            actorId: null,
+            pitchId: pitch.id,
+            path: "send-queue",
+            failures: allowed.outstanding,
+          });
+          results.push({ pitch_id: pitch.id, status: "skipped", reason });
           continue;
         }
 

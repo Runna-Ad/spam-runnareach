@@ -92,7 +92,7 @@ const TEMPLATES: IndustryTemplate[] = [
     label_es: "E-commerce / Marca D2C",
     en: {
       subject: "what your ad budget is quietly losing",
-      preview_text: "Find out exactly how much {company} loses every month to marketing that doesn't convert — 30 seconds.",
+      preview_text: "Find out exactly how much {company} loses every month to marketing that doesn't convert, in 30 seconds.",
       body: `Hi {first_name},
 
 Uncomfortable question: do you know how much {company} loses every month to marketing that doesn't convert? Almost no one does, and that blind spot is the real cost.
@@ -167,11 +167,11 @@ En Rünna producimos marketing que vende, no que solo se ve bonito. Pero primero
     label_en: "Real Estate / Construction",
     label_es: "Bienes Raíces / Construcción",
     en: {
-      subject: "{company}'s leads are slipping through follow-up",
+      subject: "{company}'s enquiries are slipping through follow-up",
       preview_text: "Lead gen isn't the problem. The problem is how many die between first contact and follow-up, and what that costs.",
       body: `Hi {first_name},
 
-In real estate, generating leads is rarely the problem. The problem is how many die between first contact and follow-up, and what that costs you in dollars.
+In real estate, getting enquiries is rarely the problem. The problem is how many die between first contact and follow-up, and what that costs you in dollars.
 
 We built a 30-second diagnostic that puts an exact number on that leak. No email, no commitment.
 
@@ -183,11 +183,11 @@ Rünna has spent 12 years turning marketing into measurable results. This shows 
 {agency}`,
     },
     es: {
-      subject: "los leads que {company} está dejando ir",
-      preview_text: "El 70% de los leads se pierde entre el primer contacto y el seguimiento. Ese costo tiene un número exacto.",
+      subject: "los clientes que {company} está dejando ir",
+      preview_text: "Muchos clientes potenciales se pierden entre el primer contacto y el seguimiento. Ese costo tiene un número exacto.",
       body: `Hola {first_name},
 
-En bienes raíces, generar leads casi nunca es el problema. El problema es cuántos se pierden entre el primer contacto y el seguimiento, y lo que eso cuesta en pesos.
+En bienes raíces, conseguir clientes potenciales casi nunca es el problema. El problema es cuántos se pierden entre el primer contacto y el seguimiento, y lo que eso cuesta en pesos.
 
 Te armamos un diagnóstico de 30 segundos que pone número exacto a esa fuga. Sin correo, sin compromiso.
 
@@ -320,10 +320,10 @@ Rünna lleva 12 años haciendo marketing medible para marcas exigentes. Esto te 
     label_es: "Salud & Wellness",
     en: {
       subject: "{company}: patients who look but never book",
-      preview_text: "High traffic, low bookings — there's an exact cost to that gap. 30 seconds to see yours.",
+      preview_text: "High traffic, low bookings: there's an exact cost to that gap. 30 seconds to see yours.",
       body: `Hi {first_name},
 
-In health and wellness the problem is rarely traffic. It's conversion. Plenty of people look, few book, and manual follow-up falls through. That has an exact cost.
+In health and wellness the problem is rarely traffic. It's turning lookers into bookings. Plenty of people look, few book, and manual follow-up falls through. That has an exact cost.
 
 We built a tool that tells you what it is in 30 seconds, using real data for your industry. No email required.
 
@@ -362,14 +362,14 @@ Rünna lleva 12 años convirtiendo marketing en resultados medibles. Empieza vie
     label_es: "Hoteles Boutique & Independientes",
     en: {
       subject: "{company}'s OTA commission, recaptured",
-      preview_text: "The gap between 15–30% OTA commission and 4.5% direct is real money. 30 seconds to see {company}'s number.",
+      preview_text: "The gap between OTA commission and a direct booking is real money. 30 seconds to see {company}'s number.",
       body: `Hi {first_name},
 
-You already know the number that stings: 15–30% of every Booking.com and Expedia reservation gone before the guest checks in. A direct booking costs closer to 4.5%.
+You already know the number that stings: a slice of every Booking.com and Expedia reservation is gone before the guest checks in. A direct booking keeps almost all of it.
 
-The gap between those two numbers — for {company} specifically — is real money you could be keeping every month. We built a 30-second tool that calculates it.
+The gap between those two, for {company} specifically, is real money you could be keeping every month. We built a 30-second tool that calculates it.
 
-Rünna has 12 years producing marketing that drives measurable results. And we operate in both Mexico and Canada — so we know how to sell your destination to the travellers who actually book it.
+Rünna has 12 years producing marketing that drives measurable results. And we operate in both Mexico and Canada, so we know how to sell your destination to the travellers who actually book it.
 
 👉 See {company}'s recapture number: {link}
 
@@ -378,14 +378,14 @@ Rünna has 12 years producing marketing that drives measurable results. And we o
     },
     es: {
       subject: "La comisión de OTA de {company}, recuperada",
-      preview_text: "La brecha entre 15–30% de comisión OTA y 4.5% de reserva directa es dinero real. 30 segundos para verlo.",
+      preview_text: "La brecha entre la comisión de las OTAs y una reserva directa es dinero real. 30 segundos para verlo.",
       body: `Hola {first_name},
 
-Ya sabes el número que duele: 15–30% de cada reserva de Booking.com y Expedia se va antes de que el huésped llegue. Una reserva directa cuesta cerca del 4.5%.
+Ya sabes el número que duele: una parte de cada reserva de Booking.com y Expedia se va antes de que el huésped llegue. Una reserva directa se queda con casi todo.
 
-La diferencia entre esos dos números — para {company} específicamente — es dinero real que podrías estar quedándote cada mes. Armamos una herramienta de 30 segundos que lo calcula.
+La diferencia entre las dos, para {company} específicamente, es dinero real que podrías estar quedándote cada mes. Armamos una herramienta de 30 segundos que lo calcula.
 
-En Rünna llevamos 12 años produciendo marketing que genera resultados medibles. Y operamos en México y Canadá — sabemos vender tu destino a los viajeros que realmente reservan.
+En Rünna llevamos 12 años produciendo marketing que genera resultados medibles. Y operamos en México y Canadá: sabemos vender tu destino a los viajeros que realmente reservan.
 
 👉 Ve el número de {company}: {link}
 
@@ -403,11 +403,11 @@ En Rünna llevamos 12 años produciendo marketing que genera resultados medibles
       preview_text: "In Cancún and Los Cabos, the hard part isn't the experience. It's getting discovered by the right travellers first.",
       body: `Hi {first_name},
 
-In Cancún and Los Cabos, the hard part isn't the experience — it's getting discovered by the right travellers before they've already committed elsewhere. Most venues market to whoever happens to scroll by.
+In Cancún and Los Cabos, the hard part isn't the experience, it's getting discovered by the right travellers before they've already committed elsewhere. Most venues market to whoever happens to scroll by.
 
-We built a 30-second diagnostic that shows where {company}'s marketing is leaking those guests — and what it costs. No email, no call.
+We built a 30-second diagnostic that shows where {company}'s marketing is leaking those guests, and what it costs. No email, no call.
 
-Rünna operates in both Mexico and Canada — we don't just produce marketing that fills tables, we know the North American traveller you're trying to reach.
+Rünna operates in both Mexico and Canada. We don't just produce marketing that fills tables, we know the North American traveller you're trying to reach.
 
 👉 {link}
 
@@ -419,11 +419,11 @@ Rünna operates in both Mexico and Canada — we don't just produce marketing th
       preview_text: "En Cancún y Los Cabos, lo difícil no es la experiencia. Es que te descubran antes de que reserven en otro lado.",
       body: `Hola {first_name},
 
-En Cancún y Los Cabos, lo difícil no es la experiencia — es que los viajeros correctos te descubran antes de comprometerse con otra opción. La mayoría de los venues le hablan a quien aparece en el scroll.
+En Cancún y Los Cabos, lo difícil no es la experiencia, es que los viajeros correctos te descubran antes de comprometerse con otra opción. La mayoría de los venues le hablan a quien aparece en el scroll.
 
 Armamos un diagnóstico de 30 segundos que muestra dónde {company} pierde esos huéspedes y cuánto cuesta. Sin correo, sin llamada.
 
-En Rünna operamos en México y Canadá — no solo producimos marketing, conocemos al viajero norteamericano que quieres alcanzar.
+En Rünna operamos en México y Canadá. No solo producimos marketing, conocemos al viajero norteamericano que quieres alcanzar.
 
 👉 {link}
 
@@ -443,9 +443,9 @@ En Rünna operamos en México y Canadá — no solo producimos marketing, conoce
 
 In villa and boutique rentals, the leak is quiet: nights that go unbooked because the marketing reaches the wrong traveller, plus platform fees eating the nights that do book.
 
-We built a 30-second tool that puts an exact dollar figure on it — for {company} specifically. No email required.
+We built a 30-second tool that puts an exact dollar figure on it, for {company} specifically. No email required.
 
-Rünna has 12 years of measurable creative work, and we operate on both sides of the border — so we know the Mexican market and the North American traveller who books it. That's the difference between an OTA listing and a destination people seek out by name.
+Rünna has 12 years of measurable creative work, and we operate on both sides of the border, so we know the Mexican market and the North American traveller who books it. That's the difference between an OTA listing and a destination people seek out by name.
 
 👉 See your number: {link}
 
@@ -459,9 +459,9 @@ Rünna has 12 years of measurable creative work, and we operate on both sides of
 
 En rentas de villas y hospedaje boutique, la fuga es silenciosa: noches sin reservar porque el marketing llega al viajero equivocado, más comisiones de plataforma en las que sí se reservan.
 
-Armamos una herramienta de 30 segundos que pone número exacto a eso — para {company} específicamente. Sin correo.
+Armamos una herramienta de 30 segundos que pone número exacto a eso, para {company} específicamente. Sin correo.
 
-En Rünna llevamos 12 años de trabajo creativo medible, y operamos a ambos lados de la frontera — conocemos el mercado mexicano y al viajero norteamericano que lo reserva. Esa es la diferencia entre un listing de OTA y un destino que la gente busca por nombre.
+En Rünna llevamos 12 años de trabajo creativo medible, y operamos a ambos lados de la frontera: conocemos el mercado mexicano y al viajero norteamericano que lo reserva. Esa es la diferencia entre un listing de OTA y un destino que la gente busca por nombre.
 
 👉 Ve tu número: {link}
 
@@ -476,10 +476,10 @@ En Rünna llevamos 12 años de trabajo creativo medible, y operamos a ambos lado
     label_es: "Otro",
     en: {
       subject: "where is {company}'s money actually going?",
-      preview_text: "Most businesses spend more on marketing in 2026 with no clear read on what works. 30 seconds to see your number.",
+      preview_text: "Most businesses spend more on marketing every year with no clear read on what works. 30 seconds to see your number.",
       body: `Hi {first_name},
 
-Heading into 2026, most businesses are spending more on marketing and more hours on it, with no clear read on which channels actually pay back.
+These days, most businesses are spending more on marketing and more hours on it, with no clear read on which channels actually pay back.
 
 We built a 30-second diagnostic that puts an exact dollar figure on that leak. Real industry data. No email required.
 
@@ -492,10 +492,10 @@ Rünna has spent 12 years producing marketing that drives measurable results. Th
     },
     es: {
       subject: "¿dónde se está yendo el dinero de {company}?",
-      preview_text: "La mayoría de los negocios en México gasta más en marketing en 2026 sin saber qué funciona. 30 seg para saberlo.",
+      preview_text: "La mayoría de los negocios en México gasta más en marketing cada año sin saber qué funciona. 30 seg para saberlo.",
       body: `Hola {first_name},
 
-El reto de 2026 para casi cualquier negocio en México no es falta de clientes, es falta de foco. Presupuesto repartido entre canales sin saber cuál vende.
+El reto de hoy para casi cualquier negocio en México no es falta de clientes, es falta de foco. Presupuesto repartido entre canales sin saber cuál vende.
 
 Te hicimos un diagnóstico de 30 segundos que pone número exacto a esa fuga. Datos reales de industria. Sin correo.
 

@@ -675,6 +675,8 @@ export type Database = {
           sequence_step: number;
           next_followup_at: string | null;
           sequence_paused_at: string | null;
+          gate_verdict: unknown;
+          gate_override: unknown;
         };
         Insert: {
           id?: UUID;
@@ -755,6 +757,8 @@ export type Database = {
           sequence_step?: number | null;
           next_followup_at?: string | null;
           sequence_paused_at?: string | null;
+          gate_verdict?: unknown;
+          gate_override?: unknown;
         };
         Relationships: NoRels;
       };

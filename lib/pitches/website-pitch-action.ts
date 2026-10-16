@@ -32,6 +32,7 @@ import {
 import { isUnderDailyCap, recordClaudeCall } from "@/lib/anthropic/cost-tracking";
 import { fetchTopUsableContact } from "@/lib/pitches/contacts";
 import { senderSignature } from "@/lib/pitches/sender-identity";
+import { refreshGateAfterChange } from "@/lib/pitches/gate";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -217,6 +218,9 @@ export async function generateWebsitePitch(
   if (insertErr) return { ok: false, error: `Could not save pitch: ${insertErr.message}` };
   if (!created) return { ok: false, error: "Insert returned no row." };
 
+  // Send gate v2 verdict, shown on /pitches; approve and send re-check.
+  await refreshGateAfterChange(supabase, user.tenantId, created.id);
+
   revalidatePath("/pitches");
   revalidatePath(`/companies/${prospectId}`);
 
@@ -258,24 +262,24 @@ The goal is to sell them on getting a professional website built by Rünna.
 
 ${opts.language === "es" ? "Write the email in Spanish." : "Write the email in English."}
 
-Use this EXACT structure — replace [INDUSTRY] with specific ${opts.industry}-appropriate language:
+Use this EXACT structure, replacing [INDUSTRY] with specific ${opts.industry}-appropriate language:
 
 Subject: Quick question about ${opts.companyName}
 
 ${greeting}
 
-I work with ${opts.industry} businesses across ${marketLabel} helping them show up online and win more customers — and I came across your business recently.
+I work with ${opts.industry} businesses across ${marketLabel} helping them show up online and win more customers, and I came across your business recently.
 
 I wanted to ask: is not having a website a deliberate choice, or just something that hasn't happened yet?
 
-I ask because most of the business owners I talk to in [${opts.industry} industry] tell me the same thing — they know they need one, but it always feels expensive, slow, or complicated. So it keeps getting pushed back.
+I ask because most of the business owners I talk to in [${opts.industry} industry] tell me the same thing: they know they need one, but it always feels expensive, slow, or complicated. So it keeps getting pushed back.
 
-We built Rünna specifically to solve that. We get [${opts.industry}] businesses online in 2–3 weeks, at a cost that makes sense for a growing business, and built to bring in real customers — not just look pretty.
+We built Rünna specifically to solve that. We get [${opts.industry}] businesses online in 2–3 weeks, at a cost that makes sense for a growing business, and built to bring in real customers, not just look pretty.
 
 What a good website does for a [${opts.industry}] business:
 ✓ Shows up when locals search for what you offer
 ✓ Builds instant credibility (customers Google you before they call)
-✓ Works as your 24/7 salesperson — capturing leads while you sleep
+✓ Works as your 24/7 salesperson, taking enquiries while you sleep
 ✓ Gives you something real to point to on social media
 ✓ Makes you look like the obvious, professional choice vs. competitors${caseStudyBlock}
 
@@ -290,6 +294,10 @@ Rules:
 - Keep tone warm and conversational — not salesy or pushy
 - Subject line must feel like a genuine question, not a sales pitch
 - 250–350 words max in the body
+- No em dashes (—): use commas or periods
+- Plain words a business owner uses: never "leads", "funnel", "conversion", "optimize"
+- No numbers other than the ones already in the structure above
+- End with the sign-off exactly as shown, nothing after it
 - Return ONLY the email. First line: "Subject: ..." then blank line then body. Nothing else.`;
 
   try {
@@ -318,6 +326,8 @@ Rules:
     const bodyParsed = bodyLines
       .join("\n")
       .replace(/^\n+/, "")
+      // Em dashes are banned (and gated); Haiku still slips them in.
+      .replace(/\s*—\s*/g, ", ")
       .trim();
 
     const cost_usd = computeCostUsd(
@@ -366,18 +376,18 @@ function buildFallbackPitch(opts: {
   const subject = `Quick question about ${opts.companyName}`;
   const body = `${greeting}
 
-I work with ${opts.industry} businesses helping them show up online and win more customers — and I came across your business recently.
+I work with ${opts.industry} businesses helping them show up online and win more customers, and I came across your business recently.
 
 I wanted to ask: is not having a website a deliberate choice, or just something that hasn't happened yet?
 
-I ask because most of the business owners I talk to in ${opts.industry} tell me the same thing — they know they need one, but it always feels expensive, slow, or complicated. So it keeps getting pushed back.
+I ask because most of the business owners I talk to in ${opts.industry} tell me the same thing: they know they need one, but it always feels expensive, slow, or complicated. So it keeps getting pushed back.
 
-We built Rünna specifically to solve that. We get ${opts.industry} businesses online in 2–3 weeks, at a cost that makes sense for a growing business, and built to bring in real customers — not just look pretty.
+We built Rünna specifically to solve that. We get ${opts.industry} businesses online in 2–3 weeks, at a cost that makes sense for a growing business, and built to bring in real customers, not just look pretty.
 
 What a good website does for a ${opts.industry} business:
 ✓ Shows up when locals search for what you offer
 ✓ Builds instant credibility (customers Google you before they call)
-✓ Works as your 24/7 salesperson — capturing leads while you sleep
+✓ Works as your 24/7 salesperson, taking enquiries while you sleep
 ✓ Gives you something real to point to on social media
 ✓ Makes you look like the obvious, professional choice vs. competitors${caseStudyBlock}
 

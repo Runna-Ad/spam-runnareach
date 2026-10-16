@@ -8,19 +8,31 @@
 
 import assert from "node:assert/strict";
 import test from "node:test";
-import { evaluateSendGate, extractGreetedName, type GateInput } from "../lib/pitches/send-gate.ts";
+import {
+  GATE_SEVERITY,
+  evaluateSendGate,
+  namesAgree,
+  extractGreetedName,
+  gateAllows,
+  type GateInput,
+} from "../lib/pitches/send-gate.ts";
+import { renderIndustryTemplate } from "../lib/pitches/industry-templates.ts";
+import { buildFollowup1, buildFollowup2 } from "../lib/pitches/followup-templates.ts";
+import { senderForGenerator, senderSignature } from "../lib/pitches/sender-identity.ts";
+import type { GeneratorInputs } from "../lib/pitches/generator.ts";
 
 /** A pitch that should pass everything — the baseline. */
 function goodPitch(over: Partial<GateInput> = {}): GateInput {
   return {
-    subject: "waghorn stephens: enquiries you're not catching",
+    subject: "who answers waghorn stephens at night?",
     body:
       "Hi John,\n\n" +
-      "Pedro from Runna here, we help Canadian law firms turn inquiry chaos into " +
-      "qualified leads without adding headcount.\n\n" +
-      "We'd build you a custom AI intake tool that screens and routes enquiries to " +
-      "the right lawyer, so nothing sits overnight.\n\n" +
-      "Worth a quick chat?\n\nPedro",
+      "Henry from Runna Advertising here. We help Canadian law firms answer every " +
+      "enquiry without adding staff.\n\n" +
+      "We'd build you a simple assistant that replies to new enquiries right away and " +
+      "passes each one to the right lawyer, so nothing sits overnight.\n\n" +
+      "Worth a chat?\n\nHenry\nRunna Advertising",
+    lang: "en",
     recipientEmail: "john.sipos@waglaw.net",
     recipientFullName: null,
     recipientSelectedBy: "scraper",
@@ -231,3 +243,227 @@ test("omitting benchmarkFigures entirely still works (back-compat)", () => {
   }));
   assert.ok(!(!r.pass && r.failures.some((f) => f.code === "unsourced_metric")));
 });
+
+// ── Gate v2 (2026-10-16) ─────────────────────────────────────────────────────
+
+const has = (r: ReturnType<typeof evaluateSendGate>, code: string) => (codes(r) as string[]).includes(code);
+const withBody = (body: string, over: Partial<GateInput> = {}) =>
+  evaluateSendGate(goodPitch({ body, ...over }));
+const BODY_TAIL = "\n\nWorth a chat?\n\nHenry\nRunna Advertising";
+
+test("v2: checks EVERY number, not just the first (v1's blind spot)", () => {
+  // v1 matched only the first number: a sourced "3" let "20-30%" through.
+  const r = withBody(
+    "Hi John,\n\nYour contact form takes 3 screens on a phone, and that's probably costing you 20-30% of inbound requests." + BODY_TAIL,
+    { evidenceQuotes: ["contact form takes 3 screens on mobile"] },
+  );
+  assert.ok(has(r, "unsourced_metric"));
+  assert.match(JSON.stringify(r), /20/);
+});
+
+test("v2: numbers in the SUBJECT are checked too", () => {
+  const r = evaluateSendGate(goodPitch({ subject: "waghorn stephens: 3 things i'd fix this week" }));
+  assert.ok(has(r, "unsourced_metric"));
+});
+
+test("v2: spelled-out multiples need a source", () => {
+  assert.ok(has(withBody("Hi John,\n\nFirms that answer first are seven times more likely to win the client." + BODY_TAIL), "unsourced_metric"));
+  assert.ok(has(withBody("Hola Juan,\n\nSiete de cada diez clientes se van sin respuesta, y eso cuesta." + BODY_TAIL, { lang: "es" }), "unsourced_metric"));
+});
+
+test("v2: Rünna's own facts, the CTA link and the company name are not claims", () => {
+  const r = withBody(
+    "Hi John,\n\nWe've spent 12 years on this. The free check takes about 30 seconds, no signup, and a 20-minute chat after is optional.\n\n" +
+      "👉 See it for yourself: https://runna-hunter.vercel.app/?market=ca&v=1&size=25\n\nHenry\nRunna Advertising",
+    { companyName: "43 North Waghorn", siteName: null },
+  );
+  assert.ok(!has(r, "unsourced_metric"), JSON.stringify(r));
+  const named = withBody("Hi John,\n\nAt 43 North Waghorn the phones ring after hours and nobody picks up." + BODY_TAIL, {
+    companyName: "43 North Waghorn",
+    siteName: null,
+  });
+  assert.ok(!has(named, "unsourced_metric"));
+});
+
+test("v2: a verified benchmark's statistic text is a source", () => {
+  const r = withBody(
+    "Hi John,\n\nWhen researchers contacted 500 law firms, only 33% replied to the email. Most enquiries just wait." + BODY_TAIL,
+    { benchmarkFigures: ["33%", "When researchers posed as prospective clients and contacted 500 law firms, only 33% replied to the email"] },
+  );
+  assert.ok(!has(r, "unsourced_metric"), JSON.stringify(r));
+});
+
+test("v2: never a client name (block), matched case-sensitively", () => {
+  const clientNames = ["DiDi", "El Club", "Lila", "Ford", "SnapPad"];
+  const named = withBody("Hi John,\n\nWe did exactly this for DiDi and it worked." + BODY_TAIL, { clientNames });
+  assert.ok(has(named, "client_name"));
+  assert.equal(GATE_SEVERITY.client_name, "block");
+  // Ordinary words and first names that happen to be client names.
+  const ordinary = withBody(
+    "Hola Lila,\n\nVi que el club de golf tiene reservas solo por teléfono, y muchos se quedan sin respuesta." + BODY_TAIL.replace("Worth a chat?", "¿Platicamos?"),
+    { clientNames, lang: "es", recipientEmail: "lila@club.mx", recipientFullName: "Lila Ortiz" },
+  );
+  assert.ok(!has(ordinary, "client_name"), JSON.stringify(ordinary));
+  // A Ford dealer talking about Ford is about them, not a client brag.
+  const dealer = withBody("Hi John,\n\nYour Ford customers book service by phone only, and the line is busy at lunch." + BODY_TAIL, {
+    clientNames,
+    companyName: "Calgary Ford Dealers",
+    siteName: null,
+  });
+  assert.ok(!has(dealer, "client_name"));
+  // "afford" is not "Ford".
+  assert.ok(!has(withBody("Hi John,\n\nMost firms can't afford to miss an enquiry at night." + BODY_TAIL, { clientNames }), "client_name"));
+});
+
+test("v2: internal product names are blocked", () => {
+  const r = withBody("Hi John,\n\nWe built S.P.A.M., an AI prospecting platform, for ourselves." + BODY_TAIL);
+  assert.ok(has(r, "internal_name"));
+});
+
+test("v2: jargon and em dashes are review-level flags", () => {
+  const r = withBody("Hi John,\n\nWe'd build an intake tool that sends you qualified leads — automatically." + BODY_TAIL);
+  assert.ok(has(r, "banned_jargon"));
+  assert.ok(has(r, "em_dash"));
+  assert.equal(GATE_SEVERITY.banned_jargon, "review");
+  assert.equal(GATE_SEVERITY.em_dash, "review");
+});
+
+test("v2: bracket placeholders copied from the prompt are blocked", () => {
+  assert.ok(has(withBody("Hi John,\n\nRun [company] through our free check and see where [the pain] is costing you." + BODY_TAIL), "unresolved_placeholder"));
+  assert.ok(has(withBody("Hola,\n\nCorre [empresa] en la herramienta y mira dónde [el dolor] te cuesta." + BODY_TAIL, { lang: "es" }), "unresolved_placeholder"));
+});
+
+test("v2: formal Spanish greetings are checked (v1 never saw them)", () => {
+  assert.equal(extractGreetedName("Estimado Lic. García,\n\nCuerpo."), "García");
+  assert.equal(extractGreetedName("Estimada Dra. Ana Ruiz,\n\nCuerpo."), "Ana Ruiz");
+  assert.equal(extractGreetedName("Dear Ms. Lee,\n\nBody."), "Lee");
+  assert.equal(extractGreetedName("Hola, equipo de Clínica Sur,\n\nCuerpo."), null);
+  const es = { lang: "es" as const, recipientEmail: "jgarcia@despacho.mx", recipientSelectedBy: "scraper" };
+  const ok = withBody("Estimado Lic. García,\n\nSoy Nils, de Runna Advertising. Vi que su despacho solo recibe consultas por teléfono." + BODY_TAIL, {
+    ...es,
+    recipientFullName: "Juan García",
+  });
+  assert.ok(!has(ok, "greeting_mismatch"), JSON.stringify(ok));
+  const wrong = withBody("Estimado Lic. García,\n\nSoy Nils, de Runna Advertising. Vi que su despacho solo recibe consultas por teléfono." + BODY_TAIL, {
+    ...es,
+    recipientFullName: "Juan Pérez",
+  });
+  assert.ok(has(wrong, "greeting_mismatch"));
+  const merge = withBody("Estimado/a Juan,\n\nSoy Nils, de Runna Advertising, con una idea para su despacho." + BODY_TAIL, {
+    ...es,
+    recipientFullName: "Juan García",
+  });
+  assert.ok(has(merge, "greeting_mismatch"));
+});
+
+test("v2: 'Checked acme.com' is a website claim (v1 missed the domain form)", () => {
+  const r = withBody("Hi John,\n\nChecked waglaw.net: there's no way to book a consult online." + BODY_TAIL, {
+    websiteVerified: false,
+  });
+  assert.ok(has(r, "unverifiable_website_claim"));
+});
+
+test("v2: follow-ups skip provenance but not the usable-email check", () => {
+  const r = evaluateSendGate(goodPitch({ recipientSelectedBy: "snapverify_catchall_guess", checkRecipientSource: false }));
+  assert.ok(!has(r, "unverified_recipient"));
+  const bad = evaluateSendGate(goodPitch({ recipientEmail: "nobody", checkRecipientSource: false }));
+  assert.ok(has(bad, "unusable_email"));
+});
+
+test("gateAllows: block never passes; review passes only for accepted codes", () => {
+  const review = evaluateSendGate(goodPitch({ recipientSelectedBy: "snapverify_catchall_guess" }));
+  assert.equal(gateAllows(review).ok, false);
+  assert.equal(gateAllows(review, ["unverified_recipient"]).ok, true);
+  // Accepting one flag doesn't accept a different one that appeared later.
+  const twoFlags = evaluateSendGate(
+    goodPitch({ recipientSelectedBy: "snapverify_catchall_guess", body: goodPitch().body.replace("right away", "right away — fast") }),
+  );
+  assert.equal(gateAllows(twoFlags, ["unverified_recipient"]).ok, false);
+  // A block-level code can't be accepted, even if someone sends it.
+  const block = withBody("Hi John,\n\nWe did this for DiDi." + BODY_TAIL, { clientNames: ["DiDi"] });
+  assert.equal(gateAllows(block, ["client_name"]).ok, false);
+  assert.equal(gateAllows(evaluateSendGate(goodPitch())).ok, true);
+});
+
+test("every gate code has a severity", () => {
+  const all = Object.keys(GATE_SEVERITY);
+  assert.ok(all.length >= 15);
+  for (const sev of Object.values(GATE_SEVERITY)) assert.ok(sev === "block" || sev === "review");
+});
+
+// ── Our own templates must pass the gate ──────────────────────────────────────
+// If a template we wrote fails, every fallback pitch is held. Rendered for
+// every industry bucket in both languages.
+
+test("industry fallback templates pass the content rules in both languages", () => {
+  const industries = ["hotel", "beach club", "villa", "ecommerce", "restaurant", "real estate", "law", "retail", "automotive", "dental", "plumbing"];
+  for (const lang of ["en", "es"] as const) {
+    for (const industry of industries) {
+      const input: GeneratorInputs = {
+        prospect: { id: "p", company_name: "Casa Norte", industry, language: lang, employee_size_estimate: null, city: null, market: null, what_they_do: null, tech_stack: [] },
+        pains: [], contacts: [], case_studies: [], notable_clients: [], benchmarks: [],
+        sender: senderForGenerator(lang),
+        deep_pitch_url: `https://runna-hunter.vercel.app/?market=${lang === "es" ? "mx" : "ca"}`,
+      };
+      const p = renderIndustryTemplate(input, "test");
+      const r = evaluateSendGate({
+        subject: p.subject, body: p.body, lang,
+        recipientEmail: "info@casanorte.mx", recipientFullName: null, recipientSelectedBy: "scraper",
+        companyName: "Casa Norte", siteName: null, domain: "casanorte.mx", websiteVerified: true,
+        evidenceQuotes: [], benchmarkFigures: [], clientNames: ["DiDi", "El Club", "Lila", "Ford"],
+      });
+      assert.ok(r.pass, `${lang}/${industry}: ${JSON.stringify(r)}`);
+    }
+  }
+});
+
+test("follow-up fallback templates pass the content rules in both languages", () => {
+  for (const lang of ["en", "es"] as const) {
+    for (const painLabel of [null, "online booking"]) {
+      for (const build of [buildFollowup1, buildFollowup2]) {
+        const e = build({
+          prospectName: "Casa Norte", contactName: "Ana", originalSubject: "una idea para casa norte",
+          painLabel: lang === "en" ? painLabel : null, lang, signature: senderSignature(lang),
+        });
+        const r = evaluateSendGate({
+          subject: e.subject, body: e.body, lang,
+          recipientEmail: "ana@casanorte.mx", recipientFullName: "Ana López", recipientSelectedBy: null,
+          companyName: "Casa Norte", siteName: null, domain: "casanorte.mx", websiteVerified: true,
+          evidenceQuotes: [], benchmarkFigures: [], clientNames: ["DiDi"], checkRecipientSource: false,
+        });
+        assert.ok(r.pass, `${lang}/${build.name}/${painLabel}: ${JSON.stringify(r)}`);
+      }
+    }
+  }
+});
+
+// ── False positives found replaying 60 real sent emails (2026-10-16) ────────
+
+test("v2: times of day, B2B-style codes and ordinals are not quantity claims", () => {
+  const r = withBody(
+    "Hi John,\n\nSomeone looking for help at 10pm, or after 6 p.m. on a Friday, finds only a B2B contact form on your 2nd page." + BODY_TAIL,
+  );
+  assert.ok(!has(r, "unsourced_metric"), JSON.stringify(r));
+  // "copy-pasted three times" is a count of something seen, not a multiplier.
+  assert.ok(!has(withBody("Hi John,\n\nThe same contact form is copy-pasted three times on the page." + BODY_TAIL), "unsourced_metric"));
+  // …while an invented multiplier still is.
+  assert.ok(has(withBody("Hi John,\n\nFirms like yours are three times more likely to win when they answer fast." + BODY_TAIL), "unsourced_metric"));
+});
+
+test("v2: research-summary facts count as sources, whatever the number format", () => {
+  const r = withBody(
+    "Hi John,\n\nFor a 4-site network serving 44,000 residents, a phone-only front door is a lot of missed calls." + BODY_TAIL,
+    { evidenceQuotes: ["Multi-site rural hospital network serving 4 communities; ~400 staff serving 44K residents"] },
+  );
+  assert.ok(!has(r, "unsourced_metric"), JSON.stringify(r));
+});
+
+test("v2: company-name check compares distinctive words", () => {
+  assert.equal(namesAgree("Woodbine Hotel & Suites", "Welcome to Woodbine"), true);
+  assert.equal(namesAgree("Amsted Design-Build", "amsted.ca"), true);
+  assert.equal(namesAgree("Estética Orozco Hermanos", "OrozcoHnos"), true);
+  assert.equal(namesAgree("Hospitals", "Rural Roads Health Services"), false);
+  assert.equal(namesAgree("Dynamic Source Manufacturing", "Contract Electronics Manufacturing"), false);
+  assert.equal(namesAgree("Acadianlogworks", "Northern Timber Homes"), false);
+});
+

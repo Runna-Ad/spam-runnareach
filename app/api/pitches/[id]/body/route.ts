@@ -19,5 +19,7 @@ export async function GET(
   return NextResponse.json({
     subject: pitch.subject,
     body: pitch.body_edited ?? pitch.body_original,
+    gate_verdict: pitch.gate_verdict,
+    gate_override_codes: pitch.gate_override_codes,
   });
 }

@@ -24,6 +24,8 @@ import { bodyWithFooter, getOutboundCompliance } from "@/lib/compliance/outbound
 import { firstTouchConflict } from "@/lib/pitches/send-guards";
 import { verifyRecipient } from "@/lib/research/verify-recipient";
 import { reconcileSignOff, senderIdentity } from "@/lib/pitches/sender-identity";
+import { checkPitchGate } from "@/lib/pitches/gate";
+import { describeFailures, gateAllows } from "@/lib/pitches/send-gate";
 
 /** Same set the send-queue cron refuses (app/api/pitches/send-queue/route.ts). */
 const MANUAL_DO_NOT_SEND = new Set([
@@ -158,6 +160,22 @@ export async function sendPitch(input: {
   });
   if (verify.verdict === "drop") {
     return { ok: false, error: `Not sending to ${toEmail}: ${verify.reasons.join("; ")}` };
+  }
+
+  // Send gate v2, on the exact text and address going out (the contact may
+  // have been re-resolved above, or the body edited since approval). Review-
+  // level flags pass only if the person accepted them when approving.
+  const gate = await checkPitchGate(supabase, user.tenantId, pitch.id, {
+    body: signedBody,
+    recipient: { email: toEmail, full_name: toName, selected_by: toSelectedBy },
+  });
+  if (!gate) return { ok: false, error: "Couldn't run the quality check. Not sent — try again." };
+  const allowed = gateAllows(gate.result, gate.override?.codes);
+  if (!allowed.ok) {
+    return {
+      ok: false,
+      error: `Not sent — the quality check flagged it since approval. Fix it and approve again: ${describeFailures(allowed.outstanding)}`,
+    };
   }
 
   // ── 2. Load inbox (must belong to tenant, not paused, Gmail connected) ─────
