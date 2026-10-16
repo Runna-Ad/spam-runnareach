@@ -21,6 +21,7 @@ import { requireUser } from "@/lib/auth";
 import { getAccessToken, sendGmailMessage } from "@/lib/gmail/client";
 import { createClient } from "@/lib/supabase/server";
 import { bodyWithFooter, getOutboundCompliance } from "@/lib/compliance/outbound";
+import { firstTouchConflict } from "@/lib/pitches/send-guards";
 
 /** Same set the send-queue cron refuses (app/api/pitches/send-queue/route.ts). */
 const MANUAL_DO_NOT_SEND = new Set([
@@ -131,6 +132,15 @@ export async function sendPitch(input: {
     lang,
   });
   if (!compliance.ok) return { ok: false, error: compliance.error };
+
+  // One first email per prospect and per address (duplicate prospect rows exist).
+  const duplicate = await firstTouchConflict(supabase, {
+    tenantId: user.tenantId,
+    prospectId: pitch.prospect_id,
+    pitchId: pitch.id,
+    email: toEmail,
+  });
+  if (duplicate) return { ok: false, error: duplicate };
 
   // ── 2. Load inbox (must belong to tenant, not paused, Gmail connected) ─────
   type InboxRow = {

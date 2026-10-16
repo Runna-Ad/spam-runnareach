@@ -18,6 +18,7 @@ import { recordClaudeCall } from "@/lib/anthropic/cost-tracking";
 import { writeAuditLog } from "@/lib/audit/log";
 import { getAccessToken, sendGmailMessage } from "@/lib/gmail/client";
 import { getOutboundCompliance } from "@/lib/compliance/outbound";
+import { threadBlocksSend } from "@/lib/pitches/send-guards";
 import { isEmailOnDncList, type DncClient } from "@/lib/discover/dnc-check";
 import { createServiceRoleClient } from "@/lib/supabase/service-role";
 import {
@@ -256,6 +257,24 @@ export async function GET(req: NextRequest) {
     const tokenResult = await getAccessToken(inbox.gmail_refresh_token_encrypted);
     if (!tokenResult.ok) {
       results.push({ prospect: prospect.company_name, action: "skipped", reason: "gmail auth" });
+      continue;
+    }
+    // Anything they sent after our last reply that the poll hasn't imported
+    // yet means this nudge would talk over them.
+    const nudgeThreadId = (pitch.gmail_thread_id as string | null) ?? null;
+    if (!nudgeThreadId) {
+      results.push({ prospect: prospect.company_name, action: "skipped", reason: "no Gmail thread" });
+      continue;
+    }
+    const threadBlock = await threadBlocksSend(supabase, tokenResult.accessToken, {
+      tenantId,
+      threadId: nudgeThreadId,
+      ourEmail: inbox.email,
+      sinceIso: draftSentAt,
+      mode: "unseen_only",
+    });
+    if (threadBlock) {
+      results.push({ prospect: prospect.company_name, action: "skipped", reason: threadBlock });
       continue;
     }
     const sendResult = await sendGmailMessage({

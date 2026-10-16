@@ -152,3 +152,40 @@ function stripAngle(raw: string | null): string | null {
   if (!raw) return null;
   return raw.replace(/^</, "").replace(/>$/, "").trim() || null;
 }
+
+const MESSAGES_URL = "https://gmail.googleapis.com/gmail/v1/users/me/messages";
+
+/**
+ * Look in the sender's Sent folder for a message to `to` with exactly `subject`,
+ * sent after `afterEpochSec`. The source of truth for "did that send actually
+ * happen?" when a send was interrupted and our own row can't say.
+ */
+export async function findSentMessage(
+  accessToken: string,
+  args: { to: string; subject: string; afterEpochSec: number },
+): Promise<{ ok: true; found: { id: string; threadId: string; internalDate: number } | null } | { ok: false; error: string }> {
+  const q = `in:sent to:${args.to} after:${Math.floor(args.afterEpochSec)}`;
+  const list = await fetch(`${MESSAGES_URL}?maxResults=10&q=${encodeURIComponent(q)}`, {
+    headers: { Authorization: `Bearer ${accessToken}` },
+  });
+  if (!list.ok) {
+    const body = await list.text().catch(() => "");
+    return { ok: false, error: `messages.list failed (${list.status}): ${body.slice(0, 200)}` };
+  }
+  const json = (await list.json()) as { messages?: Array<{ id: string; threadId: string }> };
+  for (const m of json.messages ?? []) {
+    const res = await fetch(
+      `${MESSAGES_URL}/${encodeURIComponent(m.id)}?format=metadata&metadataHeaders=Subject`,
+      { headers: { Authorization: `Bearer ${accessToken}` } },
+    );
+    if (!res.ok) return { ok: false, error: `messages.get failed (${res.status})` };
+    const msg = (await res.json()) as GmailMessage;
+    if ((header(msg, "Subject") ?? "").trim() === args.subject.trim()) {
+      return {
+        ok: true,
+        found: { id: msg.id, threadId: msg.threadId, internalDate: Number.parseInt(msg.internalDate ?? "0", 10) },
+      };
+    }
+  }
+  return { ok: true, found: null };
+}

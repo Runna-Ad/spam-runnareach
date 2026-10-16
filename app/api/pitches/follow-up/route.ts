@@ -22,6 +22,7 @@ import { type NextRequest, NextResponse } from "next/server";
 import { createServiceRoleClient } from "@/lib/supabase/service-role";
 import { getAccessToken, sendGmailMessage } from "@/lib/gmail/client";
 import { bodyWithFooter, getOutboundCompliance } from "@/lib/compliance/outbound";
+import { threadBlocksSend } from "@/lib/pitches/send-guards";
 import {
   buildFollowup1,
   buildFollowup2,
@@ -54,6 +55,8 @@ type DuePitchRow = {
   gmail_thread_id: string | null;
   gmail_message_id: string | null;
   sequence_step: number;
+  next_followup_at: string;
+  sent_at: string | null;
   case_study_id: string;
   service_id: string | null;
   pain_id: string | null;
@@ -69,6 +72,10 @@ type ProspectRow = {
   status: string;
   cooldown_until: string | null;
 };
+
+/** Bounded batch + time budget: each follow-up can take ~20s (Sonnet + Gmail). */
+const MAX_PER_RUN = 30;
+const TIME_BUDGET_MS = 90_000;
 
 // Prospect states that must never receive an automated follow-up. Manual/bulk
 // suppression doesn't touch pitches.sequence_paused_at, so the cron re-checks
@@ -263,6 +270,22 @@ async function processFollowup(pitch: DuePitchRow): Promise<FollowupResult> {
     return { pitch_id: pitch.id, prospect: prospect.company_name, step: nextStep, status: "skipped", reason: `Token refresh failed: ${tokenResult.error}` };
   }
 
+  // ── 6b. Has anyone written back since the last poll? ─────────────────────
+  // The reply poll runs hours before this cron; a reply in between used to get
+  // a follow-up anyway. Ask Gmail now. Fails closed.
+  if (!pitch.gmail_thread_id) {
+    return { pitch_id: pitch.id, prospect: prospect.company_name, step: nextStep, status: "skipped", reason: "No Gmail thread to follow up in" };
+  }
+  const threadBlock = await threadBlocksSend(supabase, tokenResult.accessToken, {
+    tenantId: pitch.tenant_id,
+    threadId: pitch.gmail_thread_id,
+    ourEmail: inbox.email,
+    sinceIso: pitch.sent_at,
+  });
+  if (threadBlock) {
+    return { pitch_id: pitch.id, prospect: prospect.company_name, step: nextStep, status: "skipped", reason: threadBlock };
+  }
+
   // ── 7. Build template ─────────────────────────────────────────────────────
   const ctx: FollowupContext = {
     prospectName: prospect.company_name,
@@ -325,6 +348,24 @@ async function processFollowup(pitch: DuePitchRow): Promise<FollowupResult> {
     }
   }
 
+  // ── 7c. Claim this step (at most once) ──────────────────────────────────
+  // Advance the sequence BEFORE sending, conditional on it not having moved.
+  // A concurrent or retried run then finds nothing to claim, and a crash after
+  // this point costs one follow-up rather than sending it twice.
+  const nextFollowupAt = nextStep === 3 ? null : new Date(Date.now() + 5 * 24 * 60 * 60 * 1000).toISOString();
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const { data: claimed } = await (supabase as any)
+    .from("pitches")
+    .update({ sequence_step: nextStep, next_followup_at: nextFollowupAt })
+    .eq("id", pitch.id)
+    .eq("sequence_step", pitch.sequence_step)
+    .is("sequence_paused_at", null)
+    .select("id")
+    .maybeSingle();
+  if (!claimed) {
+    return { pitch_id: pitch.id, prospect: prospect.company_name, step: nextStep, status: "skipped", reason: "Already handled by another run" };
+  }
+
   // ── 8. Send via Gmail in original thread ─────────────────────────────────
   const sendResult = await sendGmailMessage({
     accessToken: tokenResult.accessToken,
@@ -341,6 +382,13 @@ async function processFollowup(pitch: DuePitchRow): Promise<FollowupResult> {
   });
 
   if (!sendResult.ok) {
+    // Gmail refused it, so nothing went out: release the claim for a later run.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    await (supabase as any)
+      .from("pitches")
+      .update({ sequence_step: pitch.sequence_step, next_followup_at: pitch.next_followup_at })
+      .eq("id", pitch.id)
+      .eq("sequence_step", nextStep);
     return { pitch_id: pitch.id, prospect: prospect.company_name, step: nextStep, status: "skipped", reason: `Gmail send failed: ${sendResult.error}` };
   }
 
@@ -374,25 +422,7 @@ async function processFollowup(pitch: DuePitchRow): Promise<FollowupResult> {
     .select("id")
     .maybeSingle() as { data: { id: string } | null };
 
-  // ── 10. Update original pitch's next_followup_at ──────────────────────────
-  // next_followup_at and sequence_step are new columns not yet in generated
-  // types — cast to any for the update.
-  if (nextStep === 3) {
-    // Final follow-up sent — no more follow-ups
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    await (supabase as any)
-      .from("pitches")
-      .update({ next_followup_at: null })
-      .eq("id", pitch.id);
-  } else {
-    // Step 2 sent — schedule final follow-up in 5 days
-    const nextFollowupAt = new Date(Date.now() + 5 * 24 * 60 * 60 * 1000).toISOString();
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    await (supabase as any)
-      .from("pitches")
-      .update({ next_followup_at: nextFollowupAt, sequence_step: nextStep })
-      .eq("id", pitch.id);
-  }
+  // (Step 10 — advancing the original pitch's sequence — happened in the claim.)
 
   // ── 11. Increment inbox sends_today (resets at the UTC day boundary) ──────
   await supabase
@@ -447,14 +477,17 @@ export async function GET(req: NextRequest) {
     .from("pitches")
     .select(
       "id, tenant_id, prospect_id, contact_id, sender_inbox_id, subject, " +
-      "gmail_thread_id, gmail_message_id, sequence_step, " +
+      "gmail_thread_id, gmail_message_id, sequence_step, next_followup_at, sent_at, " +
       "case_study_id, service_id, pain_id",
     )
     .eq("status", "sent")
+    .is("parent_pitch_id", null)
     .lte("next_followup_at", now)
     .lt("sequence_step", 3)
     .is("sequence_paused_at", null)
-    .not("next_followup_at", "is", null) as {
+    .not("next_followup_at", "is", null)
+    .order("next_followup_at", { ascending: true })
+    .limit(MAX_PER_RUN) as {
     data: DuePitchRow[] | null;
     error: { message: string } | null;
   };
@@ -473,6 +506,12 @@ export async function GET(req: NextRequest) {
   const results: FollowupResult[] = [];
 
   for (const pitch of pitches) {
+    // Stop well inside maxDuration (120s): a kill mid-loop is what turns a
+    // send into a ghost. What's left is picked up by tomorrow's run.
+    if (Date.now() - startTime > TIME_BUDGET_MS) {
+      results.push({ pitch_id: pitch.id, prospect: "", step: pitch.sequence_step + 1, status: "skipped", reason: "Time budget reached — next run" });
+      continue;
+    }
     try {
       const result = await processFollowup(pitch);
       results.push(result);
