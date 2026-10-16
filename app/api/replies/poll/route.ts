@@ -9,12 +9,16 @@
 //   2. For each thread: mint an access token for its sender inbox, fetch the
 //      thread via the Gmail API, and collect inbound messages (from the
 //      prospect, not us) that we haven't imported yet.
-//   3. Insert each new reply, classify intent (Claude → heuristic fallback),
-//      pause the follow-up sequence, and mark the prospect 'replied'.
-//   4. Draft a response (Claude → heuristic) for engageable intents when the
-//      prospect is still under the 3-reply cap → draft_status='pending'.
-//      If the prospect is already at the cap and still hasn't booked, archive
-//      it as archived_no_meeting with a captured learning.
+//   3. Insert each new reply and classify it on the text they wrote (quoted
+//      thread stripped; Claude → heuristic; explicit opt-outs detected
+//      deterministically). Then, by intent:
+//        - temporary delivery delay → recorded, nothing else
+//        - bounced   → address on DNC, prospect suppressed, sequence paused
+//        - hard_no   → opt-out: address on DNC, prospect suppressed, sequences stopped
+//        - auto_reply (out of office) → follow-ups pushed back, not stopped
+//        - anything a human wrote → sequence paused, prospect 'replied'
+//   4. Draft a response (Claude → heuristic) for engageable intents →
+//      draft_status='pending'. The reply cap is enforced when a human sends.
 //   5. Email Pedro a digest of drafts awaiting review (in-app + email alert).
 //
 // Auth: Authorization: Bearer <CRON_SECRET>.
@@ -30,7 +34,14 @@ import {
 } from "@/lib/anthropic/client";
 import { recordClaudeCall } from "@/lib/anthropic/cost-tracking";
 import { classifyReplyWithClaude } from "@/lib/replies/claude-classifier";
-import { classifyReplyHeuristic, type ClassifyResult } from "@/lib/replies/classify";
+import {
+  classifyReplyHeuristic,
+  isExplicitOptOut,
+  isTemporaryDeliveryDelay,
+  stripQuotedReply,
+  type ClassifyResult,
+} from "@/lib/replies/classify";
+import { recordOptOut } from "@/lib/compliance/opt-out";
 import {
   composeReplyDraftHeuristic,
   composeReplyDraftWithClaude,
@@ -40,7 +51,8 @@ import type { ReplyIntent } from "@/lib/replies/queries";
 import { addEmailToDnc, type DncInsertClient } from "@/lib/discover/dnc-check";
 import { extractBouncedRecipient } from "@/lib/replies/bounce-parse";
 
-const MAX_REPLY_ATTEMPTS = 3;
+/** An out-of-office pushes the next follow-up at least this far out. */
+const OOO_POSTPONE_DAYS = 7;
 // Intents we draft a response for. Negatives (hard_no / wrong_person) and
 // auto_reply are left for Pedro's intent actions in /inbox — no draft.
 const DRAFTABLE: ReplyIntent[] = ["wants_meeting", "wants_info", "not_now", "unclassified"];
@@ -65,6 +77,8 @@ type ThreadRow = {
   subject: string;
   gmail_thread_id: string;
   sent_at: string | null;
+  /** Earliest send in the thread — replies are matched against this, not the latest follow-up. */
+  first_sent_at: string | null;
 };
 
 type DraftDigestItem = { prospect: string; intent: ReplyIntent };
@@ -93,12 +107,16 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: "DB query failed", details: pitchErr.message }, { status: 500 });
   }
 
-  // Dedupe to one (most recent) pitch per thread.
+  // Dedupe to one (most recent) pitch per thread, remembering the thread's
+  // first send. Rows arrive newest-first, so later rows can only be older.
   const threadMap = new Map<string, ThreadRow>();
   for (const p of (pitchRows ?? []) as Array<ThreadRow & { id: string }>) {
     const key = p.gmail_thread_id;
     if (!key) continue;
-    if (!threadMap.has(key)) {
+    const known = threadMap.get(key);
+    if (known) {
+      if (p.sent_at && (!known.first_sent_at || p.sent_at < known.first_sent_at)) known.first_sent_at = p.sent_at;
+    } else {
       threadMap.set(key, {
         pitch_id: p.id,
         tenant_id: p.tenant_id,
@@ -108,6 +126,7 @@ export async function GET(req: NextRequest) {
         subject: p.subject,
         gmail_thread_id: p.gmail_thread_id,
         sent_at: p.sent_at,
+        first_sent_at: p.sent_at,
       });
     }
   }
@@ -119,7 +138,6 @@ export async function GET(req: NextRequest) {
 
   let imported = 0;
   let drafted = 0;
-  let archived = 0;
   const errors: string[] = [];
 
   for (const thread of threadMap.values()) {
@@ -173,18 +191,37 @@ export async function GET(req: NextRequest) {
         .in("gmail_message_id", candidateIds);
       const seen = new Set((existing ?? []).map((e: { gmail_message_id: string }) => e.gmail_message_id));
 
-      // Only messages received after our pitch went out, and not yet imported.
-      const sentMs = thread.sent_at ? Date.parse(thread.sent_at) : 0;
+      // Only messages received after the thread's FIRST send, and not yet
+      // imported. Keying on the latest follow-up's sent_at lost any reply that
+      // arrived between the poll and that follow-up — permanently.
+      const firstSent = thread.first_sent_at ?? thread.sent_at;
+      const sentMs = firstSent ? Date.parse(firstSent) : 0;
       const fresh = fetched.replies
         .filter((r) => !seen.has(r.gmailMessageId))
         .filter((r) => r.internalDate >= sentMs - 60_000) // small clock-skew grace
         .sort((a, b) => a.internalDate - b.internalDate);
       if (fresh.length === 0) continue;
 
-      const replyAttempts: number = prospect.reply_attempts ?? 0;
+      // terminal: suppressed or opted out during this run — don't touch status after.
+      // engaged:  a human actually wrote back (not a delay, bounce or out-of-office).
+      let terminal = false;
+      let engaged = false;
 
       for (const inbound of fresh) {
-        const classification = await classifyReply(supabase, thread.tenant_id, inbound);
+        // A "will retry" notice is neither a bounce nor a reply: record it, change nothing.
+        const delay = isTemporaryDeliveryDelay({
+          subject: inbound.subject,
+          body_text: inbound.bodyText,
+          from_email: inbound.fromEmail,
+        });
+        const classification: ClassifyResult = delay
+          ? {
+              intent: "auto_reply",
+              urgency: "cold",
+              sentiment: "neutral",
+              reasoning: "Temporary delivery delay — the mail server will retry. Not a bounce.",
+            }
+          : await classifyReply(supabase, thread.tenant_id, inbound);
 
         // Insert the reply row.
         const { data: insertedReply } = await supabase
@@ -224,6 +261,8 @@ export async function GET(req: NextRequest) {
             source: "gmail_poll",
           },
         });
+
+        if (delay) continue;
 
         // ── Bounce (NDR) → auto-suppress immediately ───────────────────────
         // A daemon NDR means the address is dead. Waiting for a human to click
@@ -265,36 +304,46 @@ export async function GET(req: NextRequest) {
             entity_id: thread.prospect_id,
             metadata: { reply_id: insertedReply.id, reason: "bounced_auto", source: "gmail_poll" },
           });
+          // Without this the end-of-thread block re-marked the prospect
+          // "replied" from its stale status, undoing the suppression.
+          terminal = true;
           continue;
         }
 
-        // ── Cap reached + not booked + still negotiating → archive ─────────
-        if (replyAttempts >= MAX_REPLY_ATTEMPTS && classification.intent !== "wants_meeting") {
-          const reason =
-            `Archived after ${replyAttempts} funnel replies without booking. ` +
-            `Last intent: ${classification.intent}. ` +
-            `Last message: "${(inbound.bodyText ?? "").slice(0, 160).replace(/\s+/g, " ").trim()}"`;
-          await supabase
-            .from("prospects")
-            .update({
-              status: "archived_no_meeting",
-              no_meeting_reason: reason,
-              archived_at: new Date().toISOString(),
-            })
-            .eq("id", thread.prospect_id);
-          await pauseSequence(supabase, thread.tenant_id, thread.prospect_id);
-          await supabase.from("audit_log").insert({
-            tenant_id: thread.tenant_id,
-            actor_id: null,
-            action: "prospect.archived_no_meeting",
-            entity_type: "prospect",
-            entity_id: thread.prospect_id,
-            metadata: { reply_id: insertedReply.id, reason, source: "gmail_poll" },
+        // ── "No" / unsubscribe → stop for good ──────────────────────────────
+        // Address on do-not-contact, prospect suppressed, every sequence stopped.
+        // CASL wants opt-outs honoured within 10 business days; this is immediate.
+        if (classification.intent === "hard_no") {
+          const optOut = await recordOptOut(supabase, {
+            tenantId: thread.tenant_id,
+            prospectId: thread.prospect_id,
+            email: inbound.fromEmail,
+            source: "reply",
+            note: `Reply ${insertedReply.id}: ${classification.reasoning}`,
           });
-          archived += 1;
+          if (optOut.ok) {
+            terminal = true;
+          } else {
+            errors.push(`opt-out for ${inbound.fromEmail} failed: ${optOut.error}`);
+            engaged = true; // at least pause the sequence below
+          }
           continue;
         }
 
+        // ── Out-of-office → push the sequence back, don't kill it ──────────
+        // Pausing here (the old behaviour) stopped the sequence forever: the
+        // follow-up cron requires sequence_paused_at IS NULL and nothing reset it.
+        if (classification.intent === "auto_reply") {
+          await postponeSequence(supabase, thread.tenant_id, thread.prospect_id, OOO_POSTPONE_DAYS);
+          continue;
+        }
+
+        engaged = true;
+
+        // A warm reply at the reply cap used to be archived silently, with no
+        // draft and no alert ("sure, send pricing" disappeared). It now drafts
+        // like any other; the send action still enforces the cap, so a human
+        // decides whether to book, reply or archive.
         // ── Draft a response for engageable intents ────────────────────────
         if (DRAFTABLE.includes(classification.intent)) {
           const draft = await draftResponse(
@@ -333,14 +382,17 @@ export async function GET(req: NextRequest) {
         }
       }
 
-      // Pause the follow-up sequence + mark prospect 'replied' (non-terminal).
-      await pauseSequence(supabase, thread.tenant_id, thread.prospect_id);
-      if (!DEAD_STATUSES.has(prospect.status)) {
-        await supabase
-          .from("prospects")
-          .update({ status: "replied" })
-          .eq("id", thread.prospect_id)
-          .neq("status", "archived_no_meeting");
+      // Pause the follow-up sequence + mark prospect 'replied' — only when a
+      // human wrote back, and never over a suppression made in this run.
+      if (engaged && !terminal) {
+        await pauseSequence(supabase, thread.tenant_id, thread.prospect_id);
+        if (!DEAD_STATUSES.has(prospect.status)) {
+          await supabase
+            .from("prospects")
+            .update({ status: "replied" })
+            .eq("id", thread.prospect_id)
+            .not("status", "in", "(archived_no_meeting,suppressed,booked,won,lost)");
+        }
       }
     } catch (err) {
       console.error(`[replies/poll] thread ${thread.gmail_thread_id} error:`, err);
@@ -361,7 +413,6 @@ export async function GET(req: NextRequest) {
     threads_scanned: threadMap.size,
     imported,
     drafted,
-    archived,
     errors,
   });
 }
@@ -373,11 +424,39 @@ async function classifyReply(
   tenantId: string,
   inbound: InboundReply,
 ): Promise<ClassifyResult> {
+  // Classify what THEY wrote. The quoted thread contains our own email —
+  // including the unsubscribe footer — which would otherwise read as an opt-out.
+  const own = stripQuotedReply(inbound.bodyText);
   const input = {
     subject: inbound.subject,
-    body_text: inbound.bodyText,
+    body_text: own || inbound.bodyText,
     from_email: inbound.fromEmail,
   };
+  return withOptOutOverride(await classifyReplyRaw(tenantId, input, inbound), own);
+}
+
+/**
+ * An explicit "unsubscribe"/"darme de baja" must never be missed, whatever the
+ * model said — except when the model saw real interest or an out-of-office:
+ * company signatures and auto-replies sometimes carry an "unsubscribe from our
+ * newsletter" line, and that must not cost us an interested lead.
+ */
+function withOptOutOverride(result: ClassifyResult, own: string): ClassifyResult {
+  const keep: ReplyIntent[] = ["bounced", "hard_no", "auto_reply", "wants_meeting", "wants_info"];
+  if (keep.includes(result.intent) || !isExplicitOptOut(own)) return result;
+  return {
+    intent: "hard_no",
+    urgency: "cold",
+    sentiment: "negative",
+    reasoning: `Explicit opt-out request (overrode "${result.intent}").`,
+  };
+}
+
+async function classifyReplyRaw(
+  tenantId: string,
+  input: { subject: string | null; body_text: string | null; from_email: string },
+  inbound: InboundReply,
+): Promise<ClassifyResult> {
   if (!claudeIsAvailable()) return classifyReplyHeuristic(input);
 
   const result = await classifyReplyWithClaude(input);
@@ -497,6 +576,25 @@ async function draftResponse(
 }
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
+
+/** Push every pending follow-up for the prospect at least `days` out (never earlier). */
+async function postponeSequence(
+  supabase: AnySupabase,
+  tenantId: string,
+  prospectId: string,
+  days: number,
+): Promise<void> {
+  const until = new Date(Date.now() + days * 24 * 60 * 60 * 1000).toISOString();
+  await supabase
+    .from("pitches")
+    .update({ next_followup_at: until })
+    .eq("prospect_id", prospectId)
+    .eq("tenant_id", tenantId)
+    .eq("status", "sent")
+    .is("sequence_paused_at", null)
+    .not("next_followup_at", "is", null)
+    .lt("next_followup_at", until);
+}
 
 async function pauseSequence(supabase: AnySupabase, tenantId: string, prospectId: string): Promise<void> {
   await supabase

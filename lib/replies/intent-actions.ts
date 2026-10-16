@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache";
 import { writeAuditLog } from "@/lib/audit/log";
 import { requireUser } from "@/lib/auth";
 import { createServiceRoleClient } from "@/lib/supabase/service-role";
+import { recordOptOut } from "@/lib/compliance/opt-out";
 
 type ReplyIntent =
   | "wants_meeting"
@@ -88,22 +89,26 @@ export async function handleReplyIntent(
     }
 
     case "hard_no": {
-      const cooldownUntil = new Date(
-        Date.now() + 180 * 24 * 60 * 60 * 1000,
-      ).toISOString();
+      // Same routine as the unsubscribe link: the ADDRESS goes on the
+      // do-not-contact list (a 180-day prospect cooldown alone let a duplicate
+      // prospect row or a re-discovery email them again), prospect suppressed,
+      // every sequence stopped.
+      const { data: replyRow } = await supabase
+        .from("replies")
+        .select("from_email")
+        .eq("id", replyId)
+        .eq("tenant_id", user.tenantId)
+        .maybeSingle();
+      if (!replyRow?.from_email) return { ok: false, error: "Reply not found." };
 
-      await supabase
-        .from("prospects")
-        .update({
-          status: "suppressed",
-          suppressed_at: now,
-          suppressed_reason: "Hard no reply",
-          cooldown_until: cooldownUntil,
-        })
-        .eq("id", prospectId)
-        .eq("tenant_id", user.tenantId);
-
-      await pauseSequence();
+      const optOut = await recordOptOut(supabase, {
+        tenantId: user.tenantId,
+        prospectId,
+        email: replyRow.from_email,
+        source: "reply",
+        note: `Marked hard no in /inbox by ${user.id}.`,
+      });
+      if (!optOut.ok) return { ok: false, error: optOut.error };
       await markReplyHandled();
 
       await writeAuditLog({
@@ -172,12 +177,18 @@ export async function handleReplyIntent(
         Date.now() + 14 * 24 * 60 * 60 * 1000,
       ).toISOString();
 
+      // Only the ORIGINAL pitch row carries the sequence (next_followup_at,
+      // sequence_step). Dating follow-up rows too made them eligible for a
+      // follow-up of their own. And the poll used to pause the sequence on an
+      // out-of-office, so a snooze that didn't un-pause it never resumed.
       await supabase
         .from("pitches")
-        .update({ next_followup_at: snoozeUntil })
+        .update({ next_followup_at: snoozeUntil, sequence_paused_at: null })
         .eq("prospect_id", prospectId)
         .eq("tenant_id", user.tenantId)
-        .eq("status", "sent");
+        .eq("status", "sent")
+        .is("parent_pitch_id", null)
+        .lt("sequence_step", 3);
 
       await markReplyHandled();
 
