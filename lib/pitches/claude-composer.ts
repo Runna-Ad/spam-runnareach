@@ -388,7 +388,8 @@ FACTS: EVERYTHING COMES FROM THE PAYLOAD
    - "about 30 seconds" for the free check;
    - facts about THEM that are in the payload (what_they_do, evidence_quote), e.g. how many locations they run;
    - statistics from payload.benchmarks: real, sourced research on what businesses that make this kind of change typically see (more enquiries won, hours saved, sales recovered, fewer no-shows). We don't need numbers of our own; this is how the outcome gets a size. When one matches the pain you lead with, USE it: it is usually the line that makes the reader stop. Keep the figure exactly as given, say where it comes from in a few words (${p.benchmark.attribution}), and frame it as what businesses like theirs experience, saying exactly what the source measured ("get a real conversation" is not "win the client"). One per email; two only if they make the same point.
-   Never: a figure you remember, estimate, round or combine; a benchmark presented as OUR result; any number in the subject line. benchmarks may be empty, and then the email has no statistic: the pain and the fix carry it.
+   How to frame it matters: in cold-email data, percentage and ROI claims made by the sender LOWER replies (Gong: -15%), while a number that describes the reader's world reads as insight. So a statistic describes what happens out there or sizes their problem ("most firms never reply to a web enquiry at all"); it never promises the reader a result ("you'll get 30% more").
+   Never: a figure you remember, estimate, round or combine; a benchmark presented as OUR result; a percentage promised to the reader; any number in the subject line. benchmarks may be empty, and then the email has no statistic: the pain and the fix carry it.
      OK (only when that figure is in benchmarks): "${p.benchmark.ok}"
      NEVER: "${p.benchmark.not}" (our result, a brag, unsourced)
 3. Clients. Never name a client or quote a client's result: not as proof, not in passing, not "we worked with X". The payload has no client names, on purpose. Named examples make the email about someone else's win instead of the reader's problem.
@@ -404,7 +405,7 @@ THE EMAIL, IN THIS ORDER (nothing added, nothing reordered)
 5. Proof, one sentence: the kind of work we do for businesses like theirs. No client, no metric, no boast. For example: "${p.proof}"
 6. CTA: one line that starts with 👉 (that marker turns it into the email's button). See CALL TO ACTION.
 7. Sign-off: "${s.firstName}" on one line and "${s.agency}" on the next. Nothing after it.
-Length: 70 to 110 words from the salutation to the CTA.
+Length: 60 to 100 words from the salutation to the CTA. Past 100, replies drop sharply (Gong, 2026); the best emails run 50 to 100.
 
 TRANSLATE THE PAIN FIRST
 pain_candidates are raw audit findings in technical, usually English, language. Before writing, pick the best one (prefer one with both pain_id and evidence_quote) and translate it into how the owner would describe it to a friend: the business consequence, not the symptom. No jargon, never a quote from the audit. That translation is your hook.
@@ -414,7 +415,7 @@ pain_candidates are raw audit findings in technical, usually English, language. 
 WORDS
 - No em dashes (—) or en dashes (–). Use a comma or a period, or split the sentence.
 - ${p.register}
-- Short sentences, one idea each. Less "we", more "you". Plain verbs: ${p.verbs}.
+- Short sentences, one idea each, at about a 5th-grade reading level (simple writing gets far more replies). One or two sentences per paragraph: it's read on a phone. Less "we", more "you". Plain verbs: ${p.verbs}.
 - Banned, with what to say instead (always say the plain thing, even when pain_label uses the jargon):
 ${p.jargon}
 - No clever consultant lines ("that's not a staffing problem, it's a systems problem"). They sound smart and say nothing.
@@ -424,14 +425,14 @@ ${p.jargon}
 
 CALL TO ACTION: the Inefficiency Hunter (payload.hunter_url)
 It is a FREE check they run on their OWN business: about 30 seconds, no signup. The credibility comes from THE DATA, not from us. We are not the ones making the claim; their own numbers show it to them. They look first, and reach out afterward only if they want to, with zero pressure if they don't. Confident and generous, never salesy.
-Write it FRESH every time, tailored to the pain this email leads with, never a stock line; vary the opening especially. It must land all of: free; on their own business; they'll see for themselves where [this email's pain] is costing them; it's the data saying it, not us; about 30 seconds, no signup, no strings; reply afterward only if they want.
+Write it FRESH every time, in one or two short sentences, tailored to the pain this email leads with, never a stock line; vary the opening especially. An interest-based ask ("worth a look?") books twice as many meetings as asking for a call (Gong), which is exactly what this CTA is. It must land all of: free; on their own business; they'll see for themselves where [this email's pain] is costing them; it's the data saying it, not us; about 30 seconds, no signup, no strings; reply afterward only if they want.
 Write the token {hunter_url} exactly, where the link goes. It is a template slot that is replaced with the real link before sending: never invent a URL, never write a bare domain, never leave it out. No other links, no video, no call request.
 Tone only, do not copy:
   "${p.cta[0]}"
   "${p.cta[1]}"
 
 SUBJECT LINE
-- At most 50 characters, all lower case, no em dash, no jargon, no number except "30 seconds" / "30 segundos".
+- 2 to 6 plain words, at most 50 characters, all lower case, no em dash, no jargon, no number except "30 seconds" / "30 segundos". It should read like a note from someone they know, about THEIR business.
 - Never "[company]: [pain label]" (it reads like a spam report). They should not know exactly what the email is about until they open it.
 - Pick the shape that fits the evidence:
 ${p.subjects}
