@@ -14,7 +14,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { type NextRequest, NextResponse } from "next/server";
-import * as Sentry from "@sentry/nextjs";
+import { HOBBY_CHECKIN_MARGIN, withCronMonitor } from "@/lib/sentry/cron";
 import { createServiceRoleClient } from "@/lib/supabase/service-role";
 import { getAccessToken, sendGmailMessage } from "@/lib/gmail/client";
 import {
@@ -285,7 +285,7 @@ export async function GET(req: NextRequest) {
   const allResults: EngineTickResult[] = [];
 
   try {
-    await Sentry.withMonitor(
+    await withCronMonitor(
       "warmup-engine",
       async () => {
         const configs = await getAllActiveConfigs();
@@ -296,7 +296,7 @@ export async function GET(req: NextRequest) {
       },
       {
         schedule: { type: "crontab", value: "0 14 * * *" },
-        checkinMargin: 30,   // Vercel Hobby crons can fire 20-30 min late — wide grace window
+        checkinMargin: HOBBY_CHECKIN_MARGIN,
         maxRuntime: 3,       // should complete in <2 min — flag if stuck longer
         timezone: "UTC",
         failureIssueThreshold: 2,

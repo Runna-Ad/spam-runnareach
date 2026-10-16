@@ -12,7 +12,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { type NextRequest, NextResponse } from "next/server";
-import * as Sentry from "@sentry/nextjs";
+import { HOBBY_CHECKIN_MARGIN, withCronMonitor } from "@/lib/sentry/cron";
 import { createServiceRoleClient } from "@/lib/supabase/service-role";
 import { getAccessToken } from "@/lib/gmail/client";
 import { ingestDmarcReports } from "@/lib/warmup/dmarc-reports";
@@ -38,7 +38,7 @@ export async function GET(req: NextRequest) {
   const results: Array<{ tenant_id: string; mailbox: string; status: string }> = [];
 
   try {
-    await Sentry.withMonitor(
+    await withCronMonitor(
       "dmarc-sync",
       async () => {
         const { data: inboxes } = await supabase
@@ -86,7 +86,7 @@ export async function GET(req: NextRequest) {
       },
       {
         schedule: { type: "crontab", value: "0 9 * * *" },
-        checkinMargin: 30, // Vercel Hobby crons can fire 20–30 min late
+        checkinMargin: HOBBY_CHECKIN_MARGIN,
         maxRuntime: 3,
         timezone: "UTC",
         failureIssueThreshold: 2,

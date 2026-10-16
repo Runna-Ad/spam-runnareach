@@ -15,7 +15,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { type NextRequest, NextResponse } from "next/server";
-import * as Sentry from "@sentry/nextjs";
+import { HOBBY_CHECKIN_MARGIN, withCronMonitor } from "@/lib/sentry/cron";
 import { createServiceRoleClient } from "@/lib/supabase/service-role";
 import { getAccessToken, sendGmailMessage } from "@/lib/gmail/client";
 import {
@@ -252,7 +252,7 @@ export async function GET(req: NextRequest) {
   const results: ConfigResult[] = [];
 
   try {
-    await Sentry.withMonitor(
+    await withCronMonitor(
       "warmup-reactivation",
       async () => {
         const configs = await getAllActiveConfigs();
@@ -271,7 +271,7 @@ export async function GET(req: NextRequest) {
       },
       {
         schedule: { type: "crontab", value: "30 13 * * *" },
-        checkinMargin: 30,
+        checkinMargin: HOBBY_CHECKIN_MARGIN,
         maxRuntime: 3,
         timezone: "UTC",
         failureIssueThreshold: 2,

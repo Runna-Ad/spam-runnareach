@@ -4,6 +4,14 @@ Running log of mistakes, root causes, and rules to prevent recurrence. Newest at
 
 ---
 
+[2026-10-16] LESSON: postmaster-sync Sentry monitor "failing since Oct 2" was really broken since at least Sep 17: late Hobby cron + closing check-in never sent
+WHAT HAPPENED: Sentry emailed that postmaster-sync had no successful check-in for days. Check-in history (Sentry API, 30 days): EVERY day "missed" at 08:10 UTC, then the run started at 08:46 UTC and ended "timed out"; only 5 runs reported ok (~1s duration). Oct 2 was just the end of the last lucky ok.
+ROOT CAUSE: (1) Vercel Hobby fires a cron at a fixed random minute INSIDE the scheduled hour (here :46 every day), so checkinMargin 10 (and the old "30" rule below) reports a miss daily. (2) Sentry.withMonitor only QUEUES the closing check-in; the route returned immediately and Vercel froze the function before it was sent → Sentry saw in_progress then silence → timeout. No Sentry.flush() anywhere in the codebase.
+ALSO FOUND: postmaster-sync has never written a row (domain_health = 0 rows; Postmaster needs high volume). Sentry showed warmup-engine, dmarc-sync and warmup-reactivation monitors all "disabled"; warmup-engine last checked in 2026-06-14, so the job that sends email had no alerting for 4 months.
+FIX (Pedro picked option 2): lib/sentry/cron.ts `withCronMonitor()` = withMonitor + `await Sentry.flush(2000)` in finally, and HOBBY_CHECKIN_MARGIN = 60. engine / reactivation / dmarc-sync use it. postmaster-sync no longer has a monitor. In Sentry: turn warmup-engine on, postmaster-sync off (after deploy).
+RULE: Every Sentry cron check-in on Vercel must be flushed before the route returns. On Hobby, checkinMargin must be 60 (the cron can run any minute of its hour). When a monitor alerts, pull its full check-in history first: the "since" date in the email is only the latest streak.
+TAGS: #lesson #sentry #cron #vercel #hobby #flush #monitoring
+
 [2026-08-14] LESSON: the warmup dashboard's red "Domain listed on dbl.spamhaus.org" was a FALSE POSITIVE — a DNSBL return-code the code misread — and it was feeding both the domain-health grade and (nearly) an auto-reactivation trigger
 WHAT HAPPENED: Pedro reported "spam issues", and the dashboard showed a red Spamhaus DBL blocklist listing for runnareach.com. Reproduced with dig BEFORE trusting it: querying `runnareach.com.dbl.spamhaus.org` via Cloudflare (1.1.1.1) returned `127.255.255.254` + TXT "Error: open resolver", and via Google DNS (8.8.8.8) returned nothing. The control `test.dbl.spamhaus.org` returned `127.0.1.2` (a real listing code), proving the DNS path worked. The domain was NEVER listed.
 ROOT CAUSE: `checkBlocklists()` in lib/warmup/deliverability.ts used a resolver pinned to public DNS (8.8.8.8 / 1.1.1.1) and treated ANY `127.*` answer as a hit (`ip.startsWith("127.")`). But DNSBLs (Spamhaus DBL, SURBL) REFUSE queries arriving via big public resolvers and answer with an error sentinel in `127.255.255.0/24` — NOT a listing. Real listings are `127.0.1.2–127.0.1.106` (DBL) / `127.0.0.x` bitmask (SURBL). So the "open resolver" refusal was read as "you're blocklisted."
@@ -702,7 +710,7 @@ TAGS: #bug #sentry #cron #imap #timeout
 
 [2026-06-03] LESSON: Sentry checkinMargin too tight for Vercel Hobby crons
 ROOT CAUSE: checkinMargin: 5 min caused false "missed" alerts — Vercel Hobby crons can fire 20-30 min late.
-RULE: Always set checkinMargin: 30 for Vercel Hobby cron monitors. maxRuntime should match what the function SHOULD take, not the Vercel timeout ceiling.
+RULE: Always set checkinMargin: 30 for Vercel Hobby cron monitors. [SUPERSEDED 2026-10-16: use 60, Hobby can fire any minute of the hour; see top entry] maxRuntime should match what the function SHOULD take, not the Vercel timeout ceiling.
 TAGS: #sentry #cron #vercel
 
 [2026-06-03] LESSON: GitHub Actions CI failed on first push — pre-existing lint errors + wrong Node.js version
