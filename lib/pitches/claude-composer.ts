@@ -387,7 +387,7 @@ FACTS: EVERYTHING COMES FROM THE PAYLOAD
 2. Numbers. A real number makes a cold email more believable; an invented one kills it. Allowed:
    - "about 30 seconds" for the free check;
    - facts about THEM that are in the payload (what_they_do, evidence_quote), e.g. how many locations they run;
-   - statistics from payload.benchmarks: real, sourced research on what businesses that make this kind of change typically see (more enquiries won, hours saved, sales recovered, fewer no-shows). We don't need numbers of our own; this is how the outcome gets a size. When one matches the pain you lead with, USE it: it is usually the line that makes the reader stop. Keep the figure exactly as given, say where it comes from in a few words (${p.benchmark.attribution}), and frame it as what businesses like theirs experience, saying exactly what the source measured ("get a real conversation" is not "win the client"). One per email; two only if they make the same point.
+   - statistics from payload.benchmarks: real, sourced research on what businesses that make this kind of change typically see (more enquiries won, hours saved, sales recovered, fewer no-shows). We don't need numbers of our own; this is how the outcome gets a size. When one matches the pain you lead with, USE it: it is usually the line that makes the reader stop. Keep the figure exactly as given, say where it comes from in a few words (${p.benchmark.attribution}), and frame it as what businesses like theirs experience, saying exactly what the source measured ("get a real conversation" is not "win the client"). Each benchmark carries a caveat: follow it. One per email; two only if they make the same point.
    How to frame it matters: in cold-email data, percentage and ROI claims made by the sender LOWER replies (Gong: -15%), while a number that describes the reader's world reads as insight. So a statistic describes what happens out there or sizes their problem ("most firms never reply to a web enquiry at all"); it never promises the reader a result ("you'll get 30% more").
    Never: a figure you remember, estimate, round or combine; a benchmark presented as OUR result; a percentage promised to the reader; any number in the subject line. benchmarks may be empty, and then the email has no statistic: the pain and the fix carry it.
      OK (only when that figure is in benchmarks): "${p.benchmark.ok}"
@@ -562,6 +562,9 @@ function buildStage2UserPrompt(input: GeneratorInputs): string {
       statistic: b.statistic,
       figure: b.figure,
       publisher: b.publisher,
+      // What it does and doesn't measure ("qualify ≠ convert", "say 'in
+      // clinics'"), so the paraphrase stays true to the source.
+      caveat: b.caveat ?? null,
     })),
     // Deliberately NOT sent: case studies and notable clients. Pedro's override
     // (2026-07-22): never name a client, never quote a client's metric — named

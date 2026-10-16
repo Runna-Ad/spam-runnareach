@@ -467,3 +467,20 @@ test("v2: company-name check compares distinctive words", () => {
   assert.equal(namesAgree("Acadianlogworks", "Northern Timber Homes"), false);
 });
 
+
+// ── Sourced benchmarks (Pedro, 2026-10-16) ───────────────────────────────────
+
+test("a pitch quoting a seeded benchmark passes; a near-miss figure does not", () => {
+  const bench = [
+    "42 hours",
+    "Among companies that did reply to a web enquiry, the average first response took 42 hours (Harvard Business Review audit of 2,241 US companies).",
+    "Harvard Business Review (Oldroyd, McElheran, Elkington)",
+  ];
+  const ok = withBody(
+    "Hi John,\n\nA Harvard Business Review audit of 2,241 companies found the average reply to a web enquiry took 42 hours. Yours sit until Monday." + BODY_TAIL,
+    { benchmarkFigures: bench },
+  );
+  assert.ok(!has(ok, "unsourced_metric"), JSON.stringify(ok));
+  const drift = withBody("Hi John,\n\nThe average reply to a web enquiry takes 48 hours, and yours sit until Monday." + BODY_TAIL, { benchmarkFigures: bench });
+  assert.ok(has(drift, "unsourced_metric"));
+});

@@ -127,6 +127,8 @@ export type GeneratorInputBenchmark = {
   figure: string;
   publisher: string;
   source_url: string;
+  /** What the figure does and doesn't measure, trimmed for the prompt. */
+  caveat?: string | null;
 };
 
 export type GeneratorInputs = {

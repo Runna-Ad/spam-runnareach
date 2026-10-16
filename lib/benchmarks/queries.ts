@@ -29,7 +29,19 @@ type BenchmarkRow = {
   pain_codes: string[];
   industry_scope: string[];
   market: string | null;
+  caveat: string | null;
 };
+
+/**
+ * The part of a caveat the composer should read: what the figure measures and
+ * how to say it. Provenance notes ("Source-checked by…", "Activated…") are for
+ * the human reviewing /benchmarks, not the model.
+ */
+export function caveatForPrompt(caveat: string | null): string | null {
+  if (!caveat) return null;
+  const cut = caveat.split(/\s(?:Source-checked by|Activated 2026|Read first-hand)/)[0]?.trim() ?? "";
+  return cut ? cut.slice(0, 280) : null;
+}
 
 /** Loose industry comparison — mirrors generator.ts's industryMatch. */
 function industryOverlaps(scope: string[], industry: string | null): boolean {
@@ -94,7 +106,7 @@ export async function fetchBenchmarksForPitch(
 
     const { data, error } = await supabase
       .from("benchmarks")
-      .select("id, statistic, figure, publisher, source_url, pain_codes, industry_scope, market")
+      .select("id, statistic, figure, publisher, source_url, pain_codes, industry_scope, market, caveat")
       .eq("tenant_id", tenantId)
       .eq("is_active", true)
       .not("verified_at", "is", null)
@@ -113,6 +125,7 @@ export async function fetchBenchmarksForPitch(
         figure: r.figure,
         publisher: r.publisher,
         source_url: r.source_url,
+        caveat: caveatForPrompt(r.caveat),
       }));
   } catch {
     return [];
