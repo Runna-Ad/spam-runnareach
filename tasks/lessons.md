@@ -4,6 +4,33 @@ Running log of mistakes, root causes, and rules to prevent recurrence. Newest at
 
 ---
 
+[2026-10-16] LESSON: a "positive reply" in the metrics was our own test
+WHAT HAPPENED: the audit reported GYMVMT's "did the audit and interested" as the one positive reply and the proof that the audit-tool CTA converts. The pitch had gone to pedrojr22@gmail.com (a manual contact, not GYMVMT's address) and the reply came from the same address — a test of the flow.
+RULE: before quoting a funnel number, check WHO the outcome came from. Test sends to our own addresses must be excluded (or tagged) at the source, or every metric — and every future learning loop — trains on us.
+TAGS: #lesson #metrics #data-hygiene #learning
+
+[2026-10-16] LESSON: a broken DNS resolver says "nonexistent" for everything
+WHAT HAPPENED: building SPAM Verify, the sandbox resolver returned ENOTFOUND for every domain — gmail.com included. Trusted as-is, the verifier would have marked every recipient "domain doesn't exist" and emptied the queue.
+FIX: a negative DNS answer counts only if a control query (gmail.com / outlook.com MX) succeeds on the same resolver; otherwise "unknown" → review.
+RULE: same as the Spamhaus lesson, from the other side — before acting on a negative external answer, prove the lookup path works with a known-positive control.
+TAGS: #lesson #dns #verification #automation-safety
+
+[2026-10-16] LESSON: the cookie Supabase client silently does nothing in a cron
+WHAT HAPPENED: recordClaudeCall, isUnderDailyCap and writeAuditLog used the cookie (logged-in user) client. In cron routes there is no user, so RLS returned zero rows for the cap (always "under") and rejected every insert. Follow-up / reply / nudge AI spend was uncapped and unrecorded for months; auto-sent nudges left no audit trail.
+RULE: any helper a cron can reach must not depend on a request session. Pass an explicit tenantId and use the service-role client (server-only), or take the client as a parameter.
+TAGS: #lesson #supabase #rls #cron #cost #silent-failure
+
+[2026-10-16] LESSON: our own footer would have turned "yes, interested" into an opt-out
+WHAT HAPPENED: adding the CASL footer put "/api/unsubscribe" into every email — and every reply quotes our email. The fallback classifier matched \bunsubscribe\b anywhere in the body, so the first reply quoting us would have been auto-suppressed.
+FIX: classify only the text the person wrote (quoted thread stripped); explicit opt-out detection runs on that, never on the quote.
+RULE: when you add text to outbound mail, ask what every inbound parser will do when that text comes back quoted.
+TAGS: #lesson #replies #classifier #compliance
+
+[2026-10-16] LESSON: quoted-printable soft breaks split accented characters
+WHAT HAPPENED: wrapQP cut lines every 75 chars even inside an "=C3=BA" escape, so "según" arrived as "seg=C3\uFFFDn" on ~39% of long Spanish lines (reproduced with a strict decoder: 31 of 80 offsets).
+RULE: an encoder needs a round-trip test through a STRICT decoder at every offset, in every language we send. "Looks fine in my Gmail" proves nothing about Outlook.
+TAGS: #lesson #email #encoding #i18n
+
 [2026-10-16] LESSON: postmaster-sync Sentry monitor "failing since Oct 2" was really broken since at least Sep 17: late Hobby cron + closing check-in never sent
 WHAT HAPPENED: Sentry emailed that postmaster-sync had no successful check-in for days. Check-in history (Sentry API, 30 days): EVERY day "missed" at 08:10 UTC, then the run started at 08:46 UTC and ended "timed out"; only 5 runs reported ok (~1s duration). Oct 2 was just the end of the last lucky ok.
 ROOT CAUSE: (1) Vercel Hobby fires a cron at a fixed random minute INSIDE the scheduled hour (here :46 every day), so checkinMargin 10 (and the old "30" rule below) reports a miss daily. (2) Sentry.withMonitor only QUEUES the closing check-in; the route returned immediately and Vercel froze the function before it was sent → Sentry saw in_progress then silence → timeout. No Sentry.flush() anywhere in the codebase.
