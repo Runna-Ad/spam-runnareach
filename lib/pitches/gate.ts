@@ -106,7 +106,7 @@ export async function loadGateShared(supabase: AnySupabase, tenantId: string): P
   const [benchRes, casesRes, notableRes] = await Promise.all([
     supabase
       .from("benchmarks")
-      .select("figure, statistic")
+      .select("figure, statistic, publisher")
       .eq("tenant_id", tenantId)
       .eq("is_active", true)
       .not("verified_at", "is", null),
@@ -114,14 +114,16 @@ export async function loadGateShared(supabase: AnySupabase, tenantId: string): P
     supabase.from("notable_clients").select("name").eq("tenant_id", tenantId),
   ]);
   if (casesRes.error || notableRes.error || benchRes.error) return null;
-  const benchmarks = (benchRes.data ?? []) as { figure: string; statistic: string }[];
+  const benchmarks = (benchRes.data ?? []) as { figure: string; statistic: string; publisher: string }[];
   const clientNames = [
     ...((casesRes.data ?? []) as { client_name: string | null }[]).map((r) => r.client_name),
     ...((notableRes.data ?? []) as { name: string | null }[]).map((r) => r.name),
   ].filter((n): n is string => typeof n === "string" && n.trim().length > 0);
   return {
     // A verified benchmark's statistic text is a source too ("73% of buyers…").
-    benchmarkSources: benchmarks.flatMap((b) => [b.figure, b.statistic]),
+    // The publisher is too: the prompt asks the model to attribute ("Deloitte
+    // Digital + 55 found…"), and a digit in a publisher's name isn't a claim.
+    benchmarkSources: benchmarks.flatMap((b) => [b.figure, b.statistic, b.publisher]),
     clientNames: Array.from(new Set(clientNames)),
   };
 }

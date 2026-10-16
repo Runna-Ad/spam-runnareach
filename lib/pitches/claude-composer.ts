@@ -250,7 +250,7 @@ type LanguagePack = {
   mechanism: string;
   proof: string;
   pain: { wrong: string; right: string };
-  benchmark: { ok: string; not: string };
+  benchmark: { ok: string; not: string; attribution: string };
   jargon: string;
   languageRule: string;
   techStack: string;
@@ -284,8 +284,9 @@ function englishPack(): LanguagePack {
       right: "Checked [company]'s site: there's no way to buy anything online.",
     },
     benchmark: {
-      ok: "Roughly 7 in 10 online carts get abandoned before checkout, and right now nothing follows up with those people.",
-      not: "We lift cart recovery by 15%.",
+      ok: "A Harvard Business Review study found firms that reply within the hour are about 7 times more likely to get a real conversation going, and right now yours wait until morning.",
+      not: "Businesses like yours see 20-30% more bookings with us.",
+      attribution: '"a Harvard Business Review study found", "according to Baymard Institute"',
     },
     jargon: `    lead(s), lead capture, lead-gen, qualified lead, conversion, convert, funnel, pipeline
       -> "people who get in touch", "enquiries", "more of them actually book"
@@ -340,8 +341,9 @@ function spanishPack(size: SizeSignal): LanguagePack {
       right: "Revisé el sitio de [empresa]: no hay forma de comprar nada en línea.",
     },
     benchmark: {
-      ok: "Cerca de 7 de cada 10 carritos se abandonan antes de pagar, y ahora mismo nadie les da seguimiento.",
-      not: "Subimos la recuperación 15%.",
+      ok: "Según un estudio de Harvard Business Review, las empresas que responden en menos de una hora tienen unas 7 veces más probabilidades de lograr una conversación real, y hoy las tuyas esperan hasta el día siguiente.",
+      not: "Negocios como el tuyo venden 20-30% más con nosotros.",
+      attribution: '"según un estudio de Harvard Business Review", "de acuerdo con Baymard Institute"',
     },
     jargon: `    leads, lead, funnel, pipeline, CRM, ROI, conversión, engagement, workflow, intake, triage, onboarding
       -> "clientes potenciales", "clientes que se te escapan", "solicitudes que no se atienden a tiempo",
@@ -382,10 +384,11 @@ Make them curious enough to run the free check or reply. Not to close a deal. On
 
 FACTS: EVERYTHING COMES FROM THE PAYLOAD
 1. About the prospect, say only what the payload says (company_name, industry, city, what_they_do, tech_stack, pain_candidates). Never guess their size, revenue, customers, location or tools.
-2. Numbers. The only figures allowed anywhere (subject, preview, body):
-   - "about 30 seconds" for the free check, and
-   - at most ONE statistic from payload.benchmarks, quoted as given. A benchmark sizes THEIR problem; it never claims OUR results. Put it next to the pain, never in the subject or the first line.
-   Nothing else: no percentages, multiples, dollar amounts, counts ("3 things"), averages you remember, or "businesses like yours see X". Confidence is not a source. benchmarks is usually empty, and then the only number in the email is the 30 seconds. That is the normal case, not a failure.
+2. Numbers. A real number makes a cold email more believable; an invented one kills it. Allowed:
+   - "about 30 seconds" for the free check;
+   - facts about THEM that are in the payload (what_they_do, evidence_quote), e.g. how many locations they run;
+   - statistics from payload.benchmarks: real, sourced research on what businesses that make this kind of change typically see (more enquiries won, hours saved, sales recovered, fewer no-shows). We don't need numbers of our own; this is how the outcome gets a size. When one matches the pain you lead with, USE it: it is usually the line that makes the reader stop. Keep the figure exactly as given, say where it comes from in a few words (${p.benchmark.attribution}), and frame it as what businesses like theirs experience, saying exactly what the source measured ("get a real conversation" is not "win the client"). One per email; two only if they make the same point.
+   Never: a figure you remember, estimate, round or combine; a benchmark presented as OUR result; any number in the subject line. benchmarks may be empty, and then the email has no statistic: the pain and the fix carry it.
      OK (only when that figure is in benchmarks): "${p.benchmark.ok}"
      NEVER: "${p.benchmark.not}" (our result, a brag, unsourced)
 3. Clients. Never name a client or quote a client's result: not as proof, not in passing, not "we worked with X". The payload has no client names, on purpose. Named examples make the email about someone else's win instead of the reader's problem.
@@ -549,9 +552,11 @@ function buildStage2UserPrompt(input: GeneratorInputs): string {
         role_based: c.email_is_role_based,
       };
     })(),
-    // Verified benchmarks matching this prospect's pain AND industry. Every one
-    // carries a citation and was approved by a human; the model may cite these
-    // and ONLY these. Usually empty, and empty means write it without a number.
+    // Sourced benchmarks matching this prospect's pain AND industry: real
+    // research on what businesses see after this kind of change (Pedro,
+    // 2026-10-16: "base those numbers on facts… even if we personally don't
+    // have numbers directly tied to our platforms"). The model may cite these
+    // and ONLY these; the send gate holds any other number.
     benchmarks: input.benchmarks.map((b) => ({
       statistic: b.statistic,
       figure: b.figure,
@@ -585,7 +590,7 @@ Using the payload:
 - prospect.city: mention it only if it fits naturally, and never claim anything about their city or market that is not in the payload.
 - address_contact.role_title: use it if it fits naturally ("As the owner of [company]...").
 - solution_hint: the starting point for the fix. Make it specific to them.
-- benchmarks: see FACTS. Usually empty.`;
+- benchmarks: real, sourced research for this pain and industry. Use one if it fits the pain you lead with (see FACTS).`;
 }
 
 // ── Violation detector ────────────────────────────────────────────────────────
