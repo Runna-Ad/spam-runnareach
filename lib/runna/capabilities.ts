@@ -39,3 +39,20 @@ UNLIMITED DESIGN — a strong in-house graphic design department, groomed across
 CONTENT CREATION, EDITING & PRODUCTION — two dedicated production studios and a pool of 100+ talents (actors), for video ads, paid social creative (Meta/TikTok/Google), campaign production, content and editing at scale.
 
 These apply to almost any business. Runna's YEARS OF EXPERTISE + the real portfolio above are themselves credible proof — use specific external case studies as proof points only WHEN they genuinely fit, otherwise lead with the relevant capability + a real Runna build + track record. NEVER invent a specific client name, metric, or geography that isn't given to you.`;
+
+/**
+ * The same capabilities, written for the cold-pitch composer.
+ *
+ * Cold emails never name a client or an internal product (Pedro, 2026-07-22:
+ * named examples underperform; and "S.P.A.M." in a cold email is both
+ * self-referential and a spam-filter word). SnapPad is a client, so its
+ * Command Center can't be cited by name either. This version keeps the WORK
+ * those builds prove and drops the names, so the model has nothing to leak.
+ */
+export const RUNNA_CAPABILITIES_FOR_PITCHES = `WHAT RUNNA DOES (describe it in plain words; never name a client or an internal product):
+- Custom AI tools and automations: an assistant that answers enquiries the moment they arrive, follow-ups that send themselves, a morning and evening brief written from the team's email and chat, dashboards and reports that update on their own, internal tools built around how one business actually works.
+- Websites and online stores: faster sites, easy to buy from on a phone, built to bring in customers rather than just look nice.
+- Growth: finding where a business loses customers, money or time and fixing it; ads that reach the right people; emails that bring customers back.
+- Design: an in-house design team with work across many industries (outdoors, automotive, food and drink, retail, fitness, manufacturing and more): brand identity, packaging, web design, content.
+- Video and content: in-house production studios and a large pool of on-camera talent, for ads, social content and campaigns.
+The proof is the work itself and years of doing it. Not client names, not numbers.`;

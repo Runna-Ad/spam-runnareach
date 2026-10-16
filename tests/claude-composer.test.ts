@@ -121,7 +121,8 @@ test("composePitchWithClaude: returns parsed pitch on valid response", async () 
     const r = await composePitchWithClaude(inputs());
     assert.equal(r.ok, true);
     if (r.ok) {
-      assert.equal(r.result.composed.case_study_id, CASE_ID);
+      // Prompt v2 never cites a case study, whatever the model returns.
+      assert.equal(r.result.composed.case_study_id, null);
       assert.equal(r.result.composed.pain_id, PAIN_ID);
       assert.match(r.result.composed.body, /^Hi Sarah,/);
       assert.equal(r.result.usage.input_tokens, 800);
@@ -151,10 +152,15 @@ test("composePitchWithClaude: passes correct system+user prompts", async () => {
     const sys = systemText(call.system);
     assert.match(sys, /cold[- ]email/i);
     assert.match(sys, /JSON/);
-    // User prompt (payload): sender agency name + candidate IDs
-    assert.match(call.messages[0]!.content, /Runna CA/);
-    assert.match(call.messages[0]!.content, new RegExp(CASE_ID));
-    assert.match(call.messages[0]!.content, new RegExp(PAIN_ID));
+    // System prompt: signed by the per-language sender, under the agency name.
+    assert.match(sys, /from Henry/);
+    assert.match(sys, /Runna Advertising/);
+    // User prompt (payload): pain candidate IDs, and NO case studies — client
+    // names and metrics are withheld so they cannot leak into a pitch.
+    const user = call.messages[0]!.content;
+    assert.match(user, new RegExp(PAIN_ID));
+    assert.doesNotMatch(user, new RegExp(CASE_ID));
+    assert.doesNotMatch(user, /DiDi|47%/);
   } finally {
     teardown();
   }
@@ -181,25 +187,55 @@ test("composePitchWithClaude: strips ```json fences if Claude slips", async () =
 
 // ── Hallucination guards ───────────────────────────────────────────────────
 
-test("composePitchWithClaude: rejects hallucinated case_study_id", async () => {
-  installMock({
-    reply: {
-      content: [
-        { type: "text", text: validResponse({ case_study_id: "11111111-1111-1111-1111-111111111111" }) },
-      ],
-      usage: { input_tokens: 500, output_tokens: 200 },
-    },
-  });
-  try {
-    const r = await composePitchWithClaude(inputs());
-    assert.equal(r.ok, false);
-    if (!r.ok) {
-      assert.match(r.error, /unknown case_study_id/);
-      assert.equal(r.reason, "hallucinated_case");
-      assert.ok(r.usage); // still record cost — tokens were spent
+test("composePitchWithClaude: ignores any case_study_id the model returns", async () => {
+  for (const case_study_id of ["11111111-1111-1111-1111-111111111111", "not-a-uuid", undefined]) {
+    installMock({
+      reply: {
+        content: [{ type: "text", text: validResponse({ case_study_id }) }],
+        usage: { input_tokens: 500, output_tokens: 200 },
+      },
+    });
+    try {
+      const r = await composePitchWithClaude(inputs());
+      assert.equal(r.ok, true, String(case_study_id));
+      if (r.ok) assert.equal(r.result.composed.case_study_id, null);
+    } finally {
+      teardown();
     }
-  } finally {
-    teardown();
+  }
+});
+
+// ── Prompt v2 coherence ─────────────────────────────────────────────────────
+
+test("prompt v2: one rule per topic, examples obey the rules", async () => {
+  const variants: Array<Partial<GeneratorInputs["prospect"]>> = [
+    { language: "en" },
+    { language: "es", employee_size_estimate: 10 },
+    { language: "es", employee_size_estimate: 200 },
+  ];
+  for (const v of variants) {
+    const calls: MessagesCreateInput[] = [];
+    installMock({
+      reply: { content: [{ type: "text", text: validResponse() }], usage: { input_tokens: 1, output_tokens: 1 } },
+      calls,
+    });
+    try {
+      const base = inputs();
+      await composePitchWithClaude({ ...base, prospect: { ...base.prospect, ...v } });
+      const sys = systemText(calls[0]!.system);
+      const label = JSON.stringify(v);
+      // The only em dash is the one in the rule that bans it.
+      assert.equal(sys.split("—").length - 1, 1, `${label}: em dash in an example`);
+      // No client or internal product offered as proof.
+      assert.doesNotMatch(sys, /SnapPad|S\.P\.A\.M|Did this for|case stud(y|ies) bridge/i, label);
+      // The v1 contradictions are gone.
+      assert.doesNotMatch(sys, /NO NUMBERS/, label);
+      assert.doesNotMatch(sys, /Klaviyo flows|creative refresh|attribution improvement/i, label);
+      // The sign-off is the per-language sender.
+      assert.match(sys, v.language === "es" ? /"Nils" on one line/ : /"Henry" on one line/, label);
+    } finally {
+      teardown();
+    }
   }
 });
 

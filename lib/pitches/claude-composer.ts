@@ -1,12 +1,11 @@
 /**
- * 2-stage pitch composer (collapsed from 3 stages to reduce Vercel timeout risk).
+ * Pitch composer: one Sonnet pass that translates the prospect's pain and
+ * writes the email, under a single prompt (PITCH_PROMPT_VERSION).
  *
- * Stage 1 — Credibility Match (deterministic / Haiku only when 3+ candidates tied)
- * Stage 2 — Pitch Assembly   (Sonnet): translate pain + write the email in one pass
- *
- * The pain-translation step was previously a separate Haiku call (Stage 1 old).
- * It's now embedded in the Stage 2 Sonnet prompt — Sonnet handles it natively and
- * we save a full network round-trip (~3-5s on Vercel cold starts).
+ * History: this was 3 stages (Haiku pain translation, case-study match, Sonnet
+ * assembly), then 2. The case-study stage is gone since prompt v2 (2026-10-16):
+ * cold pitches never cite a client, so case studies are no longer sent to the
+ * model at all and case_study_id is always null.
  *
  * External signature is identical to v1 — the rest of the pipeline is unchanged.
  */
@@ -18,22 +17,18 @@ import {
   type ClaudeUsage,
   type SystemBlock,
 } from "../anthropic/client.ts";
-import { RUNNA_CAPABILITIES } from "../runna/capabilities.ts";
+import { RUNNA_CAPABILITIES_FOR_PITCHES } from "../runna/capabilities.ts";
 import { HUNTER_URL } from "./industry-templates.ts";
 import { hasUsableEmail } from "../research/email-utils.ts";
 import { senderIdentity } from "./sender-identity.ts";
-import type {
-  ComposedPitch,
-  GeneratorInputCaseStudy,
-  GeneratorInputs,
-} from "./generator.ts";
+import type { ComposedPitch, GeneratorInputs } from "./generator.ts";
 
 // Who the intro line names. Resolved once at module load so each language's
 // system prompt stays byte-identical across calls (it is prompt-cached).
 const EN_SENDER = senderIdentity("en");
 const ES_SENDER = senderIdentity("es");
 
-// ── Zod schema (unchanged from v1) ───────────────────────────────────────────
+// ── Zod schema ───────────────────────────────────────────
 
 // CLIP, don't REJECT: a hard .max() fails the WHOLE parse when Claude runs a few
 // chars long on any one field, dumping the pitch to the junky heuristic template
@@ -45,8 +40,8 @@ const responseSchema = z.object({
   body: z.string().trim().min(80).max(8000).transform((s) => s.slice(0, 2000)),
   // pain_id can be a text slug like "abandoned_cart_loss" or a UUID — accept both.
   pain_id: z.string().nullable(),
-  // case_study_id is always a UUID from the DB.
-  case_study_id: z.string().uuid().nullable(),
+  // No longer requested (prompt v2 sends no case studies); tolerated if present.
+  case_study_id: z.unknown().optional(),
   // contact_email may be missing from Claude response — coerce null gracefully.
   contact_email: z.union([z.string().email(), z.literal(""), z.null()]).transform(v => v || null),
   measurable_result_included: z.boolean(),
@@ -110,36 +105,14 @@ export async function composePitchWithClaude(
   const size = deriveSize(input.prospect.employee_size_estimate);
   let totalUsage: ClaudeUsage = { ...ZERO_USAGE };
 
-  // ── Stage 1: pick case studies by tier + industry (deterministic / Haiku tie-breaker) ─
-  // When an angle is forced (rewrite flow), skip selection entirely: use the
-  // angle's chosen case (if any) or none → capability-led. No LLM tie-break.
-  let stage1: { cases: GeneratorInputCaseStudy[]; usage: ClaudeUsage };
-  if (input.forced_angle) {
-    const forcedId = input.forced_angle.case_study_id;
-    const forcedCase = forcedId
-      ? input.case_studies.find((c) => c.id === forcedId) ?? null
-      : null;
-    stage1 = { cases: forcedCase ? [forcedCase] : [], usage: { ...ZERO_USAGE } };
-  } else {
-    stage1 = await stage1MatchCredibility(input, size);
-  }
-  totalUsage = addUsage(totalUsage, stage1.usage);
-
-  // ── Stage 2: translate pain + assemble pitch in one Sonnet pass ───────────
+  // ── One Sonnet pass: translate the pain + write the pitch ──────────────────
   const lang = input.prospect.language;
-  // The ~4–5k-token voice/structure/subject-engine prompt is byte-identical for
-  // a given (lang, size) across every pitch in a run — cache it. First pitch of
-  // each variant writes the cache, the rest read it at 0.1× input price. All
-  // per-prospect data lives in the user message, so the cached prefix is stable.
-  const system: SystemBlock[] = [
-    {
-      text:
-        buildSystemPrompt(lang, size) +
-        buildCredibilityContext(lang),
-      cache: true,
-    },
-  ];
-  const user = buildStage2UserPrompt(input, stage1.cases);
+  // The system prompt is byte-identical for a given (lang, size) across every
+  // pitch in a run — cache it. First pitch of each variant writes the cache,
+  // the rest read it at 0.1× input price. All per-prospect data lives in the
+  // user message, so the cached prefix is stable.
+  const system: SystemBlock[] = [{ text: buildSystemPrompt(lang, size), cache: true }];
+  const user = buildStage2UserPrompt(input);
 
   const call = await structuredCall({
     model: ANTHROPIC_DEFAULT_MODEL,
@@ -166,12 +139,9 @@ export async function composePitchWithClaude(
   });
 
   if (!call.ok) {
-    // If stage1 had no API calls (totalUsage all-zero) and the Sonnet call failed
-    // before returning any token counts (call.usage=null), return null usage so
-    // callers know no credits were spent. Otherwise combine what we have.
-    const combined = call.usage !== null
-      ? addUsage(totalUsage, call.usage)
-      : totalUsage.input_tokens > 0 ? totalUsage : null;
+    // The Sonnet call failed before returning token counts (call.usage=null):
+    // return null usage so callers know no credits were spent.
+    const combined = call.usage !== null ? addUsage(totalUsage, call.usage) : null;
     return {
       ok: false,
       error: call.error,
@@ -182,16 +152,6 @@ export async function composePitchWithClaude(
 
   totalUsage = addUsage(totalUsage, call.usage);
 
-  // UUID hallucination guard
-  const validCaseIds = new Set(input.case_studies.map((c) => c.id));
-  if (call.data.case_study_id !== null && !validCaseIds.has(call.data.case_study_id)) {
-    return {
-      ok: false,
-      error: `Claude returned unknown case_study_id ${call.data.case_study_id}`,
-      reason: "hallucinated_case",
-      usage: totalUsage,
-    };
-  }
   const validPainIds = new Set(
     input.pains.map((p) => p.pain_id).filter(Boolean) as string[],
   );
@@ -243,7 +203,9 @@ export async function composePitchWithClaude(
         preview_text: call.data.preview_text,
         body: finalBody,
         pain_id: call.data.pain_id,
-        case_study_id: call.data.case_study_id,
+        // Case studies are no longer sent to the model (see the payload), so a
+        // pitch never cites one; anything the model returns here is ignored.
+        case_study_id: null,
         contact_used: call.data.contact_email,
         measurable_result_included: call.data.measurable_result_included,
         quality_self_score: adjustedScore,
@@ -256,434 +218,237 @@ export async function composePitchWithClaude(
   };
 }
 
-// ── Stage 1: Credibility Match ───────────────────────────────────────────────
-
-async function stage1MatchCredibility(
-  input: GeneratorInputs,
-  size: SizeSignal,
-): Promise<{ cases: GeneratorInputCaseStudy[]; usage: ClaudeUsage }> {
-  // Filter 1: tier — SMBs only see SMB cases; no enterprise flex on boutiques
-  let eligible: GeneratorInputCaseStudy[];
-  if (size === "smb") {
-    eligible = input.case_studies.filter((c) => c.tier === "smb");
-  } else if (size === "mid_market") {
-    eligible = input.case_studies.filter(
-      (c) => c.tier === "smb" || c.tier === "mid_market",
-    );
-  } else {
-    eligible = [...input.case_studies];
-  }
-
-  // Filter 2: prefer industry match when available
-  if (input.prospect.industry && eligible.length > 0) {
-    const industryMatches = eligible.filter((c) =>
-      industryMatch(c.industry, input.prospect.industry),
-    );
-    if (industryMatches.length > 0) eligible = industryMatches;
-  }
-
-  if (eligible.length === 0) return { cases: [], usage: { ...ZERO_USAGE } };
-
-  // Cases are now a RARE garnish — the composer defaults to capability-led and
-  // only cites a case on a perfect (solution + segment + strong-metric) match.
-  // So ranking candidates with a per-pitch Haiku call is wasted cost: pick the 2
-  // strongest deterministically (a real measurable result first, then pain
-  // strength) and let the composer decide whether either clears the bar.
-  const ranked = [...eligible].sort((a, b) => {
-    const am = a.measurable_results ? 1 : 0;
-    const bm = b.measurable_results ? 1 : 0;
-    if (am !== bm) return bm - am;
-    return (b.pain_strength ?? 0) - (a.pain_strength ?? 0);
-  });
-  return { cases: ranked.slice(0, 2), usage: { ...ZERO_USAGE } };
-}
-
-// ── Stage 3 helpers ───────────────────────────────────────────────────────────
-
-function buildSystemPrompt(lang: "en" | "es", size: SizeSignal): string {
-  const langName = lang === "es" ? "Spanish — Mexican B2B register" : "English — Canadian market";
-  const voiceRules = lang === "es" ? buildSpanishVoiceRules(size) : buildEnglishVoiceRules();
-
-  return `You are a B2B cold-email copywriter for Runna, a creative + digital agency with a broad modern toolkit.
-
-${RUNNA_CAPABILITIES}
-
-PROOF POLICY (important): a specific success story is NOT required, and the DEFAULT is to use NONE. Lead with the most relevant Runna CAPABILITY for this prospect (AI tools/automation, optimization, custom dashboards, asset creation, video/ad production, design, growth) and use Runna's years of expertise + real in-house builds as proof. A capability-led pitch with NO case study is the norm and is usually STRONGER. Cite a specific case study ONLY when it clears a HIGH bar: the case must be about the SAME KIND OF WORK you're proposing in this email — same industry is NOT enough, and the metric must be genuinely impressive. ⛔ NEVER bridge a case about a DIFFERENT service onto this solution (e.g. do not cite a paid-ads / Meta-ads / clicks result to prove an AI chatbot; do not cite a web-design result to prove email automation). A mismatched or weak case is a non-sequitur that makes the email LESS credible — when in doubt, leave it out and go capability-led. The ONE hard rule: never fabricate a client name, metric, or geography that isn't in the payload.
-
-Your job: write a cold email that reads like a real person typed it, quickly, to another
-person. Conversational, specific, warm. Like introducing yourself to someone at a bar: you
-notice something about them, mention it genuinely, show you can help with one thing, then ask
-if they want to grab a coffee. 70-100 words max. Get them curious enough to reply, not close a deal.
-
-WHO YOU ARE WRITING TO — read this twice.
-Your reader runs a hospital, a law firm, a machine shop, a wholesale warehouse, a spa. They
-know their trade cold and know almost NOTHING about marketing or software, and they don't want
-to. Every insider word you use makes them feel talked-down-to or sold-at, and they stop reading.
-Write the way you'd explain it to a smart friend who isn't in the business. If a 60-year-old
-shop owner would have to stop and wonder what a word means, it's the wrong word.
-
-ABSOLUTE FORMAT RULES (violations will fail QA):
-- NO em dashes (—). Use commas, periods, or restructure the sentence.
-- NO jargon, marketing OR tech. Banned, with what to say instead (say the plain thing, ALWAYS):
-    intake / smart intake / triage / route / routing / workflow / pipeline / funnel
-      -> just say what happens: "someone gets back to them right away", "the message lands
-         with the right person", "nothing slips through"
-    qualify / qualified lead / lead / lead capture / lead-gen / conversion / convert
-      -> "the people worth calling back", "more of them actually book"
-    bandwidth / capacity (as a stand-in for time or staff) -> "time", "without hiring anyone"
-    optimize / optimization / streamline / seamless / robust / solution / systems / leverage
-      -> cut the word, describe the result: "faster", "less manual work", "you stop losing X"
-    retargeting / nurture / drip / lifecycle / attribution / segmentation / CRM / ROAS / LTV /
-      churn / win-back / UX audit -> describe the OUTCOME in plain words
-  Test each sentence: would that shop owner understand every word without stopping? If not, swap it.
-- NO clever consultant lines. "That's not a staffing problem, it's a systems problem" sounds
-  smart and tells the reader nothing. Cut that kind of line entirely.
-- NO corporate labels: no "El fix aqui", no "Lo que mueve la aguja", no "diagnosticar el patron".
-- NO language mixing: the entire email must be in one language.
-- NO greeting with "there" in Spanish: "Hola there" is a critical failure.
-
-HUMANIZE — it must sound typed by a person, not assembled by an agency:
-- Short sentences. One idea each. If a sentence leans on two commas to hold itself up, split it.
-- Contractions always (you're, it's, they're, don't). Nobody writes "it is" in a real email.
-- Talk about THEIR world in THEIR words, not about what "we build". Less "we", more "you".
-- Plain verbs: "answer", "reach", "fix", "lose", "miss", "book". Not "facilitate", "enable",
-  "deliver", "implement", "deploy".
-- Read it in your head as if saying it out loud. If you'd never say it to someone's face, redo it.
-The same bar applies in Spanish: the everyday words a "tendero" or "dueño" actually uses, never
-agency Spanish.
-${voiceRules}
-
-CRITICAL — pain translation handling:
-pain_candidates contains raw audit findings. Your FIRST internal step is to translate the
-best pain into how a real business owner would describe it to a friend. No jargon. No quotes
-from the audit. Describe the BUSINESS CONSEQUENCE in plain language.
-
-Wrong: 'Vi "Outdated website — no e-commerce functionality..."'
-Right (ES): "Revisé [company].com — sin checkout, sin ficha de producto real."
-Right (EN): "Checked [company].com — no product pages, no checkout path."
-
-⚙️ THE ENGINE OF EVERY PITCH (what the email is actually built on): their RESEARCHED pain (industry + what_they_do + tech_stack + evidence) → the specific RUNNA SERVICE that fixes it → the concrete OUTCOME for them (more revenue, hours saved, faster, less leaking). That pain→service→outcome chain IS the pitch. NO NUMBERS. Not client metrics, and not "industry benchmarks" either — this instruction used to invite them ("firms that automate first contact recover 20-30% more enquiries") and that is exactly how an invented 20-30% statistic reached a live draft. If a figure is not in the payload it does not exist. State the outcome qualitatively (more enquiries answered, hours back, less leaking) and let the free audit produce the real numbers. Case studies do NOT drive or shape the email; the pitch must stand fully on its own without one (it usually will).
-
-REQUIRED EMAIL STRUCTURE — follow this exactly, no additions, no reordering:
-1. Salutation (see voice rules for format)
-2. One-liner intro — who is writing and why they're reaching out. Brief and warm, not a pitch.
-   EN: "${EN_SENDER.firstName} from ${EN_SENDER.agency} here. We help independent retailers grow without burning their ad budget."
-   EN: "Quick note from ${EN_SENDER.firstName} at ${EN_SENDER.agency}. We work with Canadian ecommerce brands on exactly this."
-   Keep it to ONE sentence. This is the "who the hell is this person" moment. Required.
-3. Opening hook — one concrete, specific observation about THIS prospect's situation.
-   Pull from: what_they_do, tech_stack, city, translated_pain. Be specific, not generic.
-   "Checked your store — no cart recovery flow on Tiendanube" beats "Noticed an opportunity."
-4. Proposed solution — THIS is the core of the email. One to two sentences:
-   - Name the SPECIFIC fix: "3-email cart recovery sequence + Meta dynamic retargeting",
-     not "email marketing." "Mobile checkout redesign with A/B tested CTA placement",
-     not "UX improvements."
-   - Tailor it to their stack, market, and industry. If they're on Shopify → mention
-     Klaviyo flows. If they run paid ads already → mention creative refresh + attribution.
-     If MX market → reference MX consumer habits. If CA → Canadian shopper behaviour.
-   - ⛔ No benchmarks, no percentages, no multiples. "DTC brands recover 15-25% of abandoned
-     carts", "well-run Meta retargeting averages 3-5x ROAS" — these read as researched and are
-     invented. Describe the MECHANISM instead ("a sequence that reaches everyone who left
-     something behind"), and let the free audit produce real numbers from their own data.
-   - Use solution_hints in the payload as a starting point, then go further using what
-     you know about current trends, platforms, and what actually works for this industry.
-5. Proof line — DEFAULT to capability proof (b). Using a case study (a) is the exception, not the rule, and must clear a HIGH bar:
-   (a) CASE-STUDY BRIDGE — use ONLY when ALL of these hold:
-       - a case_study_id is chosen, AND
-       - the case is about the SAME KIND OF WORK you propose in step 4 (e.g. an AI / chatbot /
-         lead-qualification / automation case for an AI-chatbot pitch). SAME INDUSTRY IS NOT ENOUGH.
-         ⛔ NEVER bridge a case about a DIFFERENT service onto this solution — do NOT cite a
-         paid-ads / Meta-ads / "X clicks" result to prove an AI chatbot, or a web result to prove
-         email automation. If the case's work ≠ the solution you're pitching, it is a non-sequitur
-         that makes the email WEAKER. Drop it.
-       - the metric is genuinely impressive and relevant (not a small/soft number).
-       Then ONE sentence: "Did this for {client}, {metric}." Only the OUTCOME, never what you did.
-   (b) CAPABILITY PROOF — the DEFAULT and a STRONG choice (case_study_id=null): prove it with Runna's
-       capability + years of expertise + a real in-house build from RUNNA'S CAPABILITIES (e.g. "we build
-       custom AI tools and dashboards like the ones running our own ops"). No client name, no invented
-       metric. A sharp capability-led email with NO case study is usually STRONGER than one with a
-       forced/mismatched/weak case — and is the correct choice most of the time.
-   RULE: if no chosen case clears the bar above, set case_study_id=null and use (b). When in doubt, leave it out.
-   ⛔ FACTUAL INTEGRITY — DO NOT FABRICATE ATTRIBUTES OF THE CLIENT:
-   - State ONLY facts present in the case payload (client_name, industry, the metric).
-   - NEVER invent or imply the client's country, nationality, city, or location. The
-     payload contains NO geography for case-study clients — so phrases like "a Canadian
-     fitness studio", "a local Calgary brand", or any nationality claim are LIES. Do not
-     write them, even to make the case feel more relevant to the prospect's market.
-   - You MAY use the client's industry word (e.g. "fitness studio") and any descriptor
-     that literally appears in result_description (e.g. "in a saturated market"), nothing more.
-   - When in doubt, just write "Did this for {client}, {metric}." with no extra framing.
-6. CTA — the Inefficiency Hunter: low-pressure, self-serve, written FRESH and tailored to THIS email's pain (see voice rules — "run it yourself and see, reach out only if you want")
-7. Sign off: sender's first name, then full signature on the next line
-
-Quality bar: a prospect should read line 3 and think "that's exactly my problem and that's
-exactly what I need." Generic = fail. Specific, data-backed, tailored = win.
-
-Language: ${langName}.
-IMPORTANT: Write the ENTIRE email in ${langName}. Do not mix languages.
-
-Case-study selection rules — DEFAULT is case_study_id=null. Don't force a connection:
-1. The chosen_cases payload is just a pre-filtered shortlist — it does NOT mean you should use one. Most pitches use NONE.
-2. The case's WORK must be the same kind as the solution you're pitching (a packaging case is NOT a match for a social-media pain; a paid-ads case is NOT a match for an AI-chatbot pitch). Same industry is not a match. The metric must also be genuinely strong.
-3. If no chosen_case is a near-perfect match on BOTH work and strength, set case_study_id=null and don't mention any case. The pain→service→outcome pitch stands on its own.
-4. pain_id and case_study_id MUST come from the candidates in the payload. No invented UUIDs.
-
-SUBJECT LINE — there are exactly 5 engines that get cold emails opened. Use one:
-
-ABSOLUTE RULES (no exceptions):
-- ≤50 chars. ALL lower case. ZERO em dashes (—). Use comma or colon instead.
-- NEVER "[company] + pain label" — "studio f: carritos abandonados" reads like a spam report.
-  The prospect shouldn't know what the email is about until they open it.
-
-THE 5 ENGINES — pick the one that best fits the evidence you have:
-
-1. NAMED + NUMBERED (default — highest reply rate)
-   Formula: [company] + a number, timeframe, or dollar-implied loss
-   EN: "[company]'s marketing math doesn't add up"
-   EN: "30 seconds: what [company] loses monthly"
-   EN: "[company]: 3 things I'd fix this week"
-   ES: "[empresa] reparte presupuesto a ciegas"
-   ES: "30 segundos: lo que pierde [empresa] al mes"
-   ES: "3 fugas de marketing en [empresa]"
-
-2. LEAK STATEMENT (state their loss as fact, no question mark)
-   Formula: name the exact place where money/leads/time disappears
-   EN: "[company]'s leads are dying in the follow-up"
-   EN: "what [company]'s ad budget is quietly losing"
-   EN: "Calgary Coffee's checkout is losing mobile sales"
-   ES: "[empresa] gasta en ads que no venden"
-   ES: "lo que le cuesta a [empresa] no tener seguimiento"
-   ES: "los carritos de [empresa] se van sin comprar"
-   A statement already implies you know — they open to find out how much.
-
-3. NICHE MIRROR (name their exact segment + geography)
-   Formula: [city/region] + [their niche] + [pain implied]
-   EN: "Calgary brokerages: your lead leak, in dollars"
-   EN: "Banff brewers are quietly losing taproom traffic"
-   ES: "lo que tu competencia en CDMX ya sabe"
-   ES: "marcas D2C en México están quemando presupuesto"
-   Reads like industry intel, not a pitch. Strong in MX markets.
-
-4. THE REFRAME (take something they think is fine and call it a cost)
-   Formula: "how much is [X] costing you?" — reframes a tool or process as a leak
-   EN: "how much is [company]'s CRM costing you?"
-   EN: "[company] — money stuck between floor and digital"
-   ES: "¿cuánto le cuesta a [empresa] el marketing improvisado?"
-   ES: "el número que [empresa] no ha calculado"
-
-5. PEER PRESSURE (use sparingly — weakest engine, gimmicky if overused)
-   EN: "what [company]'s competitors already know"
-   ES: "lo que tu competencia en CDMX ya sabe"
-   Only use this when you have no specific evidence and other engines won't fit.
-
-PICK ENGINE BASED ON EVIDENCE:
-- Have evidence_quote with specific numbers → Engine 2 (Leak Statement) using those specifics
-- Have company name + industry + city → Engine 3 (Niche Mirror)
-- Have company name + clear pain → Engine 1 (Named + Numbered)
-- Have no specific evidence → Engine 4 (Reframe) or Engine 1 generic
-
-PREVIEW TEXT — the 1–2 lines shown under the subject in Gmail/Outlook:
-- ≤150 chars. Second thing read. Must answer "why should I open this?"
-- NEVER repeat the subject. Subject = curiosity; preview = the hook that justifies opening.
-- Subject is curiosity gap → preview names the specific observation
-  ("no cart recovery running, that's daily revenue walking out" /
-   "sin flujo de recuperación activo, eso son ventas que se van cada día")
-- Subject names the pain → preview names the fix (no numbers)
-  ("a 3-email Klaviyo sequence that catches the ones who left" /
-   "una secuencia de 3 correos que alcanza a quienes se fueron sin comprar")
-- Never use: "I'd love to connect", "Let me know if you're interested", "Hope this finds you well"
-
-Output the final pitch as a JSON object with EXACTLY these fields:
-{
-  "subject": string,                    // ≤50 chars ideally, max 120, lower case, plain text, everyday words (NO jargon: no "leads"/"funnel"/"pipeline")
-  "preview_text": string,               // 20–150 chars, extends subject, never repeats it
-  "body": string,                       // 80–2000 chars, plain text with \\n line breaks, no markdown
-  "pain_id": string | null,             // UUID from pain_candidates[].pain_id, or null
-  "case_study_id": string | null,       // UUID from chosen_cases[].id, or null if no case fits
-  "contact_email": string | null,       // email of the contact addressed, or null
-  "measurable_result_included": boolean,// true ONLY if you cited a specific number/% in body
-  "quality_self_score": number,         // 0..1 — honest grade of personalization + evidence
-  "reasoning": string                   // 1–3 sentences explaining picks. REQUIRED.
-}
-
-ALL fields required (null only where type allows). Do not omit "reasoning".`;
-}
-
-function buildSpanishVoiceRules(size: SizeSignal): string {
-  const register = size === "smb"
-    ? `- Tuteo (tú-form, informal). "Hola {nombre}," — direct and warm.
-- "Estás perdiendo ventas" not "hay oportunidades de conversión".`
-    : `- Usted-form, professional. "Estimado/a {nombre}," — or with title if clear.
-- If title visible: "Lic.", "Ing.", "Dr./Dra." before surname.`;
-
-  return `
-Voice rules (Mexican B2B — sin excepción):
-${register}
-- Register: professional Mexican — direct and respectful. No anglicised hype words.
-  No template openers ("me permito contactarle para ofrecerle nuestros servicios").
-- Concise. Cut every adverb. One pain, one case, one ask. No feature dump.
-- Use the translated_pain as-is. Do NOT re-translate or re-jargonize it.
-- Plain text only. No markdown, no links other than what we provide.
-- FORBIDDEN words: "abandonment", "funnel", "lead", "Meta Pixel", "WooCommerce",
-  "Shopify", "retention automation", "default setup", any English anglicism.
-- CTA — el Inefficiency Hunter (hunter_url): diagnóstico gratis de ~30 segundos, sin registro.
-  FILOSOFÍA (este ES el mensaje — que quede clarísimo): el Inefficiency Hunter es una plataforma
-  GRATIS donde ELLOS auditan su PROPIA empresa y ven por sí mismos dónde está fallando o se puede
-  mejorar. Lo clave: la credibilidad viene de LOS DATOS, no de nosotros — no somos nosotros quienes lo
-  afirmamos, los números se lo muestran. Sin compromiso, sin registro, no es una llamada de ventas.
-  Primero lo ven con sus propios ojos; solo si quieren hablar después, nos contactan — y cero presión
-  si no. Seguro y generoso, nunca de vendedor.
-  ESCRIBE el CTA FRESCO CADA VEZ, ajustado al dolor/ángulo ESPECÍFICO de ESTE correo — nunca una línea
-  de plantilla. Debe transmitir TODO: (1) es una plataforma GRATIS que corren sobre su PROPIA empresa;
-  (2) van a VER por sí mismos, en los datos, dónde [el dolor de este correo] les está costando; (3) no
-  es que lo digamos nosotros — lo dicen los números; (4) sin compromiso, sin registro, ~30 segundos;
-  (5) incluir {hunter_url}; (6) que nos contacten DESPUÉS solo si quieren — si no, no pasa nada.
-  Direcciones de tono (NO copiar textual — muestran la VIBRA, varíala siempre):
-    "No me creas a mí, créele a los datos: corre {company} en nuestra herramienta gratis y mira tú mismo dónde [el dolor] te está costando. 30 segundos, sin registro, sin compromiso: {hunter_url}. ¿Ves algo que arreglar? Escríbeme. ¿No? No pasa nada."
-    "Prefiero que te lo muestren los números a decírtelo yo: {hunter_url} revisa gratis [el dolor] de {company} en unos 30 segundos, sin registro. Velo con tus propios ojos; si quieres hablar después, aquí estoy."
-  Varía sobre todo la ENTRADA — no empieces todos los CTA igual. Encuentra una forma fresca que vaya
-  con este correo, manteniendo el mensaje "lo dicen los datos, no yo; compruébalo tú mismo; gratis; sin compromiso".
-  Empieza siempre la línea del CTA con 👉 (se convierte en el botón del correo). Sin video, sin llamada, sin registro.
-- Salutation: si address_contact.first_name existe Y se lee como un nombre real de
-  persona, salúdalo POR SU NOMBRE: "Hola {first_name}," (o "Estimado/a {first_name},"
-  en usted). SIEMPRE prefiere el nombre de la persona sobre saludar al "equipo". Usa
-  "Hola equipo de {empresa}," solo cuando first_name es null O parece iniciales/algo
-  ambiguo (p. ej. "Jdoe"). NUNCA "Hola there,". Si no hay nada, "Hola," a secas.
-- JERGA — el ASUNTO y el cuerpo en lenguaje cotidiano que cualquier dueño entienda.
-  NUNCA uses "leads", "funnel", "pipeline", "CRM", "ROI", "conversión". Di "clientes
-  potenciales", "clientes que se te escapan", "solicitudes que no atiendes a tiempo",
-  "oportunidades de venta". Aunque el pain_label traiga jerga (p. ej. "lead process"),
-  NO la copies — tradúcela a cómo lo diría un dueño de negocio normal.
-- One-liner intro (required, step 2 of structure):
-  "${ES_SENDER.firstName}, de ${ES_SENDER.agency}. Ayudamos a marcas independientes a crecer sin quemar presupuesto en ads."
-  or "Soy ${ES_SENDER.firstName}, de ${ES_SENDER.agency}. Trabajamos con tiendas en línea en exactamente esto."
-  One sentence only. Warm and direct.
-- Sign off: sender's first name on one line, agency name on the next line.`;
-}
-
-function buildEnglishVoiceRules(): string {
-  return `
-Voice rules (Canadian market):
-- Direct, understated, confident — no American marketing energy. Let evidence do the work.
-- No hype verbs: "transform", "unlock", "supercharge", "game-changer", "leverage" (as verb).
-- FORBIDDEN: "synergy", "best-in-class", "solutions", "thought leader", "circle back".
-- FORBIDDEN openings: "I hope this finds you well", "Quick question", "Just reaching out".
-- Use direct phrasing: "You're losing sales" not "There are conversion optimization opportunities".
-- Salutation: if address_contact.first_name exists AND clearly reads as a real given
-  name, greet them BY NAME: "Hi {first_name},". ALWAYS prefer the person's name over
-  greeting the "team". Use "Hi {company} team," only when first_name is null OR looks
-  like initials/ambiguous (e.g. "Jdoe"). NEVER use "Hi there," — it reads as a mass blast.
-- JARGON — keep the SUBJECT and body in plain everyday words anyone understands.
-  Avoid "leads", "funnel", "pipeline", "CRM", "ROI", "conversion". Say "potential
-  customers", "customers slipping through", "enquiries you're not getting to in time",
-  "sales you're losing". Even if pain_label carries jargon (e.g. "lead process"), do
-  NOT copy it — translate it into how a normal business owner would say it.
-- CTA — the Inefficiency Hunter (hunter_url): a free ~30-second self-serve audit, no signup.
-  PHILOSOPHY (this is THE message — make it unmistakable): the Inefficiency Hunter is a FREE platform
-  where THEY audit their OWN company and see for themselves where it's lacking or could be improved.
-  The whole point is that the credibility comes from THE DATA, not from us — we're not the ones making
-  the claim, the numbers show it to them. No strings attached, no signup, not a sales call. They look
-  with their own eyes first; only if they want to talk afterward do they reach out — and zero pressure
-  if they don't. Confident and generous, never salesy.
-  WRITE THE CTA FRESH EVERY TIME, tailored to the SPECIFIC pain/angle THIS email leads with — never a
-  stock line, never the same wording twice. It must land ALL of: (1) it's a FREE platform they run on
-  their OWN company; (2) they'll SEE for themselves, in the data, where [this email's pain] is costing
-  them (manual admin → "how much time it's quietly eating"; checkout → "where mobile shoppers drop
-  off"; ad spend → "which dollars aren't pulling weight"); (3) it's not us saying it — the numbers do;
-  (4) no strings, no signup, ~30 seconds; (5) write the token {hunter_url} EXACTLY, verbatim, where the
-  link belongs — it is a template slot replaced with the real URL before sending, so never invent a URL,
-  never write a bare domain, and never omit it; (6) reach out AFTER only if they want to — no harm if not.
-  Tone directions (do NOT copy verbatim — these show the VIBE, vary it every time):
-    "Don't take my word for it, take the data's — run {company} through our free tool and see for yourself where [the pain] is costing you. 30 seconds, no signup, no strings: {hunter_url}. See something worth fixing? Reach out. If not, no harm done."
-    "I'd rather the numbers show you than me tell you: {hunter_url} is a free check of {company}'s own [pain], about 30 seconds, no signup. See it with your own eyes first; if you want to talk after, I'm here."
-  Vary the OPENING especially — do not begin every CTA the same way. Find a fresh way in that fits
-  this email's tone while keeping the "it's the data, not me; see for yourself; free; no strings" message.
-  The CTA line MUST begin with 👉 — that marker is what turns it into the email's button. A CTA without
-  it renders as plain text and the button silently disappears. No Loom, no video, no call ask, no signup.
-- ⛔ NEVER name a specific client, past or present. Not in the proof line, not as a bridge, not as a
-  name-drop, not "we worked with X". Pedro's campaigns show named examples consistently UNDERPERFORM:
-  they invite "so what, that isn't me" instead of "that's my problem". Prove it with WHAT WE DO for
-  businesses like theirs — the capability, the kind of problem it solves, and how we approach it.
-  This is the shape to aim for:
-    "We've built positioning and campaign systems for hospitality brands trying to carve out space in
-     crowded markets, the work is finding the one defensible thing you own, then making sure every
-     touchpoint says it the same way."
-  Note what that does: names the INDUSTRY, names the WORK, describes the PROSPECT's situation. No client,
-  no metric, no boast.
-- Sign off: sender's first name on one line, agency name on the next line.`;
-}
+// ── Pitch prompt ──────────────────────────────────────────────────────────────
 
 /**
- * Credibility guidance for the composer.
+ * Version of the pitch prompt below. Bump it on every wording change so a pitch
+ * can be traced to the prompt that wrote it.
  *
- * This used to be a name-drop ladder: Tier 2 anchored on a notable client
- * ("Hemos trabajado con {name}"), Tier 3 listed four client names outright.
- * Removed 2026-07-22 on Pedro's second override — named examples consistently
- * underperform in his campaigns, because they make the email about someone
- * else's win instead of about the reader's problem.
- *
- * The PROOF POLICY above already defaulted to capability-led after the first
- * override (2026-06-23), but these fallbacks fired whenever the default didn't,
- * so the old behaviour survived underneath the new policy. A default and its
- * fallbacks are one feature.
- *
- * Note this no longer receives the client list at all — the names never reach
- * the model, so they cannot leak. That is deliberate: a prompt rule alone would
- * not hold against the model's strong prior toward social proof.
+ * v2 (2026-10-16) is the one-voice rewrite. v1 had grown by accretion and
+ * contradicted itself: "NO NUMBERS" next to "numbers only from benchmarks",
+ * "never name a client" next to "Did this for {client}, {metric}", a banned-
+ * jargon list next to examples full of that jargon and of em dashes, and a
+ * capabilities block offering a client (SnapPad) and S.P.A.M. itself as proof.
+ * A model resolves a contradiction by picking a side, differently each time,
+ * which is how invented statistics kept reaching live drafts after they were
+ * "banned". Every rule now lives in exactly one place:
+ *   - facts (numbers, clients, our work) → FACTS
+ *   - order and length                   → THE EMAIL
+ *   - wording, per language              → WORDS (+ the language pack)
  */
-function buildCredibilityContext(lang: "en" | "es"): string {
-  return lang === "es"
-    ? `
+export const PITCH_PROMPT_VERSION = "pitch-v2-2026-10-16";
 
-CREDIBILIDAD, SIN NOMBRES DE CLIENTES
+/** Everything that differs by language. The rules themselves do not. */
+type LanguagePack = {
+  langName: string;
+  register: string;
+  verbs: string;
+  salutation: string;
+  intro: [string, string];
+  hook: { good: string; bad: string };
+  mechanism: string;
+  proof: string;
+  pain: { wrong: string; right: string };
+  benchmark: { ok: string; not: string };
+  jargon: string;
+  languageRule: string;
+  techStack: string;
+  cta: [string, string];
+  subjects: string;
+  preview: string;
+};
 
-⛔ Nunca menciones el nombre de un cliente. Ni como prueba, ni de pasada, ni en
-una lista. No tienes nombres de clientes en este payload, a propósito.
+function englishPack(): LanguagePack {
+  const s = EN_SENDER;
+  return {
+    langName: "English (Canadian market)",
+    register:
+      "Direct, understated, confident: Canadian, not American marketing energy. Contractions always (you're, it's, don't).",
+    verbs: "answer, reach, fix, lose, miss, book",
+    salutation:
+      '"Hi [first name]," when address_contact.first_name is set and reads like a real given name. Otherwise "Hi [company] team,". Never "Hi there,".',
+    intro: [
+      `${s.firstName} from ${s.agency} here. We help independent businesses grow without burning money on ads.`,
+      `Quick note from ${s.firstName} at ${s.agency}. We work with [industry] businesses on exactly this.`,
+    ],
+    hook: {
+      good: "Checked your store: nothing follows up when someone leaves without buying",
+      bad: "I noticed an opportunity",
+    },
+    mechanism: "a few emails that go out on their own to everyone who left something in their cart",
+    proof:
+      "We do this kind of work for clinics that get more calls than the front desk can answer: finding where people slip away, then making sure someone always gets back to them.",
+    pain: {
+      wrong: 'I saw "Outdated website, no e-commerce functionality".',
+      right: "Checked [company]'s site: there's no way to buy anything online.",
+    },
+    benchmark: {
+      ok: "Roughly 7 in 10 online carts get abandoned before checkout, and right now nothing follows up with those people.",
+      not: "We lift cart recovery by 15%.",
+    },
+    jargon: `    lead(s), lead capture, lead-gen, qualified lead, conversion, convert, funnel, pipeline
+      -> "people who get in touch", "enquiries", "more of them actually book"
+    intake, triage, routing, workflow
+      -> say what happens: "someone gets back to them right away", "nothing slips through"
+    optimize, optimization, streamline, seamless, robust, solution(s), systems, leverage, bandwidth
+      -> cut the word and say the result: "faster", "less manual work", "without hiring anyone"
+    CRM, ROI, ROAS, LTV, churn, retargeting, nurture, drip, attribution, segmentation, UX, A/B test
+      -> describe the outcome in plain words
+    hype and stock lines: transform, unlock, supercharge, game-changer, synergy, best-in-class,
+      thought leader, circle back, "I hope this finds you well", "Quick question", "Just reaching out"`,
+    languageRule: 'No Spanish words, not even "hola".',
+    techStack:
+      'you may name the platform they use when it is in tech_stack ("your Shopify store"). Never name a tool they did not mention (Klaviyo, Meta, HubSpot...).',
+    cta: [
+      "Don't take my word for it, take the data's: run [company] through our free check and see for yourself where [the pain] is costing you. About 30 seconds, no signup, no strings: {hunter_url}. See something worth fixing? Reply. If not, no harm done.",
+      "I'd rather the numbers show you than me tell you. {hunter_url} is a free check of [company]'s own [pain], about 30 seconds, no signup. If you want to talk after, I'm here.",
+    ],
+    subjects: `    - their business + a quiet loss (the default): "where [company] loses online orders", "what [company]'s website isn't doing"
+    - the leak, stated as fact (only when the pain evidence shows it): "[company]'s checkout is losing phone shoppers"
+    - the reframe, something they think is fine called a cost: "what slow replies cost [company]"
+    - the 30-second check: "30 seconds: where [company] leaks customers"`,
+    preview: "no way to book online, so every visitor after hours just leaves",
+  };
+}
 
-Prueba con la CAPACIDAD: qué hacemos para negocios como el suyo, qué tipo de
-problema resuelve, y cómo lo abordamos. Nombra la INDUSTRIA y el TRABAJO, y
-describe la situación DEL PROSPECTO.
+function spanishPack(size: SizeSignal): LanguagePack {
+  const s = ES_SENDER;
+  const usted = size !== "smb";
+  return {
+    langName: "Spanish (Mexican business register)",
+    register: usted
+      ? 'Habla de usted en todo el correo, CTA incluido (adapta los ejemplos, que van de tú). Profesional y directo. Si el puesto se ve, "Lic.", "Ing.", "Dr./Dra." con el apellido.'
+      : 'Tutea (tú) en todo el correo. Directo y cálido: "estás perdiendo ventas", no "hay oportunidades de conversión".',
+    verbs: "contestar, llegar, arreglar, perder, agendar, vender",
+    salutation: usted
+      ? '"Estimado [nombre]," o "Estimada [nombre]," según el nombre (si no estás seguro, "Hola [nombre],") cuando address_contact.first_name existe y parece un nombre real. Si no, "Hola, equipo de [empresa],". Nunca "Hola there,".'
+      : '"Hola [nombre]," cuando address_contact.first_name existe y parece un nombre real. Si no, "Hola, equipo de [empresa],". Nunca "Hola there,".',
+    intro: [
+      `Soy ${s.firstName}, de ${s.agency}. Ayudamos a negocios independientes a crecer sin quemar dinero en anuncios.`,
+      `${s.firstName}, de ${s.agency}. Trabajamos con negocios de [industria] justo en esto.`,
+    ],
+    hook: {
+      good: "Revisé tu tienda: nadie le da seguimiento a quien se va sin comprar",
+      bad: "Vi una oportunidad",
+    },
+    mechanism: "unos correos que le llegan solos a quien dejó algo en el carrito",
+    proof:
+      "Hacemos este trabajo para clínicas que reciben más llamadas de las que la recepción alcanza a contestar: encontrar dónde se pierden los pacientes y asegurar que siempre alguien les responda.",
+    pain: {
+      wrong: 'Vi "Outdated website, no e-commerce functionality".',
+      right: "Revisé el sitio de [empresa]: no hay forma de comprar nada en línea.",
+    },
+    benchmark: {
+      ok: "Cerca de 7 de cada 10 carritos se abandonan antes de pagar, y ahora mismo nadie les da seguimiento.",
+      not: "Subimos la recuperación 15%.",
+    },
+    jargon: `    leads, lead, funnel, pipeline, CRM, ROI, conversión, engagement, workflow, intake, triage, onboarding
+      -> "clientes potenciales", "clientes que se te escapan", "solicitudes que no se atienden a tiempo",
+         "más personas terminan comprando"
+    optimizar, optimización, soluciones, sinergia, potenciar, apalancar
+      -> di el resultado: "más rápido", "menos trabajo a mano", "sin contratar a nadie"
+    etiquetas de agencia: "el fix aquí", "lo que mueve la aguja", "diagnosticar el patrón"
+    muletillas: "me permito contactarle para ofrecerle nuestros servicios", "espero que se encuentre bien"`,
+    languageRule:
+      'Not one English word, platform names included (no "Shopify", "WooCommerce", "Meta Pixel", "abandonment", "default setup"). Use the everyday words a "dueño" or "tendero" uses, never agency Spanish.',
+    techStack:
+      'say "tu tienda en línea" or "tu sitio" (or the usted form), never the platform name.',
+    cta: [
+      "No me creas a mí, créele a los datos: corre [empresa] en nuestra herramienta gratis y mira tú mismo dónde [el dolor] te está costando. Unos 30 segundos, sin registro, sin compromiso: {hunter_url}. ¿Ves algo que arreglar? Escríbeme. ¿No? No pasa nada.",
+      "Prefiero que te lo muestren los números a decírtelo yo: {hunter_url} revisa gratis [el dolor] de [empresa] en unos 30 segundos, sin registro. Si quieres hablar después, aquí estoy.",
+    ],
+    subjects: `    - su negocio + una pérdida silenciosa (por defecto): "dónde pierde clientes [empresa]", "lo que el sitio de [empresa] no está haciendo"
+    - la fuga, dicha como hecho (solo si la evidencia la muestra): "los carritos de [empresa] se van sin comprar"
+    - el replanteo, algo que creen que está bien visto como costo: "¿cuánto le cuesta a [empresa] contestar tarde?"
+    - la revisión de 30 segundos: "30 segundos: dónde [empresa] pierde ventas"`,
+    preview: "sin forma de agendar en línea, cada visita fuera de horario se va",
+  };
+}
 
-CIFRAS: solo las de "benchmarks" en el payload.
+function buildSystemPrompt(lang: "en" | "es", size: SizeSignal): string {
+  const s = lang === "es" ? ES_SENDER : EN_SENDER;
+  const p = lang === "es" ? spanishPack(size) : englishPack();
 
-Esas filas están verificadas por una persona y tienen fuente real. Puedes citar
-una, y nada más. ⛔ No inventes nada: ni "negocios así ven 20-30% más", ni
-promedios que recuerdes, ni cifras de las que te sientas seguro. La seguridad no
-es una fuente. Si "benchmarks" viene vacío, escribe el correo SIN ningún número:
-ese es el caso normal, no una falla.
+  return `You write first-touch cold emails for ${s.agency} (Rünna), a creative and digital agency. Each email is from ${s.firstName}, a real person on the team who reads and answers the replies. Write it the way ${s.firstName} would type it: quickly, to one person, about their business.
 
-CÓMO usarla, y esto importa más que si la usas:
-un benchmark dimensiona SU problema, nunca demuestra NUESTROS resultados.
-  ✅ "Cerca de 7 de cada 10 carritos se abandonan antes de pagar, y ahora mismo
-      nadie les da seguimiento."     ← su situación, diagnóstico
-  ⛔ "Subimos la recuperación 15%."  ← nuestro resultado, presumido y sin fuente
-Cita la estadística cerca del dolor que encabeza el correo, y sigue. Una como
-máximo. Nunca dos, y nunca para abrir.`
-    : `
+${RUNNA_CAPABILITIES_FOR_PITCHES}
 
-CREDIBILITY, WITHOUT CLIENT NAMES
+WHO YOU ARE WRITING TO
+The owner or manager of a clinic, a law firm, a machine shop, a warehouse, a spa, a store. They know their trade cold, know almost nothing about marketing or software, and don't want to. Write like you're explaining it to a smart friend outside the business. If a 60-year-old shop owner would stop to wonder what a word means, it is the wrong word.
 
-⛔ Never name a client. Not as proof, not in passing, not as a list. You have no
-client names in this payload, on purpose.
+THE GOAL
+Make them curious enough to run the free check or reply. Not to close a deal. One pain, one fix, one ask.
 
-Prove it with CAPABILITY: what we do for businesses like theirs, what kind of
-problem it solves, and how we approach it. Name the INDUSTRY and the WORK, and
-describe the PROSPECT's situation.
+FACTS: EVERYTHING COMES FROM THE PAYLOAD
+1. About the prospect, say only what the payload says (company_name, industry, city, what_they_do, tech_stack, pain_candidates). Never guess their size, revenue, customers, location or tools.
+2. Numbers. The only figures allowed anywhere (subject, preview, body):
+   - "about 30 seconds" for the free check, and
+   - at most ONE statistic from payload.benchmarks, quoted as given. A benchmark sizes THEIR problem; it never claims OUR results. Put it next to the pain, never in the subject or the first line.
+   Nothing else: no percentages, multiples, dollar amounts, counts ("3 things"), averages you remember, or "businesses like yours see X". Confidence is not a source. benchmarks is usually empty, and then the only number in the email is the 30 seconds. That is the normal case, not a failure.
+     OK (only when that figure is in benchmarks): "${p.benchmark.ok}"
+     NEVER: "${p.benchmark.not}" (our result, a brag, unsourced)
+3. Clients. Never name a client or quote a client's result: not as proof, not in passing, not "we worked with X". The payload has no client names, on purpose. Named examples make the email about someone else's win instead of the reader's problem.
+4. Our work. Prove it with what we build for businesses like theirs (from WHAT RUNNA DOES), in plain words: their INDUSTRY, the kind of WORK, THEIR situation. Never name an internal product.
 
-NUMBERS: only from "benchmarks" in the payload.
+THE EMAIL, IN THIS ORDER (nothing added, nothing reordered)
+1. Salutation. ${p.salutation}
+2. Intro, one sentence: who is writing. Warm, not a pitch. For example:
+   "${p.intro[0]}"
+   "${p.intro[1]}"
+3. Hook: one specific observation about THIS business, from the translated pain (below) plus what_they_do, tech_stack or city. "${p.hook.good}" beats "${p.hook.bad}".
+4. The fix, one or two sentences, the core of the email: what we would do, described by what it does for them, specific to their business and industry. Start from solution_hint and make it theirs. Describe how it works ("${p.mechanism}"), never a tool name or a result figure.
+5. Proof, one sentence: the kind of work we do for businesses like theirs. No client, no metric, no boast. For example: "${p.proof}"
+6. CTA: one line that starts with 👉 (that marker turns it into the email's button). See CALL TO ACTION.
+7. Sign-off: "${s.firstName}" on one line and "${s.agency}" on the next. Nothing after it.
+Length: 70 to 110 words from the salutation to the CTA.
 
-Those rows are human-verified and carry a real citation. You may quote one, and
-nothing else. ⛔ Invent nothing: no "businesses like yours see 20-30% lifts", no
-recalled industry averages, no figure you feel confident about. Confidence is
-not a source. If "benchmarks" is empty, write the email with NO number at all —
-that is the normal case, not a failure.
+TRANSLATE THE PAIN FIRST
+pain_candidates are raw audit findings in technical, usually English, language. Before writing, pick the best one (prefer one with both pain_id and evidence_quote) and translate it into how the owner would describe it to a friend: the business consequence, not the symptom. No jargon, never a quote from the audit. That translation is your hook.
+  NOT: ${p.pain.wrong}
+  OK:  ${p.pain.right}
 
-HOW to use one, and this matters more than whether you use one:
-a benchmark sizes THEIR problem, it never proves OUR results.
-  ✅ "Roughly 7 in 10 online carts get abandoned before checkout, and right now
-      nothing follows up with those people."   ← their situation, diagnostic
-  ⛔ "We lift cart recovery by 15%."            ← our result, a brag, and unsourced
-Quote the statistic close to the pain you're leading with, then move on. One at
-most. Never stack two, and never open with one.`;
+WORDS
+- No em dashes (—) or en dashes (–). Use a comma or a period, or split the sentence.
+- ${p.register}
+- Short sentences, one idea each. Less "we", more "you". Plain verbs: ${p.verbs}.
+- Banned, with what to say instead (always say the plain thing, even when pain_label uses the jargon):
+${p.jargon}
+- No clever consultant lines ("that's not a staffing problem, it's a systems problem"). They sound smart and say nothing.
+- One language only: ${p.langName}. ${p.languageRule}
+- Their platform: ${p.techStack}
+- Read it in your head out loud. If you would never say it to someone's face, rewrite it.
+
+CALL TO ACTION: the Inefficiency Hunter (payload.hunter_url)
+It is a FREE check they run on their OWN business: about 30 seconds, no signup. The credibility comes from THE DATA, not from us. We are not the ones making the claim; their own numbers show it to them. They look first, and reach out afterward only if they want to, with zero pressure if they don't. Confident and generous, never salesy.
+Write it FRESH every time, tailored to the pain this email leads with, never a stock line; vary the opening especially. It must land all of: free; on their own business; they'll see for themselves where [this email's pain] is costing them; it's the data saying it, not us; about 30 seconds, no signup, no strings; reply afterward only if they want.
+Write the token {hunter_url} exactly, where the link goes. It is a template slot that is replaced with the real link before sending: never invent a URL, never write a bare domain, never leave it out. No other links, no video, no call request.
+Tone only, do not copy:
+  "${p.cta[0]}"
+  "${p.cta[1]}"
+
+SUBJECT LINE
+- At most 50 characters, all lower case, no em dash, no jargon, no number except "30 seconds" / "30 segundos".
+- Never "[company]: [pain label]" (it reads like a spam report). They should not know exactly what the email is about until they open it.
+- Pick the shape that fits the evidence:
+${p.subjects}
+
+PREVIEW TEXT (shown under the subject in the inbox)
+- 20 to 150 characters, same language, same rules on numbers and jargon. Never repeat the subject: the subject makes them curious, the preview names the specific observation that makes opening worth it. For example: "${p.preview}"
+- Never "I'd love to connect", "Let me know if you're interested", "Hope this finds you well".
+
+Brackets like [company] or [the pain] in the examples above are for you to fill in. {hunter_url} is the only token that stays exactly as written.
+
+OUTPUT: one JSON object with exactly these fields, all required (null only where allowed):
+{
+  "subject": string,                     // see SUBJECT LINE
+  "preview_text": string,                // see PREVIEW TEXT
+  "body": string,                        // plain text with \\n line breaks, no markdown, salutation through sign-off
+  "pain_id": string | null,              // the pain_candidates[].pain_id you led with, or null
+  "contact_email": string | null,        // address_contact.email, or null
+  "measurable_result_included": boolean, // true ONLY if you quoted a benchmark figure
+  "quality_self_score": number,          // 0..1, honest grade of how specific and personal it is
+  "reasoning": string                    // 1 to 3 sentences: the pain and the fix you chose, and why
+}`;
 }
 
 // Generic inbox local-parts that are NOT a person's name — never greet these.
@@ -730,10 +495,7 @@ export function firstNameGuess(
   return seg.length <= 6 ? cap(seg) : null;
 }
 
-function buildStage2UserPrompt(
-  input: GeneratorInputs,
-  chosenCases: GeneratorInputCaseStudy[],
-): string {
+function buildStage2UserPrompt(input: GeneratorInputs): string {
   const lang = input.prospect.language;
   // Resolve solution hint for the top pain so Claude has a concrete starting point.
   const topPain = input.pains.find((p) => p.pain_id && p.evidence_quote)
@@ -786,35 +548,6 @@ function buildStage2UserPrompt(
         role_based: c.email_is_role_based,
       };
     })(),
-    contacts: input.contacts.map((c) => ({
-      full_name: c.full_name,
-      email: c.email,
-      role_based: c.email_is_role_based,
-      role_title: c.role_title ?? null,
-    })),
-    chosen_cases: chosenCases.map((cs) => ({
-      id: cs.id,
-      client_name: cs.client_name,
-      industry: cs.industry,
-      hero_metric:
-        lang === "es"
-          ? cs.hero_metric_es ?? cs.hero_metric_en ?? "(metric pending)"
-          : cs.hero_metric_en ?? cs.hero_metric_es ?? "(metric pending)",
-      result_description:
-        lang === "es"
-          ? cs.result_description_es ?? cs.result_description_en ?? null
-          : cs.result_description_en ?? cs.result_description_es ?? null,
-      testimonial_quote:
-        lang === "es"
-          ? cs.testimonial_quote_es ?? cs.testimonial_quote_en ?? null
-          : cs.testimonial_quote_en ?? cs.testimonial_quote_es ?? null,
-      measurable_results: cs.measurable_results,
-      pain_strength: cs.pain_strength,
-    })),
-    sender: {
-      full_name: input.sender.full_name,
-      agency_name: input.sender.tenant_display_name,
-    },
     // Verified benchmarks matching this prospect's pain AND industry. Every one
     // carries a citation and was approved by a human; the model may cite these
     // and ONLY these. Usually empty, and empty means write it without a number.
@@ -823,64 +556,35 @@ function buildStage2UserPrompt(
       figure: b.figure,
       publisher: b.publisher,
     })),
-    // notable_clients deliberately NOT sent. Pedro's override (2026-07-22):
-    // named examples underperform, so the model must not have names to reach
-    // for. Withholding the data is the guard — a prompt rule alone loses to the
-    // model's prior toward social proof.
+    // Deliberately NOT sent: case studies and notable clients. Pedro's override
+    // (2026-07-22): never name a client, never quote a client's metric — named
+    // examples underperform. Withholding the data is the guard; a prompt rule
+    // alone loses to the model's prior toward social proof. (v1 still sent
+    // chosen_cases with client names and metrics, and its prompt still offered
+    // a "Did this for {client}, {metric}" proof line.)
     hunter_url: input.deep_pitch_url ?? null,
   };
 
   const rewriteDirective = input.forced_angle
-    ? `\n⚑ REWRITE DIRECTIVE — the human chose a specific angle for this rewrite. Lead the email with it:
-- Pain to lead with: "${input.forced_angle.pain_label}"
-- ${
-        input.forced_angle.case_study_id
-          ? "Anchor the proof on the chosen case study in chosen_cases (use its real metric)."
-          : `No case study — prove it with the Runna capability "${input.forced_angle.capability ?? "AI / optimization / production"}" + track record (capability proof, option (b); set case_study_id=null).`
-      }
-Keep everything else (voice, structure, CTA, factual integrity) the same.\n`
+    ? `\n⚑ REWRITE DIRECTIVE: the human chose the angle for this rewrite. Lead with this pain: "${input.forced_angle.pain_label}". Prove it with the kind of work that fixes it${
+        input.forced_angle.capability ? ` ("${input.forced_angle.capability}")` : ""
+      }, under the same FACTS rules: no client, no number. Everything else stays the same.\n`
     : "";
 
-  return `Compose the cold-email pitch from this payload:${rewriteDirective}
+  return `Write the pitch from this payload.${rewriteDirective}
 
 \`\`\`json
 ${JSON.stringify(payload, null, 2)}
 \`\`\`
 
-PAIN TRANSLATION — do this first internally before writing the email:
-Pick the best pain from pain_candidates (prefer one with both pain_id + evidence_quote).
-Translate it from technical audit language into how a business owner would describe it to
-a friend over coffee — one concrete sentence, no jargon, business consequence not symptom.
-Use this translation as your opening hook.
-
-Good: "Estás perdiendo ventas de gente que llena el carrito y se va sin comprar"
-Bad: "No cart abandonment flow visible; WooCommerce default setup"
-
-SOLUTION TAILORING — this is the most important part of the email:
-- Start from solution_hint, then make it MORE specific using what_they_do + tech_stack + market
-- If they're on Shopify → mention Klaviyo; Tiendanube → mention its email integrations
-- If they run paid media already → focus on creative refresh + attribution improvement
-- If they have no digital presence → website + social strategy as first step
-- ⛔ Never cite a benchmark, percentage or multiple. Confidence is not a source; if the number is not in the payload, leave it out and describe the mechanism instead.
-- Runna's full toolkit is available: email flows, Meta/TikTok paid, AI automation, custom apps,
-  UX redesign, content systems, packaging, brand — propose whatever actually fits
-
-PERSONALIZATION INSTRUCTIONS — use these fields when present:
-- prospect.what_they_do → use as the basis for your opening hook. Reference what they actually do ("veo que venden X", "I see you carry X") instead of a generic observation.
-- prospect.city → weave in a geographic reference naturally (e.g., "marcas en Guadalajara como la tuya" / "brands in Vancouver like yours"). Don't force it if it feels awkward.
-- prospect.tech_stack → if they're on a platform you recognize (Shopify, WooCommerce, Tiendanube, etc.), reference it in the pain framing: "Vi que usan Tiendanube — sin flujo de recuperación activo, eso se traduce directo en ventas perdidas." / "I saw you're on Shopify — without a recovery flow, those abandoned carts are just gone."
-  EXCEPTION: the system-level forbidden words still apply — never write "Shopify" or "WooCommerce" in Spanish emails. In Spanish, say "su plataforma" or "la tienda" instead.
-- contacts[].role_title → if a contact has a role_title (e.g. "CEO", "Dueña", "Founder", "Marketing Manager"), use it in the salutation or opening: "Como dueño de {company}..." / "As the founder of {company}..." — only when it fits naturally.
-- prospect.market → adapt agency positioning: if market="CA", lean on Canadian portfolio and "Canadian-first" framing; if market="MX", lean on MX portfolio and regional understanding.
-
-hunter_url is the Inefficiency Hunter link — use it as the primary CTA (per voice rules above).
-Make it low-pressure + self-serve ("run it yourself and see, reply only if it's useful, no harm if
-not") and write it FRESH, tailored to the pain you led with — never a stock line. One line starting
-with 👉, placed after the proof line (or solution if no case), before sign-off.
-Do NOT add any other links or video offers.
-
-Set contact_email to the non-role-based named contact's email; otherwise best fallback; null if none.
-Set measurable_result_included=true only if the chosen case's hero_metric is a real number/%.`;
+Using the payload:
+- address_contact is the person who will receive this email. Greet them as the salutation rule says, and set contact_email to address_contact.email.
+- prospect.what_they_do: base the hook on what they actually do, not on a generic observation.
+- prospect.tech_stack: see "Their platform" under WORDS.
+- prospect.city: mention it only if it fits naturally, and never claim anything about their city or market that is not in the payload.
+- address_contact.role_title: use it if it fits naturally ("As the owner of [company]...").
+- solution_hint: the starting point for the fix. Make it specific to them.
+- benchmarks: see FACTS. Usually empty.`;
 }
 
 // ── Violation detector ────────────────────────────────────────────────────────
@@ -1046,48 +750,48 @@ export function detectViolations(body: string, lang: "en" | "es"): number {
 
 const SOLUTION_HINTS_EN: [string, string][] = [
   ["abandoned_cart", "automatically reaching back out to everyone who added things and left without buying, so those sales stop quietly disappearing"],
-  ["cart", "automatic reminders that follow up with people who added things and left — showing them exactly what they left behind"],
-  ["mobile conversion", "fixing the parts of your site where phone shoppers give up, so the traffic you already pay for actually converts"],
-  ["email", "automatic emails that follow your customers through every stage — so the right message reaches them at the right moment without you lifting a finger"],
+  ["cart", "automatic reminders that follow up with people who added things and left, showing them exactly what they left behind"],
+  ["mobile conversion", "fixing the parts of your site where phone shoppers give up, so more of the visitors you already pay for actually buy"],
+  ["email", "automatic emails that follow your customers from first visit to repeat order, so the right message reaches them at the right moment without you lifting a finger"],
   ["paid media", "refreshing your ads and who they reach, so the budget stops funding impressions that were never going to buy"],
-  ["roas", "fixing your ads so you make more for every dollar you spend — better creative, better audiences, and actually knowing what's working"],
-  ["social engagement", "a content plan you can actually stick to — the brands that post consistently win, and most don't"],
-  ["content velocity", "a simple system to post 4-5 times a week without it taking over your life"],
+  ["roas", "fixing your ads so you make more for every dollar you spend: better ads, the right people seeing them, and actually knowing what's working"],
+  ["social engagement", "a content plan you can actually stick to, so you show up regularly instead of whenever someone remembers"],
+  ["content velocity", "a simple way to post regularly without it taking over your week"],
   ["retention", "automatic messages after every purchase, a thank you, helpful tips, a reminder when they're running low, so a first order turns into a second"],
   ["website", "making your site faster, easier to use on a phone, and easier to actually buy from"],
   ["outdated", "rebuilding your site so it loads fast, looks great on any phone, and makes buying simple"],
-  ["brand", "cleaning up how your brand looks everywhere — so it feels intentional, not like five different people made it"],
-  ["packaging", "redesigning your packaging to stand out in 3 seconds and tell the story clearly"],
+  ["brand", "cleaning up how your brand looks everywhere, so it feels intentional, not like five different people made it"],
+  ["packaging", "redesigning your packaging so it stands out on the shelf at a glance and tells the story clearly"],
   ["value prop", "getting crystal clear on your one best reason to buy, then saying that same thing everywhere consistently"],
-  ["launch", "coordinating your ads, social posts, emails and landing page to go live together — so nothing falls flat on its own"],
+  ["launch", "coordinating your ads, social posts, emails and website to go live together, so nothing falls flat on its own"],
   ["competitor", "standing for something specific so people choose you for reasons other than price"],
   ["sales process", "automating the follow-up so no interested buyer gets forgotten and you stop chasing manually"],
-  ["event", "turning your event into content and a campaign — before, during and after — not just showing up"],
+  ["event", "turning your event into content and a campaign before, during and after, not just showing up"],
   ["proof", "putting your best customer stories in exactly the spots where people hesitate before buying"],
-  ["ai", "automating the repetitive stuff — follow-ups, capturing leads, reporting — so your team focuses on what actually matters"],
+  ["ai", "automating the repetitive stuff (follow-ups, answering new enquiries, reporting) so your team focuses on what actually matters"],
 ];
 
 const SOLUTION_HINTS_ES: [string, string][] = [
   ["abandoned_cart", "mandarle un mensaje automático a cada persona que llenó su carrito y se fue sin comprar, para que esas ventas dejen de perderse solas"],
-  ["carrito", "recordatorios automáticos para quien agregó cosas y se fue sin comprar — mostrándoles exactamente lo que dejaron"],
+  ["carrito", "recordatorios automáticos para quien agregó cosas y se fue sin comprar, mostrándoles exactamente lo que dejaron"],
   ["mobile", "arreglar las partes de tu sitio donde la gente se rinde desde el celular, para que el tráfico que ya pagas sí termine comprando"],
-  ["email", "mensajes automáticos que acompañan a tu cliente en cada momento — para que el mensaje correcto llegue solo, sin que tú tengas que hacer nada"],
+  ["email", "mensajes automáticos que acompañan a tu cliente desde la primera visita hasta la siguiente compra, para que el mensaje correcto llegue solo, sin que tú tengas que hacer nada"],
   ["paid media", "renovar tus anuncios y a quién les llegan, para que el presupuesto deje de pagar impresiones que nunca iban a comprar"],
-  ["roas", "hacer que tus anuncios rindan más por cada peso que gastas — mejor creatividad, mejor selección de quién los ve y saber de verdad qué está funcionando"],
-  ["engagement", "un plan de contenido que puedas mantener — las marcas que publican seguido ganan seguidores, las que publican cuando se acuerdan no"],
-  ["contenido", "un sistema sencillo para publicar 4-5 veces a la semana sin que te consuma la vida"],
+  ["roas", "hacer que tus anuncios rindan más por cada peso que gastas: mejores anuncios, que los vea la gente correcta y saber de verdad qué está funcionando"],
+  ["engagement", "un plan de contenido que puedas mantener, para publicar seguido y no solo cuando alguien se acuerda"],
+  ["contenido", "una forma sencilla de publicar seguido sin que te consuma la semana"],
   ["retención", "mensajes automáticos después de cada compra, agradecimiento, tips útiles, recordatorio cuando ya se les acabó, para que una primera compra se convierta en la segunda"],
   ["sitio", "hacer tu sitio más rápido, más fácil de usar desde el celular y más fácil para comprar"],
   ["página", "reconstruir tu sitio para que cargue rápido, se vea bien en cualquier celular y comprar sea simple"],
-  ["marca", "limpiar cómo se ve tu marca en todos lados — para que se sienta intencional y consistente, no como si la hubieran hecho cinco personas distintas"],
-  ["empaque", "rediseñar tu empaque para que se destaque en 3 segundos y cuente la historia de forma clara"],
+  ["marca", "limpiar cómo se ve tu marca en todos lados, para que se sienta intencional y consistente, no como si la hubieran hecho cinco personas distintas"],
+  ["empaque", "rediseñar tu empaque para que destaque en el anaquel de un vistazo y cuente la historia de forma clara"],
   ["propuesta de valor", "encontrar tu razón número uno para que te compren a ti, y decirla igual en todos lados"],
   ["lanzamiento", "coordinar tus anuncios, redes sociales, correos y página de destino para que todo salga junto y con fuerza"],
   ["competencia", "definir por qué te eligen a ti y no al de precio más bajo"],
   ["ventas", "automatizar el seguimiento para que ningún interesado quede en el olvido y dejes de perseguir a mano"],
-  ["evento", "convertir tu evento en contenido y campaña — antes, durante y después — no solo aparecer"],
+  ["evento", "convertir tu evento en contenido y campaña antes, durante y después, no solo aparecer"],
   ["prueba social", "poner las historias de tus mejores clientes justo en los momentos donde la gente duda antes de comprar"],
-  ["ai", "automatizar lo repetitivo — seguimientos, captura de interesados, reportes — para que tu equipo se enfoque en lo que realmente importa"],
+  ["ai", "automatizar lo repetitivo (seguimientos, responder a nuevos interesados, reportes) para que tu equipo se enfoque en lo que realmente importa"],
 ];
 
 export function getSolutionHint(painLabel: string | null, lang: "en" | "es"): string | null {
@@ -1112,12 +816,4 @@ export function getSolutionHint(painLabel: string | null, lang: "en" | "es"): st
     }
   }
   return null;
-}
-
-// Re-used from generator.ts logic — avoids import cycle.
-function industryMatch(a: string | null | undefined, b: string | null | undefined): boolean {
-  if (!a || !b) return false;
-  const al = a.toLowerCase();
-  const bl = b.toLowerCase();
-  return al === bl || al.includes(bl) || bl.includes(al);
 }
