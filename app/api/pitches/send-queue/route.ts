@@ -20,6 +20,7 @@ import { hasUsableEmail } from "@/lib/research/email-utils";
 import { isEmailOnDncList, type DncClient } from "@/lib/discover/dnc-check";
 import { findSentMessage } from "@/lib/gmail/read";
 import { firstTouchConflict } from "@/lib/pitches/send-guards";
+import { verifyRecipient } from "@/lib/research/verify-recipient";
 
 // Prospect states that must never receive a queued cold pitch, even if the
 // pitch was approved before the state changed. Checked at send time — the
@@ -243,7 +244,7 @@ export async function GET(req: NextRequest) {
         // without this check the cron would still email them.
         const { data: prospectRow } = await supabase
           .from("prospects")
-          .select("status, cooldown_until, language")
+          .select("status, cooldown_until, language, domain")
           .eq("id", pitch.prospect_id)
           .maybeSingle();
         if (prospectRow && DO_NOT_SEND_STATUSES.has(prospectRow.status)) {
@@ -263,7 +264,7 @@ export async function GET(req: NextRequest) {
         }
         const { data: contact } = await supabase
           .from("prospect_contacts")
-          .select("email, full_name")
+          .select("email, full_name, selected_by")
           .eq("id", pitch.contact_id)
           .maybeSingle();
         const toEmail: string | null = contact?.email ?? null;
@@ -298,6 +299,21 @@ export async function GET(req: NextRequest) {
         if (duplicate) {
           await dropFromQueue(supabase, pitch.id, duplicate);
           results.push({ pitch_id: pitch.id, status: "skipped", reason: duplicate });
+          continue;
+        }
+        // SPAM Verify: an address that can only bounce, or must never be
+        // pitched, leaves the queue. "review" still sends — a human approved it;
+        // the autopilot will only ever auto-send "send".
+        const verify = await verifyRecipient(supabase, {
+          tenantId: pitch.tenant_id,
+          email: toEmail,
+          selectedBy: contact?.selected_by ?? null,
+          prospectDomain: prospectRow?.domain ?? null,
+        });
+        if (verify.verdict === "drop") {
+          const reason = `SPAM Verify: ${verify.reasons.join("; ")}`;
+          await dropFromQueue(supabase, pitch.id, reason);
+          results.push({ pitch_id: pitch.id, status: "skipped", reason });
           continue;
         }
         const body = (pitch.body_edited ?? pitch.body_original ?? "").trim();

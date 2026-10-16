@@ -22,6 +22,7 @@ import { getAccessToken, sendGmailMessage } from "@/lib/gmail/client";
 import { createClient } from "@/lib/supabase/server";
 import { bodyWithFooter, getOutboundCompliance } from "@/lib/compliance/outbound";
 import { firstTouchConflict } from "@/lib/pitches/send-guards";
+import { verifyRecipient } from "@/lib/research/verify-recipient";
 
 /** Same set the send-queue cron refuses (app/api/pitches/send-queue/route.ts). */
 const MANUAL_DO_NOT_SEND = new Set([
@@ -61,8 +62,8 @@ export async function sendPitch(input: {
     preview_text: string | null;
     prospect_id: string;
     contact_id: string | null;
-    prospect_contacts: { email: string | null; full_name: string | null } | null;
-    prospects: { language: "en" | "es"; status: string; cooldown_until: string | null } | null;
+    prospect_contacts: { email: string | null; full_name: string | null; selected_by: string | null } | null;
+    prospects: { language: "en" | "es"; status: string; cooldown_until: string | null; domain: string | null } | null;
   };
 
   const { data: pitch, error: pitchErr } = await supabase
@@ -70,8 +71,8 @@ export async function sendPitch(input: {
     .select(
       `id, status, subject, body_original, body_edited, preview_text,
        prospect_id, contact_id,
-       prospect_contacts:contact_id(email, full_name),
-       prospects:prospect_id(language, status, cooldown_until)`,
+       prospect_contacts:contact_id(email, full_name, selected_by),
+       prospects:prospect_id(language, status, cooldown_until, domain)`,
     )
     .eq("id", pitch_id)
     .eq("tenant_id", user.tenantId)
@@ -99,12 +100,14 @@ export async function sendPitch(input: {
     ? pitch.prospect_contacts!.email
     : null;
   let toName: string | null = toEmail ? pitch.prospect_contacts?.full_name ?? null : null;
+  let toSelectedBy: string | null = toEmail ? pitch.prospect_contacts?.selected_by ?? null : null;
   let resolvedContactId: string | null = null;
   if (!toEmail) {
     const top = await fetchTopUsableContact(supabase, user.tenantId, pitch.prospect_id);
     if (top) {
       toEmail = top.email;
       toName = top.full_name;
+      toSelectedBy = top.selected_by;
       resolvedContactId = top.id;
     }
   }
@@ -141,6 +144,18 @@ export async function sendPitch(input: {
     email: toEmail,
   });
   if (duplicate) return { ok: false, error: duplicate };
+
+  // SPAM Verify: never send to an address that can only bounce or must never
+  // be pitched. "review" passes here — a human is clicking Send.
+  const verify = await verifyRecipient(supabase, {
+    tenantId: user.tenantId,
+    email: toEmail,
+    selectedBy: toSelectedBy,
+    prospectDomain: pitch.prospects?.domain ?? null,
+  });
+  if (verify.verdict === "drop") {
+    return { ok: false, error: `Not sending to ${toEmail}: ${verify.reasons.join("; ")}` };
+  }
 
   // ── 2. Load inbox (must belong to tenant, not paused, Gmail connected) ─────
   type InboxRow = {

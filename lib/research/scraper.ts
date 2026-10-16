@@ -1,5 +1,11 @@
 import * as cheerio from "cheerio";
-import { hasUsableEmail, hasValidTld, repairGluedDomainPrefix } from "./email-utils.ts";
+import {
+  hasUsableEmail,
+  hasValidTld,
+  isNeverPitchEmail,
+  isRegulatorEmail,
+  repairGluedDomainPrefix,
+} from "./email-utils.ts";
 
 /**
  * Use a realistic browser UA. Bot-style UAs (e.g. "RunnaCABot/0.1") are
@@ -770,70 +776,6 @@ function isValidEmail(email: string): boolean {
 // Wix sites include Sentry DSN-style addresses like {32hexchars}@sentry.wixpress.com.
 const MONITORING_DOMAINS = ["sentry.io", "sentry.wixpress.com", "sentry-next.wixpress.com", "bugsnag.com", "rollbar.com", "datadog.com", "newrelic.com", "honeybadger.io"];
 const HEX_LOCAL_RE = /^[0-9a-f]{16,}$/i;
-
-/**
- * Inboxes that are real and deliverable but must NEVER receive a cold pitch.
- *
- * Distinct from isRoleBasedEmail, which only DEPRIORITISES (rank 5): info@ and
- * sales@ are role inboxes we're happy to pitch. These are different — they
- * belong to the functions whose job is to police unsolicited mail, or to
- * departments that will never buy. A privacy officer or DPO receiving cold
- * marketing is the single likeliest source of a CASL complaint, and a complaint
- * costs more than the lead is worth.
- *
- * This list earned its place immediately: mining /privacy and /terms for
- * addresses preferentially finds privacy officers. The first sweep surfaced
- * privacy@nygh.on.ca, privacyofficer@stegh.on.ca, hrweb@uhn.ca and
- * patientrelations@gbgh.on.ca — every one deliverable, every one the wrong
- * person to pitch a website to.
- */
-const NEVER_PITCH_LOCALS = new Set([
-  // Privacy / data protection / legal / compliance
-  "privacy", "privacyofficer", "privacyoffice", "privacyteam", "dpo",
-  "dataprotection", "dataprivacy", "legal", "compliance", "counsel",
-  "privacidad", "avisodeprivacidad", "datospersonales", "juridico", "legales",
-  // Abuse / security desks
-  "abuse", "security", "postmaster", "hostmaster", "spam", "phishing",
-  // HR / recruiting — never the buyer
-  "hr", "hrweb", "humanresources", "recruiting", "recruitment", "recruiter",
-  "careers", "jobs", "hiring", "talent",
-  "recursoshumanos", "rh", "reclutamiento", "empleo", "vacantes",
-  // Unsubscribe / list management
-  "unsubscribe", "optout", "remove", "listrequest",
-  // Patient / clinical desks (hospitals surfaced these in the first sweep)
-  "patientrelations", "patientcare", "patients", "clinical", "medicalrecords",
-]);
-
-function isNeverPitchEmail(email: string): boolean {
-  const local = email.split("@")[0]?.toLowerCase();
-  if (!local) return false;
-  if (NEVER_PITCH_LOCALS.has(local)) return true;
-  if (NEVER_PITCH_LOCALS.has(local.replace(/[.\-_]/g, ""))) return true;
-  // Institutions prefix the function: "rvh.privacy@renfrewhosp.com",
-  // "hr.recruitment@williamoslerhs.ca". Both slipped through a whole-local
-  // check, so test each dot/dash/underscore segment too.
-  return local.split(/[.\-_]/).some((seg) => NEVER_PITCH_LOCALS.has(seg));
-}
-
-/**
- * Regulators, privacy commissioners and government bodies — never a prospect.
- *
- * This exists because of a live incident, not a hypothetical: the first sweep
- * wrote generalinfo@oipc.ab.ca (Information & Privacy Commissioner of Alberta)
- * as the contact for a wholesaler, and info@privcom.gc.ca (Privacy Commissioner
- * of Canada) for a hotel spa. Canadian privacy policies are expected to name
- * the oversight body and how to complain to it, so mining /privacy pages
- * harvests the REGULATOR's address. The local parts were "generalinfo", "info"
- * and a person's surname — nothing a local-part blocklist could ever catch.
- * Cold-emailing the privacy commissioner is the worst outcome this system has.
- */
-const REGULATOR_DOMAIN_RE =
-  /(?:^|\.)(?:oipc|ipc|priv|privcom|oic-ci|cai)\.[a-z.]+$|\.gc\.ca$|\.gouv\.[a-z]{2}\.ca$|\.gov(?:\.[a-z]{2})?$|\.gob\.mx$/i;
-
-function isRegulatorEmail(email: string): boolean {
-  const domain = email.split("@")[1]?.toLowerCase();
-  return !!domain && REGULATOR_DOMAIN_RE.test(domain);
-}
 
 function isMonitoringEmail(email: string): boolean {
   const [local, domain] = email.split("@");

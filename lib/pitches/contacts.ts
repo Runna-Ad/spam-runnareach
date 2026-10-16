@@ -44,15 +44,17 @@ export async function fetchTopUsableContact(
   supabase: Awaited<ReturnType<typeof createClient>>,
   tenantId: string,
   prospectId: string,
-): Promise<{ id: string; email: string; full_name: string | null } | null> {
+): Promise<{ id: string; email: string; full_name: string | null; selected_by: string | null } | null> {
   const { data } = await supabase
     .from("prospect_contacts")
-    .select("id, email, full_name, priority_rank")
+    .select("id, email, full_name, priority_rank, selected_by")
     .eq("tenant_id", tenantId)
     .eq("prospect_id", prospectId)
     .order("priority_rank", { ascending: true })
     .limit(12)
     .returns<(MiniContact & { id: string })[]>();
   const top = pickTopUsableContact(data);
-  return top?.email ? { id: top.id, email: top.email, full_name: top.full_name } : null;
+  return top?.email
+    ? { id: top.id, email: top.email, full_name: top.full_name, selected_by: top.selected_by ?? null }
+    : null;
 }
