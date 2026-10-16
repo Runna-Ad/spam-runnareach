@@ -41,3 +41,34 @@ export function buildComplianceFooter(input: FooterInput): string {
   }
   return lines.join("\n");
 }
+
+function escapeHtml(text: string): string {
+  return text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+}
+
+function link(href: string, label: string): string {
+  return `<a href="${escapeHtml(href)}" style="color: #8a8a8a; text-decoration: underline;">${escapeHtml(label)}</a>`;
+}
+
+/**
+ * The same footer for the HTML part, where links have readable labels: the
+ * reader sees "unsubscribe", not a long token URL. (The plain-text part has to
+ * show the URL — text mail can't hide a link.)
+ */
+export function buildComplianceFooterHtml(input: FooterInput): string {
+  const lines: string[] = [];
+  lines.push(escapeHtml(`${input.senderEntity.trim()} · ${input.mailingAddress.replace(/\s*\n\s*/g, ", ").trim()}`));
+  const contact: string[] = [];
+  const site = input.website?.trim();
+  if (site) contact.push(link(/^https?:\/\//i.test(site) ? site : `https://${site}`, site.replace(/^https?:\/\//i, "")));
+  const email = input.contactEmail?.trim();
+  if (email) contact.push(link(`mailto:${email}`, email));
+  if (contact.length) lines.push(contact.join(" · "));
+  if (input.lang === "es") {
+    lines.push(`Para dejar de recibir estos correos: ${link(input.unsubscribeUrl, "darse de baja")}`);
+    if (input.privacyUrl) lines.push(link(input.privacyUrl, "Aviso de privacidad"));
+  } else {
+    lines.push(`To stop receiving these emails: ${link(input.unsubscribeUrl, "unsubscribe")}`);
+  }
+  return lines.map((l) => `<p style="margin: 0;">${l}</p>`).join("\n");
+}

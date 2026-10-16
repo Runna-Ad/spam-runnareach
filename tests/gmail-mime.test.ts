@@ -147,6 +147,27 @@ test("footer lands in both parts; its URL is a link in HTML", () => {
   assert.ok(html.includes(`<html lang="es">`));
 });
 
+test("structured footer: text part shows the URL, HTML part shows only the label", () => {
+  const raw = buildRfc2822({
+    fromEmail: "pedro@runnareach.com",
+    fromName: "Pedro",
+    to: "a@b.com",
+    subject: "s",
+    body: "Hi",
+    footer: {
+      text: "To stop receiving these emails: https://go.example.com/api/unsubscribe?t=abc",
+      html: `<p>To stop receiving these emails: <a href="https://go.example.com/api/unsubscribe?t=abc">unsubscribe</a></p>`,
+    },
+    boundary: "B",
+  });
+  const [, textPart = "", htmlPart = ""] = raw.split("--B");
+  const text = strictQpDecode(textPart.split("\r\n\r\n").slice(1).join("\r\n\r\n").trim());
+  const html = strictQpDecode(htmlPart.split("\r\n\r\n").slice(1).join("\r\n\r\n").trim());
+  assert.ok(text.includes("https://go.example.com/api/unsubscribe?t=abc"));
+  assert.ok(html.includes(">unsubscribe</a>"));
+  assert.doesNotMatch(html.replace(/<[^>]+>/g, ""), /go\.example\.com/);
+});
+
 test("HTML body without footer has no footer block", () => {
   assert.doesNotMatch(buildHtmlBody("Hi there", "en"), /border-top/);
 });

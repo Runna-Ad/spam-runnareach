@@ -34,10 +34,11 @@ export type MimeMessageInput = {
   originalMessageId?: string;
   /**
    * Compliance footer (sender identity, mailing address, unsubscribe line).
-   * Appended to the text part and rendered small and grey in the HTML part,
-   * with its URLs as real links.
+   * Appended to the text part and rendered small and grey in the HTML part.
+   * A plain string has its URLs linkified as-is; the { text, html } form
+   * supplies HTML with labelled links ("unsubscribe") so no URL shows.
    */
-  footer?: string;
+  footer?: string | { text: string; html: string };
   /** RFC 2369 List-Unsubscribe targets; an https URL also gets RFC 8058 one-click. */
   listUnsubscribe?: { url?: string; mailto?: string };
   /** Fixed values for deterministic tests. */
@@ -72,7 +73,8 @@ export function buildRfc2822(input: MimeMessageInput): string {
   const unsub = listUnsubscribeHeaders(input.listUnsubscribe);
   headerLines.push(...unsub);
 
-  const textBody = input.footer ? `${input.body}\n\n${input.footer}` : input.body;
+  const footerText = typeof input.footer === "string" ? input.footer : input.footer?.text;
+  const textBody = footerText ? `${input.body}\n\n${footerText}` : input.body;
   const htmlBody = buildHtmlBody(input.body, input.lang, input.footer);
 
   const textPart = [
@@ -211,7 +213,11 @@ function encodeQpLine(line: string): string {
  * - Minimal inline CSS only (no external stylesheets)
  * - multipart/alternative means spam filters score the plain-text part too
  */
-export function buildHtmlBody(plainText: string, lang?: "en" | "es", footer?: string): string {
+export function buildHtmlBody(
+  plainText: string,
+  lang?: "en" | "es",
+  footer?: string | { text: string; html: string },
+): string {
   const lines = plainText.split("\n");
   const htmlLines: string[] = [];
 
@@ -278,14 +284,18 @@ export function buildHtmlBody(plainText: string, lang?: "en" | "es", footer?: st
   }
 
   if (footer) {
-    const footerLines = footer
-      .split("\n")
-      .map((l) => l.trim())
-      .filter(Boolean)
-      .map((l) => `<p style="margin: 0;">${linkify(l)}</p>`);
+    const inner =
+      typeof footer === "string"
+        ? footer
+            .split("\n")
+            .map((l) => l.trim())
+            .filter(Boolean)
+            .map((l) => `<p style="margin: 0;">${linkify(l)}</p>`)
+            .join("\n")
+        : footer.html;
     htmlLines.push(
       `<div style="margin-top: 28px; padding-top: 12px; border-top: 1px solid #e5e5e5; ` +
-        `color: #8a8a8a; font-size: 12px; line-height: 1.5;">\n${footerLines.join("\n")}\n</div>`,
+        `color: #8a8a8a; font-size: 12px; line-height: 1.5;">\n${inner}\n</div>`,
     );
   }
 

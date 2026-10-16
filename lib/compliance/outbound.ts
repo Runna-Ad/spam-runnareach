@@ -20,7 +20,7 @@
  */
 
 import { createHash } from "node:crypto";
-import { buildComplianceFooter } from "./footer.ts";
+import { buildComplianceFooter, buildComplianceFooterHtml, type FooterInput } from "./footer.ts";
 import { signUnsubscribeToken, type UnsubscribePayload } from "./unsubscribe-token.ts";
 
 export const UNSUBSCRIBE_PATH = "/api/unsubscribe";
@@ -41,7 +41,8 @@ function env(name: string, fallback: string): string {
 }
 
 export type OutboundCompliance = {
-  footer: string;
+  /** Plain-text footer (shows URLs) and HTML footer (labelled links). */
+  footer: { text: string; html: string };
   listUnsubscribe: { url: string };
 };
 
@@ -80,7 +81,7 @@ export function getOutboundCompliance(
 
   const token = signUnsubscribeToken(recipient, secret);
   const url = `${baseUrl()}${UNSUBSCRIBE_PATH}?t=${encodeURIComponent(token)}`;
-  const footer = buildComplianceFooter({
+  const footerInput: FooterInput = {
     lang: recipient.lang,
     senderEntity: env("RUNNA_SENDER_ENTITY", SENDER_DEFAULTS.entity),
     mailingAddress,
@@ -91,11 +92,12 @@ export function getOutboundCompliance(
     contactEmail: env("RUNNA_CONTACT_EMAIL", SENDER_DEFAULTS.contactEmail),
     unsubscribeUrl: url,
     privacyUrl: env("RUNNA_PRIVACY_URL", SENDER_DEFAULTS.privacyUrl),
-  });
+  };
+  const footer = { text: buildComplianceFooter(footerInput), html: buildComplianceFooterHtml(footerInput) };
   return { ok: true, value: { footer, listUnsubscribe: { url } } };
 }
 
-/** Body as it actually went out, for pitches.body_sent. */
-export function bodyWithFooter(body: string, footer: string): string {
-  return `${body}\n\n${footer}`;
+/** Body as it actually went out (plain-text version), for pitches.body_sent. */
+export function bodyWithFooter(body: string, footer: { text: string }): string {
+  return `${body}\n\n${footer.text}`;
 }

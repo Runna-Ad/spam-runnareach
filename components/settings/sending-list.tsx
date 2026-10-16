@@ -9,6 +9,7 @@ import { EmptyState } from "@/components/ui/empty-state";
 import type { BrandLite, SenderInbox, WarmingStage } from "@/lib/settings/sending-queries";
 import { cn } from "@/lib/utils";
 import { SenderInboxDrawer, type SenderDrawerMode } from "./sender-inbox-drawer";
+import { TestSendPanel } from "./test-send-panel";
 
 interface SendingListProps {
   inboxes: SenderInbox[];
@@ -78,6 +79,8 @@ export function SendingList({ inboxes, brands, canManage, gmailError, gmailConne
           ))}
         </div>
       )}
+
+      <TestSendPanel inboxes={inboxes} />
 
       <SenderInboxDrawer
         mode={drawer}

@@ -89,16 +89,27 @@ test("outbound compliance: Pedro's details by default, env overrides, fails clos
     assert.ok(es.ok);
     if (es.ok) {
       assert.match(es.value.listUnsubscribe.url, /^https:\/\/go\.example\.com\/api\/unsubscribe\?t=/);
-      assert.ok(es.value.footer.includes(es.value.listUnsubscribe.url));
-      assert.ok(es.value.footer.startsWith("Rünna · Tizapán San Ángel, Loreto y Campamento, Álvaro Obregón, 01090 Mexico City, Mexico\n"));
-      assert.match(es.value.footer, /\nrunna\.com\.mx · hola@runna\.mx\n/);
-      assert.match(es.value.footer, /Aviso de privacidad: https:\/\/runna\.com\.mx\/avisop$/);
+      const { text, html } = es.value.footer;
+      assert.ok(text.includes(es.value.listUnsubscribe.url));
+      assert.ok(text.startsWith("Rünna · Tizapán San Ángel, Loreto y Campamento, Álvaro Obregón, 01090 Mexico City, Mexico\n"));
+      assert.match(text, /\nrunna\.com\.mx · hola@runna\.mx\n/);
+      assert.match(text, /Aviso de privacidad: https:\/\/runna\.com\.mx\/avisop$/);
+
+      // HTML: labelled links, no URL in the visible text.
+      assert.match(html, />darse de baja<\/a>/);
+      assert.match(html, /href="https:\/\/runna\.com\.mx"/);
+      assert.match(html, /href="mailto:hola@runna\.mx"/);
+      assert.match(html, />Aviso de privacidad<\/a>/);
+      const visible = html.replace(/<[^>]+>/g, "");
+      assert.doesNotMatch(visible, /https?:\/\//, "no raw URL shown");
+      assert.doesNotMatch(visible, /spam-runnareach/);
     }
 
     process.env.RUNNA_WEBSITE_EN = "example.ca";
     const en = getOutboundCompliance({ ...PAYLOAD, lang: "en" });
-    assert.ok(en.ok && en.value.footer.includes("\nexample.ca · hola@runna.mx\n"), "env override wins");
-    assert.ok(en.ok && !en.value.footer.includes("Aviso"), "no Spanish notice on English emails");
+    assert.ok(en.ok && en.value.footer.text.includes("\nexample.ca · hola@runna.mx\n"), "env override wins");
+    assert.ok(en.ok && !en.value.footer.text.includes("Aviso"), "no Spanish notice on English emails");
+    assert.ok(en.ok && />unsubscribe<\/a>/.test(en.value.footer.html));
   } finally {
     for (const k of keys) {
       if (saved[k] === undefined) delete process.env[k];
