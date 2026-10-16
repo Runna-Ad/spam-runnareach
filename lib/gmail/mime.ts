@@ -54,7 +54,7 @@ export function buildRfc2822(input: MimeMessageInput): string {
 
   const headerLines = [
     `From: ${formatAddress(input.fromName, input.fromEmail)}`,
-    `To: ${cleanAddress(input.to)}`,
+    `To: ${formatRecipient(input.to)}`,
     `Reply-To: ${replyTo}`,
     `Subject: ${encodeHeaderValue(input.subject)}`,
     `Date: ${date}`,
@@ -112,6 +112,17 @@ function listUnsubscribeHeaders(target: MimeMessageInput["listUnsubscribe"]): st
 /** Strip anything that could start a new header line or break an address. */
 function cleanAddress(email: string): string {
   return email.replace(/[\r\n\s<>"]/g, "");
+}
+
+/**
+ * Callers pass either a bare address or `"Name" <address>`. Split the second
+ * form so the name is encoded and the address cleaned, instead of stripping
+ * the brackets and gluing the two together.
+ */
+export function formatRecipient(to: string): string {
+  const named = to.match(/^\s*(.*?)\s*<([^<>]+)>\s*$/s);
+  if (named) return formatAddress(named[1]?.replace(/^"|"$/g, ""), named[2] ?? "");
+  return cleanAddress(to);
 }
 
 /** `"Name" <email>`, RFC 2047-encoding a non-ASCII display name. */

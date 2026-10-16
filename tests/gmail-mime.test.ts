@@ -15,6 +15,7 @@ import {
   encodeHeaderValue,
   encodeQuotedPrintable,
   formatAddress,
+  formatRecipient,
 } from "../lib/gmail/mime.ts";
 
 /** RFC 2045 decoder that throws on anything a lenient decoder would paper over. */
@@ -94,6 +95,13 @@ test("non-ASCII subject becomes ≤75-char encoded-words that decode back", () =
     decoded += Buffer.from(m[1] ?? "", "base64").toString("utf8");
   }
   assert.equal(decoded, subject);
+});
+
+test("recipient: bare address or quoted name form, never glued together", () => {
+  assert.equal(formatRecipient("maria@acme.mx"), "maria@acme.mx");
+  assert.equal(formatRecipient(`"Maria Lopez" <maria@acme.mx>`), `"Maria Lopez" <maria@acme.mx>`);
+  assert.match(formatRecipient(`"María López" <maria@acme.mx>`), /^=\?UTF-8\?B\?.+\?= <maria@acme\.mx>$/);
+  assert.equal(formatRecipient(`Maria <maria@acme.mx>`), `"Maria" <maria@acme.mx>`);
 });
 
 test("display names: ASCII quoted, non-ASCII RFC 2047-encoded", () => {
