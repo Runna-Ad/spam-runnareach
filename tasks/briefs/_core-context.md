@@ -41,6 +41,9 @@ cost-tracked, daily-capped wrapper in `lib/anthropic/` · Gmail API · Sentry ·
 7. Test addresses (`RUNNA_TEST_EMAILS`, pedrojr22@gmail.com, +tags, Gmail dots) are
    excluded from every metric and never counted as prospects.
 8. Every cold-email CTA goes to the runna-hunter audit tool. No calls, no Loom.
+9. Volume rule (2026-10-17): while the platform learns, the autopilot researches at most
+   100 prospects a day (`MAX_PROSPECTS_PER_DAY`, `lib/learning/scout.ts`) and Claude spend
+   is capped at $3 per rolling 24h (`ANTHROPIC_DAILY_USD_CAP`). Never raise either.
 
 ## Engineering rules (distilled from 105+ lessons)
 - **Actor model** (`lib/actor.ts`): every pipeline stage lives in a `*-stage.ts` file as
