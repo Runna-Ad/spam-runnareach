@@ -29,8 +29,8 @@ for the current phase; move older ones to the retro.
 |---|---|---|---|---|---|---|---|---|---|---|---|---|
 | opportunities-calendar-sync | opportunities (new) + api | opus/high | claude/opportunities-calendar-sync | session_012RWb5yLGodvUPrkTCx1cyV | — | — | running | — | | | | |
 | opportunities-pipeline-ui | opportunities UI | sonnet/medium | claude/opportunities-pipeline-ui | session_01EPMCtSCVAJ4Pzs49KhxxcZ | #1 | — | reworked (fix-then-merge) | — | 12 | 1 (6 optional) | 0 | 1 |
-| pitches-hot-lead-badge | pitches UI + query | sonnet/medium | claude/pitches-hot-lead-badge | session_019USzyNMvBuS2nVtHefbPwy | #3 | — | in-review | — | 12 | | | |
-| learning-arms-dashboard | learning UI | sonnet/medium | claude/learning-arms-dashboard | session_01Puhp34C8K7qKKGnBEJ8tzb | #2 | — | in-review | — | 12 | | | |
+| pitches-hot-lead-badge | pitches UI + query | sonnet/medium | claude/pitches-hot-lead-badge | archived | #3 merged 808af20 | — | merged | — | 12 | 0 (6 optional) | 0 | 0 |
+| learning-arms-dashboard | learning UI | sonnet/medium | claude/learning-arms-dashboard | archived | #2 merged 5d9e88c | — | merged | — | 12 | 0 (6 optional) | 0 | 0 |
 | contact-source-url | research + discover inserts | opus/medium | claude/contact-source-url | session_01VQw8xTBcjWonaKZruNCydk | — | — | running | — | | | | |
 | pitch-exemplar-memory | pitches (hub) | opus/high | claude/pitch-exemplar-memory | — | — | wave 1 merged | queued (wave 2) | wave 1 | | | | |
 
@@ -48,6 +48,10 @@ These four columns feed the retro and the routing table.
 | Path | Branch | Remove after |
 |---|---|---|
 
+## Optional findings carried to next batch (from reviews)
+- PR #3: /pitches list throws if the pitch_events query fails (wrap, log, show list without badges); reward.ts and hot-lead.ts decide audit_scan stage with different rules (share levelOf); 200-row list window hides old hot leads; "Asked to talk" chip tone is danger-red (Pedro to judge in browser).
+- PR #2: add a trials=100 boundary test; query failure renders as an honest "arms not loaded", not an empty state; order + truncation notice on the 2000 limit; icp learner never writes arms (label dead); UI "too early" (<20) vs bandit settle thresholds (15 scout / 30 writer) differ, audit to note.
+
 ## Shared-file changes pending (conductor does these)
 | Requested by | File | Change | Done |
 |---|---|---|---|
@@ -61,3 +65,4 @@ These four columns feed the retro and the routing table.
 - 2026-10-17 16:24 UTC — PROBE RESULT: remote worker in inherited (default) mode ran install, tests, build, push and PR creation with NO prompts; only its final send_message to the conductor prompted. PR #1 open (499→507 tests). Allowing mcp__claude-code-remote__send_message in .claude/settings.json so later workers don't prompt. Spawning the other four next.
 - 2026-10-17 16:25 UTC — 4 remaining wave-1 workers spawned as remote sessions (inherited mode, proven by the probe). PR #1 under review. Safety check-in armed for 17:16 UTC.
 - 2026-10-17 16:31 UTC — PR #1 review: fix-then-merge (blocking: won/lost event attached to latest SENT pitch, which is a follow-up child; must be the root). Conductor landed lib/pitches/root-pitch.ts + audit opportunity actions. PR #2 (learning) and #3 (hot-lead) opened, 504/505 tests, in review.
+- 2026-10-17 16:35 UTC — PR #3 merged (505 tests), PR #2 merged (510 tests), both reviewed merge/0 blocking. Sessions archived. Sonnet lane evidence: 2 clean runs on UI tasks.
