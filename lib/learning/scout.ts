@@ -139,6 +139,13 @@ export function candidateCells(
 }
 
 /**
+ * At most this many prospects researched per day by the autopilot (Pedro,
+ * 2026-10-17): while the platform is learning, more volume means more drafts
+ * to review, not better ones. Raise it once the learners have proven out.
+ */
+export const MAX_PROSPECTS_PER_DAY = 100;
+
+/**
  * How many new prospects to discover today: enough to keep tomorrow's send
  * capacity fed, no more (research costs AI money and stale drafts rot).
  *
@@ -157,7 +164,7 @@ export function discoveryBudget(i: {
   const needed = Math.max(0, i.dailySendCapacity * buffer - i.pitchesWaiting);
   if (needed === 0) return 0;
   const yieldRate = Math.min(Math.max(i.pitchYield, 0.05), 1);
-  return Math.min(Math.ceil(needed / yieldRate), i.maxPerDay ?? 200);
+  return Math.min(Math.ceil(needed / yieldRate), i.maxPerDay ?? MAX_PROSPECTS_PER_DAY);
 }
 
 /** Autopilot discovery jobs per rolling day: each one crawls its sources even when it finds nothing. */

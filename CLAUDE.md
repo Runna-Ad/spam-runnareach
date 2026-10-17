@@ -21,6 +21,7 @@ Vercel project `spam-runnareach` → https://spam-runnareach.vercel.app. Repo `R
 - Background jobs self-chain via `after()` + fetch (Vercel daily-cron tier), not queues; long routes have custom `maxDuration` in `vercel.json`.
 - AI calls are cost-tracked + daily-capped — keep new calls inside that wrapper.
 - **Cost rule (Pedro, 2026-10-16):** until S.P.A.M. is proven to make money, stay as close to free as possible. AI API spend is fine; paid external platforms/SaaS are not. Build or solve it internally (our own data, DNS, Postgres, Supabase `pg_cron`, Gmail API) unless there is truly no other way, and ask before adding any paid service. Scheduler = Supabase `pg_cron` + `pg_net`, not Vercel Pro.
+- **Volume rule (Pedro, 2026-10-17):** while the platform learns, the autopilot researches at most 100 prospects a day (`MAX_PROSPECTS_PER_DAY`, `lib/learning/scout.ts`) and Claude spend is capped at $3 per rolling 24h (`ANTHROPIC_DAILY_USD_CAP` in Vercel; code default $6). Don't raise either without asking.
 
 ## Multi-agent mode (since 2026-10-17)
 Phases are run by one **conductor** session that briefs, spawns, reviews and integrates **workers** (one module, one brief, one fresh session each, model per `tasks/routing.md`).
