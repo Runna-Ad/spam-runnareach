@@ -20,18 +20,18 @@ for the current phase; move older ones to the retro.
 | Number | Reserved for | Status (reserved → used → applied) |
 |---|---|---|
 | 0043 | conductor wave 0: opportunities.source/calendar_event_id, pitch_event_type +meeting_booked/won/lost, prospect_contacts.source_url | used (on integration, NOT applied) |
-| 0044 | opportunities-calendar-sync (cron schedule) | reserved |
+| 0044 | opportunities-calendar-sync (cron schedule) | used (PR #5, not applied) |
 | 0045 | pitch-exemplar-memory (wave 2, if a table is needed) | reserved |
 | 0046 | — | free |
 
 ## Active and queued tasks
 | Slug | Module | Model/effort | Branch | Session | PR | Depends on | Status | Blocked on | Turns | Review findings | CI reds | Rework |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|
-| opportunities-calendar-sync | opportunities (new) + api | opus/high | claude/opportunities-calendar-sync | session_012RWb5yLGodvUPrkTCx1cyV | — | — | running | — | | | | |
-| opportunities-pipeline-ui | opportunities UI | sonnet/medium | claude/opportunities-pipeline-ui | session_01EPMCtSCVAJ4Pzs49KhxxcZ | #1 | — | reworked (fix-then-merge) | — | 12 | 1 (6 optional) | 0 | 1 |
+| opportunities-calendar-sync | opportunities (new) + api | opus/high | claude/opportunities-calendar-sync | session_012RWb5yLGodvUPrkTCx1cyV | #5 | — | in-review | — | 20 | | | |
+| opportunities-pipeline-ui | opportunities UI | sonnet/medium | claude/opportunities-pipeline-ui | session_01EPMCtSCVAJ4Pzs49KhxxcZ | #1 | — | fix pushed, delta in re-review | — | 18 | 1 (6 optional) | 0 | 1 |
 | pitches-hot-lead-badge | pitches UI + query | sonnet/medium | claude/pitches-hot-lead-badge | archived | #3 merged 808af20 | — | merged | — | 12 | 0 (6 optional) | 0 | 0 |
 | learning-arms-dashboard | learning UI | sonnet/medium | claude/learning-arms-dashboard | archived | #2 merged 5d9e88c | — | merged | — | 12 | 0 (6 optional) | 0 | 0 |
-| contact-source-url | research + discover inserts | opus/medium | claude/contact-source-url | session_01VQw8xTBcjWonaKZruNCydk | — | — | running | — | | | | |
+| contact-source-url | research + discover inserts | opus/medium | claude/contact-source-url | session_01VQw8xTBcjWonaKZruNCydk | #4 | — | in-review | — | 14 | | | |
 | pitch-exemplar-memory | pitches (hub) | opus/high | claude/pitch-exemplar-memory | — | — | wave 1 merged | queued (wave 2) | wave 1 | | | | |
 
 Column meanings: Turns = assistant turns in the worker session (proxy for tokens).
@@ -43,6 +43,7 @@ These four columns feed the retro and the routing table.
 | # | From task | Question | Default if unanswered | Answer |
 |---|---|---|---|---|
 | 1 | opportunities-calendar-sync | Reconnect Google once after ship so the calendar.readonly scope is granted | sync reports needsReconnect until done | |
+| 2 | contact-source-url | structured-research-stage.ts also inserts contacts (outside the brief's allow-list); leave source_url null there until a later task? | yes, next batch | |
 
 ## Worktrees to clean up (in-session workers only)
 | Path | Branch | Remove after |
@@ -66,3 +67,4 @@ These four columns feed the retro and the routing table.
 - 2026-10-17 16:25 UTC — 4 remaining wave-1 workers spawned as remote sessions (inherited mode, proven by the probe). PR #1 under review. Safety check-in armed for 17:16 UTC.
 - 2026-10-17 16:31 UTC — PR #1 review: fix-then-merge (blocking: won/lost event attached to latest SENT pitch, which is a follow-up child; must be the root). Conductor landed lib/pitches/root-pitch.ts + audit opportunity actions. PR #2 (learning) and #3 (hot-lead) opened, 504/505 tests, in review.
 - 2026-10-17 16:35 UTC — PR #3 merged (505 tests), PR #2 merged (510 tests), both reviewed merge/0 blocking. Sessions archived. Sonnet lane evidence: 2 clean runs on UI tasks.
+- 2026-10-17 16:39 UTC — PR #5 (calendar-sync, 524 tests, 20 turns; does NOT use latestRootSentPitchId, reviewer told) and PR #4 (contact-source-url, 505 tests, 14 turns) opened, CI green, both in review. PR #1 fix pushed (508 tests), delta re-review running. Brief-quality note: contact-source-url brief contradicted SUBPAGE_PRIORITY (About before Contact).
