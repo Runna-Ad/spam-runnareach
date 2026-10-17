@@ -11,7 +11,7 @@
  */
 
 import { normalizeDomain } from "../fuzzy-dedupe";
-import { isNonBusinessHost } from "../non-business";
+import { isListicleTitle, isNonBusinessHost } from "../non-business";
 
 // ── Public types ─────────────────────────────────────────────────────────────
 
@@ -137,6 +137,7 @@ export async function searchBrave(
     const results = data?.web?.results ?? [];
 
     const listings: BraveListing[] = results
+      .filter((r) => !isListicleTitle(r.title ?? ""))
       .map((r) => {
         let domain: string | null = null;
         try {

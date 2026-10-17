@@ -2,7 +2,23 @@
 
 import assert from "node:assert/strict";
 import test from "node:test";
-import { isNonBusinessHost } from "../lib/discover/non-business.ts";
+import { isListicleTitle, isNonBusinessHost } from "../lib/discover/non-business.ts";
+
+test("numbered list pages are dropped, in English and Spanish", () => {
+  for (const t of [
+    "LOS 10 MEJORES spas en México (Actualizado 2026)",
+    "¡Descubre los 12 mejores spas en Ciudad de México! | Moons",
+    "Los 13 mejores spas en CDMX para un día de relax",
+    "Top 10 Law Firms in Calgary",
+    "15 Best Accounting Firms in Toronto",
+    "The 7 best spas in Monterrey",
+  ]) {
+    assert.equal(isListicleTitle(t), true, t);
+  }
+  for (const t of ["The Best Pizza in Calgary | Tony's", "Manthra SPA Chapultepec", "Top Notch Plumbing", "24 Hour Fitness"]) {
+    assert.equal(isListicleTitle(t), false, t);
+  }
+});
 
 test("what the first autopilot run found is refused", () => {
   for (const h of [

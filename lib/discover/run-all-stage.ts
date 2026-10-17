@@ -18,6 +18,7 @@ import { runCrawlWith } from "./crawl-stage";
 import { braveIsAvailable } from "./sources/brave-search";
 import { denueIsAvailable, deriveScianCode, deriveMexicoStateCode, MEXICO_STATE_CODES, INDUSTRY_TO_SCIAN } from "./sources/denue";
 import { googlePlacesIsAvailable } from "./sources/google-places";
+import { searchGeo } from "./search-geo";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -43,12 +44,6 @@ const PLATFORM_KEYWORDS = new Set([
   "magento", "prestashop", "volusion", "ecwid", "wordpress",
 ]);
 
-const CANADIAN_PROVINCES = new Set([
-  "Alberta", "British Columbia", "Manitoba", "New Brunswick",
-  "Newfoundland and Labrador", "Northwest Territories", "Nova Scotia",
-  "Nunavut", "Ontario", "Prince Edward Island", "Quebec", "Saskatchewan", "Yukon",
-]);
-
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 /**
@@ -67,30 +62,12 @@ function deriveDirectoryKeywords(icp: {
 }
 
 /**
- * Derive the YP province/location from an ICP's geo_regions.
- * YP expects a full province name (e.g. "Alberta") or "Canada".
- */
-function deriveYpLocation(geoRegions: string[]): string {
-  const province = geoRegions.find((r) => CANADIAN_PROVINCES.has(r));
-  return province ?? "Canada";
-}
-
-/**
  * Build a Brave Search query.
  * Platform keywords get "online store" appended to target merchants, not agencies.
- * Non-platform keywords are used as-is with geo.
+ * Non-platform keywords are used as-is with geo (searchGeo's brave words).
  */
-function deriveBraveQuery(icp: {
-  search_keywords: string[];
-  industry_tags: string[];
-  market: string;
-  geo_regions: string[];
-}): string {
+function deriveBraveQuery(icp: { search_keywords: string[]; industry_tags: string[] }, geo: string): string {
   const primaryKeyword = icp.search_keywords[0] ?? icp.industry_tags[0] ?? "ecommerce";
-  const geo =
-    icp.market === "MX" ? "Mexico"
-    : icp.market === "US" ? "United States"
-    : icp.geo_regions.find((r) => CANADIAN_PROVINCES.has(r)) ?? "Canada";
 
   if (PLATFORM_KEYWORDS.has(primaryKeyword.toLowerCase())) {
     return `"${primaryKeyword}" online store ${geo}`;
@@ -150,9 +127,11 @@ export async function runAllSourcesWith(
 
   // The autopilot's scout picks one cell (keyword × region) per run, so each
   // run's yield can be credited to that cell (lib/learning/scout.ts).
+  let focusRegion: string | null = null;
   if (focus?.keyword.trim()) {
     icp.search_keywords = [focus.keyword.trim()];
-    if (focus.region?.trim()) icp.geo_regions = [focus.region.trim()];
+    focusRegion = focus.region?.trim() || null;
+    if (focusRegion) icp.geo_regions = [focusRegion];
   }
 
   // LATAM is retired (removed from the ICP selector 2026-07-17). Legacy rows
@@ -160,8 +139,9 @@ export async function runAllSourcesWith(
   // LATAM prospects as Mexican. The old CA mapping here meant a LATAM ICP
   // searched Canadian directories and then labelled the results Mexican.
   const market = icp.market === "LATAM" ? "MX" : (icp.market as "CA" | "MX" | "US");
-  const ypLocation = deriveYpLocation(icp.geo_regions);
-  const braveQuery = deriveBraveQuery({ ...icp, market });
+  const geo = searchGeo(market, icp.geo_regions, focusRegion, MEXICO_STATE_CODES);
+  const ypLocation = geo.yp;
+  const braveQuery = deriveBraveQuery(icp, geo.brave);
   const directoryKeywords = deriveDirectoryKeywords(icp);
   const firstKeyword = directoryKeywords[0]!;
 
@@ -207,17 +187,11 @@ export async function runAllSourcesWith(
 
     // Google Places (all markets)
     if (googlePlacesIsAvailable()) {
-      const googleLocation =
-        market === "MX" ? "Mexico"
-        : market === "US" ? "United States"
-        : ypLocation !== "Canada" ? `${ypLocation}, Canada`
-        : "Canada";
-
       collect(
         await runCrawlWith(actor, {
           source: "google_places",
           keyword: kw,
-          location: googleLocation,
+          location: geo.places,
           market,
           pages: 1,
           icp_id: icpId,
@@ -324,14 +298,11 @@ export async function previewRunAllSourcesWith(
     ? `${scianEntry[0]} (SCIAN ${scianCode})`
     : scianCode !== "0" ? `SCIAN ${scianCode}` : "all industries";
 
-  const ypLoc = deriveYpLocation(icp.geo_regions);
   // Preview must show the same market the run will actually use (LATAM -> MX).
   const previewMarket = icp.market === "LATAM" ? "MX" : icp.market;
-  const googleLocation =
-    previewMarket === "MX" ? "Mexico"
-    : previewMarket === "US" ? "United States"
-    : ypLoc !== "Canada" ? `${ypLoc}, Canada`
-    : "Canada";
+  const geo = searchGeo(previewMarket, icp.geo_regions, null, MEXICO_STATE_CODES);
+  const ypLoc = geo.yp;
+  const googleLocation = geo.places;
 
   const directoryKeywords = deriveDirectoryKeywords(icp);
 
@@ -345,7 +316,7 @@ export async function previewRunAllSourcesWith(
     directoryKeywords,
     ypLocation: ypLoc,
     totalDirectoryCrawls: directoryKeywords.length * activeDirSources,
-    braveQuery: deriveBraveQuery({ ...icp, market: previewMarket }),
+    braveQuery: deriveBraveQuery(icp, geo.brave),
     braveAvailable: braveIsAvailable(),
     denueAvailable: denueIsAvailable(),
     denueActivity,

@@ -64,6 +64,13 @@ test("candidate cells: every keyword in every region, deduplicated", () => {
   assert.deepEqual(cells.map(cellKey).sort(), ["a|dentist|calgary", "a|dentist|edmonton", "b|despacho|"]);
 });
 
+test("technologies and bare attributes never become search cells", () => {
+  const cells = candidateCells([
+    { id: "a", search_keywords: ["Shopify", "direct to consumer", "Meta Pixel", "premium", "fitness studio"], geo_regions: ["Alberta"] },
+  ]);
+  assert.deepEqual(cells.map(cellKey), ["a|fitness studio|alberta"]);
+});
+
 test("discovery budget feeds tomorrow's capacity, no more", () => {
   assert.equal(discoveryBudget({ dailySendCapacity: 20, pitchesWaiting: 40, pitchYield: 0.2 }), 0);
   assert.equal(discoveryBudget({ dailySendCapacity: 20, pitchesWaiting: 10, pitchYield: 0.2 }), 150);

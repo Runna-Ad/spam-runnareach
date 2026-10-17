@@ -26,6 +26,20 @@ const NEWS_HOSTS = [
 
 const matches = (host: string, list: string[]) => list.some((h) => host === h || host.endsWith(`.${h}`));
 
+/**
+ * A numbered list page ("Top 10 spas in Calgary", "Los 13 mejores spas en
+ * CDMX") is a review site, never the business's own. Unnumbered titles are left
+ * alone: "The Best Pizza in Calgary" can be a pizzeria's homepage.
+ */
+export function isListicleTitle(title: string): boolean {
+  const t = title.trim().replace(/^[¡¿]\s*/, "").replace(/^descubre\s+/i, "");
+  return (
+    /^(top|best)\s+\d+\b/i.test(t) ||
+    /^\d+\s+(best|top|mejores|principales)\b/i.test(t) ||
+    /^(los|las|the)\s+\d+\s+(best|top|mejores|principales)\b/i.test(t)
+  );
+}
+
 export function isNonBusinessHost(hostname: string): boolean {
   const host = hostname.toLowerCase().replace(/^www\./, "");
   const labels = host.split(".");

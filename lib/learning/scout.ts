@@ -106,13 +106,27 @@ export function chooseCellFromArms(
   return arm ? parseCellKey(arm.key) : null;
 }
 
-/** Candidate cells from active ICPs: each keyword × each region (or no region). */
+// Technologies and bare attributes describe a business but can't be searched
+// for: "direct to consumer Alberta" returned news sites and government pages.
+// Manual runs still use them; the scout doesn't spend jobs on them.
+const NOT_A_SEARCH = new Set([
+  "shopify", "shopify plus", "woocommerce", "bigcommerce", "squarespace", "wix", "magento",
+  "prestashop", "wordpress", "google tag manager", "meta pixel", "google analytics", "klaviyo",
+  "hubspot", "premium", "luxury", "sustainable", "handmade", "small batch", "made in canada",
+  "subscription", "online store", "dtc brand", "direct to consumer", "ecommerce", "e-commerce",
+]);
+
+export function isSearchableKeyword(keyword: string): boolean {
+  return !NOT_A_SEARCH.has(keyword.trim().toLowerCase());
+}
+
+/** Candidate cells from active ICPs: each searchable keyword × each region (or no region). */
 export function candidateCells(
   icps: ReadonlyArray<{ id: string; search_keywords: string[] | null; geo_regions: string[] | null }>,
 ): SearchCell[] {
   const out = new Map<string, SearchCell>();
   for (const icp of icps) {
-    const keywords = (icp.search_keywords ?? []).map((k) => k.trim()).filter(Boolean);
+    const keywords = (icp.search_keywords ?? []).map((k) => k.trim()).filter(Boolean).filter(isSearchableKeyword);
     const regions = (icp.geo_regions ?? []).map((r) => r.trim()).filter(Boolean);
     for (const keyword of keywords) {
       for (const region of regions.length ? regions : [null]) {
