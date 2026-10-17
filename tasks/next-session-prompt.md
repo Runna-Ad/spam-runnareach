@@ -45,7 +45,9 @@ version 0038), main = `ae03703`. Verify after the first real use:
    RFC Message-IDs (contain "@"); the tick after, `landed_in_inbox` values.
 
 Still open from Phase 1:
-- runna-hunter must store the `r` query parameter (attribution code) on scans
-  and write an `audit_scan` pitch_event (or a row SPAM can join on).
+- Attribution is live end to end (runna-hunter `3b4077f` + migration 0039):
+  `select * from pitch_events where event_type = 'audit_scan'`. Not yet shown
+  in the UI: a "ran the free check" / "asked to talk" badge on /pitches would
+  make these hot leads visible.
 - Per-contact source URL (enables the just-in-time page-freshness check).
 - Follow-up template fallback in the cron (Pedro's call, see project-state).
