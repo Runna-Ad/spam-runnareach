@@ -33,6 +33,7 @@ import { refreshGateAfterChange } from "@/lib/pitches/gate";
 import { recordPitchEvent } from "@/lib/pitches/events";
 import { DECISION_VERSION, recipientSummary, registerFor, type DecisionRecord } from "@/lib/pitches/decision";
 import { isRoleBasedEmail } from "@/lib/research/email-utils";
+import { decisionExemplarFields } from "@/lib/pitches/exemplars";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -240,6 +241,9 @@ export async function generateWebsitePitchWith(
     attribution_code: null,
     recipient: recipientSummary({ ...topUsable, email_is_role_based: isRoleBasedEmail(topUsable.email) }),
     critic: null,
+    // This writer has its own prompt (the value of a website) and takes no
+    // exemplars; recorded so every decision record has the field.
+    ...decisionExemplarFields(method === "claude" ? "website_claude" : "website_template", []),
     gate: gateAtGeneration
       ? { version: gateAtGeneration.version, pass: gateAtGeneration.pass, codes: gateAtGeneration.failures.map((f) => f.code) }
       : null,

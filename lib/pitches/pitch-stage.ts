@@ -25,6 +25,9 @@ import {
   type DecisionRecord,
 } from "./decision";
 import { recordPitchEvent } from "./events";
+import { fetchExemplars } from "./exemplar-queries";
+import { decisionExemplarFields } from "./exemplars";
+import { segmentOf } from "@/lib/learning/segments";
 import { chooseWriterArms } from "@/lib/autopilot/learn";
 import { renderIndustryTemplate } from "./industry-templates";
 import { buildHunterUrlForPitch } from "./hunter-mapping";
@@ -333,7 +336,25 @@ export async function generatePitchWith(
   // Which writer variants this pitch tests (lib/autopilot/learn.ts): cite a
   // sourced statistic or not, and which learned guidance (if any) to follow.
   // Never throws; without arms, today's behaviour.
-  const writerArms = await chooseWriterArms(supabase, user.tenantId);
+  // Alongside: up to two of our own best past pitches for this segment
+  // (lib/pitches/exemplars.ts), scrubbed, as the writer's model and the
+  // critic's bar. Never throws; none → today's exact prompts. Skipped when the
+  // daily AI cap is already hit (the template writes the pitch then), so the
+  // cap is checked once, here, and reused below.
+  const dailyCapCheck = claudeIsAvailable() ? isUnderDailyCap(user.tenantId) : Promise.resolve(null);
+  const [writerArms, exemplars, dailyCap] = await Promise.all([
+    chooseWriterArms(supabase, user.tenantId),
+    dailyCapCheck.then((c) =>
+      c?.under
+        ? fetchExemplars(supabase, user.tenantId, {
+            segment: segmentOf(prospect),
+            lang: prospect.language,
+            prospect_id: prospect.id,
+          })
+        : [],
+    ),
+    dailyCapCheck,
+  ]);
   const offeredBenchmarks = writerArms.evidence === "no_benchmark" ? [] : benchmarks;
 
   const generatorInputs: GeneratorInputs = {
@@ -348,6 +369,7 @@ export async function generatePitchWith(
     notable_clients: notableClientRows,
     benchmarks: offeredBenchmarks,
     guidance: writerArms.guidance?.text ?? null,
+    exemplars,
     // Signed by the per-language sender (Nils ES / Henry EN · Runna Advertising),
     // never the name of whoever clicked "Generate".
     sender: senderForGenerator(prospect.language),
@@ -380,8 +402,8 @@ export async function generatePitchWith(
   let reviewCalls: ReviewCall[] = [];
   let critic: CriticVerdict | null = null;
 
-  if (claudeIsAvailable()) {
-    const cap = await isUnderDailyCap(user.tenantId);
+  if (dailyCap) {
+    const cap = dailyCap;
     if (!cap.under) {
       claudeFallbackReason = `daily cap hit (spent $${cap.spent_today_usd.toFixed(2)} of $${cap.cap_usd.toFixed(2)})`;
     } else {
@@ -544,6 +566,8 @@ export async function generatePitchWith(
     ...(method === "claude"
       ? { arms: { "writer.evidence": writerArms.evidence, "writer.guidance": writerArms.guidance?.key ?? "none" } }
       : {}),
+    // A template uses no exemplars, even when some were loaded for the AI path.
+    ...decisionExemplarFields(method === "claude" ? "claude" : "template", exemplars),
   };
   const { error: decisionErr } = await supabase
     .from("pitches")
@@ -820,6 +844,8 @@ export async function rewritePitchWithAngleWith(
       path: "rewrite",
       prompt_version: PITCH_PROMPT_VERSION,
       angle: parsed.data.pain_label,
+      // A human-chosen angle is written without exemplars.
+      exemplars_used: [],
       critic_pass: result.critic?.pass ?? null,
       critic_issues: result.critic?.issues ?? [],
       revisions: result.critic?.revisions ?? 0,

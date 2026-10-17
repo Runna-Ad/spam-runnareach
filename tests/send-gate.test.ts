@@ -331,6 +331,10 @@ test("v2: jargon and em dashes are review-level flags", () => {
 test("v2: bracket placeholders copied from the prompt are blocked", () => {
   assert.ok(has(withBody("Hi John,\n\nRun [company] through our free check and see where [the pain] is costing you." + BODY_TAIL), "unresolved_placeholder"));
   assert.ok(has(withBody("Hola,\n\nCorre [empresa] en la herramienta y mira dónde [el dolor] te cuesta." + BODY_TAIL, { lang: "es" }), "unresolved_placeholder"));
+  // One-character placeholders too: the exemplar scrubber emits [n] / [x] and a
+  // model may copy them verbatim (2026-10-17).
+  assert.ok(has(withBody("Hi John,\n\nMost shops like yours lose [n] enquiries a week." + BODY_TAIL), "unresolved_placeholder"));
+  assert.ok(has(withBody("Hi John,\n\nWe worked with {x} last year." + BODY_TAIL), "unresolved_placeholder"));
 });
 
 test("v2: formal Spanish greetings are checked (v1 never saw them)", () => {

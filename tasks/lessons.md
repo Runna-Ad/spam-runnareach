@@ -1,4 +1,76 @@
-# Lessons — S.P.A.M. / Runna CA Opportunity Engine
+# S.P.A.M. — Lessons (newest first)
+
+## Merged from lessons-inbox, Phase 3 batch 1 (2026-10-17, conductor/worker workflow)
+
+### from pitch-exemplar-memory
+[2026-10-17] A placeholder or label inside a prompt must not trip the check it is meant to satisfy
+WHAT HAPPENED: The exemplar section numbered its examples ("Example 1"), so the "no digit reaches the prompt" test failed on our own label, not on prospect data (lib/pitches/exemplars.ts). In the other direction, the brief's digit placeholder `[n]` is 1 character, and the send gate's placeholder check (lib/pitches/send-gate.ts:377, 3–40 chars, same pattern as `LEFTOVER_PLACEHOLDER_RE` in claude-composer.ts) does not see it: a writer that copies `[n]` out of an exemplar would pass the gate as a draft with a visible blank (the critic is the only net). `[name]`, `[company]`, `[site]` are caught.
+RULE: When text is injected into a prompt with placeholders, check both directions: the scaffolding (labels, numbering) carries none of what the scrubber removes, and every placeholder is something the downstream gate recognizes as unfinished if it is copied.
+TAGS: pitches, prompts, gate
+
+[2026-10-17] Segment filters cannot run in SQL while industry is free text
+WHAT HAPPENED: prospects.industry and decision.segment.industry are free text; segment industry is a regex normalization (lib/learning/segments.ts normalizeIndustry). A "candidates for the segment, limit 20" query cannot be written, so fetchExemplars scans the 200 newest settled sends in the language, filters to the segment in memory, and reads events for at most 20.
+RULE: Any learner that needs "pitches in segment X" will hit this. A stored, normalized segment key (e.g. decision.segment_key or a generated column) would make it one indexed query; until then, scan-recent-then-filter with an explicit cap.
+TAGS: learning, segments, queries
+
+[2026-10-17] A scrubber is a list of rules; guard it with an invariant that fails closed
+WHAT HAPPENED: The first exemplar scrubber replaced a past prospect's full name, company and city with a hand-built case/accent regex. Review found 9 leaks: "Wagner" from "Wagner Legal Group Inc.", lower-case "toronto", "Smith-Jones", "St. Bernard's", "Lic. Núñez", "O’Brien", "Hi Miguel" without a comma, "Dr. Patel", and vowel-only accent classes that missed "CALGARY". The fix matches on one accent-folded, lower-cased shadow of the text mapped back to the original. Then exemplarLeaks re-checks every distinctive word (4+ letters, not generic) of the company, contact, city and domain, and toExemplar DROPS the exemplar if any survives (lib/pitches/exemplars.ts).
+RULE: When text from one customer may reach another, don't rely on the replacement rules alone. Add a separate check over the output for the identifying tokens, and drop on any hit. Test it with the reviewer's probes plus a generated property test (30 name × company × city combos), and run those tests against the old code to show they bite (7 of 7 failed there).
+TAGS: pitches, privacy, scrubbing, testing
+
+## Out of scope, noticed
+- (Fixed by the conductor in 3dfeec4, merged into this branch: the send gate now blocks one-character placeholders like `[n]`.) `LEFTOVER_PLACEHOLDER_RE` in claude-composer.ts (the composer's violation counter) still needs 3+ chars; cosmetic only.
+- (Resolved in this PR: the scrubber also replaces the past prospect's city with `[city]`, which the gate's placeholder check does catch.)
+
+### from opportunities-calendar-sync
+[2026-10-17] A route test needs a handler that takes its deps; route.ts files can't load under node --test
+WHAT HAPPENED: The brief asked for a 401/200 route test with a `Request`, but `app/api/**/route.ts` imports `@/` aliases, `next/server` and `server-only`, none of which load under `node --experimental-strip-types --test`. The handler lives in `lib/opportunities/calendar-sync.ts` as `handleCalendarSync(req, deps)` (auth, tenants, actor, sync injected) and `route.ts` only wires real deps; the test calls the handler with a real `Request`.
+RULE: For any cron route whose auth or response shape must be tested, put the handler in a lib module with no server imports (relative `.ts` imports, `import type` for Actor) and make `route.ts` a one-call wiring file. Briefs asking for a route test should say so.
+TAGS: testing, routes, cron
+
+## Out of scope, noticed
+- `lib/gmail/client.ts` `getAccessToken` and `sendGmailMessage` fetch with no `AbortSignal.timeout` (core-context rule). Every cron route that refreshes a token inherits an unbounded wait.
+- The brief points at `app/api/autopilot/tick/route.ts` for a "Sentry check-in flush" pattern; the tick route has no Sentry monitor (only warmup/* routes use `withCronMonitor`).
+
+### from contact-source-url
+[2026-10-17] A brief's mechanism and its acceptance check can disagree. Satisfy the check and say how
+WHAT HAPPENED: The contact-source-url brief said "first page in fetch order wins" and also required that an address on /contact and /about record /contact. But `scrapeSubPages` fetches in SUBPAGE_PRIORITY order (About, Team, Contact…), so About comes first. `lib/research/scraper.ts` `attributeEmailSources` ranks a Contact page first, then fetch order. The emails' order and set are unchanged.
+RULE: Before writing a brief's acceptance check about "first/last/order", check the real iteration order in code (`SUBPAGE_PRIORITY`, not `KEY_PAGE_PATHS`). A worker that hits the contradiction keeps the testable check, writes the rule in the PR, and gives the one-line switch.
+TAGS: research, scraper, briefs
+
+[2026-10-17] Scraper end-to-end tests can stub global fetch
+WHAT HAPPENED: `tests/scraper-source-url.test.ts` runs the real `scrapeSite` against a fake site by replacing `globalThis.fetch` and setting `Response.url` with `Object.defineProperty`. A constructed Response has `url === ""`, which silently empties key-page discovery. Each case takes about 1 s because of SUBPAGE_RATE_LIMIT_MS sleeps.
+RULE: To test network-loop code in the scraper, stub fetch rather than exporting internals. Always set `res.url`. Use real-looking mailboxes: `privacy@` is filtered by the extractor and makes a test fail for the wrong reason.
+TAGS: research, testing
+
+## Out of scope, noticed
+- `lib/research/structured-research-stage.ts:257` also inserts into `prospect_contacts` (decision-maker email, `selected_by: "engine"`). It was not in the brief's list or allow-list, so it leaves `source_url` unset (column default). Its email can come from scraped notes, so a later brief could thread a source there.
+
+### from opportunities-pipeline-ui
+[2026-10-17] Read-only helper unions lag new enum values
+WHAT HAPPENED: 0043 added `won`/`lost` to pitch_event_type, but `PitchEventType` in lib/pitches/events.ts and the AuditAction/entityType unions in lib/audit/log.ts were not extended, and both are read-only for workers. actions.ts inserts the pitch_events row directly and reuses the `prospect.status_changed` audit code with the opportunity id in metadata.
+RULE: when a migration adds an enum value, the conductor extends every TS union that mirrors it in the same wave, so workers can use the shared helpers.
+TAGS: opportunities, enums, pitch-events, audit
+
+## Out of scope, noticed
+- package.json has zod v3 (`required_error`), so zod v4 `{ error }` params fail typecheck; worth a line in core-context.
+
+### from pitches-hot-lead-badge
+[2026-10-17] Widening PitchListRow breaks PitchDetail
+WHAT HAPPENED: `PitchDetail` is `PitchListRow & {...}` and `getPitch` builds it by hand, so adding required fields to the list row would have forced edits to `getPitch` (briefed as untouched). I changed the PitchDetail type to `Omit<PitchListRow, "hot_lead" | "hot_lead_at"> & {...}` in lib/pitches/queries.ts. Also `pitch_events` is not in `lib/supabase/types.ts`, so the typed client rejects it; the query uses the same `any` cast as lib/pitches/events.ts. Tests import with a relative path plus `.ts` (the `@/` alias is not resolved by the node test runner).
+RULE: When adding a field to a row type that another type extends, check the extender's builder; list-only fields go through `Omit` on the detail type. Add `pitch_events` to the Database types when the conductor next touches types.ts.
+TAGS: pitches, types
+
+## Out of scope, noticed
+- lib/supabase/types.ts: `pitch_events` missing from the hand-written Database type (forces `any` casts in events.ts and queries.ts).
+- getPitch fills created_at/updated_at with `new Date()` instead of the row values (lib/pitches/queries.ts).
+
+### from learning-arms-dashboard
+nothing new
+
+## Out of scope, noticed
+- `lib/autopilot/learn.ts` uses learner names `writer.evidence`, `writer.guidance`, `scout.cell`, `icp`; the labels in `lib/learning/report.ts` are keyed on those strings and unknown learners fall back to the raw name.
+
 
 Running log of mistakes, root causes, and rules to prevent recurrence. Newest at top.
 

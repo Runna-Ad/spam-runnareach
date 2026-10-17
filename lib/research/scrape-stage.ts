@@ -326,6 +326,7 @@ export async function scrapeWebsiteWith(
       priority_rank: roleBased ? 5 : 2,
       selected_by: "scraper",
       selected_at: new Date().toISOString(),
+      source_url: site.contact_email_sources[email.toLowerCase()] ?? null,
     } as never);
     if (contactErr && contactErr.code !== "23505") {
       contactInsertErrors.push(`${email}: ${contactErr.code} ${contactErr.message}`);

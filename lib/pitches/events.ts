@@ -22,7 +22,10 @@ export type PitchEventType =
   | "reply"
   | "bounce"
   | "unsubscribe"
-  | "audit_scan";
+  | "audit_scan"
+  | "meeting_booked"
+  | "won"
+  | "lost";
 
 export async function recordPitchEvent(
   supabase: AnySupabase,

@@ -980,6 +980,7 @@ export type Database = {
           verify_verdict: string | null;
           verify_reasons: string[] | null;
           verify_checked_at: string | null;
+          source_url: string | null;
           created_at: Timestamptz;
           updated_at: Timestamptz;
         };
@@ -1000,6 +1001,7 @@ export type Database = {
           verify_verdict?: string | null;
           verify_reasons?: string[] | null;
           verify_checked_at?: string | null;
+          source_url?: string | null;
         };
         Update: {
           full_name?: string | null;
@@ -1015,6 +1017,7 @@ export type Database = {
           verify_verdict?: string | null;
           verify_reasons?: string[] | null;
           verify_checked_at?: string | null;
+          source_url?: string | null;
         };
         Relationships: NoRels;
       };

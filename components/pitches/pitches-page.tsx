@@ -108,13 +108,19 @@ export function PitchesPage({ pitches, counts, canEdit, inboxes }: PitchesPagePr
       return next;
     });
 
+  const [hotOnly, setHotOnly] = React.useState(false);
+  React.useEffect(() => setChecked(new Set()), [hotOnly]);
+
   const visible = React.useMemo(() => {
-    if (filter === "ALL") return pitches;
-    if (filter === "queued_for_send") return pitches.filter(isQueuedForSend);
-    // "Approved" means ready-to-queue only — queued ones live in their own view.
-    if (filter === "approved") return pitches.filter((p) => p.status === "approved" && !p.scheduled_send_at);
-    return pitches.filter((p) => p.status === filter);
-  }, [pitches, filter]);
+    const byStatus = (() => {
+      if (filter === "ALL") return pitches;
+      if (filter === "queued_for_send") return pitches.filter(isQueuedForSend);
+      // "Approved" means ready-to-queue only — queued ones live in their own view.
+      if (filter === "approved") return pitches.filter((p) => p.status === "approved" && !p.scheduled_send_at);
+      return pitches.filter((p) => p.status === filter);
+    })();
+    return hotOnly ? byStatus.filter((p) => p.hot_lead !== null) : byStatus;
+  }, [pitches, filter, hotOnly]);
 
   const selected = React.useMemo(
     () => pitches.find((p) => p.id === selectedId) ?? null,
@@ -286,6 +292,19 @@ export function PitchesPage({ pitches, counts, canEdit, inboxes }: PitchesPagePr
               Queue {counts.approved} for send
             </Button>
           ) : null}
+          <label className="flex cursor-pointer items-center gap-1.5 text-xs text-[var(--color-fg-300)]">
+            <input
+              type="checkbox"
+              checked={hotOnly}
+              onChange={(e) => {
+                setHotOnly(e.target.checked);
+                // Hot leads are sent pitches; the default "Draft" view would hide them all.
+                if (e.target.checked) setFilter("ALL");
+              }}
+              className="h-3.5 w-3.5 cursor-pointer accent-[var(--color-accent-300)]"
+            />
+            Hot leads
+          </label>
           <Filter className="h-3.5 w-3.5 text-[var(--color-fg-700)]" aria-hidden />
           <Select
             value={filter}
@@ -479,6 +498,18 @@ function PitchRow({
       >
         <div className="flex items-center gap-2">
           <Chip tone={meta.tone}>{meta.label}</Chip>
+          {pitch.hot_lead ? (
+            <Chip
+              tone={pitch.hot_lead === "contact_request" ? "danger" : "accent"}
+              title={
+                pitch.hot_lead === "contact_request"
+                  ? "Submitted the contact form after running the audit tool from this pitch's link."
+                  : "Ran the audit tool from this pitch's link."
+              }
+            >
+              {pitch.hot_lead === "contact_request" ? "Asked to talk" : "Ran the check"}
+            </Chip>
+          ) : null}
           {pitch.quality_self_score !== null ? (
             <span className={cn("font-mono text-[11px]", scoreColor)}>
               {Math.round(pitch.quality_self_score * 100)}%

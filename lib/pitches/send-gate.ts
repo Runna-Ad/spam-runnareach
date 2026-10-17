@@ -373,8 +373,9 @@ export function evaluateSendGate(input: GateInput): GateResult {
   // ── 6. No unresolved template tokens ─────────────────────────────────────
   // A literal "{hunter_url}" reached a live draft on 2026-07-22. resolveCtaLink
   // now fills it, so anything still here — {company}, [the pain] — is a
-  // placeholder the recipient would read as-is.
-  const placeholder = both.match(/[{[]{1,2}\s*[a-záéíóúñü_' ]{3,40}?\s*[}\]]{1,2}/i);
+  // placeholder the recipient would read as-is. One character counts too: the
+  // exemplar scrubber emits [n], and a model may copy it (2026-10-17).
+  const placeholder = both.match(/[{[]{1,2}\s*[a-záéíóúñü_' ]{1,40}?\s*[}\]]{1,2}/i);
   if (placeholder) {
     fail("unresolved_placeholder", `Contains the literal placeholder "${placeholder[0]}" — it was never substituted.`);
   }
