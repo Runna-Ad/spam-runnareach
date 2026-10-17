@@ -5,7 +5,7 @@ file alone. Update it on every spawn, every status change, every merge. Keep clo
 for the current phase; move older ones to the retro.
 
 ## Current phase
-`phase3-batch1` · integration branch `claude/gallant-gauss-gly093` (this session's branch doubles as the integration branch) · opened from `main` at `acf53e2` · integration → main PR: https://github.com/Runna-Ad/spam-runnareach/pull/7 (awaiting Pedro's ship-it)
+`phase3-batch1` · integration branch `claude/gallant-gauss-gly093` (this session's branch doubles as the integration branch) · opened from `main` at `acf53e2` · integration → main PR #7 MERGED a15d1d8 (ship it 2026-10-17)
 
 ## Approvals and checks
 | Item | State |
@@ -19,7 +19,7 @@ for the current phase; move older ones to the retro.
 ## Reserved migration numbers
 | Number | Reserved for | Status (reserved → used → applied) |
 |---|---|---|
-| 0043 | conductor wave 0: opportunities.source/calendar_event_id, pitch_event_type +meeting_booked/won/lost, prospect_contacts.source_url | used (merged, NOT applied; apply BEFORE deploy: inserts name source_url) |
+| 0043 | conductor wave 0: opportunities.source/calendar_event_id, pitch_event_type +meeting_booked/won/lost, prospect_contacts.source_url | APPLIED 2026-10-17 17:40 UTC via connector (version 20261017174016) |
 | 0044 | opportunities-calendar-sync (cron schedule) | used (merged, NOT applied; apply AFTER deploy) |
 | 0045 | pitch-exemplar-memory (wave 2, if a table is needed) | reserved |
 | 0046 | — | free |
@@ -83,3 +83,4 @@ These four columns feed the retro and the routing table.
 - 2026-10-17 17:11 UTC — PR #6 round 2: fail-closed invariant landed (592 tests) but the common-word case gate also covered cities/brands (victoria, surrey, summit leak in lowercase subjects). Sent the precise fix as the last round; conductor will verify with the reviewer's probe script instead of a 3rd review (G15). Reviewer round 2: ~142k tokens cumulative.
 - 2026-10-17 17:23 UTC — PR #6 merged after conductor spot-check (23 probes, 593 tests). BATCH COMPLETE: 6/6 merged, 593 tests, build green. Fable batch audit: MERGE, conditional on applying 0043 BEFORE deploy (contact inserts name source_url; a code-first deploy would silently drop contacts in the autopilot research path). Retro written, lessons merged, project-state updated. Opening integration → main PR; waiting on Pedro's ship-it.
 - 2026-10-17 17:24 UTC — Integration → main PR #7 opened and subscribed. Batch is DONE on the conductor side; waiting on Pedro: apply 0043, ship it, apply 0044, reconnect Google.
+- 2026-10-17 17:42 UTC — Pedro: 'applied 0043, ship it'. DB check showed 0043 NOT applied (0 columns, 0 enum values, latest migration 0042) → applied via Supabase connector, verified, THEN merged PR #7 → main a15d1d8. Remaining for Pedro: apply 0044 after deploy, reconnect Google. Check-in trigger cancelled.

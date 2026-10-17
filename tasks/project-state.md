@@ -13,7 +13,7 @@
 - **Sibling repo:** `runna-hunter` (separate Vercel project) — the self-serve Inefficiency Hunter the pitch CTA deep-links to.
 
 ## What's deployed
-- Prod = `main` = `ae03703` (2026-10-17, Phase 1 parts 1 and 2 shipped on Pedro's "ship it"). `main` = prod.
+- Prod = `main` = `a15d1d8` (2026-10-17, Phase 3 batch 1 shipped on Pedro's "ship it"; Phase 2 and earlier below). `main` = prod.
 - Migration **0038** (pitches.decision + write-once trigger, pitches.attribution_code, pitch_event_type values, prospect_contacts.verify_*) applied to prod 2026-10-17, recorded as version 0038.
 - Migration **0039** (hunter_scans.ref + trigger `hunter_scans_pitch_event`: a scan carrying a pitch's attribution code → `pitch_events` 'audit_scan' {stage: scan}; its contact-form submit → {stage: contact_request}) applied 2026-10-17, recorded as version 0039. runna-hunter `3b4077f` sends `?r=` with each scan. Before this: `hunter_scans` had 6 rows ever, the last on 2026-06-25, i.e. the Jul–Aug sends produced no logged scans.
 - Migrations **0036** (pitches.gate_verdict + gate_override) and **0037** (sourced benchmarks: 41 seeded + 4 activated → 48 active) applied to prod 2026-10-17, recorded as versions 0036 / 0037.
@@ -76,10 +76,13 @@ SHIPPED on Pedro's "ship it": migrations 0040 + 0041 applied, main = `4b22ad1`+,
 - **Scheduler** (migration 0041): pg_cron + pg_net; token generated inside Postgres, kept in Vault, checked via `scheduler_token_valid` (service role only); tick every 15 min, reply poll every 30 min, send-queue every 10 min and follow-ups hourly Mon–Fri 15–22 UTC. Vercel daily crons stay as backstop.
 - Session note: the Auto-mode safety check refused the service-role pipeline and creating an account; Pedro switched the session to "Accept edits" and approved. Permission rules were not edited.
 
-## Phase 3 — batch 1 (ON INTEGRATION BRANCH `claude/gallant-gauss-gly093`, awaiting Pedro's "ship it")
+## Phase 3 — batch 1 (SHIPPED 2026-10-17 on Pedro's "ship it": main = `a15d1d8`, PR #7)
 First batch run through the conductor/worker workflow (`.claude/skills/conductor/SKILL.md`,
 retro in `tasks/retros/2026-10-17-phase3-batch1.md`). 593 tests, build green, 6 PRs reviewed
-and merged into the integration branch in 58 minutes. NOT in prod yet.
+and merged into the integration branch in 58 minutes. Migration **0043** applied via the Supabase
+connector right before the merge (recorded as version 20261017174016; Pedro's SQL-editor run had
+not landed: the column check returned 0 rows). **0044 NOT yet applied** (apply after the deploy),
+Google NOT yet reconnected.
 - **Booking → opportunities** (`lib/opportunities/calendar-sync.ts`, `/api/opportunities/calendar-sync`,
   migration 0044 = hourly pg_cron): Google Calendar appointment-schedule bookings on the
   connected inbox become `opportunities` rows (stage meeting_booked, source calendar,
