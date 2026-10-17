@@ -4,6 +4,11 @@ Running log of mistakes, root causes, and rules to prevent recurrence. Newest at
 
 ---
 
+[2026-10-17] LESSON: the Supabase MCP holds every DELETE, not just DROP, and in a cloud session nobody can confirm it
+WHAT HAPPENED: Pedro asked to delete the test-era data. execute_sql (twice) and apply_migration each sat 60s waiting for the MCP's destructive-statement confirmation, then timed out. Nothing ran: the DO block was atomic and the counts were unchanged.
+RULE: don't retry destructive SQL through the MCP and don't disguise it to slip past the check. Commit it as a migration with "at most N rows" guards (safe to replay) and hand it to Pedro for the SQL editor. Then record the version and verify the counts with a SELECT.
+TAGS: #lesson #supabase #mcp #destructive
+
 [2026-10-17] LESSON: in vercel.json `functions`, the FIRST matching pattern wins
 WHAT HAPPENED: the first autopilot discovery run lost half its prospects to "Task timed out after 60 seconds" on /api/discover/run, a route vercel.json gives 120s. `@vercel/build-utils` `findMatchingFunction` walks the patterns in object order and returns the first match. `"app/**": 60` was listed first, so every route got 60s and none of the 120s overrides ever applied (errors since 2026-06-16). Every "105s of a 120s budget" comment in this repo was really running against 60s.
 FIX: catch-all moved to the end; `tests/vercel-config.test.ts` keeps it last and checks every per-route pattern names a real file.
