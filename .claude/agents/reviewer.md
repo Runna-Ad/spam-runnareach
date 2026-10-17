@@ -40,6 +40,8 @@ Checklist (grown by retros; add a line when a retro records a miss):
   to another class (an interested reply that says "stop by our booth"); list them.
 - The PR claims its tests fail on the old code: check it once (base for a bug fix, the
   worker's earlier commit for a review fix).
+- Any write to `prospects.status`: list every reader (send-queue, follow-up, nudge, reply
+  poll, discovery, governor) and say which transitions each one honours.
 - Does this task's output combine at runtime with another task in the batch (a rule one
   module writes, a cron another reads)? Say so under OPTIONAL so the batch audit looks.
 

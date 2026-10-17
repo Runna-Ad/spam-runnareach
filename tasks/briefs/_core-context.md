@@ -66,6 +66,13 @@ cost-tracked, daily-capped wrapper in `lib/anthropic/` · Gmail API · Sentry ·
 - Server-only types live in a `types.ts` with zero server imports; hooks in client files.
 - `noUncheckedIndexedAccess`: `.charAt(0)`, `.find`, defaults.
 - Errors shown to humans state what was observed, never an unreproduced diagnosis.
+- Timeline events (opt-out, meeting booked, won, lost) are recorded on the ROOT pitch:
+  use `latestRootSentPitchId()` in `lib/pitches/root-pitch.ts`. Follow-ups are child rows
+  with a later `sent_at`; "latest sent pitch" picks the wrong row.
+- A scrubber, filter or classifier is a list of rules and will miss cases. Guard it with
+  an output invariant that fails closed, plus a property test, and show the new tests
+  failing on the old code.
+- Enum values added by a migration ship with their TS union in the same commit.
 - Don't widen scope. Unrelated bugs go in your lessons-inbox file; if one is the root
   cause of your own task's risk, say so at the top of your report.
 
@@ -85,7 +92,7 @@ lib/pitches/   (25)    composer, review, gate, send-gate, queries, events, stage
 lib/replies/   ( 8)    classify, bounce parse, draft, send-reply
 lib/warmup/    (10)    deliverability, DMARC, IMAP, placement
 lib/{gmail,compliance,anthropic,supabase,audit,sentry,cron-auth}  shared infra  CONDUCTOR ONLY
-supabase/migrations/0001..0043   numbered; YOUR brief reserves yours (never the next free one)
+supabase/migrations/0001..0044   numbered; YOUR brief reserves yours (never the next free one)
 vercel.json, CLAUDE.md, lib/supabase/types.ts, package.json         CONDUCTOR ONLY
 ```
 Your brief lists the files you may edit. Anything outside it: say so in the PR body under

@@ -41,6 +41,9 @@ Every conductor session starts here, including the first one:
      `lib/supabase/`) are conductor tasks and land on the integration branch BEFORE the
      workers that need them are spawned.
    - Reserve migration numbers on the board now, one per task that needs one.
+   - Scan the briefs for lookups or helpers two tasks both need (a "latest root pitch",
+     a test-address check): land ONE shared function in wave 0 before spawning. A
+     migration that adds enum values ships with its TS union in the same wave-0 commit.
 4. Order tasks: shared infra → leaf modules in parallel → `discover`/`replies` → `pitches`
    (serialized, one at a time).
 5. Fill the board, including the Depends-on column and the "Approvals and checks"
@@ -77,7 +80,10 @@ create_session(
   prompt: "Read .claude/skills/worker/SKILL.md, then tasks/briefs/<slug>.md. Conductor session: <your id>. Do the task."
 )
 ```
-Record session id, branch, model, start time on the board. Spawn every parallel-safe task
+Do not pass `permission_mode`: the inherited mode runs install, tests, build, push
+and PR creation without prompts; only the worker's final `send_message` prompts (server
+policy), and Pedro can approve or ignore it since the report is also readable via
+`list_events` (kind control_request). Record session id, branch, model, start time on the board. Spawn every parallel-safe task
 of the current wave in the same turn. Then end your turn; workers report via
 `send_message`, PR events wake you. Never poll with sleep. Arm one `send_later` safety
 check-in 50 minutes out in case a worker dies silently.
@@ -144,6 +150,8 @@ Small bounded jobs (one test file, a lint sweep, a doc) may use `Agent` with the
 - Batch Pedro's questions; one message per batch, each with a default.
 - Board log lines carry `date -u` timestamps, never estimates.
 - Grep history files; never load them whole.
+- Never chain past a command whose non-zero exit is informational (`grep -c`, a diff
+  check): one informational command per call, or `|| true`.
 - Keep your own effort at `high`; `xhigh`/`max` only for the batch audit.
 - When your context is getting long, write the board and stop; the next conductor
   session resumes from §0 at a fraction of the cost of continuing.
