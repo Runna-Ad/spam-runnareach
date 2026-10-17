@@ -106,9 +106,12 @@ and merged into the integration branch in 58 minutes. NOT in prod yet.
   (`latestRootSentPitchId`, the one lookup for timeline events), audit actions
   `opportunity.booked/won/lost`, send-gate blocks 1-char placeholders (`[n]`).
 
-**Ship steps:** apply 0043 then 0044 in the SQL editor BEFORE deploying (the enum values
-must exist before code writes them; 0044 schedules the hourly sync); merge the integration
-PR; reconnect Google in Settings; optionally set `CALENDAR_BOOKING_INBOX`.
+**Ship steps (order matters, batch audit):** 1) apply 0043 in the SQL editor FIRST: every
+contact insert now names `source_url`, so code deployed before 0043 would fail each insert
+and the autopilot research path would silently stop saving contacts; 2) merge the integration
+PR (deploy); 3) apply 0044 (schedules the hourly calendar sync; before deploy it would 404);
+4) reconnect Google in Settings so the new calendar scope is granted; 5) optionally set
+`CALENDAR_BOOKING_INBOX` in Vercel.
 **Open questions** (board): invite you send counts as booked before acceptance (default keep);
 cancel-then-rebook makes two opportunities (default accept).
 

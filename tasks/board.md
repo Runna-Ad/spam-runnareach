@@ -13,14 +13,14 @@ for the current phase; move older ones to the retro.
 | Batch plan sent to Pedro | 2026-10-17 (in chat) |
 | Batch plan approved | yes, 2026-10-17 ("go") |
 | Questions sent | 2026-10-17: booking tool → Google Calendar (answered) |
-| `npm run build` green on integration | no (no node_modules in conductor container; CI + workers) |
+| `npm run build` green on integration | yes, af917cb (593 tests) |
 | Origin in sync (`git status -sb`) | pushed with this commit |
 
 ## Reserved migration numbers
 | Number | Reserved for | Status (reserved → used → applied) |
 |---|---|---|
-| 0043 | conductor wave 0: opportunities.source/calendar_event_id, pitch_event_type +meeting_booked/won/lost, prospect_contacts.source_url | used (on integration, NOT applied) |
-| 0044 | opportunities-calendar-sync (cron schedule) | used (PR #5, not applied) |
+| 0043 | conductor wave 0: opportunities.source/calendar_event_id, pitch_event_type +meeting_booked/won/lost, prospect_contacts.source_url | used (merged, NOT applied; apply BEFORE deploy: inserts name source_url) |
+| 0044 | opportunities-calendar-sync (cron schedule) | used (merged, NOT applied; apply AFTER deploy) |
 | 0045 | pitch-exemplar-memory (wave 2, if a table is needed) | reserved |
 | 0046 | — | free |
 
@@ -32,7 +32,7 @@ for the current phase; move older ones to the retro.
 | pitches-hot-lead-badge | pitches UI + query | sonnet/medium | claude/pitches-hot-lead-badge | archived | #3 merged 808af20 | — | merged | — | 12 | 0 (6 optional) | 0 | 0 |
 | learning-arms-dashboard | learning UI | sonnet/medium | claude/learning-arms-dashboard | archived | #2 merged 5d9e88c | — | merged | — | 12 | 0 (6 optional) | 0 | 0 |
 | contact-source-url | research + discover inserts | opus/medium | claude/contact-source-url | archived | #4 merged ce22264 | — | merged | — | 14 | 0 (3 optional) | 0 | 0 |
-| pitch-exemplar-memory | pitches (hub) | opus/high | claude/pitch-exemplar-memory | session_01B7aax1BaonbKt33EWPXomB | #6 | none (serialized: only pitches worker) | reworked round 2 (last; conductor spot-check next) | — | ~50 | 2 rounds (7 + 5 optional) | 0 | 2 |
+| pitch-exemplar-memory | pitches (hub) | opus/high | claude/pitch-exemplar-memory | archived | #6 merged af917cb | none | merged | — | ~50 | 2 rounds (7 + 5 optional) | 0 | 2 | tokens: 92.9k out / 14.3M cache-read / $6.45 |
 
 Column meanings: Turns = assistant turns in the worker session (proxy for tokens).
 Review findings = blocking findings the reviewer raised. CI reds = failed CI runs on the
@@ -53,6 +53,7 @@ These four columns feed the retro and the routing table.
 |---|---|---|
 
 ## Optional findings carried to next batch (from reviews)
+- Batch audit (Fable): meeting_booked/won/lost do not feed scoreOutcome or the exemplar shortlist; three prospects.status writers with three overwrite rules (one closeProspectStatus predicate); placeholder regex duplicated in send-gate and composer (export one); needsReconnect persists silently (Sentry breadcrumb after 24h); calendar-sync route has no maxDuration; listPitches throws on a pitch_events error while listOpportunities returns [].
 - PR #5: warn when CALENDAR_BOOKING_INBOX matches no inbox; markProspectBooked overwrites suppressed/archived/bounced (skip suppressed); getAccessToken has no timeout (conductor, lib/gmail); root-pitch.ts drops its query error.
 - PR #1: prospects update should skip 'suppressed'; prospect activity feed does not render opportunity.won/lost actions.
 - PR #3: /pitches list throws if the pitch_events query fails (wrap, log, show list without badges); reward.ts and hot-lead.ts decide audit_scan stage with different rules (share levelOf); 200-row list window hides old hot leads; "Asked to talk" chip tone is danger-red (Pedro to judge in browser).
@@ -80,3 +81,4 @@ These four columns feed the retro and the routing table.
 - 2026-10-17 16:52 UTC — Wave 2: PR #6 (exemplar memory, 545 tests, 35 turns) open, in review. Conductor fixed the gate's placeholder regex (3+ chars → 1+) in send-gate.ts and claude-composer.ts with tests; 565 green on integration.
 - 2026-10-17 16:58 UTC — PR #6 review: fix-then-merge. Blocking: scrubber leaks company short forms, hyphenated surnames, honorifics, lowercase cities. Sent back with a fail-closed invariant (drop exemplar if any distinctive token survives) + property test, per the sim lesson (invariant, not longer regex). Reviewer: ~114k tokens, 45 tool uses, 7 min (hub-level rigor).
 - 2026-10-17 17:11 UTC — PR #6 round 2: fail-closed invariant landed (592 tests) but the common-word case gate also covered cities/brands (victoria, surrey, summit leak in lowercase subjects). Sent the precise fix as the last round; conductor will verify with the reviewer's probe script instead of a 3rd review (G15). Reviewer round 2: ~142k tokens cumulative.
+- 2026-10-17 17:23 UTC — PR #6 merged after conductor spot-check (23 probes, 593 tests). BATCH COMPLETE: 6/6 merged, 593 tests, build green. Fable batch audit: MERGE, conditional on applying 0043 BEFORE deploy (contact inserts name source_url; a code-first deploy would silently drop contacts in the autopilot research path). Retro written, lessons merged, project-state updated. Opening integration → main PR; waiting on Pedro's ship-it.
