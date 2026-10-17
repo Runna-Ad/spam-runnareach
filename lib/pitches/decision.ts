@@ -54,6 +54,13 @@ export type DecisionRecord = {
   };
   critic: CriticVerdict | null;
   gate: { version: number; pass: boolean; codes: string[] } | null;
+  /**
+   * The learning arms this pitch was written under, learner → arm key
+   * ({"writer.evidence": "benchmark", "writer.guidance": "g-…"}). Each arm's
+   * reward is this pitch's outcome (lib/autopilot/learn.ts). Absent before
+   * the learners existed.
+   */
+  arms?: Record<string, string>;
 };
 
 export type SizeBand = "smb" | "mid_market" | "enterprise" | "unknown";

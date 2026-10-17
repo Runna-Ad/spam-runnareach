@@ -6,6 +6,31 @@ Prod = `main` (2026-10-17): Phase 0 + Phase 1 part 1 shipped (Nils/Henry sender,
 Cost rule (CLAUDE.md): near-free until proven. AI API spend OK; no paid
 external platforms; scheduler = Supabase `pg_cron` + `pg_net`.
 
+**Goal (Pedro, 2026-10-17): total automation that learns.** Phase 2 (autopilot
++ learners + Hunter loop) is SHIPPED and running: main = `4b22ad1`+, migrations
+0040 + 0041 applied, runna-hunter `867d007`. See project-state "Phase 2".
+Previous leads were testing; don't look back at them.
+
+## 0. Phase 2 is LIVE: check on it first
+
+Autopilot stage **veto** for the Rünna tenant. Kill switch:
+`update autonomy_state set enabled = false`.
+1. `select j.jobname, d.status, d.start_time from cron.job_run_details d join cron.job j using (jobid) order by d.start_time desc limit 10`
+   and `select status_code, left(content::text, 400) from net._http_response order by created desc limit 5`.
+   Every tick should be 200 with `errors: []`.
+2. Discovery: `select created_at, status, phase, stats->'focus'->>'cell_key', stats->>'processed', stats->>'pitched', stats->>'max_processed' from discovery_jobs where stats->>'started_by' = 'autopilot' order by created_at desc`.
+   At most 6 a day; no `Task timed out after 60 seconds` in Vercel runtime errors
+   for /api/discover/run (the 120s limit applies since `2dee217`).
+3. Learners: `select learner, key, status, trials, reward from learning_arms order by updated_at desc`.
+   Writer arms appear after the first pitch; scout cells settle 14 days after a send.
+4. Drafts: `select autopilot_lane, autopilot_reasons from pitches where autopilot_lane is not null order by created_at desc limit 10`.
+5. Reviewer: `select decision->'critic'->>'pass', decision->'critic'->>'score', autopilot_lane from pitches order by created_at desc limit 20`.
+   Since `4b22ad1` a draft passes when no issue is blocking. If AUTO stays at 0, read the
+   blocking issues: they are what the writer prompt has to fix.
+6. Search quality: the first cell ("direct to consumer × Alberta") returned
+   news/government pages. If the scout keeps choosing junk cells, give the ICPs
+   concrete category keywords (the ICP learner's `SEARCH_TERMS` are the model).
+
 ---
 
 ## 1. Phase 0 is SHIPPED (migration 0035 applied)

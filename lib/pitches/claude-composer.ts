@@ -595,7 +595,15 @@ ${input.revision.body}
 `
     : "";
 
-  return `Write the pitch from this payload.${rewriteDirective}${revisionDirective}
+  // Learned guidance (lib/autopilot/learn.ts): a short instruction the weekly
+  // review proposed from real outcomes, under live test as a bandit arm. It can
+  // only add to the system prompt's rules, never relax them; the gate and the
+  // reviewer still check the result.
+  const guidanceDirective = input.guidance?.trim()
+    ? `\nAdditional guidance learned from what has worked (follow it only where it fits every rule in the system prompt):\n- ${input.guidance.trim()}\n`
+    : "";
+
+  return `Write the pitch from this payload.${rewriteDirective}${revisionDirective}${guidanceDirective}
 
 \`\`\`json
 ${JSON.stringify(payload, null, 2)}

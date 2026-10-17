@@ -5,7 +5,7 @@ import { z } from "zod";
 import { writeAuditLog } from "@/lib/audit/log";
 import { requireUser } from "@/lib/auth";
 import { scoreProspect } from "@/lib/research/score-action";
-import { generatePitch } from "@/lib/pitches/actions";
+import { generatePitchWith } from "@/lib/pitches/pitch-stage";
 import { processSingleProspect } from "@/lib/discover/pipeline-action";
 import { enrichContactsForProspect } from "@/lib/discover/enrich-contacts";
 import { hasUsableEmail } from "@/lib/research/email-utils";
@@ -571,14 +571,15 @@ export async function bulkGeneratePitches(
     toGenerate.push(id);
   }
 
-  // ── Compose in concurrent chunks (pass injected user+supabase so generatePitch
-  //    doesn't re-auth inside this nested server-action chain) ─────────────────
+  // ── Compose in concurrent chunks, as this session's actor (no re-auth inside
+  //    this nested server-action chain) ───────────────────────────────────────
+  const actor = { user, supabase, system: false };
   let generated = 0;
   let failed = 0;
   for (let i = 0; i < toGenerate.length; i += GENERATE_CHUNK) {
     const chunk = toGenerate.slice(i, i + GENERATE_CHUNK);
     const res = await Promise.all(
-      chunk.map((id) => generatePitch(id, { user, supabase })),
+      chunk.map((id) => generatePitchWith(actor, id)),
     );
     for (const r of res) {
       if (r.ok) generated += 1;

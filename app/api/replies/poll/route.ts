@@ -25,9 +25,10 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { type NextRequest, NextResponse } from "next/server";
+import { isSchedulerAuthorized } from "@/lib/cron-auth";
 import { createServiceRoleClient } from "@/lib/supabase/service-role";
 import { getAccessToken, sendGmailMessage } from "@/lib/gmail/client";
-import { fetchThreadReplies, type InboundReply } from "@/lib/gmail/read";
+import { fetchThreadReplies, listRecentInboundThreadIds, type InboundReply } from "@/lib/gmail/read";
 import {
   ANTHROPIC_HAIKU_MODEL,
   claudeIsAvailable,
@@ -56,6 +57,15 @@ import { isTestAddress } from "@/lib/compliance/test-addresses";
 
 /** An out-of-office pushes the next follow-up at least this far out. */
 const OOO_POSTPONE_DAYS = 7;
+/** Stop starting threads after this long (maxDuration is 120s; leaves room for the digest). */
+const POLL_BUDGET_MS = 100_000;
+/**
+ * A normal run reads only threads with inbound mail this recent (one list call
+ * per inbox). Reading every sent thread each time ran into Gmail's per-minute
+ * quota and left threads unchecked. The daily Vercel cron still reads them
+ * all as a backstop.
+ */
+const RECENT_INBOUND_DAYS = 2;
 // Intents we draft a response for. Negatives (hard_no / wrong_person) and
 // auto_reply are left for Pedro's intent actions in /inbox — no draft.
 const DRAFTABLE: ReplyIntent[] = ["wants_meeting", "wants_info", "not_now", "unclassified"];
@@ -65,10 +75,9 @@ const DEAD_STATUSES = new Set(["booked", "suppressed", "archived_no_meeting", "w
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type AnySupabase = any;
 
-function isAuthorized(req: NextRequest): boolean {
-  const cronSecret = process.env.CRON_SECRET;
-  if (!cronSecret) return false;
-  return req.headers.get("authorization") === `Bearer ${cronSecret}`;
+/** Vercel cron (CRON_SECRET) or the autopilot's pg_cron schedule (Vault token). */
+function isAuthorized(req: NextRequest): Promise<boolean> {
+  return isSchedulerAuthorized(req);
 }
 
 type ThreadRow = {
@@ -87,12 +96,16 @@ type ThreadRow = {
 type DraftDigestItem = { prospect: string; intent: ReplyIntent };
 
 export async function GET(req: NextRequest) {
-  if (!isAuthorized(req)) {
+  if (!(await isAuthorized(req))) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
   const startTime = Date.now();
   const supabase = createServiceRoleClient() as AnySupabase;
+  // The daily Vercel cron (user agent vercel-cron/1.0) reads every thread;
+  // the half-hourly pg_cron run reads only threads with recent inbound mail.
+  const fullSweep =
+    req.nextUrl.searchParams.get("full") === "1" || (req.headers.get("user-agent") ?? "").startsWith("vercel-cron");
 
   // ── 1. Find candidate threads ────────────────────────────────────────────
   const { data: pitchRows, error: pitchErr } = await supabase
@@ -136,6 +149,10 @@ export async function GET(req: NextRequest) {
 
   // Token cache per inbox (id → { email, token }).
   const inboxCache = new Map<string, { email: string; display_name: string; token: string } | null>();
+  // Per inbox: threads with recent inbound mail, or null when listing failed
+  // (then every thread of that inbox is read, as in a full sweep).
+  const recentThreads = new Map<string, Set<string> | null>();
+  let threadsRead = 0;
   // Per-tenant digest of drafts created this run, for the email alert.
   const digest = new Map<string, DraftDigestItem[]>();
 
@@ -143,7 +160,14 @@ export async function GET(req: NextRequest) {
   let drafted = 0;
   const errors: string[] = [];
 
+  // Rate-limited reads wait and retry, so stop starting threads well inside
+  // maxDuration (120s). Threads run newest first; the oldest wait 30 minutes.
+  let deferred = 0;
   for (const thread of threadMap.values()) {
+    if (Date.now() - startTime > POLL_BUDGET_MS) {
+      deferred++;
+      continue;
+    }
     try {
       if (!thread.sender_inbox_id) continue;
 
@@ -177,7 +201,19 @@ export async function GET(req: NextRequest) {
       }
       if (!inbox) continue;
 
+      if (!fullSweep) {
+        let recent = recentThreads.get(thread.sender_inbox_id);
+        if (recent === undefined) {
+          const listed = await listRecentInboundThreadIds(inbox.token, RECENT_INBOUND_DAYS);
+          if (!listed.ok) errors.push(`inbox ${inbox.email}: ${listed.error} (reading every thread)`);
+          recent = listed.ok ? listed.threadIds : null;
+          recentThreads.set(thread.sender_inbox_id, recent);
+        }
+        if (recent && !recent.has(thread.gmail_thread_id)) continue;
+      }
+
       // ── Fetch the thread + find inbound replies ─────────────────────────
+      threadsRead++;
       const fetched = await fetchThreadReplies(inbox.token, thread.gmail_thread_id, [inbox.email]);
       if (!fetched.ok) {
         errors.push(`thread ${thread.gmail_thread_id}: ${fetched.error}`);
@@ -428,7 +464,10 @@ export async function GET(req: NextRequest) {
   return NextResponse.json({
     ok: true,
     duration_ms: Date.now() - startTime,
-    threads_scanned: threadMap.size,
+    mode: fullSweep ? "full" : "recent",
+    threads_scanned: threadMap.size - deferred,
+    threads_read: threadsRead,
+    deferred,
     imported,
     drafted,
     errors,

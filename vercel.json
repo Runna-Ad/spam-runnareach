@@ -1,8 +1,5 @@
 {
   "functions": {
-    "app/**": {
-      "maxDuration": 60
-    },
     "app/api/warmup/engine/route.ts": {
       "maxDuration": 120
     },
@@ -26,6 +23,12 @@
     },
     "app/api/replies/nudge/route.ts": {
       "maxDuration": 120
+    },
+    "app/api/autopilot/tick/route.ts": {
+      "maxDuration": 120
+    },
+    "app/**": {
+      "maxDuration": 60
     }
   },
   "crons": [

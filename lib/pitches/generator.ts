@@ -162,6 +162,11 @@ export type GeneratorInputs = {
     body: string;
     issues: string[];
   } | null;
+  /**
+   * A learned writing instruction under live test (a `writer.guidance` arm,
+   * lib/autopilot/learn.ts). Added to the user prompt; never overrides rules.
+   */
+  guidance?: string | null;
   forced_angle?: {
     pain_label: string;
     pain_id: string | null;

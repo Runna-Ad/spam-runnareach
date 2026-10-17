@@ -1,0 +1,586 @@
+import { revalidatePath } from "next/cache";
+import { z } from "zod";
+import { writeAuditLog } from "@/lib/audit/log";
+import type { Actor } from "@/lib/actor";
+import type { Database } from "@/lib/supabase/types";
+import { findDuplicate, normalizeDomain } from "./fuzzy-dedupe";
+import { isChainListing } from "./chain-filter";
+import { searchBrave, braveIsAvailable } from "./sources/brave-search";
+import { searchYellowPagesCA } from "./sources/yellowpages-ca";
+import { searchDenue, denueIsAvailable, deriveMexicoStateCode, MEXICO_STATE_CODES } from "./sources/denue";
+import { searchGooglePlaces, googlePlacesIsAvailable } from "./sources/google-places";
+import { searchWithClaude, claudeSearchIsAvailable, type ClaudeSearchIcp } from "./sources/claude-search";
+
+// ── Input schema ──────────────────────────────────────────────────────────────
+
+const crawlSchema = z.object({
+  source: z.enum(["yellowpages_ca", "brave_search", "denue", "google_places", "claude_search"]),
+  keyword: z.string().trim().min(1).max(200),
+  /** Province name for YP ("Alberta"), or omit for Brave (uses market) */
+  location: z.string().trim().max(200).optional(),
+  market: z.enum(["CA", "MX", "US", "LATAM"]).default("CA"),
+  /** How many YP pages to scrape (1-10). Brave always fetches 20 results. */
+  pages: z.number().int().min(1).max(10).default(3),
+  icp_id: z.string().uuid().nullable().optional(),
+  /**
+   * Clean industry label stored in prospects.industry — separate from the
+   * search keyword so Brave's full query string ("\"shopify\" \"dtc\" canada")
+   * doesn't pollute the column. Falls back to keyword if not provided.
+   */
+  industry_label: z.string().trim().max(100).optional(),
+});
+
+export type CrawlInput = z.input<typeof crawlSchema>;
+
+export type CrawlResult =
+  | {
+      ok: true;
+      run_id: string;
+      source: "yellowpages_ca" | "brave_search" | "denue" | "google_places" | "claude_search";
+      candidates_found: number;
+      candidates_new: number;
+      candidates_duplicate: number;
+      red_flags: number;
+    }
+  | { ok: false; error: string };
+
+// ── Main action ───────────────────────────────────────────────────────────────
+
+export async function runCrawlWith(
+  actor: Actor,
+  input: CrawlInput): Promise<CrawlResult> {
+  const { user } = actor;
+  if (user.role === "viewer") {
+    return { ok: false, error: "Viewers cannot run discovery crawls." };
+  }
+
+  const parsed = crawlSchema.safeParse(input);
+  if (!parsed.success) {
+    return { ok: false, error: parsed.error.issues[0]?.message ?? "Invalid input." };
+  }
+
+  const { source, keyword, location, market, pages, icp_id, industry_label } = parsed.data;
+  const { supabase } = actor;
+  const nowIso = new Date().toISOString();
+
+  // ── Open discovery_run row ──────────────────────────────────────────────
+  const { data: runRow, error: runErr } = await supabase
+    .from("discovery_runs")
+    .insert({
+      tenant_id: user.tenantId,
+      icp_id: icp_id ?? null,
+      source,
+      triggered_by: user.id,
+      status: "running",
+      started_at: nowIso,
+    } as never)
+    .select("id")
+    .single<{ id: string }>();
+
+  if (runErr || !runRow) {
+    return {
+      ok: false,
+      error: `Could not start crawl run: ${runErr?.message ?? "no row"}`,
+    };
+  }
+
+  // ── For AI Search: load ICP context so Claude can judge fit ─────────────
+  let icpContext: ClaudeSearchIcp | null = null;
+  if (source === "claude_search" && icp_id) {
+    const { data: icpRow } = await supabase
+      .from("icps")
+      .select(
+        "name, industry_tags, business_types, geo_regions, employee_size_min, employee_size_max, excluded_keywords",
+      )
+      .eq("id", icp_id)
+      .eq("tenant_id", user.tenantId)
+      .maybeSingle<ClaudeSearchIcp>();
+    icpContext = icpRow ?? null;
+  }
+
+  // ── Fetch raw listings from source ──────────────────────────────────────
+  const rawListings = await fetchFromSource({
+    source,
+    keyword,
+    location,
+    market,
+    pages,
+    icp: icpContext,
+  });
+
+  if (!rawListings.ok) {
+    await failRun(supabase, runRow.id, rawListings.error);
+    return { ok: false, error: rawListings.error };
+  }
+
+  // ── Load existing prospects for dedupe ──────────────────────────────────
+  const { data: existing, error: existingErr } = await supabase
+    .from("prospects")
+    .select("company_name, domain")
+    .eq("tenant_id", user.tenantId)
+    .returns<{ company_name: string; domain: string | null }[]>();
+
+  if (existingErr) {
+    await failRun(supabase, runRow.id, `Could not preload prospects: ${existingErr.message}`);
+    return { ok: false, error: `Could not preload prospects: ${existingErr.message}` };
+  }
+
+  const seen: { name: string; domain: string | null }[] = (existing ?? []).map((e) => ({
+    name: e.company_name,
+    domain: e.domain,
+  }));
+
+  // ── Dedupe + build inserts ──────────────────────────────────────────────
+  let candidates_new = 0;
+  let candidates_duplicate = 0;
+  let red_flags = 0;
+  const inserts: Database["public"]["Tables"]["prospects"]["Insert"][] = [];
+
+  // Domains that are SaaS platforms, not prospects we'd ever pitch
+  const BLOCKED_PROSPECT_DOMAINS = new Set([
+    "shopify.com", "woocommerce.com", "bigcommerce.com", "squarespace.com",
+    "wix.com", "weebly.com", "ecwid.com", "volusion.com", "prestashop.com",
+    "magento.com", "wordpress.com", "wordpress.org",
+    "google.com", "facebook.com", "instagram.com", "linkedin.com",
+    "amazon.com", "amazon.ca", "ebay.com", "etsy.com",
+    "yelp.com", "yelp.ca", "yellowpages.ca",
+  ]);
+
+  for (const listing of rawListings.listings) {
+    const normalizedDomain = listing.domain
+      ? normalizeDomain(listing.domain)
+      : null;
+
+    // Skip SaaS platforms / directories that slipped past source-level filters
+    if (normalizedDomain && BLOCKED_PROSPECT_DOMAINS.has(normalizedDomain)) {
+      candidates_duplicate++; // count as dup so stats stay accurate
+      continue;
+    }
+
+    // Skip prospects with no name or a name that's clearly just a platform keyword
+    const nameClean = listing.company_name.trim().toLowerCase();
+    if (!nameClean || nameClean === "shopify" || nameClean === "shopify partner"
+        || nameClean === "woocommerce" || nameClean === "squarespace") {
+      candidates_duplicate++;
+      continue;
+    }
+
+    // Skip obvious web agencies / digital service providers — these are competitors,
+    // not prospects. Match on whole words to avoid false positives (e.g. "Design" in
+    // a product brand name vs a web-design agency). Case-insensitive.
+    const AGENCY_SIGNALS = [
+      /\bweb\s*(design|development|developer|solutions)\b/i,
+      /\bdigital\s*(agency|marketing|solutions|studio|media)\b/i,
+      /\bseo\s*(agency|services|company)\b/i,
+      /\bshopify\s*(developer|expert|agency|partner|plus\s*partner)\b/i,
+      /\b(ecommerce|e-?commerce)\s*(agency|developer|solutions|consultant)\b/i,
+      /\b(marketing|media)\s*(agency|group|firm)\b/i,
+      /\b(creative|design|branding)\s*(agency|studio|firm)\b/i,
+      /\b(software|tech|it)\s*(solutions|consulting|services|agency)\b/i,
+    ];
+    // Skip national chains / enterprise brands. Directory sources answer a
+    // KEYWORD, not an ICP: "wholesale / Alberta" on Yellow Pages returns
+    // Walmart, Shoppers Drug Mart, Loblaw and Rexall. Left in, each is scraped,
+    // deep-researched and scored before finally being suppressed — the whole
+    // cost paid for a guaranteed rejection. Dropping them here is free.
+    if (isChainListing(listing.company_name, normalizedDomain)) {
+      candidates_duplicate++; // counted as filtered, same as the agency skip
+      continue;
+    }
+
+    const isAgency = AGENCY_SIGNALS.some((re) => re.test(listing.company_name));
+    if (isAgency) {
+      candidates_duplicate++; // treat as filtered so stats stay accurate
+      continue;
+    }
+
+    const dup = findDuplicate(
+      { name: listing.company_name, domain: normalizedDomain },
+      seen,
+    );
+    if (dup !== -1) {
+      candidates_duplicate++;
+      continue;
+    }
+
+    // Skip prospects with no domain — no URL means no research, no scoring, no pitch.
+    if (!normalizedDomain) {
+      candidates_duplicate++; // counts as filtered so totals stay accurate
+      continue;
+    }
+
+    seen.push({ name: listing.company_name, domain: normalizedDomain });
+    candidates_new++;
+
+    const flags: string[] = [];
+    red_flags += flags.length;
+
+    inserts.push({
+      tenant_id: user.tenantId,
+      icp_id: icp_id ?? null,
+      discovery_run_id: runRow.id,
+      discovery_source: source as never, // denue not yet in generated types
+      company_name: listing.company_name,
+      domain: normalizedDomain,
+      website_url: listing.website_url ?? null,
+      industry: industry_label ?? keyword, // use clean label; Brave passes keyword separately
+      city: listing.city ?? null,
+      region: listing.region ?? null,
+      country_code: marketToCountry(market),
+      market,
+      language: market === "MX" ? "es" : "en",
+      status: "raw",
+      red_flags: flags,
+    });
+  }
+
+  // ── Bulk insert ─────────────────────────────────────────────────────────
+  if (inserts.length > 0) {
+    const { error: insertErr } = await supabase.from("prospects").insert(inserts as never);
+    if (insertErr) {
+      await failRun(supabase, runRow.id, `Insert failed: ${insertErr.message}`);
+      return { ok: false, error: `Could not save prospects: ${insertErr.message}` };
+    }
+  }
+
+  // Contact enrichment (SnapVerify → Anymail → Hunter) is intentionally NOT
+  // run here. It only fires in pipeline-action.ts for prospects that score ≥70,
+  // preserving paid API credits (Anymail, Hunter) for leads that actually
+  // cleared the quality bar.
+
+  // ── Close run ───────────────────────────────────────────────────────────
+  await supabase
+    .from("discovery_runs")
+    .update({
+      status: "complete",
+      candidates_found: rawListings.listings.length,
+      candidates_new,
+      candidates_duplicate,
+      completed_at: new Date().toISOString(),
+    } as never)
+    .eq("id", runRow.id);
+
+  await writeAuditLog({
+    tenantId: user.tenantId,
+    actorId: user.id,
+    action: "prospect.scored", // closest existing; future: discovery.run_completed
+    entityType: "prospect",
+    entityId: runRow.id,
+    metadata: {
+      kind: "crawl",
+      source,
+      keyword,
+      location: location ?? null,
+      market,
+      candidates_found: rawListings.listings.length,
+      candidates_new,
+      candidates_duplicate,
+    },
+  });
+
+  revalidatePath("/discover");
+  revalidatePath("/companies");
+
+  return {
+    ok: true,
+    run_id: runRow.id,
+    source,
+    candidates_found: rawListings.listings.length,
+    candidates_new,
+    candidates_duplicate,
+    red_flags,
+  };
+}
+
+// ── Source dispatcher ─────────────────────────────────────────────────────────
+
+type NormalizedListing = {
+  company_name: string;
+  website_url: string | null;
+  domain: string | null;
+  city: string | null;
+  region: string | null; // province code for CA, state for US/MX
+};
+
+type FetchSourceResult =
+  | { ok: true; listings: NormalizedListing[] }
+  | { ok: false; error: string };
+
+async function fetchFromSource(opts: {
+  source: "yellowpages_ca" | "brave_search" | "denue" | "google_places" | "claude_search";
+  keyword: string;
+  location: string | undefined;
+  market: "CA" | "MX" | "US" | "LATAM";
+  pages: number;
+  icp?: ClaudeSearchIcp | null;
+}): Promise<FetchSourceResult> {
+  if (opts.source === "yellowpages_ca") {
+    const loc = opts.location ?? "Canada";
+    const result = await searchYellowPagesCA({
+      keyword: opts.keyword,
+      location: loc,
+      pages: opts.pages,
+    });
+    if (!result.ok) return { ok: false, error: result.error };
+    return {
+      ok: true,
+      listings: result.listings.map((l) => ({
+        company_name: l.company_name,
+        website_url: l.website_url,
+        domain: l.domain,
+        city: l.city,
+        region: l.province_code,
+      })),
+    };
+  }
+
+  if (opts.source === "brave_search") {
+    if (!braveIsAvailable()) {
+      return {
+        ok: false,
+        error: "Brave Search not configured — add BRAVE_SEARCH_API_KEY to .env.local",
+      };
+    }
+    const country =
+      opts.market === "CA" ? "CA"
+      : opts.market === "MX" ? "MX"
+      : opts.market === "US" ? "US"
+      : "CA";
+
+    const result = await searchBrave({
+      query: opts.keyword,
+      country,
+      count: 20,
+    });
+    if (!result.ok) return { ok: false, error: result.error };
+    return {
+      ok: true,
+      listings: result.listings.map((l) => ({
+        company_name: l.company_name,
+        website_url: l.website_url,
+        domain: l.domain,
+        city: null,
+        region: null,
+      })),
+    };
+  }
+
+  if (opts.source === "denue") {
+    if (!denueIsAvailable()) {
+      return {
+        ok: false,
+        error: "DENUE not configured — add DENUE_API_KEY to .env.local (register at inegi.org.mx/servicios/api_denue.html)",
+      };
+    }
+    // Convert state name → INEGI numeric code if needed (UI sends full names like "Ciudad de México")
+    const rawLocation = opts.location ?? "0";
+    const stateCode = /^\d{1,2}$/.test(rawLocation)
+      ? rawLocation
+      : (MEXICO_STATE_CODES[rawLocation] ?? deriveMexicoStateCode([rawLocation]));
+    const result = await searchDenue({
+      keyword: opts.keyword,
+      stateCode,
+      maxResults: 100, // 100 per run is plenty for discovery
+    });
+    if (!result.ok) return { ok: false, error: result.error };
+    return {
+      ok: true,
+      listings: result.listings.map((l) => ({
+        company_name: l.company_name,
+        website_url: l.website_url,
+        domain: l.domain,
+        city: l.city,
+        region: l.state_code,
+      })),
+    };
+  }
+
+  if (opts.source === "google_places") {
+    if (!googlePlacesIsAvailable()) {
+      return {
+        ok: false,
+        error: "Google Places not configured — add GOOGLE_PLACES_API_KEY to .env.local",
+      };
+    }
+    // Build a natural-language query with location baked in.
+    // resolveLocationForGeoApi converts INEGI codes ("09") → "Ciudad de México, Mexico"
+    const locationHint = resolveLocationForGeoApi(opts.location, opts.market);
+
+    const result = await searchGooglePlaces({
+      query: `${opts.keyword} ${locationHint}`,
+      maxResults: 20,
+      languageCode: opts.market === "MX" ? "es" : "en",
+      locationBias: getGooglePlacesBias(opts.location),
+    });
+    if (!result.ok) return { ok: false, error: result.error };
+    return {
+      ok: true,
+      listings: result.listings.map((l) => ({
+        company_name: l.company_name,
+        website_url: l.website_url,
+        domain: l.domain,
+        city: l.city,
+        region: l.state_code,
+      })),
+    };
+  }
+
+  if (opts.source === "claude_search") {
+    if (!claudeSearchIsAvailable()) {
+      return {
+        ok: false,
+        error: "AI Search not configured — requires ANTHROPIC_API_KEY + BRAVE_SEARCH_API_KEY in .env.local",
+      };
+    }
+    const country =
+      opts.market === "MX" ? "MX"
+      : opts.market === "US" ? "US"
+      : "CA";
+    const result = await searchWithClaude({
+      brief: opts.keyword,
+      location: opts.location ?? "Canada",
+      country,
+      icp: opts.icp ?? null,
+      target: 15,
+    });
+    if (!result.ok) return { ok: false, error: result.error };
+    console.log(
+      `[claude-search] ${result.listings.length} businesses from ${result.searches_run} searches ($${result.cost_usd.toFixed(4)})`,
+    );
+    return {
+      ok: true,
+      listings: result.listings.map((l) => ({
+        company_name: l.company_name,
+        website_url: l.website_url,
+        domain: l.domain,
+        city: l.city,
+        region: l.region,
+      })),
+    };
+  }
+
+  return { ok: false, error: `Unknown source: ${opts.source}` };
+}
+
+// ── Helpers ───────────────────────────────────────────────────────────────────
+
+async function failRun(supabase: Actor["supabase"], runId: string, msg: string) {
+  await supabase
+    .from("discovery_runs")
+    .update({
+      status: "failed",
+      error_message: msg.slice(0, 500),
+      completed_at: new Date().toISOString(),
+    } as never)
+    .eq("id", runId);
+}
+
+function marketToCountry(market: "CA" | "MX" | "US" | "LATAM"): string {
+  switch (market) {
+    case "CA": return "CA";
+    case "MX": return "MX";
+    case "US": return "US";
+    case "LATAM": return "MX";
+  }
+}
+
+// Converts INEGI numeric state codes (used in the drawer for DENUE) to
+// human-readable location names suitable for Yelp / Google Places geocoding.
+const INEGI_CODE_TO_LOCATION: Record<string, string> = {
+  "0":  "Mexico",
+  "01": "Aguascalientes, Mexico",
+  "02": "Baja California, Mexico",
+  "03": "Baja California Sur, Mexico",
+  "04": "Campeche, Mexico",
+  "05": "Coahuila, Mexico",
+  "06": "Colima, Mexico",
+  "07": "Chiapas, Mexico",
+  "08": "Chihuahua, Mexico",
+  "09": "Ciudad de México, Mexico",
+  "10": "Durango, Mexico",
+  "11": "Guanajuato, Mexico",
+  "12": "Guerrero, Mexico",
+  "13": "Hidalgo, Mexico",
+  "14": "Jalisco, Mexico",
+  "15": "Estado de México, Mexico",
+  "16": "Michoacán, Mexico",
+  "17": "Morelos, Mexico",
+  "18": "Nayarit, Mexico",
+  "19": "Nuevo León, Mexico",
+  "20": "Oaxaca, Mexico",
+  "21": "Puebla, Mexico",
+  "22": "Querétaro, Mexico",
+  "23": "Quintana Roo, Mexico",
+  "24": "San Luis Potosí, Mexico",
+  "25": "Sinaloa, Mexico",
+  "26": "Sonora, Mexico",
+  "27": "Tabasco, Mexico",
+  "28": "Tamaulipas, Mexico",
+  "29": "Tlaxcala, Mexico",
+  "30": "Veracruz, Mexico",
+  "31": "Yucatán, Mexico",
+  "32": "Zacatecas, Mexico",
+};
+
+/** Resolve a location string for Yelp / Google Places.
+ *  If it's an INEGI numeric code, convert to a geocodable place name.
+ *  Otherwise return as-is (already a province name, city, or country). */
+function resolveLocationForGeoApi(location: string | undefined, market: "CA" | "MX" | "US" | "LATAM"): string {
+  if (!location) {
+    return market === "MX" ? "Mexico" : market === "US" ? "United States" : "Canada";
+  }
+  // INEGI code: 1–2 digit numeric string (with or without leading zero)
+  if (/^\d{1,2}$/.test(location)) {
+    const padded = location.padStart(2, "0");
+    return INEGI_CODE_TO_LOCATION[padded] ?? INEGI_CODE_TO_LOCATION[location] ?? "Mexico";
+  }
+  return location;
+}
+
+// Geo-center + radius for each Mexican state (INEGI code → lat/lng/radius).
+// Used as locationBias for Google Places to keep results inside the selected state.
+const MX_STATE_GEO: Record<string, { lat: number; lng: number; radiusMeters: number }> = {
+  "09": { lat: 19.4326, lng: -99.1332, radiusMeters: 60_000 },  // CDMX
+  "14": { lat: 20.6534, lng: -103.3460, radiusMeters: 120_000 }, // Jalisco
+  "19": { lat: 25.6866, lng: -100.3161, radiusMeters: 100_000 }, // Nuevo León
+  "15": { lat: 19.2965, lng: -99.6545, radiusMeters: 120_000 }, // Estado de México
+  "21": { lat: 19.0413, lng: -98.2062, radiusMeters: 100_000 }, // Puebla
+  "22": { lat: 20.5888, lng: -100.3899, radiusMeters: 80_000 }, // Querétaro
+  "11": { lat: 21.0190, lng: -101.2574, radiusMeters: 120_000 }, // Guanajuato
+  "26": { lat: 29.0730, lng: -110.9559, radiusMeters: 200_000 }, // Sonora
+  "28": { lat: 23.7369, lng: -99.1411, radiusMeters: 150_000 }, // Tamaulipas
+  "30": { lat: 19.1738, lng: -96.1342, radiusMeters: 200_000 }, // Veracruz
+  "31": { lat: 20.9674, lng: -89.6237, radiusMeters: 150_000 }, // Yucatán
+  "02": { lat: 32.5027, lng: -117.0037, radiusMeters: 150_000 }, // Baja California
+  "25": { lat: 24.8091, lng: -107.3940, radiusMeters: 150_000 }, // Sinaloa
+  "08": { lat: 28.6353, lng: -106.0889, radiusMeters: 200_000 }, // Chihuahua
+};
+
+/** Returns a locationBias for Google Places if we have geo data for the location code. */
+function getGooglePlacesBias(location: string | undefined): { lat: number; lng: number; radiusMeters: number } | undefined {
+  if (!location) return undefined;
+  const padded = location.padStart(2, "0");
+  return MX_STATE_GEO[padded] ?? MX_STATE_GEO[location];
+}
+
+/**
+ * Marks all discovery runs that are stuck in `status="running"` as "failed".
+ * Runs can get stuck when a crawl times out mid-flight (e.g. Vercel 60s limit).
+ * Call this from the UI to unblock the Discover page.
+ */
+export async function closeStuckRunsWith(
+  actor: Actor,
+  ): Promise<{ closed: number }> {
+  "use server";
+  const { supabase } = actor;
+  const { data } = await supabase
+    .from("discovery_runs")
+    .update({
+      status: "failed",
+      error_message: "Manually closed — run was stuck in 'running' state.",
+      completed_at: new Date().toISOString(),
+    })
+    .eq("status", "running")
+    .select("id");
+  return { closed: (data ?? []).length };
+}

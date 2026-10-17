@@ -1,0 +1,377 @@
+/**
+ * Server actions for background discovery jobs.
+ *
+ * startDiscoveryJob  — create a job row + kick the first worker slice, return jobId.
+ * cancelDiscoveryJob — flip status to 'cancelled'; the next slice's guard halts the chain.
+ * getDiscoveryJob    — poll status/progress (client polls this to render the run).
+ * getActiveJobForIcp — resume-on-reopen: find an in-flight job for an ICP.
+ *
+ * The actual work runs in /api/discover/run (the self-chaining worker). These
+ * actions never block on the run — they return immediately so the browser tab is
+ * free to close.
+ */
+
+import { cookies, headers } from "next/headers";
+import { after } from "next/server";
+import { z } from "zod";
+import type { Actor } from "@/lib/actor";
+import { EMPTY_JOB_STATS, type DiscoveryJob, type DiscoveryJobStatus, type DiscoveryJobPhase } from "./job-types";
+import { triggerNextSlice, originFromHeaders, type SliceAuth } from "./job-trigger";
+import { getRawProspectIdsWith } from "./pipeline-stage";
+
+/** "full" = discover then pipeline; "pending" = pipeline-only over existing raw prospects. */
+export type DiscoveryJobMode = "full" | "pending";
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+type AnyStats = any;
+
+type JobRow = {
+  id: string;
+  icp_id: string | null;
+  status: string;
+  phase: string;
+  cursor: number;
+  prospect_ids: string[];
+  stats: AnyStats;
+  error_message: string | null;
+  heartbeat_at: string;
+  created_at: string;
+  completed_at: string | null;
+};
+
+function toJob(r: JobRow): DiscoveryJob {
+  return {
+    id: r.id,
+    icp_id: r.icp_id,
+    status: r.status as DiscoveryJobStatus,
+    phase: r.phase as DiscoveryJobPhase,
+    cursor: r.cursor,
+    total: (r.prospect_ids ?? []).length,
+    stats: { ...EMPTY_JOB_STATS, ...(r.stats ?? {}) },
+    error_message: r.error_message,
+    heartbeat_at: r.heartbeat_at,
+    created_at: r.created_at,
+    completed_at: r.completed_at,
+  };
+}
+
+const JOB_COLS =
+  "id, icp_id, status, phase, cursor, prospect_ids, stats, error_message, heartbeat_at, created_at, completed_at";
+
+/**
+ * How the worker chain will prove who it runs for: the browser's cookies, or,
+ * for the autopilot, the cron secret + tenant (lib/actor.ts).
+ */
+async function sliceAuthFor(actor: Actor): Promise<SliceAuth> {
+  if (actor.system) return { kind: "system", tenantId: actor.user.tenantId };
+  const store = await cookies();
+  return {
+    kind: "cookie",
+    cookie: store
+      .getAll()
+      .map((c) => `${c.name}=${c.value}`)
+      .join("; "),
+  };
+}
+
+// Slices bump heartbeat_at seconds apart; this much silence means the chain is
+// dead. Kept in sync with the janitor cron's STALE_MINUTES.
+const STALE_JOB_MS = 5 * 60_000;
+
+/**
+ * Opportunistic zombie sweep. The janitor cron only runs daily (Vercel Hobby
+ * caps cron cadence), so dead chains from closed tabs would otherwise linger as
+ * "running" for up to 24h. We fail this tenant's own stale-heartbeat jobs right
+ * when they start a new run — the exact moment stale rows are noticeable — so the
+ * UI is clean without waiting for the cron. Runs under the caller's session (RLS),
+ * so it only ever touches their own tenant's jobs. Best-effort: never blocks the
+ * new run if it fails.
+ */
+async function sweepStaleTenantJobs(supabase: AwaitedClient, tenantId: string): Promise<void> {
+  try {
+    const cutoff = new Date(Date.now() - STALE_JOB_MS).toISOString();
+    await supabase
+      .from("discovery_jobs")
+      .update({
+        status: "failed",
+        error_message: "Worker chain stalled (stale heartbeat) — cleaned up on new run.",
+        completed_at: new Date().toISOString(),
+      } as never)
+      .eq("tenant_id", tenantId)
+      .eq("status", "running")
+      .lt("heartbeat_at", cutoff);
+  } catch {
+    // Non-fatal — the daily janitor is the backstop.
+  }
+}
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+type AwaitedClient = any;
+
+export async function startDiscoveryJobWith(
+  actor: Actor,
+  icpId: string,
+  mode: DiscoveryJobMode = "full",
+): Promise<{ ok: true; jobId: string } | { ok: false; error: string }> {
+  const idParse = z.string().uuid().safeParse(icpId);
+  if (!idParse.success) return { ok: false, error: "Invalid ICP id." };
+
+  const { user } = actor;
+  if (user.role === "viewer") return { ok: false, error: "Viewers cannot run discovery." };
+
+  const { supabase } = actor;
+
+  // Clear this tenant's dead-chain zombies before we look for a job to reuse —
+  // otherwise a stale "running" row could be resurfaced as the active job below.
+  await sweepStaleTenantJobs(supabase, user.tenantId);
+
+  // Don't stack jobs: reuse an already-running job for this ICP if one exists.
+  const { data: existing } = await supabase
+    .from("discovery_jobs")
+    .select("id")
+    .eq("tenant_id", user.tenantId)
+    .eq("icp_id", idParse.data)
+    .eq("status", "running")
+    .limit(1)
+    .maybeSingle<{ id: string }>();
+  if (existing) return { ok: true, jobId: existing.id };
+
+  // "pending" mode skips discovery: preload existing raw prospects and start
+  // straight in the pipeline phase. "full" mode starts in discovering.
+  let phase: DiscoveryJobPhase = "discovering";
+  let prospectIds: string[] = [];
+  if (mode === "pending") {
+    const raw = await getRawProspectIdsWith(actor, idParse.data);
+    prospectIds = raw.ok ? raw.ids : [];
+    if (prospectIds.length === 0) {
+      return { ok: false, error: "No raw prospects waiting to process." };
+    }
+    phase = "pipeline";
+  }
+
+  const { data, error } = await supabase
+    .from("discovery_jobs")
+    .insert({
+      tenant_id: user.tenantId,
+      icp_id: idParse.data,
+      created_by: user.id,
+      status: "running",
+      phase,
+      cursor: 0,
+      prospect_ids: prospectIds,
+      stats: EMPTY_JOB_STATS,
+    } as never)
+    .select("id")
+    .single<{ id: string }>();
+
+  if (error || !data) return { ok: false, error: error?.message ?? "Could not start the job." };
+
+  // Kick the first slice. after() keeps this action's function alive long enough
+  // to actually send the trigger once the response has returned. Origin is taken
+  // from the incoming request so the chain stays on this exact host/port.
+  const sliceAuth = await sliceAuthFor(actor);
+  const origin = originFromHeaders(await headers());
+  const jobId = data.id;
+  if (!origin) return { ok: false, error: "Could not resolve request origin." };
+  after(async () => {
+    await triggerNextSlice(jobId, sliceAuth, origin);
+  });
+
+  return { ok: true, jobId };
+}
+
+/**
+ * Watchdog resume — re-kick a job whose self-chain died (slice killed by the
+ * 120s function cap, or a dropped trigger). Safe to call from the client poller:
+ * it only acts when the job is still 'running' AND its heartbeat is stale beyond
+ * STALL_MS (well past a normal slice), then bumps the heartbeat to claim it and
+ * re-fires the worker from the current cursor. Re-running the in-flight slice is
+ * idempotent: cursor only advances after a batch fully persists, so a killed
+ * batch's prospects are still unprocessed and get redone, never skipped.
+ */
+const STALL_MS = 100_000; // a normal slice is well under this; longer = dead chain
+
+export async function resumeDiscoveryJobWith(
+  actor: Actor,
+  jobId: string,
+): Promise<{ ok: true; resumed: boolean } | { ok: false; error: string }> {
+  const idParse = z.string().uuid().safeParse(jobId);
+  if (!idParse.success) return { ok: false, error: "Invalid job id." };
+
+  const { user } = actor;
+  const { supabase } = actor;
+
+  const { data: job } = await supabase
+    .from("discovery_jobs")
+    .select("id, status, heartbeat_at")
+    .eq("id", idParse.data)
+    .eq("tenant_id", user.tenantId)
+    .maybeSingle<{ id: string; status: string; heartbeat_at: string }>();
+
+  if (!job || job.status !== "running") return { ok: true, resumed: false };
+  const staleMs = Date.now() - new Date(job.heartbeat_at).getTime();
+  if (staleMs < STALL_MS) return { ok: true, resumed: false }; // slice still alive
+
+  // Claim it ATOMICALLY: the conditional .lt on heartbeat_at means only ONE of
+  // several concurrent pollers wins the claim — the losers see 0 rows and back
+  // off. Without it, two pollers reading the same stale heartbeat would both
+  // re-trigger the worker and double-process the same prospects.
+  const { data: claimed } = await supabase
+    .from("discovery_jobs")
+    .update({ heartbeat_at: new Date().toISOString() } as never)
+    .eq("id", idParse.data)
+    .eq("tenant_id", user.tenantId)
+    .eq("status", "running")
+    .lt("heartbeat_at", new Date(Date.now() - STALL_MS).toISOString())
+    .select("id");
+  if (!claimed || claimed.length === 0) {
+    return { ok: true, resumed: false }; // another poller claimed it first
+  }
+
+  const sliceAuth = await sliceAuthFor(actor);
+  const origin = originFromHeaders(await headers());
+  if (!origin) return { ok: false, error: "Could not resolve request origin." };
+  const id = job.id;
+  after(async () => {
+    await triggerNextSlice(id, sliceAuth, origin);
+  });
+
+  return { ok: true, resumed: true };
+}
+
+/**
+ * Start a background pipeline job over a HAND-PICKED set of prospects (the
+ * /companies "Run pipeline" bulk action). Runs server-side through the same
+ * self-chaining worker (time-budgeted, crash-safe) instead of a synchronous
+ * server action that 504s on more than a couple of prospects. Skips the top-30
+ * prune (the user chose these on purpose). Returns immediately with the jobId.
+ */
+export async function startPipelineJobForProspectsWith(
+  actor: Actor,
+  prospectIds: string[],
+): Promise<{ ok: true; jobId: string } | { ok: false; error: string }> {
+  const ids = z.array(z.string().uuid()).min(1).max(50).safeParse(prospectIds);
+  if (!ids.success) return { ok: false, error: "Select 1-50 prospects." };
+
+  const { user } = actor;
+  if (user.role === "viewer") return { ok: false, error: "Viewers cannot run the pipeline." };
+
+  const { supabase } = actor;
+  await sweepStaleTenantJobs(supabase, user.tenantId);
+  const { data, error } = await supabase
+    .from("discovery_jobs")
+    .insert({
+      tenant_id: user.tenantId,
+      icp_id: null,
+      created_by: user.id,
+      status: "running",
+      phase: "pipeline",
+      cursor: 0,
+      prospect_ids: ids.data,
+      stats: { ...EMPTY_JOB_STATS, skip_prune: true },
+    } as never)
+    .select("id")
+    .single<{ id: string }>();
+
+  if (error || !data) return { ok: false, error: error?.message ?? "Could not start the job." };
+
+  const sliceAuth = await sliceAuthFor(actor);
+  const origin = originFromHeaders(await headers());
+  if (!origin) return { ok: false, error: "Could not resolve request origin." };
+  const jobId = data.id;
+  after(async () => {
+    await triggerNextSlice(jobId, sliceAuth, origin);
+  });
+
+  return { ok: true, jobId };
+}
+
+export async function cancelDiscoveryJobWith(
+  actor: Actor,
+  jobId: string,
+): Promise<{ ok: true } | { ok: false; error: string }> {
+  const idParse = z.string().uuid().safeParse(jobId);
+  if (!idParse.success) return { ok: false, error: "Invalid job id." };
+
+  const { user } = actor;
+  const { supabase } = actor;
+
+  const { error } = await supabase
+    .from("discovery_jobs")
+    .update({ status: "cancelled", completed_at: new Date().toISOString() } as never)
+    .eq("id", idParse.data)
+    .eq("tenant_id", user.tenantId)
+    .eq("status", "running");
+
+  if (error) return { ok: false, error: error.message };
+  return { ok: true };
+}
+
+export async function getDiscoveryJobWith(
+  actor: Actor,
+  jobId: string): Promise<DiscoveryJob | null> {
+  const idParse = z.string().uuid().safeParse(jobId);
+  if (!idParse.success) return null;
+
+  const { user } = actor;
+  const { supabase } = actor;
+
+  const { data } = await supabase
+    .from("discovery_jobs")
+    .select(JOB_COLS)
+    .eq("id", idParse.data)
+    .eq("tenant_id", user.tenantId)
+    .maybeSingle<JobRow>();
+
+  return data ? toJob(data) : null;
+}
+
+/**
+ * Resume-on-mount for the /companies "Run pipeline" bulk action.
+ *
+ * Hand-picked runs are created with icp_id = NULL, so getActiveJobForIcp can
+ * never find them. Their job id lived only in React state, and a run takes
+ * many minutes — so a refresh or a navigation mid-run orphaned the UI: the
+ * poller died, no progress or completion toast appeared, and the table was
+ * never refreshed, making a perfectly successful run look like it did nothing.
+ */
+export async function getActiveBulkPipelineJobWith(
+  actor: Actor,
+  ): Promise<DiscoveryJob | null> {
+  const { user } = actor;
+  const { supabase } = actor;
+
+  const { data } = await supabase
+    .from("discovery_jobs")
+    .select(JOB_COLS)
+    .eq("tenant_id", user.tenantId)
+    .is("icp_id", null)
+    .eq("status", "running")
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .maybeSingle<JobRow>();
+
+  return data ? toJob(data) : null;
+}
+
+export async function getActiveJobForIcpWith(
+  actor: Actor,
+  icpId: string): Promise<DiscoveryJob | null> {
+  const idParse = z.string().uuid().safeParse(icpId);
+  if (!idParse.success) return null;
+
+  const { user } = actor;
+  const { supabase } = actor;
+
+  const { data } = await supabase
+    .from("discovery_jobs")
+    .select(JOB_COLS)
+    .eq("tenant_id", user.tenantId)
+    .eq("icp_id", idParse.data)
+    .eq("status", "running")
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .maybeSingle<JobRow>();
+
+  return data ? toJob(data) : null;
+}

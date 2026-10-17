@@ -7,9 +7,10 @@
 // function alive to send the request). This decouples a "Run All Sources" run
 // from the browser tab: closing the tab no longer stops the run.
 //
-// Auth: the START action forwards the user's session cookie, and each slice
-// forwards it onward — so getCurrentUser()/requireUser() resolve the same user
-// across the whole chain WITHOUT any session-less pipeline refactor.
+// Auth: a slice runs as an explicit Actor (lib/actor.ts). A job started from the
+// browser forwards the user's session cookie slice to slice; a job the
+// autopilot started forwards the cron secret + tenant instead, and runs as the
+// tenant's system actor. Every stage takes the actor, never a session lookup.
 //
 // Slice state machine (job.phase):
 //   discovering -> run all crawl sources, collect raw prospect ids, -> pipeline
@@ -22,18 +23,19 @@
 
 import { type NextRequest, NextResponse } from "next/server";
 import { after } from "next/server";
+import { systemActorFromRequest, type Actor } from "@/lib/actor";
 import { getCurrentUser } from "@/lib/auth";
 import { createClient } from "@/lib/supabase/server";
-import { runAllSources } from "@/lib/discover/run-all-action";
+import { runAllSourcesWith } from "@/lib/discover/run-all-stage";
 import {
-  getProspectIdsForRuns,
-  getRawProspectIds,
-  processSingleProspect,
-  pruneRunToTop30,
+  getProspectIdsForRunsWith,
+  getRawProspectIdsWith,
+  processSingleProspectWith,
+  pruneRunToTop30With,
   type ProspectOutcome,
-} from "@/lib/discover/pipeline-action";
-import { triggerNextSlice } from "@/lib/discover/job-trigger";
-import { generatePitch } from "@/lib/pitches/actions";
+} from "@/lib/discover/pipeline-stage";
+import { triggerNextSlice, type SliceAuth } from "@/lib/discover/job-trigger";
+import { generatePitchWith } from "@/lib/pitches/pitch-stage";
 import { EMPTY_JOB_STATS, type DiscoveryJobStats } from "@/lib/discover/job-types";
 
 // A discovering phase that keeps outliving the function cap would be killed and
@@ -107,9 +109,21 @@ async function bumpHeartbeat(supabase: AnySupabase, jobId: string) {
     .eq("id", jobId);
 }
 
-export async function POST(req: NextRequest) {
+/** The logged-in user from the forwarded session cookie, or null. */
+async function cookieActor(): Promise<Actor | null> {
   const user = await getCurrentUser();
-  if (!user) return NextResponse.json({ ok: false, error: "Unauthenticated" }, { status: 401 });
+  return user ? { user, supabase: await createClient(), system: false } : null;
+}
+
+export async function POST(req: NextRequest) {
+  // Two ways in: the autopilot (cron secret + tenant header → system actor), or
+  // a logged-in user's session cookie forwarded along the chain.
+  const actor: Actor | null = (await systemActorFromRequest(req)) ?? (await cookieActor());
+  if (!actor) return NextResponse.json({ ok: false, error: "Unauthenticated" }, { status: 401 });
+  const { user, supabase } = actor;
+  const sliceAuth: SliceAuth = actor.system
+    ? { kind: "system", tenantId: user.tenantId }
+    : { kind: "cookie", cookie: req.headers.get("cookie") ?? "" };
 
   let jobId: string;
   try {
@@ -120,8 +134,6 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ ok: false, error: "Bad request" }, { status: 400 });
   }
 
-  const supabase = await createClient();
-  const cookieHeader = req.headers.get("cookie") ?? "";
   // Chain stays on the exact host/port this request arrived on.
   const origin = new URL(req.url).origin;
 
@@ -171,7 +183,7 @@ export async function POST(req: NextRequest) {
       let newCount = 0;
       let dupCount = 0;
 
-      let result: Awaited<ReturnType<typeof runAllSources>>;
+      let result: Awaited<ReturnType<typeof runAllSourcesWith>>;
       // KEEPALIVE. runAllSources is one long call (every source × every keyword)
       // and used to bump the heartbeat exactly zero times while it ran. The
       // client watchdog resumes any job silent longer than STALL_MS (100s), so
@@ -187,7 +199,7 @@ export async function POST(req: NextRequest) {
         void bumpHeartbeat(supabase, job.id);
       }, 20_000);
       try {
-        result = await runAllSources(job.icp_id);
+        result = await runAllSourcesWith(actor, job.icp_id, stats.focus ?? null);
       } catch (e) {
         // A 504 / thrown server-action error — fall back to whatever was inserted.
         result = { ok: false, error: e instanceof Error ? e.message : "Discovery failed." };
@@ -202,16 +214,16 @@ export async function POST(req: NextRequest) {
         dupCount = result.candidatesDuplicate;
         discoverErrors = result.errors;
         if (result.candidatesNew > 0) {
-          const ids = await getProspectIdsForRuns(result.runIds);
+          const ids = await getProspectIdsForRunsWith(actor, result.runIds);
           prospectIds = ids.ok ? ids.ids : [];
           if (prospectIds.length === 0) {
-            const raw = await getRawProspectIds(job.icp_id);
+            const raw = await getRawProspectIdsWith(actor, job.icp_id);
             prospectIds = raw.ok ? raw.ids : [];
           }
         }
       } else {
         // Discovery errored/timed out — process anything inserted before the cut.
-        const raw = await getRawProspectIds(job.icp_id);
+        const raw = await getRawProspectIdsWith(actor, job.icp_id);
         prospectIds = raw.ok ? raw.ids : [];
         if (prospectIds.length === 0) {
           // Nothing inserted — fail the job with the discovery error.
@@ -227,7 +239,7 @@ export async function POST(req: NextRequest) {
         discoverErrors = [result.error];
       }
 
-      prospectIds = prospectIds.slice(0, PIPELINE_CAP);
+      prospectIds = prospectIds.slice(0, Math.min(PIPELINE_CAP, stats.max_processed ?? PIPELINE_CAP));
 
       const nextStats: DiscoveryJobStats = {
         ...stats,
@@ -254,7 +266,7 @@ export async function POST(req: NextRequest) {
         prospect_ids: prospectIds,
         stats: nextStats,
       });
-      after(() => triggerNextSlice(job.id, cookieHeader, origin));
+      after(() => triggerNextSlice(job.id, sliceAuth, origin));
       return NextResponse.json({ ok: true, phase: "pipeline", total: prospectIds.length });
     }
 
@@ -285,7 +297,7 @@ export async function POST(req: NextRequest) {
           batch.map(async (id): Promise<{ outcome: ProspectOutcome; error?: string }> => {
             try {
               const r = await Promise.race([
-                processSingleProspect(id),
+                processSingleProspectWith(actor, id),
                 new Promise<never>((_, reject) =>
                   setTimeout(() => reject(new Error("prospect-timeout")), budget),
                 ),
@@ -330,7 +342,7 @@ export async function POST(req: NextRequest) {
       // just advance to the next slice.
       if (cursor < ids.length) {
         await patchJob(supabase, job.id, { cursor, stats });
-        after(() => triggerNextSlice(job.id, cookieHeader, origin));
+        after(() => triggerNextSlice(job.id, sliceAuth, origin));
         return NextResponse.json({ ok: true, phase: "pipeline", cursor });
       }
 
@@ -339,7 +351,7 @@ export async function POST(req: NextRequest) {
       const icpId = job.icp_id;
       if (!icpId || stats.skip_prune) {
         await patchJob(supabase, job.id, { cursor, stats, phase: "pruning" });
-        after(() => triggerNextSlice(job.id, cookieHeader, origin));
+        after(() => triggerNextSlice(job.id, sliceAuth, origin));
         return NextResponse.json({ ok: true, phase: "pruning", cursor });
       }
 
@@ -372,13 +384,15 @@ export async function POST(req: NextRequest) {
       stats.pitched_pool = pitchedCount ?? 0;
 
       const processedSoFar = stats.processed ?? 0;
+      // An autopilot job carries what's left of its daily budget.
+      const processCap = stats.max_processed ?? MAX_PROCESSED_PER_RUN;
       const targetReached = (pitchedCount ?? 0) >= TARGET_PITCHED;
-      const capReached = processedSoFar >= MAX_PROCESSED_PER_RUN;
+      const capReached = processedSoFar >= processCap;
 
       if (!targetReached && !capReached) {
         // Refill with the next batch of raw prospects for this ICP and loop.
-        const nextRaw = await getRawProspectIds(icpId);
-        const nextIds = nextRaw.ok ? nextRaw.ids : [];
+        const nextRaw = await getRawProspectIdsWith(actor, icpId);
+        const nextIds = (nextRaw.ok ? nextRaw.ids : []).slice(0, processCap - processedSoFar);
         if (nextIds.length > 0) {
           await patchJob(supabase, job.id, {
             phase: "pipeline",
@@ -386,7 +400,7 @@ export async function POST(req: NextRequest) {
             prospect_ids: nextIds,
             stats,
           });
-          after(() => triggerNextSlice(job.id, cookieHeader, origin));
+          after(() => triggerNextSlice(job.id, sliceAuth, origin));
           return NextResponse.json({ ok: true, phase: "pipeline", refill: nextIds.length, pitched: stats.pitched_pool });
         }
         // else: raw exhausted — fall through to finish.
@@ -395,7 +409,7 @@ export async function POST(req: NextRequest) {
       // Target met, cap hit, or raw exhausted → finish (prune leftover raw + a
       // final pitching catch-up).
       await patchJob(supabase, job.id, { cursor, stats, phase: "pruning" });
-      after(() => triggerNextSlice(job.id, cookieHeader, origin));
+      after(() => triggerNextSlice(job.id, sliceAuth, origin));
       return NextResponse.json({ ok: true, phase: "pruning", pitched: stats.pitched_pool });
     }
 
@@ -423,7 +437,7 @@ export async function POST(req: NextRequest) {
           .select("id");
         prune = { ok: true, kept: stats.pitched_pool ?? 0, deleted: (del ?? []).length };
       } else {
-        prune = await pruneRunToTop30(ids);
+        prune = await pruneRunToTop30With(actor, ids);
       }
       const nextStats: DiscoveryJobStats = {
         ...stats,
@@ -473,7 +487,7 @@ export async function POST(req: NextRequest) {
         prospect_ids: pending,
         stats: nextStats,
       });
-      after(() => triggerNextSlice(job.id, cookieHeader, origin));
+      after(() => triggerNextSlice(job.id, sliceAuth, origin));
       return NextResponse.json({ ok: true, phase: "pitching", pending: pending.length });
     }
 
@@ -496,7 +510,7 @@ export async function POST(req: NextRequest) {
           batch.map(async (id): Promise<boolean> => {
             try {
               const r = await Promise.race([
-                generatePitch(id),
+                generatePitchWith(actor, id),
                 new Promise<never>((_, reject) =>
                   setTimeout(() => reject(new Error("pitch-timeout")), budget),
                 ),
@@ -519,7 +533,7 @@ export async function POST(req: NextRequest) {
         stats,
         ...(moreToProcess ? {} : { status: "done", completed_at: new Date().toISOString() }),
       });
-      if (moreToProcess) after(() => triggerNextSlice(job.id, cookieHeader, origin));
+      if (moreToProcess) after(() => triggerNextSlice(job.id, sliceAuth, origin));
       return NextResponse.json({ ok: true, phase: moreToProcess ? "pitching" : "done", cursor });
     }
 
