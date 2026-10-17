@@ -10,15 +10,54 @@
  */
 
 const THREADS_GET_URL = "https://gmail.googleapis.com/gmail/v1/users/me/threads";
+const MESSAGES_LIST_URL = "https://gmail.googleapis.com/gmail/v1/users/me/messages";
 
-// Gmail meters each mailbox per minute. The reply poll reads every sent thread
-// back to back, and past ~50 in a burst every other read came back 403 "Quota
-// exceeded … per minute per user", so half the threads went unchecked. That is
-// a pace problem, not a failure: wait and read again.
+// Gmail meters each mailbox per minute. Reading every sent thread back to back
+// hit 403 "Quota exceeded … per minute per user" past ~50 reads. A rate limit
+// is a pace problem, not a failure: wait and read again.
 const RATE_LIMIT_RETRIES = 3;
 
 export function isRateLimited(status: number, body: string): boolean {
   return status === 429 || (status === 403 && /rateLimitExceeded|Quota exceeded/i.test(body));
+}
+
+/** GET a Gmail API URL, retrying rate limits (Retry-After, else 1s/2s/4s). */
+async function gmailGet(url: string, accessToken: string, what: string): Promise<{ ok: true; res: Response } | { ok: false; error: string }> {
+  for (let attempt = 0; ; attempt++) {
+    const res = await fetch(url, { headers: { Authorization: `Bearer ${accessToken}` } });
+    if (res.ok) return { ok: true, res };
+    const body = await res.text().catch(() => "");
+    if (attempt >= RATE_LIMIT_RETRIES || !isRateLimited(res.status, body)) {
+      return { ok: false, error: `${what} failed (${res.status}): ${body.slice(0, 200)}` };
+    }
+    const retryAfter = Number(res.headers.get("retry-after"));
+    await new Promise((r) => setTimeout(r, retryAfter > 0 ? retryAfter * 1000 : 1000 * 2 ** attempt));
+  }
+}
+
+/**
+ * Threads that received mail from anyone else in the last `days` days, spam
+ * included (an opt-out filed as spam still counts). One cheap list call
+ * instead of reading every thread we ever sent: the reply poll reads only these.
+ */
+export async function listRecentInboundThreadIds(
+  accessToken: string,
+  days: number,
+): Promise<{ ok: true; threadIds: Set<string> } | { ok: false; error: string }> {
+  const threadIds = new Set<string>();
+  let pageToken: string | undefined;
+  for (let page = 0; page < 5; page++) {
+    const params = new URLSearchParams({ q: `-from:me newer_than:${days}d`, includeSpamTrash: "true", maxResults: "500" });
+    if (pageToken) params.set("pageToken", pageToken);
+    const got = await gmailGet(`${MESSAGES_LIST_URL}?${params}`, accessToken, "messages.list");
+    if (!got.ok) return got;
+    const data = (await got.res.json()) as { messages?: Array<{ threadId: string }>; nextPageToken?: string };
+    for (const m of data.messages ?? []) threadIds.add(m.threadId);
+    pageToken = data.nextPageToken;
+    if (!pageToken) return { ok: true, threadIds };
+  }
+  // More than 2,500 inbound messages in the window: too many to trust a partial list.
+  return { ok: false, error: "messages.list: too many recent messages to list" };
 }
 
 export type InboundReply = {
@@ -127,21 +166,10 @@ export async function fetchThreadReplies(
 ): Promise<{ ok: true; replies: InboundReply[] } | { ok: false; error: string }> {
   const ours = new Set(ourEmails.map((e) => e.toLowerCase()));
 
-  let res: Response;
-  for (let attempt = 0; ; attempt++) {
-    res = await fetch(`${THREADS_GET_URL}/${encodeURIComponent(threadId)}?format=full`, {
-      headers: { Authorization: `Bearer ${accessToken}` },
-    });
-    if (res.ok) break;
-    const body = await res.text().catch(() => "");
-    if (attempt >= RATE_LIMIT_RETRIES || !isRateLimited(res.status, body)) {
-      return { ok: false, error: `threads.get failed (${res.status}): ${body.slice(0, 200)}` };
-    }
-    const retryAfter = Number(res.headers.get("retry-after"));
-    await new Promise((r) => setTimeout(r, retryAfter > 0 ? retryAfter * 1000 : 1000 * 2 ** attempt));
-  }
+  const got = await gmailGet(`${THREADS_GET_URL}/${encodeURIComponent(threadId)}?format=full`, accessToken, "threads.get");
+  if (!got.ok) return got;
 
-  const thread = (await res.json()) as GmailThread;
+  const thread = (await got.res.json()) as GmailThread;
   const messages = thread.messages ?? [];
   const replies: InboundReply[] = [];
 
