@@ -3,6 +3,8 @@
 import { revalidatePath } from "next/cache";
 import { writeAuditLog } from "@/lib/audit/log";
 import { requireUser } from "@/lib/auth";
+import { recordPitchEvent } from "@/lib/pitches/events";
+import { latestRootSentPitchId } from "@/lib/pitches/root-pitch";
 import { createClient } from "@/lib/supabase/server";
 import {
   closeDateToday,
@@ -56,38 +58,38 @@ async function closeOpportunity({
   if (error) return { ok: false, error: `Could not save: ${error.message}` };
   if (!updated) return { ok: false, error: "Opportunity not found or already closed." };
 
-  // Attach the outcome to the prospect's most recent sent pitch, if any.
-  let eventRecorded = false;
-  const { data: pitch } = await supabase
-    .from("pitches")
-    .select("id")
-    .eq("tenant_id", user.tenantId)
-    .eq("prospect_id", updated.prospect_id)
-    .eq("status", "sent")
-    .order("sent_at", { ascending: false })
-    .limit(1)
-    .maybeSingle();
-
-  if (pitch?.id) {
-    const { error: evErr } = await supabase.from("pitch_events").insert({
-      tenant_id: user.tenantId,
-      pitch_id: pitch.id,
-      event_type: outcome,
+  // Outcomes are recorded against the ROOT sent pitch (the only row the learners read).
+  const pitchId = await latestRootSentPitchId(supabase, {
+    tenantId: user.tenantId,
+    prospectId: updated.prospect_id,
+  });
+  if (pitchId) {
+    await recordPitchEvent(supabase, {
+      tenantId: user.tenantId,
+      pitchId,
+      type: outcome,
       payload: { opportunity_id: id, close_date: closeDate, ...payload },
     });
-    if (evErr) console.warn(`[opportunities] ${outcome} event not recorded:`, evErr.message);
-    else eventRecorded = true;
   }
 
-  // The audit action/entity unions have no opportunity member yet; reuse the
-  // prospect status-change code and carry the opportunity id in metadata.
+  // Analytics revenue/won counts read prospects.status, so the funnel only sees the
+  // deal once the prospect carries the same outcome.
+  const { error: prospectErr } = await supabase
+    .from("prospects")
+    .update({ status: outcome, updated_at: new Date().toISOString() })
+    .eq("id", updated.prospect_id)
+    .eq("tenant_id", user.tenantId);
+  if (prospectErr) {
+    console.warn(`[opportunities] prospect status not set to ${outcome}:`, prospectErr.message);
+  }
+
   await writeAuditLog({
     tenantId: user.tenantId,
     actorId: user.id,
-    action: "prospect.status_changed",
-    entityType: "prospect",
-    entityId: updated.prospect_id,
-    metadata: { opportunity_id: id, to: outcome, pitch_event_recorded: eventRecorded, ...payload },
+    action: outcome === "won" ? "opportunity.won" : "opportunity.lost",
+    entityType: "opportunity",
+    entityId: id,
+    metadata: { prospect_id: updated.prospect_id, ...payload },
   });
 
   revalidatePath("/opportunities");

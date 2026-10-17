@@ -40,8 +40,7 @@ function OpportunityItem({ opp }: { opp: OpportunityRow }) {
         mode === "won"
           ? await markOpportunityWon({
               id: opp.id,
-              deal_value_cad:
-                value.trim() === "" ? (undefined as unknown as number) : Number(value),
+              deal_value_cad: value.trim() === "" ? Number.NaN : Number(value),
             })
           : await markOpportunityLost({ id: opp.id, loss_reason: reason });
       if (res.ok) {

@@ -78,7 +78,12 @@ export function describeOutcome(o: OutcomeFields): string {
   return "";
 }
 
-/** Today as YYYY-MM-DD (UTC), the value stored in actual_close_date. */
+/** Today as YYYY-MM-DD in America/Toronto, the value stored in actual_close_date. */
 export function closeDateToday(now: Date = new Date()): string {
-  return now.toISOString().slice(0, 10);
+  return new Intl.DateTimeFormat("en-CA", {
+    timeZone: "America/Toronto",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(now);
 }
