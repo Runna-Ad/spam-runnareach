@@ -22,6 +22,7 @@ import { HUNTER_URL } from "./industry-templates.ts";
 import { hasUsableEmail } from "../research/email-utils.ts";
 import { findBannedTerms } from "./content-rules.ts";
 import { senderIdentity } from "./sender-identity.ts";
+import { writerExemplarSection } from "./exemplars.ts";
 import type { ComposedPitch, GeneratorInputs } from "./generator.ts";
 
 // Who the intro line names. Resolved once at module load so each language's
@@ -616,7 +617,7 @@ Using the payload:
 - prospect.city: mention it only if it fits naturally, and never claim anything about their city or market that is not in the payload.
 - address_contact.role_title: use it if it fits naturally ("As the owner of [company]...").
 - solution_hint: the starting point for the fix. Make it specific to them.
-- benchmarks: real, sourced research for this pain and industry. Use one if it fits the pain you lead with (see FACTS).`;
+- benchmarks: real, sourced research for this pain and industry. Use one if it fits the pain you lead with (see FACTS).${writerExemplarSection(input.exemplars)}`;
 }
 
 // ── Violation detector ────────────────────────────────────────────────────────
