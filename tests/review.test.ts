@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { __test__ } from "../lib/anthropic/client.ts";
-import { better, composeWithReview, revisionIssues, writingFailures } from "../lib/pitches/review.ts";
+import { asReaderSees, better, composeWithReview, revisionIssues, writingFailures } from "../lib/pitches/review.ts";
 import type { GeneratorInputs } from "../lib/pitches/generator.ts";
 
 process.env.ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY ?? "test-key";
@@ -143,4 +143,17 @@ test("better() prefers fewer block failures, then a passing review, then a highe
   const c = { ...base, writing: [], review: { pass: true, score: 0.6, issues: [] } };
   assert.equal(better(b, c), c);
   assert.deepEqual(revisionIssues({ writing: [block], review: { pass: false, score: 0, issues: ["z"] } }), ["x", "z"]);
+});
+
+test("the reviewer sees the CTA as the button the reader gets, not the tracking URL", () => {
+  const body = [
+    "Hola, equipo de Manthra:",
+    "Revisé manthraspa.com desde el celular.",
+    "👉 Revisa tu sitio gratis: https://runna-hunter.vercel.app/?market=mx&industry=fitness&r=q8zuu73j&v=1.",
+    "Nils · Runna Advertising",
+  ].join("\n");
+  const seen = asReaderSees(body);
+  assert.ok(seen.includes("👉 Revisa tu sitio gratis: [button]."));
+  assert.ok(!seen.includes("runna-hunter"));
+  assert.ok(seen.includes("manthraspa.com"), "only the 👉 line changes");
 });

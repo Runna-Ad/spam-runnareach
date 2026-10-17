@@ -31,9 +31,11 @@ export function originFromHeaders(h: Headers): string | null {
 // How long the caller waits on the next slice. A slice only answers once its
 // whole batch is done (up to ~105s), and awaiting that kept every slice alive
 // through its successor's work too: twice the function time, and the caller hit
-// maxDuration inside after(). A few seconds is plenty to hand the request over;
+// maxDuration inside after(). A short wait is enough to hand the request over;
 // the slice keeps running after we hang up (Vercel doesn't cancel on disconnect).
-const HANDOFF_WAIT_MS = 8_000;
+// 8s once lost a handoff (a cold start can be slow to take the request), so
+// leave room for that.
+const HANDOFF_WAIT_MS = 20_000;
 
 /**
  * Fire-and-forget the next worker slice. Caller should schedule this via
@@ -46,7 +48,7 @@ export async function triggerNextSlice(
   origin: string,
 ): Promise<void> {
   try {
-    await fetch(`${origin}/api/discover/run`, {
+    const res = await fetch(`${origin}/api/discover/run`, {
       method: "POST",
       headers: {
         "content-type": "application/json",
@@ -56,9 +58,14 @@ export async function triggerNextSlice(
       cache: "no-store",
       signal: AbortSignal.timeout(HANDOFF_WAIT_MS),
     });
-  } catch {
-    // The usual case: we stopped waiting while the slice works. A trigger that
-    // truly never arrived leaves a stale heartbeat, which the watchdog (browser
-    // or autopilot tick) resumes. Nothing to do here.
+    // A slice that answers within the wait finished fast or was refused.
+    if (!res.ok) console.error(`[discover] handoff for job ${jobId} got HTTP ${res.status}`);
+  } catch (e) {
+    // The usual case is our own timeout: we stopped waiting while the slice
+    // works. Anything else means the trigger may not have arrived; the
+    // watchdog (browser or autopilot tick) resumes a stale job either way.
+    if (!(e instanceof Error && e.name === "TimeoutError")) {
+      console.error(`[discover] handoff for job ${jobId} failed:`, e);
+    }
   }
 }

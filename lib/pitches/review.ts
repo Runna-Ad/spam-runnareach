@@ -98,24 +98,44 @@ function criticSystem(lang: "en" | "es"): string {
   return `You review a cold email before a person sees it. You did not write it. Be strict and specific: a weak email sent to a real business costs a lead.
 
 Judge ONLY against the payload you are given. Criteria (all must pass for "pass": true):
-1. GROUNDED: every claim about the prospect comes from the payload (company, industry, city, what_they_do, tech_stack, pain evidence). Any statistic is one of payload.benchmarks, quoted correctly and framed as its caveat says, never as the sender's own result. No client names. No invented numbers.
+1. GROUNDED: every claim about the prospect comes from the payload (company, industry, city, website, what_they_do, tech_stack, pain evidence). Any statistic is one of payload.benchmarks, quoted correctly and framed as its caveat says, never as the sender's own result. No client names. No invented numbers.
 2. RELEVANT: the owner of THIS business would see within 5 seconds why it is about them. A hook that could be sent to any company fails.
 3. PLAIN: everyday words the owner uses; no jargon, hype, consultant lines or agency language; reads like one person writing to another.
 4. LANGUAGE: written natively in ${language}
 5. FIT: the greeting matches the recipient (a named person, or the team when there is no name); the ask is low-pressure (the free check, reply only if they want).
 6. SHAPE: short intro saying who writes, one hook, one fix, one proof line, one CTA line with a link, sign-off; roughly 60 to 100 words before the sign-off.
 
+Fixed parts, not yours to judge: the 👉 line's link is shown to you as [button], because the reader gets a button there and never sees the address. The sign-off names the sender and "Runna Advertising" because the law requires the sender to be identified.
+
 Output JSON: {"pass": boolean, "score": number 0..1 (how ready it is to send), "issues": [string]}.
 Each issue is a concrete instruction the writer can act on ("Replace 'streamline your intake' with what actually happens for them", "The 7 times figure measured getting a conversation, not winning the client"), at most 6, most important first. Empty when it passes.`;
 }
 
+/**
+ * The email as the reader sees it. The 👉 line renders as a button
+ * (lib/gmail/mime.ts), so its tracking URL is replaced with [button]: a
+ * reviewer shown the raw address marked every pitch down for it.
+ */
+export function asReaderSees(body: string): string {
+  return body
+    .split("\n")
+    .map((line) => (line.trim().startsWith("👉") ? line.replace(/https?:\/\/\S+/g, (url) => {
+      const trail = url.match(/[.,;:!?)\]]+$/)?.[0] ?? "";
+      return `[button]${trail}`;
+    }) : line))
+    .join("\n");
+}
+
 function criticUser(input: GeneratorInputs, composed: Pick<ComposedPitch, "subject" | "body">): string {
   const contact = pickAddressContact(input.contacts);
+  // The pitch-stage passes the whole prospect row; its website is research too.
+  const site = input.prospect as GeneratorInputs["prospect"] & { domain?: string | null; website_url?: string | null };
   const payload = {
     prospect: {
       company_name: input.prospect.company_name,
       industry: input.prospect.industry,
       city: input.prospect.city,
+      website: site.website_url ?? site.domain ?? null,
       what_they_do: input.prospect.what_they_do,
       tech_stack: input.prospect.tech_stack,
     },
@@ -123,7 +143,7 @@ function criticUser(input: GeneratorInputs, composed: Pick<ComposedPitch, "subje
     benchmarks: input.benchmarks.map((b) => ({ statistic: b.statistic, figure: b.figure, publisher: b.publisher, caveat: b.caveat ?? null })),
     recipient: contact ? { name: contact.full_name, email: contact.email, role_based: contact.email_is_role_based } : null,
   };
-  return `Payload:\n\`\`\`json\n${JSON.stringify(payload, null, 2)}\n\`\`\`\n\nEmail to review:\nSubject: ${composed.subject}\n\n${composed.body}`;
+  return `Payload:\n\`\`\`json\n${JSON.stringify(payload, null, 2)}\n\`\`\`\n\nEmail to review:\nSubject: ${composed.subject}\n\n${asReaderSees(composed.body)}`;
 }
 
 export async function critiquePitch(
