@@ -25,7 +25,7 @@ Loose ends:
    domain to the Vercel project, set `UNSUBSCRIBE_BASE_URL` (link targets still
    point at spam-runnareach.vercel.app; visible text no longer shows it).
 
-## 2. Phase 1 — part 1 SHIPPED 2026-10-17 (`8d1cfd0`, migrations 0036 + 0037 applied)
+## 2. Phase 1 — part 1 SHIPPED 2026-10-17 (prod `4c20689`, migrations 0036 + 0037 applied)
 
 Live: Nils/Henry · Runna Advertising sender, pitch prompt v2 (+ cold-email
 evidence), send gate v2 enforced everywhere, 48 sourced benchmarks the
