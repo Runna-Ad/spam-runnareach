@@ -28,7 +28,7 @@ import { resumeDiscoveryJobWith, startDiscoveryJobWith } from "@/lib/discover/jo
 import { EMPTY_JOB_STATS } from "@/lib/discover/job-types";
 import { getAccessToken, sendGmailMessage } from "@/lib/gmail/client";
 import type { Arm } from "@/lib/learning/bandit";
-import { candidateCells, cellKey, chooseCellFromArms, discoveryBudget, type SearchCell } from "@/lib/learning/scout";
+import { candidateCells, cellKey, chooseCellFromArms, dailyAllowance, discoveryBudget, type SearchCell } from "@/lib/learning/scout";
 import { editRatio } from "@/lib/pitches/decision";
 import { transitionPitchStatusWith } from "@/lib/pitches/pitch-stage";
 import { verifyRecipient } from "@/lib/research/verify-recipient";
@@ -376,6 +376,20 @@ async function maybeStartDiscovery(actor: Actor, db: Db, now: Date): Promise<Tic
   const budget = discoveryBudget({ dailySendCapacity: capacity, pitchesWaiting: waiting ?? 0, pitchYield });
   if (budget === 0) return { started: false, reason: `${waiting ?? 0} pitches already waiting for ${capacity}/day`, budget };
 
+  const { data: todays } = await db
+    .from("discovery_jobs")
+    .select("stats")
+    .eq("tenant_id", tenantId)
+    .eq("stats->>started_by", "autopilot")
+    .gte("created_at", new Date(now.getTime() - DAY).toISOString());
+  const todayRows = (todays ?? []) as Array<{ stats: { processed?: number } | null }>;
+  const allowance = dailyAllowance({
+    budget,
+    jobsToday: todayRows.length,
+    researchedToday: todayRows.reduce((sum, j) => sum + (j.stats?.processed ?? 0), 0),
+  });
+  if (allowance.prospects === 0) return { started: false, reason: allowance.reason, budget };
+
   const { data: icps } = await db
     .from("icps")
     .select("id, search_keywords, geo_regions")
@@ -429,11 +443,16 @@ async function maybeStartDiscovery(actor: Actor, db: Db, now: Date): Promise<Tic
   await db
     .from("discovery_jobs")
     .update({
-      stats: { ...EMPTY_JOB_STATS, focus: { keyword: cell.keyword, region: cell.region, cell_key: key }, started_by: "autopilot" },
+      stats: {
+        ...EMPTY_JOB_STATS,
+        focus: { keyword: cell.keyword, region: cell.region, cell_key: key },
+        started_by: "autopilot",
+        max_processed: allowance.prospects,
+      },
     })
     .eq("id", started.jobId)
     .eq("tenant_id", tenantId);
-  return { started: true, reason: `budget ${budget} prospects`, cell: key, budget };
+  return { started: true, reason: allowance.reason, cell: key, budget: allowance.prospects };
 }
 
 // ── 4. Label drafts ───────────────────────────────────────────────────────────

@@ -239,7 +239,7 @@ export async function POST(req: NextRequest) {
         discoverErrors = [result.error];
       }
 
-      prospectIds = prospectIds.slice(0, PIPELINE_CAP);
+      prospectIds = prospectIds.slice(0, Math.min(PIPELINE_CAP, stats.max_processed ?? PIPELINE_CAP));
 
       const nextStats: DiscoveryJobStats = {
         ...stats,
@@ -384,13 +384,15 @@ export async function POST(req: NextRequest) {
       stats.pitched_pool = pitchedCount ?? 0;
 
       const processedSoFar = stats.processed ?? 0;
+      // An autopilot job carries what's left of its daily budget.
+      const processCap = stats.max_processed ?? MAX_PROCESSED_PER_RUN;
       const targetReached = (pitchedCount ?? 0) >= TARGET_PITCHED;
-      const capReached = processedSoFar >= MAX_PROCESSED_PER_RUN;
+      const capReached = processedSoFar >= processCap;
 
       if (!targetReached && !capReached) {
         // Refill with the next batch of raw prospects for this ICP and loop.
         const nextRaw = await getRawProspectIdsWith(actor, icpId);
-        const nextIds = nextRaw.ok ? nextRaw.ids : [];
+        const nextIds = (nextRaw.ok ? nextRaw.ids : []).slice(0, processCap - processedSoFar);
         if (nextIds.length > 0) {
           await patchJob(supabase, job.id, {
             phase: "pipeline",

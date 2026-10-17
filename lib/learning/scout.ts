@@ -145,3 +145,27 @@ export function discoveryBudget(i: {
   const yieldRate = Math.min(Math.max(i.pitchYield, 0.05), 1);
   return Math.min(Math.ceil(needed / yieldRate), i.maxPerDay ?? 200);
 }
+
+/** Autopilot discovery jobs per rolling day: each one crawls its sources even when it finds nothing. */
+export const MAX_DISCOVERY_JOBS_PER_DAY = 6;
+
+/**
+ * What's left of today's budget. The budget is a daily figure, so prospects the
+ * autopilot already researched in the last 24h count against it, and the jobs
+ * are capped too: a cell that turns up nothing would otherwise start a fresh
+ * crawl every tick.
+ */
+export function dailyAllowance(i: {
+  budget: number;
+  researchedToday: number;
+  jobsToday: number;
+  maxJobs?: number;
+}): { prospects: number; reason: string } {
+  const maxJobs = i.maxJobs ?? MAX_DISCOVERY_JOBS_PER_DAY;
+  if (i.jobsToday >= maxJobs) {
+    return { prospects: 0, reason: `${i.jobsToday} discovery jobs in the last 24h (max ${maxJobs})` };
+  }
+  const prospects = Math.max(0, i.budget - i.researchedToday);
+  if (prospects === 0) return { prospects, reason: `today's budget of ${i.budget} prospects is spent` };
+  return { prospects, reason: `${prospects} of today's ${i.budget} prospects left` };
+}

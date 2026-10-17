@@ -8,6 +8,7 @@ import {
   cellArm,
   cellKey,
   chooseCell,
+  dailyAllowance,
   discoveryBudget,
   parseCellKey,
   prospectReward,
@@ -67,4 +68,12 @@ test("discovery budget feeds tomorrow's capacity, no more", () => {
   assert.equal(discoveryBudget({ dailySendCapacity: 20, pitchesWaiting: 40, pitchYield: 0.2 }), 0);
   assert.equal(discoveryBudget({ dailySendCapacity: 20, pitchesWaiting: 10, pitchYield: 0.2 }), 150);
   assert.equal(discoveryBudget({ dailySendCapacity: 20, pitchesWaiting: 0, pitchYield: 0.01 }), 200); // floor on yield, cap per day
+});
+
+test("the daily budget is spent across jobs, and empty crawls are capped too", () => {
+  assert.equal(dailyAllowance({ budget: 200, researchedToday: 0, jobsToday: 0 }).prospects, 200);
+  assert.equal(dailyAllowance({ budget: 200, researchedToday: 150, jobsToday: 2 }).prospects, 50);
+  assert.equal(dailyAllowance({ budget: 200, researchedToday: 230, jobsToday: 3 }).prospects, 0);
+  // Six jobs that found nothing still stop the seventh.
+  assert.equal(dailyAllowance({ budget: 200, researchedToday: 0, jobsToday: 6 }).prospects, 0);
 });

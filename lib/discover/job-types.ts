@@ -46,6 +46,8 @@ export type DiscoveryJobStats = {
   focus?: { keyword: string; region: string | null; cell_key: string };
   /** "autopilot" when the scout started the job. */
   started_by?: string;
+  /** Research cap for this run: what's left of the autopilot's daily budget. */
+  max_processed?: number;
 };
 
 export type DiscoveryJob = {

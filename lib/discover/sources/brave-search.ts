@@ -11,6 +11,7 @@
  */
 
 import { normalizeDomain } from "../fuzzy-dedupe";
+import { isNonBusinessHost } from "../non-business";
 
 // ── Public types ─────────────────────────────────────────────────────────────
 
@@ -241,6 +242,7 @@ function isUsableUrl(url: string): boolean {
     if (blocked.some((b) => u.hostname === b || u.hostname.endsWith(`.${b}`))) {
       return false;
     }
+    if (isNonBusinessHost(u.hostname)) return false;
     // Block URL paths that look like blog/article pages (list posts, guides, etc.)
     const path = u.pathname.toLowerCase();
     if (/\/(blog|article|news|resources|guide|post)\//.test(path)) return false;
