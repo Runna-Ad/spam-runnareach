@@ -9,7 +9,8 @@
 | Model / effort | opus-5.5 / medium  (see tasks/routing.md) |
 | Branch | `claude/<slug>` from `claude/<phase>-integration` |
 | PR target | `claude/<phase>-integration` |
-| Reserved migration | none  (or `0040_<name>.sql`, do not take another number) |
+| Reserved migration | none  (or `0042_<name>.sql`, do not take another number) |
+| Depends on | none  (or `<slug>` merged first; what it provides at runtime) |
 | Conductor session | `session_...` (send_message here when done or blocked) |
 | Size | S / M / L |
 
@@ -32,6 +33,10 @@ Read for context, do not edit:
 
 Forbidden (conductor-only, say so in the PR if you need a change there):
 - `lib/supabase/types.ts`, `vercel.json`, `CLAUDE.md`, any migration not reserved above.
+
+## Must not change (negative set)
+Inputs or behaviours whose outcome stays exactly as today. Mandatory for classifiers,
+filters and gates; the reviewer probes these first.
 
 ## Acceptance checks
 Concrete, runnable. The reviewer re-runs these.

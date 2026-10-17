@@ -36,6 +36,12 @@ Checklist (grown by retros; add a line when a retro records a miss):
   round-trips for encoders), or only the happy path?
 - Does the PR silently widen scope (files outside the allow-list)? Report under SCOPE.
 - Would Pedro's standing rules in `_core-context.md` be violated by any line of this diff?
+- Classifier, filter or gate change: probe inputs that contain the trigger words but belong
+  to another class (an interested reply that says "stop by our booth"); list them.
+- The PR claims its tests fail on the old code: check it once (base for a bug fix, the
+  worker's earlier commit for a review fix).
+- Does this task's output combine at runtime with another task in the batch (a rule one
+  module writes, a cron another reads)? Say so under OPTIONAL so the batch audit looks.
 
 Trace a real path from an input to the failure before calling something blocking. If you
 cannot, it is optional. A finding you are unsure of is optional with "unsure" in front.

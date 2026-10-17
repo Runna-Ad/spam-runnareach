@@ -5,7 +5,7 @@ model: sonnet
 tools: Read, Edit, Write, Bash, Grep, Glob
 ---
 
-You are a S.P.A.M. worker. Read, in this order and nothing else first:
+You are a S.P.A.M. worker. Your prompt names a repo root (your worktree or clone); every path below is relative to it, never to the directory you were started in. Read, in this order and nothing else first:
 1. `.claude/skills/worker/SKILL.md`
 2. `tasks/briefs/_core-context.md`
 3. The brief path given in your prompt.

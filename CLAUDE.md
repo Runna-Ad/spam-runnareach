@@ -27,5 +27,5 @@ Phases are run by one **conductor** session that briefs, spawns, reviews and int
 - Conductor procedure: `.claude/skills/conductor/SKILL.md`. State lives in `tasks/board.md`; a new conductor session resumes from it.
 - Worker procedure: `.claude/skills/worker/SKILL.md`. Briefs in `tasks/briefs/`, lessons go to `tasks/lessons-inbox/<slug>.md`, never straight into `lessons.md`.
 - PR conventions: `.claude/skills/steward/SKILL.md`. Workers PR into `claude/<phase>-integration`; only the conductor opens the integration → `main` PR, and only Pedro merges it ("ship it").
-- Conductor-only files: `lib/supabase/types.ts`, `supabase/migrations/*` (numbers reserved on the board), `vercel.json`, `CLAUDE.md`, `lib/{anthropic,gmail,compliance,supabase}/`.
+- Conductor-only files: `lib/supabase/types.ts`, `vercel.json`, `CLAUDE.md`, `lib/{anthropic,gmail,compliance,supabase}/`. Migrations: the conductor reserves the number on the board; the worker writes the file at that number; the conductor applies it.
 - After every batch the conductor writes `tasks/retros/<date>.md` and applies its edits to routing, core-context, the reviewer checklist and the skills. That loop is how the system gets better; skipping it is not allowed.
