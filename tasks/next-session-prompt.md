@@ -1,6 +1,6 @@
 # NEXT SESSION — start here
 
-Prod = `main` (2026-10-16): Phase 0 shipped, plus footer links + test-send panel. Read `tasks/audit-2026-10-16.md` (the full audit + plan) and the
+Prod = `main` (2026-10-17): Phase 0 + Phase 1 part 1 shipped (Nils/Henry sender, pitch prompt v2, send gate v2, sourced benchmarks). Read `tasks/audit-2026-10-16.md` (the full audit + plan) and the
 "Phase 0" section of `tasks/project-state.md` first.
 
 Cost rule (CLAUDE.md): near-free until proven. AI API spend OK; no paid
