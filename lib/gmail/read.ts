@@ -11,6 +11,16 @@
 
 const THREADS_GET_URL = "https://gmail.googleapis.com/gmail/v1/users/me/threads";
 
+// Gmail meters each mailbox per minute. The reply poll reads every sent thread
+// back to back, and past ~50 in a burst every other read came back 403 "Quota
+// exceeded … per minute per user", so half the threads went unchecked. That is
+// a pace problem, not a failure: wait and read again.
+const RATE_LIMIT_RETRIES = 3;
+
+export function isRateLimited(status: number, body: string): boolean {
+  return status === 429 || (status === 403 && /rateLimitExceeded|Quota exceeded/i.test(body));
+}
+
 export type InboundReply = {
   /** Gmail's internal message id (used for dedupe + threading on our send). */
   gmailMessageId: string;
@@ -117,13 +127,18 @@ export async function fetchThreadReplies(
 ): Promise<{ ok: true; replies: InboundReply[] } | { ok: false; error: string }> {
   const ours = new Set(ourEmails.map((e) => e.toLowerCase()));
 
-  const res = await fetch(`${THREADS_GET_URL}/${encodeURIComponent(threadId)}?format=full`, {
-    headers: { Authorization: `Bearer ${accessToken}` },
-  });
-
-  if (!res.ok) {
+  let res: Response;
+  for (let attempt = 0; ; attempt++) {
+    res = await fetch(`${THREADS_GET_URL}/${encodeURIComponent(threadId)}?format=full`, {
+      headers: { Authorization: `Bearer ${accessToken}` },
+    });
+    if (res.ok) break;
     const body = await res.text().catch(() => "");
-    return { ok: false, error: `threads.get failed (${res.status}): ${body.slice(0, 200)}` };
+    if (attempt >= RATE_LIMIT_RETRIES || !isRateLimited(res.status, body)) {
+      return { ok: false, error: `threads.get failed (${res.status}): ${body.slice(0, 200)}` };
+    }
+    const retryAfter = Number(res.headers.get("retry-after"));
+    await new Promise((r) => setTimeout(r, retryAfter > 0 ? retryAfter * 1000 : 1000 * 2 ** attempt));
   }
 
   const thread = (await res.json()) as GmailThread;

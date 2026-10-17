@@ -57,6 +57,8 @@ import { isTestAddress } from "@/lib/compliance/test-addresses";
 
 /** An out-of-office pushes the next follow-up at least this far out. */
 const OOO_POSTPONE_DAYS = 7;
+/** Stop starting threads after this long (maxDuration is 120s; leaves room for the digest). */
+const POLL_BUDGET_MS = 100_000;
 // Intents we draft a response for. Negatives (hard_no / wrong_person) and
 // auto_reply are left for Pedro's intent actions in /inbox — no draft.
 const DRAFTABLE: ReplyIntent[] = ["wants_meeting", "wants_info", "not_now", "unclassified"];
@@ -143,7 +145,14 @@ export async function GET(req: NextRequest) {
   let drafted = 0;
   const errors: string[] = [];
 
+  // Rate-limited reads wait and retry, so stop starting threads well inside
+  // maxDuration (120s). Threads run newest first; the oldest wait 30 minutes.
+  let deferred = 0;
   for (const thread of threadMap.values()) {
+    if (Date.now() - startTime > POLL_BUDGET_MS) {
+      deferred++;
+      continue;
+    }
     try {
       if (!thread.sender_inbox_id) continue;
 
@@ -428,7 +437,8 @@ export async function GET(req: NextRequest) {
   return NextResponse.json({
     ok: true,
     duration_ms: Date.now() - startTime,
-    threads_scanned: threadMap.size,
+    threads_scanned: threadMap.size - deferred,
+    deferred,
     imported,
     drafted,
     errors,
