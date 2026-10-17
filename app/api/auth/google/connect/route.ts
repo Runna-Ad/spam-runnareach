@@ -16,6 +16,8 @@ const SCOPES = [
   "https://www.googleapis.com/auth/gmail.modify",
   // Postmaster Tools — required for domain reputation + spam rate dashboard
   "https://www.googleapis.com/auth/postmaster.readonly",
+  // Calendar — booking sync reads appointment-schedule bookings (opportunities)
+  "https://www.googleapis.com/auth/calendar.readonly",
 ].join(" ");
 
 export async function GET(req: NextRequest): Promise<NextResponse> {

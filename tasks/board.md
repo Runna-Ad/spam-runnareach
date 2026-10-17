@@ -27,12 +27,12 @@ for the current phase; move older ones to the retro.
 ## Active and queued tasks
 | Slug | Module | Model/effort | Branch | Session | PR | Depends on | Status | Blocked on | Turns | Review findings | CI reds | Rework |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|
-| opportunities-calendar-sync | opportunities (new) + api | opus/high | claude/opportunities-calendar-sync | session_012RWb5yLGodvUPrkTCx1cyV | #5 | — | in-review | — | 20 | | | |
+| opportunities-calendar-sync | opportunities (new) + api | opus/high | claude/opportunities-calendar-sync | archived | #5 merged bfd1a58 | — | merged | — | 32 | 1 (7 optional, 5 pulled into the fix) + 5 optional on delta | 0 | 1 | tokens: 30.9k out / 3.2M cache-read / $1.78 |
 | opportunities-pipeline-ui | opportunities UI | sonnet/medium | claude/opportunities-pipeline-ui | archived | #1 merged 2a25f8d | — | merged | — | 18 | 1 (6 optional) + 4 optional on delta | 0 | 1 | tokens: 13.7k out / 1.35M cache-read / $0.58 |
 | pitches-hot-lead-badge | pitches UI + query | sonnet/medium | claude/pitches-hot-lead-badge | archived | #3 merged 808af20 | — | merged | — | 12 | 0 (6 optional) | 0 | 0 |
 | learning-arms-dashboard | learning UI | sonnet/medium | claude/learning-arms-dashboard | archived | #2 merged 5d9e88c | — | merged | — | 12 | 0 (6 optional) | 0 | 0 |
-| contact-source-url | research + discover inserts | opus/medium | claude/contact-source-url | session_01VQw8xTBcjWonaKZruNCydk | #4 | — | in-review | — | 14 | | | |
-| pitch-exemplar-memory | pitches (hub) | opus/high | claude/pitch-exemplar-memory | — | — | wave 1 merged | queued (wave 2) | wave 1 | | | | |
+| contact-source-url | research + discover inserts | opus/medium | claude/contact-source-url | archived | #4 merged ce22264 | — | merged | — | 14 | 0 (3 optional) | 0 | 0 |
+| pitch-exemplar-memory | pitches (hub) | opus/high | claude/pitch-exemplar-memory | session_01B7aax1BaonbKt33EWPXomB | #6 | none (serialized: only pitches worker) | in-review | — | 35 | | | |
 
 Column meanings: Turns = assistant turns in the worker session (proxy for tokens).
 Review findings = blocking findings the reviewer raised. CI reds = failed CI runs on the
@@ -44,12 +44,17 @@ These four columns feed the retro and the routing table.
 |---|---|---|---|---|
 | 1 | opportunities-calendar-sync | Reconnect Google once after ship so the calendar.readonly scope is granted | sync reports needsReconnect until done | |
 | 2 | contact-source-url | structured-research-stage.ts also inserts contacts (outside the brief's allow-list); leave source_url null there until a later task? | yes, next batch | |
+| 3 | opportunities-calendar-sync | Set env CALENDAR_BOOKING_INBOX to the inbox whose calendar holds the appointment schedule (optional; default = oldest connected inbox) | default | |
+| 4 | opportunities-calendar-sync | An invite YOU send from the connected inbox counts as a booked meeting before the prospect accepts (current behaviour). Keep, or require acceptance? | keep | |
+| 5 | opportunities-calendar-sync | Cancel-then-rebook creates two opportunities (one lost, one booked); a manual row plus a calendar booking also gives two. Accept for now, dedupe per prospect later? | accept | |
 
 ## Worktrees to clean up (in-session workers only)
 | Path | Branch | Remove after |
 |---|---|---|
 
 ## Optional findings carried to next batch (from reviews)
+- PR #5: warn when CALENDAR_BOOKING_INBOX matches no inbox; markProspectBooked overwrites suppressed/archived/bounced (skip suppressed); getAccessToken has no timeout (conductor, lib/gmail); root-pitch.ts drops its query error.
+- PR #1: prospects update should skip 'suppressed'; prospect activity feed does not render opportunity.won/lost actions.
 - PR #3: /pitches list throws if the pitch_events query fails (wrap, log, show list without badges); reward.ts and hot-lead.ts decide audit_scan stage with different rules (share levelOf); 200-row list window hides old hot leads; "Asked to talk" chip tone is danger-red (Pedro to judge in browser).
 - PR #2: add a trials=100 boundary test; query failure renders as an honest "arms not loaded", not an empty state; order + truncation notice on the 2000 limit; icp learner never writes arms (label dead); UI "too early" (<20) vs bandit settle thresholds (15 scout / 30 writer) differ, audit to note.
 
@@ -57,7 +62,8 @@ These four columns feed the retro and the routing table.
 | Requested by | File | Change | Done |
 |---|---|---|---|
 | opportunities-pipeline-ui | lib/pitches/events.ts, lib/audit/log.ts | extend PitchEventType and audit unions with meeting_booked / won / lost | done: events.ts (0375052), audit actions opportunity.booked/won/lost + entity (this commit) |
-| PR #1 review (batch interaction) | lib/pitches/root-pitch.ts | one shared latestRootSentPitchId() for outcomes, calendar sync and opt-out | done (this commit); opt-out.ts migration to it = next batch |
+| PR #1 review (batch interaction) | lib/pitches/root-pitch.ts | one shared latestRootSentPitchId() for outcomes, calendar sync and opt-out | done (d00e743); opt-out.ts migration to it = next batch |
+| pitch-exemplar-memory | lib/pitches/send-gate.ts, claude-composer.ts | placeholder regex must catch 1-char tokens ([n], {x}) the scrubber emits | done (this commit, + 2 gate tests) |
 | pitches-hot-lead-badge | lib/supabase/types.ts | add pitch_events so the any-cast can go | pending, next batch |
 
 ## Log
@@ -69,3 +75,6 @@ These four columns feed the retro and the routing table.
 - 2026-10-17 16:35 UTC — PR #3 merged (505 tests), PR #2 merged (510 tests), both reviewed merge/0 blocking. Sessions archived. Sonnet lane evidence: 2 clean runs on UI tasks.
 - 2026-10-17 16:39 UTC — PR #5 (calendar-sync, 524 tests, 20 turns; does NOT use latestRootSentPitchId, reviewer told) and PR #4 (contact-source-url, 505 tests, 14 turns) opened, CI green, both in review. PR #1 fix pushed (508 tests), delta re-review running. Brief-quality note: contact-source-url brief contradicted SUBPAGE_PRIORITY (About before Contact).
 - 2026-10-17 16:40 UTC — PR #1 merged after one fix round (root-pitch bug; reviewer verified the test fails without the fix). Integration: 519 tests. Remaining: PR #4, PR #5 in review; wave 2 next.
+- 2026-10-17 16:42 UTC — PR #4 merged (525 tests). PR #5 review: fix-then-merge (blocking: own latest-sent-pitch query instead of latestRootSentPitchId; worker branched before d00e743). Conductor pulled 5 optional items into the fix (booked status stops follow-ups; organizer check; inbox pin; truncation flag; DB errors surfaced). Wave 2 (exemplar memory) spawned.
+- 2026-10-17 16:50 UTC — PR #5 merged after one fix round (root pitch + 5 pulled-in items; reviewer verified the regression test). WAVE 1 COMPLETE: 5/5 merged, integration 565 tests green. Wave 2 (exemplar memory) running.
+- 2026-10-17 16:52 UTC — Wave 2: PR #6 (exemplar memory, 545 tests, 35 turns) open, in review. Conductor fixed the gate's placeholder regex (3+ chars → 1+) in send-gate.ts and claude-composer.ts with tests; 565 green on integration.
