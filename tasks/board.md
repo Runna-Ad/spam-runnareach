@@ -28,7 +28,7 @@ for the current phase; move older ones to the retro.
 | Slug | Module | Model/effort | Branch | Session | PR | Depends on | Status | Blocked on | Turns | Review findings | CI reds | Rework |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|
 | opportunities-calendar-sync | opportunities (new) + api | opus/high | claude/opportunities-calendar-sync | — | — | — | queued | — | | | | |
-| opportunities-pipeline-ui | opportunities UI | sonnet/medium | claude/opportunities-pipeline-ui | — | — | — | queued | — | | | | |
+| opportunities-pipeline-ui | opportunities UI | sonnet/medium | claude/opportunities-pipeline-ui | session_01EPMCtSCVAJ4Pzs49KhxxcZ | — | — | running (probe) | — | | | | |
 | pitches-hot-lead-badge | pitches UI + query | sonnet/medium | claude/pitches-hot-lead-badge | — | — | — | queued | — | | | | |
 | learning-arms-dashboard | learning UI | sonnet/medium | claude/learning-arms-dashboard | — | — | — | queued | — | | | | |
 | contact-source-url | research + discover inserts | opus/medium | claude/contact-source-url | — | — | — | queued | — | | | | |
@@ -54,3 +54,4 @@ These four columns feed the retro and the routing table.
 
 ## Log
 - 2026-10-17 16:16 UTC — phase3-batch1 opened on claude/gallant-gauss-gly093 (main acf53e2 merged). Wave 0: migration 0043 + types. 5 briefs written. Wave 1 = calendar-sync, pipeline-ui, hot-lead-badge, learning-dashboard, contact-source-url in parallel (remote sessions). Wave 2 = exemplar memory after wave 1 merges.
+- 2026-10-17 16:18 UTC — create_session refused permission_mode acceptEdits (server records this session as default; Pedro says the app shows Accept edits). Probe: pipeline-ui spawned with inherited mode; check-in at 16:25 UTC decides remote vs in-session for the rest.
