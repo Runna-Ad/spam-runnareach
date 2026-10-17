@@ -9,6 +9,7 @@ import {
   EXEMPLAR_PROMPT_VERSION,
   criticExemplarSection,
   decisionExemplarFields,
+  exemplarLeaks,
   scrubExemplar,
   selectExemplars,
   shortlistCandidates,
@@ -191,7 +192,7 @@ test("scrubber: Spanish accents survive and name particles never eat prose", () 
   assert.match(out, /^Hola \[name\],/);
   assert.ok(out.includes("En la [company] la única forma de agendar es por teléfono"), out);
   assert.ok(out.includes("después de las [n] de la noche nadie contesta. ¿Cuántos pacientes se van así?"), out);
-  assert.ok(out.includes("[name] [name] [name] lo sabrá mejor que nadie"), out);
+  assert.ok(out.includes("[name] lo sabrá mejor que nadie"), out);
   assert.ok(out.includes("Soy Nils de Runna Advertising"), out);
   assert.doesNotMatch(out, /Jos[eé]|Peña|Sonrisa|\d/);
   // Untouched Spanish keeps every accent byte for byte.
@@ -219,6 +220,106 @@ test("scrubber: the past prospect's city goes, matched as a proper noun", () => 
 test("toExemplar scrubs both subject and body", () => {
   const e = toExemplar({ pitch_id: "x", score: 1 }, { subject: "wagner legal group after 5pm", body: "Hi John,\n\nBody.", ...WAG });
   assert.deepEqual(e, { pitch_id: "x", score: 1, subject: "[company] after [n]pm", body: "Hi [name],\n\nBody." });
+});
+
+// ── Scrubber: review probes and the fail-closed invariant ─────────────────────
+
+const foldText = (t: string) => t.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
+/** Whole-word, case- and accent-insensitive presence of any of `words` in `text`. */
+function present(text: string, words: string[]): string[] {
+  const f = foldText(text);
+  return words.filter((w) => new RegExp(`(?<![\\p{L}\\p{N}])${foldText(w)}(?![\\p{L}\\p{N}])`, "u").test(f));
+}
+
+test("probe: company short form and a lower-case city in the subject are scrubbed", () => {
+  const p = { company_name: "Wagner Legal Group Inc.", domain: null, recipient_name: null, city: "Toronto" };
+  const out = scrubExemplar("who answers at wagner in toronto after hours", p);
+  assert.equal(out, "who answers at [company] in [city] after hours");
+  assert.equal(scrubExemplar("The team at Wagner picks up by noon. TORONTO firms rarely do.", p), "The team at [company] picks up by noon. [city] firms rarely do.");
+  assert.deepEqual(exemplarLeaks(out, p), []);
+});
+
+test("probe: hyphenated, ampersand and saint-prefixed company names are scrubbed", () => {
+  const sj = { company_name: "Smith-Jones Plumbing & Heating Ltd.", domain: null, recipient_name: null };
+  const a = scrubExemplar("Smith-Jones runs two vans. Smith Jones Plumbing answers by phone. smith-jones plumbing & heating is busy.", sj);
+  assert.deepEqual(present(a, ["smith", "jones"]), [], a);
+  assert.equal(a, "[company] runs two vans. [company] Plumbing answers by phone. [company] is busy.");
+  const sb = { company_name: "St Bernard's Group Home Care", domain: null, recipient_name: null };
+  const b = scrubExemplar("St. Bernard's has one intake line, and St Bernard’s Group Home Care staff call back.", sb);
+  assert.deepEqual(present(b, ["bernard", "bernards"]), [], b);
+});
+
+test("probe: accented, hyphenated and apostrophe surnames are scrubbed, with or without an honorific", () => {
+  const mj = { company_name: null, domain: null, recipient_name: "María José Núñez-Ruiz" };
+  const a = scrubExemplar("Hola María José,\n\nLic. Núñez lo sabe: la agenda de Ruiz se llena. NUNEZ-RUIZ y nunez ruiz también.", mj);
+  assert.deepEqual(present(a, ["maria", "jose", "nunez", "ruiz"]), [], a);
+  assert.match(a, /^Hola \[name\],/);
+  assert.ok(a.includes("Lic. [name] lo sabe: la agenda de [name] se llena."), a);
+  const ob = { company_name: null, domain: null, recipient_name: "Sean O'Brien" };
+  const b = scrubExemplar("Hi Sean,\n\nMr. O’Brien, your O’Brien Hardware page and OBrien’s team.", ob);
+  assert.deepEqual(present(b, ["sean", "brien", "obrien"]), [], b);
+});
+
+test("probe: names the contact row did not know (bare greeting, honorifics) are scrubbed", () => {
+  const anon = { company_name: null, domain: null, recipient_name: null };
+  assert.equal(scrubExemplar("Hi Miguel\n\nText.", anon), "Hi [name]\n\nText.");
+  assert.equal(scrubExemplar("Hola Miguel\nTexto.", anon), "Hola [name]\nTexto.");
+  assert.equal(
+    scrubExemplar("Hi team,\n\nDr. Patel and Dra. Gómez Ruiz see patients; Sra. Hernández books them.", anon),
+    "Hi team,\n\nDr. [name] and Dra. [name] see patients; Sra. [name] books them.",
+  );
+});
+
+test("probe: matching ignores case and accents fully; a common-word name spares the word", () => {
+  const p = { company_name: null, domain: null, recipient_name: "April Gómez", city: "Calgary" };
+  const out = scrubExemplar("CALGARY, calgary and Calgary. GOMEZ, gómez. In april, April said hi.", p);
+  assert.equal(out, "[city], [city] and [city]. [name], [name]. In april, [name] said hi.");
+  assert.deepEqual(exemplarLeaks(out, p), []);
+});
+
+test("fail closed: exemplarLeaks finds a surviving word, and only distinctive ones", () => {
+  const p = { company_name: "Wagner Legal Group Inc.", domain: "waglaw.net", recipient_name: "John Sipos", city: "Toronto" };
+  assert.deepEqual(exemplarLeaks("Thanks, wágner team in TORONTO. sipos.", p).sort(), ["sipos", "toronto", "wagner"]);
+  assert.deepEqual(exemplarLeaks("Legal groups in the city get calls; waglaw", p), ["waglaw"]);
+  assert.deepEqual(exemplarLeaks("Legal groups get calls after hours.", p), []);
+});
+
+test("property: 30 generated prospects; no distinctive word survives in a kept exemplar", () => {
+  const firsts = ["María José", "Sean", "Priya", "Jean-Luc", "Zoë", "Raúl", "Siobhan", "Thanh", "Ngozi", "Björn"];
+  const lasts = ["Núñez-Ruiz", "O’Brien", "Patel", "Tremblay", "Gómez", "Nakamura", "Okafor", "Lefebvre", "Hernández", "Kowalski"];
+  const stems = ["Wagner", "Bluefin", "Maplecrest", "Ixtapa", "Tecnoforja", "Northbridge", "Arbutus", "Quetzal", "Halvorsen", "Corvid"];
+  const suffixes = [" Legal Group Inc.", " Dental Clinic", " Plumbing & Heating Ltd.", " S.A. de C.V.", " Construction"];
+  const cities = ["Toronto", "Saskatoon", "Querétaro", "Guadalajara", "Kelowna", "Trois-Rivières", "Mérida", "Moncton"];
+  let kept = 0;
+  for (let i = 0; i < 30; i++) {
+    const first = firsts[i % firsts.length]!;
+    const last = lasts[(i * 3) % lasts.length]!;
+    const stem = stems[(i * 7) % stems.length]!;
+    const company = stem + suffixes[i % suffixes.length]!;
+    const city = cities[(i * 5) % cities.length]!;
+    const p = { company_name: company, domain: `${stem.toLowerCase()}.ca`, recipient_name: `${first} ${last}`, city };
+    const subject = `${stem.toLowerCase()} in ${city.toLowerCase()} after hours`;
+    const body = [
+      `Hi ${first.split(" ")[0]},`,
+      "",
+      `The team at ${stem} in ${city.toUpperCase()} answers ${i + 2} calls by hand. ${company} has a form at www.${stem.toLowerCase()}.ca.`,
+      `Dr. ${last} told us ${last}'s desk is busy; ${first} ${last.toUpperCase()} agreed. Write ${first.split(" ")[0]!.toLowerCase()}@${stem.toLowerCase()}.ca.`,
+      "",
+      `👉 Run ${stem} through our free check, about 30 seconds: https://runna-hunter.vercel.app/?r=a${i}b`,
+      "",
+      "Henry",
+      "Runna Advertising",
+    ].join("\n");
+    const e = toExemplar({ pitch_id: `p${i}`, score: 1 }, { subject, body, ...p });
+    if (!e) continue; // dropped by the fail-closed check: safe by construction
+    kept++;
+    const words = [first, last, stem, city].flatMap((w) => foldText(w).split(/[^\p{L}\p{N}]+/u)).filter((w) => w.length >= 4);
+    const text = `${e.subject}\n${e.body}`;
+    assert.deepEqual(present(text, words), [], `case ${i}: ${text}`);
+    assert.doesNotMatch(text, /\d/, `case ${i}`);
+  }
+  // The invariant is a net, not the scrubber: nearly every case must come through.
+  assert.ok(kept >= 28, `kept ${kept} of 30`);
 });
 
 // ── Prompt injection ──────────────────────────────────────────────────────────
@@ -275,7 +376,8 @@ test("writer and critic see the scrubbed exemplars; no exemplar company, name or
     subject: "intake at wagner legal group after 5pm",
     body: "Hi John,\n\nWagner Legal Group answers 12 calls a day by hand; waglaw.net has no booking.\n\n👉 Run Wagner Legal Group through our free check, about 30 seconds: https://runna-hunter.vercel.app/?r=zz99\n\nHenry\nRunna Advertising",
   };
-  const exemplar = toExemplar({ pitch_id: "ex-1", score: 1 }, { ...past, ...WAG });
+  const exemplar = toExemplar({ pitch_id: "ex-1", score: 1 }, { ...past, ...WAG })!;
+  assert.ok(exemplar, "exemplar survives the leak check");
   const calls = install((r) => (isCritic(r) ? JSON.stringify({ score: 0.95, issues: [] }) : pitchJson));
   try {
     const r = await composeWithReview(inputs({ exemplars: [exemplar] }), { deadline: Date.now() + 120_000 });

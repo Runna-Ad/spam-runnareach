@@ -338,16 +338,22 @@ export async function generatePitchWith(
   // Never throws; without arms, today's behaviour.
   // Alongside: up to two of our own best past pitches for this segment
   // (lib/pitches/exemplars.ts), scrubbed, as the writer's model and the
-  // critic's bar. Never throws; none → today's exact prompts.
-  const [writerArms, exemplars] = await Promise.all([
+  // critic's bar. Never throws; none → today's exact prompts. Skipped when the
+  // daily AI cap is already hit (the template writes the pitch then), so the
+  // cap is checked once, here, and reused below.
+  const dailyCapCheck = claudeIsAvailable() ? isUnderDailyCap(user.tenantId) : Promise.resolve(null);
+  const [writerArms, exemplars, dailyCap] = await Promise.all([
     chooseWriterArms(supabase, user.tenantId),
-    claudeIsAvailable()
-      ? fetchExemplars(supabase, user.tenantId, {
-          segment: segmentOf(prospect),
-          lang: prospect.language,
-          prospect_id: prospect.id,
-        })
-      : Promise.resolve([]),
+    dailyCapCheck.then((c) =>
+      c?.under
+        ? fetchExemplars(supabase, user.tenantId, {
+            segment: segmentOf(prospect),
+            lang: prospect.language,
+            prospect_id: prospect.id,
+          })
+        : [],
+    ),
+    dailyCapCheck,
   ]);
   const offeredBenchmarks = writerArms.evidence === "no_benchmark" ? [] : benchmarks;
 
@@ -396,8 +402,8 @@ export async function generatePitchWith(
   let reviewCalls: ReviewCall[] = [];
   let critic: CriticVerdict | null = null;
 
-  if (claudeIsAvailable()) {
-    const cap = await isUnderDailyCap(user.tenantId);
+  if (dailyCap) {
+    const cap = dailyCap;
     if (!cap.under) {
       claudeFallbackReason = `daily cap hit (spent $${cap.spent_today_usd.toFixed(2)} of $${cap.cap_usd.toFixed(2)})`;
     } else {
@@ -838,6 +844,8 @@ export async function rewritePitchWithAngleWith(
       path: "rewrite",
       prompt_version: PITCH_PROMPT_VERSION,
       angle: parsed.data.pain_label,
+      // A human-chosen angle is written without exemplars.
+      exemplars_used: [],
       critic_pass: result.critic?.pass ?? null,
       critic_issues: result.critic?.issues ?? [],
       revisions: result.critic?.revisions ?? 0,

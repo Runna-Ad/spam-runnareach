@@ -1,20 +1,25 @@
 // Exemplar memory, the data side: read the candidates, their outcomes, and the
 // chosen pitches' text. Selection and scrubbing are pure (./exemplars.ts).
 //
-// Three small reads, tenant-scoped, each with a timeout:
+// Three small reads, tenant-scoped, under ONE shared time budget
+// (EXEMPLAR_FETCH_BUDGET_MS) so the writer and critic are never starved:
 //   1. recent settled root pitches in the prospect's language (light columns),
 //      filtered to the segment in memory (prospect.industry is free text, so
 //      SQL cannot match a segment),
-//   2. pitch_events for the shortlist (at most EXEMPLAR_SHORTLIST pitches),
+//   2. outcome events for every eligible candidate (at most EXEMPLAR_SHORTLIST),
+//      so a pitch with a reply is scored even when newer silent sends exist,
 //   3. subject + body + who it went to, for the (at most two) chosen.
 // Never throws: an exemplar is an enhancement, not a dependency. Any failure
-// returns [] and the pitch is written exactly as without exemplars.
+// is logged and returns [], and the pitch is written exactly as without
+// exemplars. A chosen pitch whose scrubbed text still names its prospect is
+// dropped (scrub_failed), never shown.
 
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { isTestAddress } from "../compliance/test-addresses.ts";
 import { ATTRIBUTION_WINDOW_DAYS, type OutcomeEvent } from "../learning/reward.ts";
 import {
   EXEMPLAR_SHORTLIST,
+  MAX_EXEMPLARS,
   selectExemplars,
   shortlistCandidates,
   toExemplar,
@@ -25,8 +30,9 @@ import {
 
 /** Recent sends scanned for a segment match. */
 const CANDIDATE_SCAN = 200;
-// Three sequential reads inside the 48s compose budget: worst case 6s, normally ~0.1s.
-const QUERY_TIMEOUT_MS = 2_000;
+/** All three reads together, inside the 48s compose budget; normally ~0.1s. */
+export const EXEMPLAR_FETCH_BUDGET_MS = 3_000;
+const OUTCOME_EVENTS = ["sent", "reply", "audit_scan", "bounce", "unsubscribe"];
 
 type CandidateRow = {
   id: string;
@@ -64,6 +70,7 @@ export async function fetchExemplars(
   now: Date = new Date(),
 ): Promise<Exemplar[]> {
   if (target.segment.industry === "other") return [];
+  const signal = AbortSignal.timeout(EXEMPLAR_FETCH_BUDGET_MS);
   try {
     const cutoff = new Date(now.getTime() - ATTRIBUTION_WINDOW_DAYS * 86_400_000).toISOString();
     const { data: rows, error } = await supabase
@@ -78,9 +85,13 @@ export async function fetchExemplars(
       .eq("prospects.language", target.lang)
       .order("sent_at", { ascending: false })
       .limit(CANDIDATE_SCAN)
-      .abortSignal(AbortSignal.timeout(QUERY_TIMEOUT_MS))
+      .abortSignal(signal)
       .returns<CandidateRow[]>();
-    if (error || !rows || rows.length === 0) return [];
+    if (error) {
+      console.error("[exemplars] candidates query failed:", error.message);
+      return [];
+    }
+    if (!rows || rows.length === 0) return [];
 
     const candidates: ExemplarCandidate[] = rows.map((r) => ({
       pitch_id: r.id,
@@ -104,9 +115,13 @@ export async function fetchExemplars(
       .select("pitch_id, event_type, event_at, payload")
       .eq("tenant_id", tenantId)
       .in("pitch_id", shortlist.map((c) => c.pitch_id))
-      .abortSignal(AbortSignal.timeout(QUERY_TIMEOUT_MS))
+      .in("event_type", OUTCOME_EVENTS)
+      .abortSignal(signal)
       .returns<Array<{ pitch_id: string; event_type: string; event_at: string; payload: OutcomeEvent["payload"] }>>();
-    if (evErr) return [];
+    if (evErr) {
+      console.error("[exemplars] events query failed:", evErr.message);
+      return [];
+    }
     const events = new Map<string, OutcomeEvent[]>();
     for (const e of evRows ?? []) {
       const list = events.get(e.pitch_id) ?? [];
@@ -114,10 +129,11 @@ export async function fetchExemplars(
       events.set(e.pitch_id, list);
     }
 
+    // Twice the slots, best first: one dropped by the leak check leaves a runner-up.
     const picked = selectExemplars(
       shortlist.map((c) => ({ ...c, events: events.get(c.pitch_id) ?? [] })),
       target,
-      opts,
+      { ...opts, max: MAX_EXEMPLARS * 2 },
     );
     if (picked.length === 0) return [];
 
@@ -128,33 +144,40 @@ export async function fetchExemplars(
       )
       .eq("tenant_id", tenantId)
       .in("id", picked.map((p) => p.pitch_id))
-      .abortSignal(AbortSignal.timeout(QUERY_TIMEOUT_MS))
+      .abortSignal(signal)
       .returns<TextRow[]>();
-    if (textErr || !texts) return [];
+    if (textErr) {
+      console.error("[exemplars] text query failed:", textErr.message);
+      return [];
+    }
+    if (!texts) return [];
     const byId = new Map(texts.map((t) => [t.id, t]));
 
     const out: Exemplar[] = [];
+    let scrubFailed = 0;
     for (const p of picked) {
+      if (out.length >= MAX_EXEMPLARS) break;
       const t = byId.get(p.pitch_id);
       // What a person approved, without the compliance footer body_sent carries.
       const body = t?.body_edited?.trim() || t?.body_original?.trim();
       if (!t || !body || !t.subject?.trim()) continue;
-      out.push(
-        toExemplar(p, {
-          subject: t.subject,
-          body,
-          company_name: t.prospects?.company_name ?? null,
-          domain: t.prospects?.domain ?? null,
-          website_url: t.prospects?.website_url ?? null,
-          city: t.prospects?.city ?? null,
-          recipient_name: t.prospect_contacts?.full_name ?? null,
-          recipient_email: t.prospect_contacts?.email ?? null,
-        }),
-      );
+      const exemplar = toExemplar(p, {
+        subject: t.subject,
+        body,
+        company_name: t.prospects?.company_name ?? null,
+        domain: t.prospects?.domain ?? null,
+        website_url: t.prospects?.website_url ?? null,
+        city: t.prospects?.city ?? null,
+        recipient_name: t.prospect_contacts?.full_name ?? null,
+        recipient_email: t.prospect_contacts?.email ?? null,
+      });
+      if (exemplar) out.push(exemplar);
+      else scrubFailed++;
     }
+    if (scrubFailed > 0) console.warn(`[exemplars] scrub_failed: dropped ${scrubFailed} exemplar(s) that still named their prospect`);
     return out;
   } catch (err) {
-    console.warn("[exemplars] not loaded:", (err as Error).message);
+    console.error("[exemplars] not loaded:", (err as Error).message);
     return [];
   }
 }

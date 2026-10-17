@@ -8,6 +8,11 @@ WHAT HAPPENED: prospects.industry and decision.segment.industry are free text; s
 RULE: Any learner that needs "pitches in segment X" will hit this. A stored, normalized segment key (e.g. decision.segment_key or a generated column) would make it one indexed query; until then, scan-recent-then-filter with an explicit cap.
 TAGS: learning, segments, queries
 
+[2026-10-17] A scrubber is a list of rules; guard it with an invariant that fails closed
+WHAT HAPPENED: The first exemplar scrubber replaced a past prospect's full name, company and city with a hand-built case/accent regex. Review found 9 leaks: "Wagner" from "Wagner Legal Group Inc.", lower-case "toronto", "Smith-Jones", "St. Bernard's", "Lic. Núñez", "O’Brien", "Hi Miguel" without a comma, "Dr. Patel", and vowel-only accent classes that missed "CALGARY". The fix matches on one accent-folded, lower-cased shadow of the text mapped back to the original. Then exemplarLeaks re-checks every distinctive word (4+ letters, not generic) of the company, contact, city and domain, and toExemplar DROPS the exemplar if any survives (lib/pitches/exemplars.ts).
+RULE: When text from one customer may reach another, don't rely on the replacement rules alone. Add a separate check over the output for the identifying tokens, and drop on any hit. Test it with the reviewer's probes plus a generated property test (30 name × company × city combos), and run those tests against the old code to show they bite (7 of 7 failed there).
+TAGS: pitches, privacy, scrubbing, testing
+
 ## Out of scope, noticed
-- lib/pitches/send-gate.ts:377 (and `LEFTOVER_PLACEHOLDER_RE`) miss 1–2 character bracket placeholders like `[n]`; adding `\[n\]` (or `{1,40}`) would close the exemplar gap above. send-gate.ts is forbidden to this brief.
+- (Fixed by the conductor in 3dfeec4, merged into this branch: the send gate now blocks one-character placeholders like `[n]`.) `LEFTOVER_PLACEHOLDER_RE` in claude-composer.ts (the composer's violation counter) still needs 3+ chars; cosmetic only.
 - (Resolved in this PR: the scrubber also replaces the past prospect's city with `[city]`, which the gate's placeholder check does catch.)
