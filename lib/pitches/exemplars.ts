@@ -271,16 +271,19 @@ const NAME_PARTICLES = new Set([
   "st", "san", "mc", "mac", "jr", "sr", "ii", "iii", "o", "d",
 ]);
 
-/** Given names that are also common words: scrubbed and checked only when capitalized. */
+/**
+ * GIVEN names that are also common words: in a contact's name they are
+ * scrubbed and leak-checked only when capitalized ("Will" goes, "will" stays).
+ * Never applied to company or city words: subjects are lower case by house
+ * rule, so "who books summit at night" and "clinics in victoria" must go.
+ */
 const COMMON_WORD_NAMES = new Set([
   "will", "mark", "may", "june", "april", "rose", "grace", "hope", "faith", "joy", "bill", "art", "pat", "sun", "sol",
   "luz", "paz", "rey", "dolores", "amparo", "consuelo", "angel", "angeles", "rocio", "pilar", "mercedes", "guadalupe",
   "victoria", "rich", "frank", "earnest", "ernest", "dean", "chase", "page", "sky", "summer", "winter", "rob", "sue",
-  "summit", "pacific", "golden", "royal", "premier", "elite", "prime", "smart", "bright", "best", "first", "true",
-  "mission", "orange", "hope", "surrey", "delta", "victoria", "regina", "guelph",
 ]);
 
-/** A phrase made only of common words ("Mission", "Summit") is matched only when capitalized. */
+/** A contact name made only of common-word given names ("Will", "April May") is matched only when capitalized. */
 function commonOnly(phrase: string): boolean {
   const ps = pieces(phrase);
   return ps.length > 0 && ps.every((p) => COMMON_WORD_NAMES.has(p));
@@ -338,14 +341,14 @@ export function scrubExemplar(text: string, prospect: ExemplarProspect): string 
   // Company: the whole name, then the name without suffix, then each distinctive
   // word of it or of the domain's label ("The team at Wagner", "waglaw").
   if (prospect.company_name?.trim()) {
-    for (const p of companyPhrases(prospect.company_name)) out = replacePhrase(out, p, "[company]", commonOnly(p));
+    for (const p of companyPhrases(prospect.company_name)) out = replacePhrase(out, p, "[company]");
     const words = new Set([...distinctive(prospect.company_name), ...distinctive(host?.split(".")[0])]);
-    for (const w of words) out = replacePhrase(out, w, "[company]", COMMON_WORD_NAMES.has(w));
+    for (const w of words) out = replacePhrase(out, w, "[company]");
   }
 
   if (prospect.city?.trim()) {
-    out = replacePhrase(out, prospect.city, "[city]", commonOnly(prospect.city));
-    for (const w of distinctive(prospect.city)) out = replacePhrase(out, w, "[city]", COMMON_WORD_NAMES.has(w));
+    out = replacePhrase(out, prospect.city, "[city]");
+    for (const w of distinctive(prospect.city)) out = replacePhrase(out, w, "[city]");
   }
 
   // Contact: the full name, then each space-separated part ("Núñez-Ruiz",
@@ -385,18 +388,22 @@ export function scrubExemplar(text: string, prospect: ExemplarProspect): string 
  * Fail closed: the distinctive words of the old company, contact, city and
  * domain that are still in the text (case- and accent-insensitive, whole
  * words). Anything here means the scrubber missed, and the exemplar is dropped.
+ * Only a contact's common-word given name ("Will") is checked capitalized-only;
+ * company, city and domain words are checked in any case.
  */
 export function exemplarLeaks(text: string, prospect: ExemplarProspect): string[] {
   const host = hostOf(prospect.domain, prospect.website_url);
-  const tokens = new Set([
+  const anyCase = new Set([
     ...distinctive(prospect.company_name),
-    ...distinctive(prospect.recipient_name),
     ...distinctive(prospect.city),
     ...distinctive(host?.split(".")[0]),
   ]);
+  const tokens = new Map<string, boolean>(); // token → capitalOnly
+  for (const t of distinctive(prospect.recipient_name)) tokens.set(t, COMMON_WORD_NAMES.has(t) && !anyCase.has(t));
+  for (const t of anyCase) tokens.set(t, false);
   const leaks: string[] = [];
-  for (const t of tokens) {
-    if (replacePhrase(text, t, "\u0000", COMMON_WORD_NAMES.has(t)) !== text) leaks.push(t);
+  for (const [t, capitalOnly] of tokens) {
+    if (replacePhrase(text, t, "\u0000", capitalOnly) !== text) leaks.push(t);
   }
   return leaks;
 }

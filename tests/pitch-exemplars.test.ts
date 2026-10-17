@@ -210,11 +210,27 @@ test("scrubber: a greeting name the contact row did not know still goes; a team 
   assert.equal(scrubExemplar("Hi Will,\n\nThis will take a minute, Will.", will), "Hi [name],\n\nThis will take a minute, [name].");
 });
 
-test("scrubber: the past prospect's city goes, matched as a proper noun", () => {
+test("scrubber: the past prospect's city goes in any case, even when it is also a word", () => {
   const p = { company_name: null, domain: null, recipient_name: null, city: "Mission" };
-  assert.equal(scrubExemplar("Clinics in Mission lose the evening calls. Our mission is plain.", p), "Clinics in [city] lose the evening calls. Our mission is plain.");
+  assert.equal(scrubExemplar("Clinics in Mission lose the evening calls. who answers in mission.", p), "Clinics in [city] lose the evening calls. who answers in [city].");
   const q = { company_name: null, domain: null, recipient_name: null, city: "Querétaro" };
   assert.equal(scrubExemplar("Aquí en Queretaro y en Querétaro.", q), "Aquí en [city] y en [city].");
+});
+
+test("probe: lower-case subjects with place and brand words are scrubbed (Victoria, Guelph, Surrey, Summit)", () => {
+  const city = (c: string) => ({ company_name: null, domain: null, recipient_name: null, city: c });
+  assert.equal(scrubExemplar("clinics in victoria after hours", city("Victoria")), "clinics in [city] after hours");
+  assert.equal(scrubExemplar("who answers in guelph at night", city("Guelph")), "who answers in [city] at night");
+  assert.equal(scrubExemplar("surrey dentists after hours", city("Surrey")), "[city] dentists after hours");
+  const summit = { company_name: "Summit Dental", domain: null, recipient_name: null };
+  assert.equal(scrubExemplar("who books summit at night", summit), "who books [company] at night");
+  // And the fail-closed check sees them in lower case too.
+  assert.deepEqual(exemplarLeaks("clinics in victoria after hours", city("Victoria")), ["victoria"]);
+  assert.deepEqual(exemplarLeaks("who books summit at night", summit), ["summit"]);
+  // A contact's common-word given name stays capital-only: "will" the verb survives.
+  const will = { company_name: null, domain: null, recipient_name: "Will Turner" };
+  assert.deepEqual(exemplarLeaks("this will help", will), []);
+  assert.deepEqual(exemplarLeaks("thanks, Will", will), ["will"]);
 });
 
 test("toExemplar scrubs both subject and body", () => {
