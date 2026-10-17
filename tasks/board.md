@@ -32,7 +32,7 @@ for the current phase; move older ones to the retro.
 | pitches-hot-lead-badge | pitches UI + query | sonnet/medium | claude/pitches-hot-lead-badge | archived | #3 merged 808af20 | — | merged | — | 12 | 0 (6 optional) | 0 | 0 |
 | learning-arms-dashboard | learning UI | sonnet/medium | claude/learning-arms-dashboard | archived | #2 merged 5d9e88c | — | merged | — | 12 | 0 (6 optional) | 0 | 0 |
 | contact-source-url | research + discover inserts | opus/medium | claude/contact-source-url | archived | #4 merged ce22264 | — | merged | — | 14 | 0 (3 optional) | 0 | 0 |
-| pitch-exemplar-memory | pitches (hub) | opus/high | claude/pitch-exemplar-memory | session_01B7aax1BaonbKt33EWPXomB | — | none (serialized: only pitches worker) | running | — | | | | |
+| pitch-exemplar-memory | pitches (hub) | opus/high | claude/pitch-exemplar-memory | session_01B7aax1BaonbKt33EWPXomB | #6 | none (serialized: only pitches worker) | in-review | — | 35 | | | |
 
 Column meanings: Turns = assistant turns in the worker session (proxy for tokens).
 Review findings = blocking findings the reviewer raised. CI reds = failed CI runs on the
@@ -62,7 +62,8 @@ These four columns feed the retro and the routing table.
 | Requested by | File | Change | Done |
 |---|---|---|---|
 | opportunities-pipeline-ui | lib/pitches/events.ts, lib/audit/log.ts | extend PitchEventType and audit unions with meeting_booked / won / lost | done: events.ts (0375052), audit actions opportunity.booked/won/lost + entity (this commit) |
-| PR #1 review (batch interaction) | lib/pitches/root-pitch.ts | one shared latestRootSentPitchId() for outcomes, calendar sync and opt-out | done (this commit); opt-out.ts migration to it = next batch |
+| PR #1 review (batch interaction) | lib/pitches/root-pitch.ts | one shared latestRootSentPitchId() for outcomes, calendar sync and opt-out | done (d00e743); opt-out.ts migration to it = next batch |
+| pitch-exemplar-memory | lib/pitches/send-gate.ts, claude-composer.ts | placeholder regex must catch 1-char tokens ([n], {x}) the scrubber emits | done (this commit, + 2 gate tests) |
 | pitches-hot-lead-badge | lib/supabase/types.ts | add pitch_events so the any-cast can go | pending, next batch |
 
 ## Log
@@ -76,3 +77,4 @@ These four columns feed the retro and the routing table.
 - 2026-10-17 16:40 UTC — PR #1 merged after one fix round (root-pitch bug; reviewer verified the test fails without the fix). Integration: 519 tests. Remaining: PR #4, PR #5 in review; wave 2 next.
 - 2026-10-17 16:42 UTC — PR #4 merged (525 tests). PR #5 review: fix-then-merge (blocking: own latest-sent-pitch query instead of latestRootSentPitchId; worker branched before d00e743). Conductor pulled 5 optional items into the fix (booked status stops follow-ups; organizer check; inbox pin; truncation flag; DB errors surfaced). Wave 2 (exemplar memory) spawned.
 - 2026-10-17 16:50 UTC — PR #5 merged after one fix round (root pitch + 5 pulled-in items; reviewer verified the regression test). WAVE 1 COMPLETE: 5/5 merged, integration 565 tests green. Wave 2 (exemplar memory) running.
+- 2026-10-17 16:52 UTC — Wave 2: PR #6 (exemplar memory, 545 tests, 35 turns) open, in review. Conductor fixed the gate's placeholder regex (3+ chars → 1+) in send-gate.ts and claude-composer.ts with tests; 565 green on integration.

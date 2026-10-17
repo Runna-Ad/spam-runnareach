@@ -632,7 +632,7 @@ const HUNTER_TOKEN_RE = /[{[]{1,2}\s*hunter_url\s*[}\]]{1,2}/gi;
  * [el dolor] — used by the violation check. The prompt's examples use brackets,
  * and a copied one must never read as finished text.
  */
-export const LEFTOVER_PLACEHOLDER_RE = /[{[]{1,2}\s*[a-záéíóúñü_' ]{3,40}?\s*[}\]]{1,2}/gi;
+export const LEFTOVER_PLACEHOLDER_RE = /[{[]{1,2}\s*[a-záéíóúñü_' ]{1,40}?\s*[}\]]{1,2}/gi;
 
 /**
  * Guarantee the CTA is a working button.
