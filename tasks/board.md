@@ -5,7 +5,7 @@ file alone. Update it on every spawn, every status change, every merge. Keep clo
 for the current phase; move older ones to the retro.
 
 ## Current phase
-`phase3-batch1` · integration branch `claude/gallant-gauss-gly093` (this session's branch doubles as the integration branch) · opened from `main` at `acf53e2` · integration → main PR: none yet
+`phase3-batch1` · integration branch `claude/gallant-gauss-gly093` (this session's branch doubles as the integration branch) · opened from `main` at `acf53e2` · integration → main PR: https://github.com/Runna-Ad/spam-runnareach/pull/7 (awaiting Pedro's ship-it)
 
 ## Approvals and checks
 | Item | State |
@@ -82,3 +82,4 @@ These four columns feed the retro and the routing table.
 - 2026-10-17 16:58 UTC — PR #6 review: fix-then-merge. Blocking: scrubber leaks company short forms, hyphenated surnames, honorifics, lowercase cities. Sent back with a fail-closed invariant (drop exemplar if any distinctive token survives) + property test, per the sim lesson (invariant, not longer regex). Reviewer: ~114k tokens, 45 tool uses, 7 min (hub-level rigor).
 - 2026-10-17 17:11 UTC — PR #6 round 2: fail-closed invariant landed (592 tests) but the common-word case gate also covered cities/brands (victoria, surrey, summit leak in lowercase subjects). Sent the precise fix as the last round; conductor will verify with the reviewer's probe script instead of a 3rd review (G15). Reviewer round 2: ~142k tokens cumulative.
 - 2026-10-17 17:23 UTC — PR #6 merged after conductor spot-check (23 probes, 593 tests). BATCH COMPLETE: 6/6 merged, 593 tests, build green. Fable batch audit: MERGE, conditional on applying 0043 BEFORE deploy (contact inserts name source_url; a code-first deploy would silently drop contacts in the autopilot research path). Retro written, lessons merged, project-state updated. Opening integration → main PR; waiting on Pedro's ship-it.
+- 2026-10-17 17:24 UTC — Integration → main PR #7 opened and subscribed. Batch is DONE on the conductor side; waiting on Pedro: apply 0043, ship it, apply 0044, reconnect Google.
