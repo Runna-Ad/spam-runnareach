@@ -43,15 +43,26 @@ export function caveatForPrompt(caveat: string | null): string | null {
   return cut ? cut.slice(0, 280) : null;
 }
 
-/** Loose industry comparison — mirrors generator.ts's industryMatch. */
-function industryOverlaps(scope: string[], industry: string | null): boolean {
+/** True when `phrase` occurs in `text` as whole words ("hotel" in "hotel chain"). */
+function containsWords(text: string, phrase: string): boolean {
+  const esc = phrase.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return new RegExp(`(^|[^\\p{L}\\p{N}])${esc}(?![\\p{L}\\p{N}])`, "u").test(text);
+}
+
+/**
+ * Industry comparison on whole words. "hotel" matches "hotel chain" and
+ * "restaurant" matches "restaurant group", but "spa" no longer matches
+ * "despacho de abogados": with plain substrings every spa prospect was being
+ * offered law-firm statistics.
+ */
+export function industryOverlaps(scope: string[], industry: string | null): boolean {
   // An empty scope means "universal". Rare and deliberate; most rows are scoped.
   if (scope.length === 0) return true;
   if (!industry) return false;
-  const target = industry.toLowerCase();
+  const target = industry.trim().toLowerCase();
   return scope.some((s) => {
-    const sl = s.toLowerCase();
-    return sl === target || sl.includes(target) || target.includes(sl);
+    const sl = s.trim().toLowerCase();
+    return sl === target || containsWords(sl, target) || containsWords(target, sl);
   });
 }
 
