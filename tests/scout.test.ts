@@ -73,8 +73,10 @@ test("technologies and bare attributes never become search cells", () => {
 
 test("discovery budget feeds tomorrow's capacity, no more", () => {
   assert.equal(discoveryBudget({ dailySendCapacity: 20, pitchesWaiting: 40, pitchYield: 0.2 }), 0);
-  assert.equal(discoveryBudget({ dailySendCapacity: 20, pitchesWaiting: 10, pitchYield: 0.2 }), 150);
-  assert.equal(discoveryBudget({ dailySendCapacity: 20, pitchesWaiting: 0, pitchYield: 0.01 }), 200); // floor on yield, cap per day
+  assert.equal(discoveryBudget({ dailySendCapacity: 5, pitchesWaiting: 4, pitchYield: 0.2 }), 30);
+  // Never more than 100 a day while the platform learns, however low the yield.
+  assert.equal(discoveryBudget({ dailySendCapacity: 20, pitchesWaiting: 10, pitchYield: 0.2 }), 100);
+  assert.equal(discoveryBudget({ dailySendCapacity: 20, pitchesWaiting: 0, pitchYield: 0.01 }), 100);
 });
 
 test("the daily budget is spent across jobs, and empty crawls are capped too", () => {
