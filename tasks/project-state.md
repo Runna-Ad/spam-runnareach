@@ -57,6 +57,16 @@ Still open after the ship:
 - Deliberately unchanged: the follow-up cron still falls back to the (bilingual, gate-checked) template when the AI follow-up fails or fails the gate. The audit says "templates never enter AUTO"; the risky first-pitch templates only go out after approval. Pedro to decide whether follow-ups should wait for the AI instead.
 Possible follow-ups: the sequence is 3 emails; the research says 4–6 touches over 2–4 weeks get more replies (Hunter: 3 messages = +106% vs one). Canadian/Mexican-specific stats (BDC, StatCan, AMVO) were found but not confirmed.
 
+## Phase 2 — Autopilot + learning (on `claude/great-planck-w6w25t`, NOT shipped)
+Pedro, 2026-10-17: "the end goal of total automation with learnings that make it smarter at searching, smarter ICPs, smarter pitches, smarter emails… and continuously improve the hunter… autonomous". 480 tests, build green. Ship steps: next-session-prompt §0.
+- **Explicit actor** (`lib/actor.ts`, `c434609`): every pipeline stage (discover → crawl → scrape → research → score → triage → pitch) lives in `*-stage.ts` as `xxxWith(actor, …)`; the `"use server"` files are thin session-only wrappers. `systemActorFor(tenant)` (service role, tenant's first admin id, named "Autopilot") only behind the CRON_SECRET check. The discovery worker chains system jobs with the cron secret + tenant header. Also closed: `generatePitch` accepted an injected user from any browser caller.
+- **Governor** (`lib/autopilot/governor.ts`, pure): AUTO/REVIEW/DROP lanes; circuit breakers (inbox bounces, daily bounces, opt-out spike, DMARC < 90%, blocklist, warmup placement < 80%); stages off → shadow → veto → auto with automatic promotion/demotion. Never learnable.
+- **Tick** (`/api/autopilot/tick`, every 15 min via pg_cron, `lib/autopilot/tick.ts`): breakers → watchdog (resume dead discovery chains) → scout starts a focused discovery job when capacity needs pitches → label drafts (verifying recipients) → veto: approve AUTO through the normal gate-checked action and schedule 18h out + digest email; a pitch a person pulls back is never re-queued; auto: schedule now → stage evaluation → learners.
+- **Learners** (`lib/autopilot/learn.ts`, pure parts in `lib/learning/*`): shared segments/reward/bandit; `writer.evidence` (benchmark vs none) and `writer.guidance` (weekly AI review proposes ≤ 2 one-line instructions, safety-checked, tested as challengers, ≤ 4 live) recorded per pitch in `decision.arms`; `scout.cell` credited by what its prospects became; weekly ICP learner adds search cells for the industries that convert or that visit the Hunter organically.
+- **Hunter loop**: `/api/public/hunter-signals` (aggregate weights per industry × finding) → runna-hunter `867d007` orders findings by them (time sink still first) and records finding ids per scan.
+- **Scheduler** (migration 0041): pg_cron + pg_net; token generated inside Postgres, kept in Vault, checked via `scheduler_token_valid` (service role only); tick every 15 min, reply poll every 30 min, send-queue every 10 min and follow-ups hourly Mon–Fri 15–22 UTC. Vercel daily crons stay as backstop.
+- Session note: the Auto-mode safety check refused the service-role pipeline and creating an account; Pedro switched the session to "Accept edits" and approved. Permission rules were not edited.
+
 ## API integrations
 | Service | Status |
 |---|---|

@@ -6,6 +6,28 @@ Prod = `main` (2026-10-17): Phase 0 + Phase 1 part 1 shipped (Nils/Henry sender,
 Cost rule (CLAUDE.md): near-free until proven. AI API spend OK; no paid
 external platforms; scheduler = Supabase `pg_cron` + `pg_net`.
 
+**Goal (Pedro, 2026-10-17): total automation that learns.** Phase 2 (autopilot
++ learners) is built on `claude/great-planck-w6w25t`, NOT shipped. See
+project-state "Phase 2". Previous leads were testing; don't look back at them.
+
+## 0. Ship Phase 2 (only on Pedro's explicit "ship it")
+
+Order matters (0041 turns the autopilot on):
+1. Apply migration 0040 (brain tables) to prod; record version 0040. No DROP
+   statements (the Supabase MCP holds DROPs for a confirmation, lessons.md).
+2. Clear the one stale queued pitch from July (43 North,
+   e341491c-5412-47a4-9cc9-51a650161302: approved + scheduled, never sent;
+   blocked by the first-touch guard): set status draft, scheduled_send_at null.
+3. Fast-forward main → push → Vercel deploy READY.
+4. Apply migration 0041 (pg_cron + pg_net jobs, Vault-held scheduler token,
+   autonomy_state veto/enabled for the Rünna tenant); record version 0041.
+5. runna-hunter: fast-forward its main to `867d007` (learned finding weights).
+6. Verify: `select * from cron.job_run_details order by start_time desc limit 10`,
+   `select status_code, left(content::text, 300) from net._http_response order by created desc limit 5`,
+   `select * from autonomy_state`, `select * from learning_insights order by created_at desc limit 10`,
+   and Vercel runtime errors for /api/autopilot/tick.
+Kill switch: `update autonomy_state set enabled = false`.
+
 ---
 
 ## 1. Phase 0 is SHIPPED (migration 0035 applied)
