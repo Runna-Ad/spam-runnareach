@@ -5,13 +5,16 @@ import { fetchPromptDetail } from "@/lib/prompts/actions";
 import type { PromptWithChampion, PromptDetail } from "@/lib/prompts/types";
 import { PromptList } from "@/components/learning/prompt-list";
 import { PromptDetailPanel } from "@/components/learning/prompt-detail";
+import { LearnerArms } from "@/components/learning/learner-arms";
+import type { LearnerGroup } from "@/lib/learning/report";
 
 interface Props {
   prompts: PromptWithChampion[];
   initialDetail: PromptDetail | null;
+  learners?: LearnerGroup[];
 }
 
-export function LearningClient({ prompts, initialDetail }: Props) {
+export function LearningClient({ prompts, initialDetail, learners = [] }: Props) {
   const [selectedId, setSelectedId] = useState<string | null>(
     initialDetail?.id ?? null,
   );
@@ -47,6 +50,8 @@ export function LearningClient({ prompts, initialDetail }: Props) {
           </div>
         )}
       </div>
+
+      <LearnerArms groups={learners} />
 
       {/* Two-column layout */}
       <div className="flex flex-1 overflow-hidden">

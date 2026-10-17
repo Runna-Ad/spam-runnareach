@@ -21,7 +21,7 @@ only for a retro-level audit, never for routine tasks (tokens).
 | `lib/replies/` | opus-5.5 | medium (high for classifier rules) | yes, after any pitches task lands | sim 2026-10-17: classifier task took 3 review rounds; brief lacked the negative set | 2026-10-17 |
 | `lib/warmup/` (isolated) | opus-5.5 | medium | yes | — | 2026-10-17 |
 | Admin CRUD (`icp`, `benchmarks`, `case-studies`, `notable-clients`, `settings`) | opus-5.5 → sonnet candidate | medium | yes | — | 2026-10-17 |
-| Dashboard pages + components (no data-model change) | opus-5.5 → sonnet candidate | medium | yes | — | 2026-10-17 |
+| Dashboard pages + components (no data-model change) | sonnet-5.5 | medium | yes | phase3 b1: 2 clean (PR #2, #3: 0 blocking each, ~12 turns, ~4 min) → promoted | 2026-10-17 |
 | Tests for existing pure logic, docs, scripts, lint/type fixes, bug fix with existing tests | sonnet-5.5 | medium | yes | sim 2026-10-17: 1 clean (0 blocking, cheapest task) | 2026-10-17 |
 | Reviewer (reads diff + brief, no edits) | opus-5.5 | high | yes | — | 2026-10-17 |
 | Log triage, lessons-inbox summarization, fixture generation | haiku-5.5 | low | yes | — | 2026-10-17 |

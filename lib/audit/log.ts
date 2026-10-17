@@ -31,13 +31,17 @@ export type AuditAction =
   // Gate v2 (enforced): a send path refused a pitch, and a person approved a
   // pitch with review-level flags ("approve anyway").
   | "pitch.gate_held"
-  | "pitch.gate_override";
+  | "pitch.gate_override"
+  // Opportunity outcomes (Phase 3): a calendar booking, a won deal, a lost deal.
+  | "opportunity.booked"
+  | "opportunity.won"
+  | "opportunity.lost";
 
 export type AuditPayload = {
   tenantId: string;
   actorId: string | null;
   action: AuditAction;
-  entityType: "prospect" | "research" | "icp" | "case_study" | "pitch" | "reply";
+  entityType: "prospect" | "research" | "icp" | "case_study" | "pitch" | "reply" | "opportunity";
   entityId: string;
   metadata?: Record<string, unknown>;
 };

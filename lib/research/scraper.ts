@@ -79,6 +79,12 @@ export type ScrapedSite = {
   /** The site's own name (og:site_name / title) — null when not clean. */
   site_name: string | null;
   contact_emails: string[];
+  /**
+   * Where each address in `contact_emails` was mined: email → absolute URL of
+   * the page it came from. A scraped address is a snapshot; this is what lets
+   * a later freshness check re-read that page before sending.
+   */
+  contact_email_sources: Record<string, string>;
   social_links: { platform: string; url: string }[];
   key_pages: { label: string; url: string }[];
   sub_page_extracts: SubPageExtract[]; // body text from About/Services/Team pages
@@ -128,7 +134,7 @@ export async function scrapeSite(rawUrl: string): Promise<ScrapeResult> {
     // be discarded because only body text was kept.
     const siteDomain = domainOf(fetched.final_url);
     const offsite = redirectedOffsite(url, fetched.final_url);
-    const { extracts: subPageExtracts, emails: subPageEmails } = await scrapeSubPages(
+    const { extracts: subPageExtracts, emails: subPageEmails, mined: subPageMined } = await scrapeSubPages(
       parsed.key_pages,
       siteDomain,
       offsite,
@@ -138,6 +144,10 @@ export async function scrapeSite(rawUrl: string): Promise<ScrapeResult> {
     // On an off-site redirect every address we can reach belongs to whoever we
     // landed on, not to this prospect. Return none and let the caller suppress
     // them as unreachable — that's correct, not a miss.
+    const minedPages: MinedPage[] = [
+      { url: fetched.final_url, label: "Home", emails: parsed.contact_emails },
+      ...subPageMined,
+    ];
     let contactEmails = offsite
       ? []
       : Array.from(new Set([...parsed.contact_emails, ...subPageEmails]));
@@ -148,7 +158,8 @@ export async function scrapeSite(rawUrl: string): Promise<ScrapeResult> {
     // once we have a usable address, so the common case costs no requests.
     if (!offsite && !contactEmails.some((e) => hasUsableEmail(e))) {
       const harvested = await harvestEmailsFromPages(parsed.key_pages, siteDomain);
-      contactEmails = Array.from(new Set([...contactEmails, ...harvested]));
+      contactEmails = Array.from(new Set([...contactEmails, ...harvested.emails]));
+      minedPages.push(...harvested.mined);
     }
 
     return {
@@ -159,6 +170,7 @@ export async function scrapeSite(rawUrl: string): Promise<ScrapeResult> {
         http_status: fetched.status,
         ...parsed,
         contact_emails: contactEmails,
+        contact_email_sources: attributeEmailSources(contactEmails, minedPages),
         what_they_do: richWhatTheyDo,
         sub_page_extracts: subPageExtracts,
         scraped_at: new Date().toISOString(),
@@ -263,7 +275,10 @@ async function fetchHtml(url: string): Promise<FetchResult> {
   }
 }
 
-type ParsedSite = Omit<ScrapedSite, "fetched_url" | "final_url" | "http_status" | "scraped_at" | "sub_page_extracts">;
+type ParsedSite = Omit<
+  ScrapedSite,
+  "fetched_url" | "final_url" | "http_status" | "scraped_at" | "sub_page_extracts" | "contact_email_sources"
+>;
 
 /** Bare hostname of a URL ("https://www.acme.ca/x" -> "acme.ca"), null if unparseable. */
 function domainOf(rawUrl: string): string | null {
@@ -810,7 +825,7 @@ async function scrapeSubPages(
   siteDomain: string | null,
   /** Skip email mining — we landed on another company's site (see redirectedOffsite). */
   offsite: boolean,
-): Promise<{ extracts: SubPageExtract[]; emails: string[] }> {
+): Promise<{ extracts: SubPageExtract[]; emails: string[]; mined: MinedPage[] }> {
   // Sort by SUBPAGE_PRIORITY order; unknown labels go last.
   // Legal pages are dropped first — they're discovered for the email hunt, and
   // their boilerplate would both pollute research context and consume slots
@@ -825,6 +840,7 @@ async function scrapeSubPages(
 
   const results: SubPageExtract[] = [];
   const emails = new Set<string>();
+  const mined: MinedPage[] = [];
 
   for (const page of sorted.slice(0, MAX_SUBPAGES)) {
     if (results.length > 0) await sleep(SUBPAGE_RATE_LIMIT_MS);
@@ -837,16 +853,16 @@ async function scrapeSubPages(
     // anywhere else; and it returns text, so `mailto:` hrefs are gone with the
     // rest of the attributes. Costs nothing — we already have the bytes.
     if (!offsite) {
-      for (const e of extractContactEmails(html, cheerio.load(html), siteDomain)) {
-        emails.add(e);
-      }
+      const pageEmails = extractContactEmails(html, cheerio.load(html), siteDomain);
+      for (const e of pageEmails) emails.add(e);
+      mined.push({ url: page.url, label: page.label, emails: pageEmails });
     }
 
     const text = extractMainText(html);
     if (text) results.push({ label: page.label, url: page.url, text });
   }
 
-  return { extracts: results, emails: Array.from(emails) };
+  return { extracts: results, emails: Array.from(emails), mined };
 }
 
 /**
@@ -862,7 +878,7 @@ async function scrapeSubPages(
 async function harvestEmailsFromPages(
   keyPages: { label: string; url: string }[],
   siteDomain: string | null,
-): Promise<string[]> {
+): Promise<{ emails: string[]; mined: MinedPage[] }> {
   const ranked = keyPages
     .filter((p) => EMAIL_HUNT_PRIORITY.includes(p.label))
     .sort(
@@ -873,6 +889,7 @@ async function harvestEmailsFromPages(
 
   const deadline = Date.now() + EMAIL_HUNT_BUDGET_MS;
   const found: string[] = [];
+  const mined: MinedPage[] = [];
   for (const [i, page] of ranked.entries()) {
     if (Date.now() >= deadline) break;
     if (i > 0) await sleep(SUBPAGE_RATE_LIMIT_MS);
@@ -897,11 +914,39 @@ async function harvestEmailsFromPages(
       (e) => siteDomain && e.toLowerCase().endsWith(`@${siteDomain}`),
     );
     found.push(...onDomain);
+    mined.push({ url: page.url, label: page.label, emails: onDomain });
     // Stop at the first page that actually yields something — one real
     // mailbox is enough, and Privacy/Terms often just repeat it.
     if (found.some((e) => hasUsableEmail(e))) break;
   }
-  return found;
+  return { emails: found, mined };
+}
+
+/** One fetched page and the addresses mined off it, in fetch order. */
+export type MinedPage = { url: string; label: string; emails: string[] };
+
+/**
+ * Map each address to the page it was mined from. A Contact page outranks every
+ * other page (it is the page whose job is to publish the address, so it is the
+ * one worth re-reading before a send); otherwise the first page in fetch order
+ * wins — homepage, then sub-pages, then legal pages. Addresses with no mined
+ * page are left out rather than guessed.
+ */
+export function attributeEmailSources(
+  emails: string[],
+  pages: MinedPage[],
+): Record<string, string> {
+  const ordered = [
+    ...pages.filter((p) => p.label === "Contact"),
+    ...pages.filter((p) => p.label !== "Contact"),
+  ];
+  const sources: Record<string, string> = {};
+  for (const email of emails) {
+    const key = email.toLowerCase();
+    const page = ordered.find((p) => p.emails.some((e) => e.toLowerCase() === key));
+    if (page) sources[key] = page.url;
+  }
+  return sources;
 }
 
 /**

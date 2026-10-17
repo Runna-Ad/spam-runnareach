@@ -2,6 +2,7 @@ import { createClient } from "@/lib/supabase/server";
 import { pickTopUsableContact, isGuessedContact } from "@/lib/pitches/contacts";
 import { parseGateOverride, parseGateVerdict, type StoredGateVerdict } from "@/lib/pitches/gate";
 import type { CriticVerdict } from "@/lib/pitches/decision";
+import { hotLeadLevel, type HotLeadEvent, type HotLeadLevel } from "@/lib/pitches/hot-lead";
 
 /** The critic block of a decision record, if present and well-formed. */
 function criticFromDecision(decision: unknown): CriticVerdict | null {
@@ -63,6 +64,10 @@ export type PitchListRow = {
   sent_at: string | null;
   created_at: string;
   updated_at: string;
+  /** Strongest audit-tool attribution on this pitch (see lib/pitches/hot-lead.ts). */
+  hot_lead: HotLeadLevel | null;
+  /** When that level was last reached. */
+  hot_lead_at: string | null;
 };
 
 /**
@@ -115,7 +120,27 @@ export async function listPitches(tenantId: string): Promise<PitchListRow[]> {
 
   if (error) throw new Error(`Failed to load pitches: ${error.message}`);
 
+  // One query for every audit_scan event of the returned pitches (no N+1).
+  const ids = (data ?? []).map((r) => r.id);
+  const eventsByPitch = new Map<string, HotLeadEvent[]>();
+  if (ids.length > 0) {
+    // pitch_events isn't in the hand-written Database types (same cast as events.ts).
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const { data: events, error: evError } = await (supabase as any)
+      .from("pitch_events")
+      .select("pitch_id, event_type, payload, event_at")
+      .eq("event_type", "audit_scan")
+      .in("pitch_id", ids);
+    if (evError) throw new Error(`Failed to load pitch events: ${evError.message}`);
+    for (const e of (events ?? []) as (HotLeadEvent & { pitch_id: string })[]) {
+      const list = eventsByPitch.get(e.pitch_id);
+      if (list) list.push(e);
+      else eventsByPitch.set(e.pitch_id, [e]);
+    }
+  }
+
   return (data ?? []).map((r) => {
+    const hot = hotLeadLevel(eventsByPitch.get(r.id) ?? []);
     // Resolve the prospect's CURRENT top usable contact, not the frozen pitch FK
     // (which goes stale — see lib/pitches/contacts.ts).
     const topContact = pickTopUsableContact(r.prospects?.prospect_contacts);
@@ -142,11 +167,13 @@ export async function listPitches(tenantId: string): Promise<PitchListRow[]> {
     sent_at: r.sent_at,
     created_at: r.created_at ?? new Date().toISOString(),
     updated_at: r.updated_at ?? r.created_at ?? new Date().toISOString(),
+    hot_lead: hot?.level ?? null,
+    hot_lead_at: hot?.at ?? null,
     };
   });
 }
 
-export type PitchDetail = PitchListRow & {
+export type PitchDetail = Omit<PitchListRow, "hot_lead" | "hot_lead_at"> & {
   body_original: string;
   body_edited: string | null;
   body_sent: string | null;

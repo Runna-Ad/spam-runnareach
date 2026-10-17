@@ -366,6 +366,7 @@ export async function upsertManualContact(
     priority_rank: 0,
     selected_by: "manual",
     selected_at: new Date().toISOString(),
+    source_url: null,
   });
 
   if (error) {
