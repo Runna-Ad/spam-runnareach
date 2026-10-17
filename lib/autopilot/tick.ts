@@ -15,12 +15,15 @@ import "server-only";
  *   5. schedule   veto stage: AUTO pitches approved and scheduled 18h out, with
  *                 a digest so a person can hold any; auto stage: scheduled now
  *   6. stage      promote / demote the autonomy stage on measured results
+ *   7. learn      re-score writer variants and search cells from outcomes;
+ *                 weekly AI review proposes new guidance to test (learn.ts)
  *
  * Every autonomous change writes a learning_insights row; breaker trips and
  * stage changes also email the notify address.
  */
 
 import type { Actor } from "@/lib/actor";
+import { evolveSearchSpace, learnFromOutcomes, weeklyReview } from "./learn";
 import { resumeDiscoveryJobWith, startDiscoveryJobWith } from "@/lib/discover/job-stage";
 import { EMPTY_JOB_STATS } from "@/lib/discover/job-types";
 import { getAccessToken, sendGmailMessage } from "@/lib/gmail/client";
@@ -74,6 +77,7 @@ export type TickReport = {
   labelled: Record<Lane, number>;
   scheduled: number;
   stageChange: { from: Stage; to: Stage; reason: string } | null;
+  review?: { ran: boolean; reason: string; guidance: string[] } | null;
   errors: string[];
 };
 
@@ -124,6 +128,13 @@ export async function runTick(actor: Actor, now: Date = new Date()): Promise<Tic
     report.scheduled = await step("schedule", () => scheduleAuto(actor, db, s.stage, now, deadline), 0);
   }
   report.stageChange = await step("stage", () => evaluateStage(db, s, now), null);
+  // Learning: re-score every arm from settled outcomes (cheap), and once a
+  // week let the AI review propose new writing guidance to test.
+  await step("learn", () => learnFromOutcomes(db, tenantId, now), undefined);
+  await step("icp", () => evolveSearchSpace(db, tenantId, now), null);
+  if (Date.now() < deadline) {
+    report.review = await step("review", () => weeklyReview(db, tenantId, now), null);
+  }
   return report;
 }
 

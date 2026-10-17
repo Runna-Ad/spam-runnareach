@@ -25,6 +25,7 @@ import {
   type DecisionRecord,
 } from "./decision";
 import { recordPitchEvent } from "./events";
+import { chooseWriterArms } from "@/lib/autopilot/learn";
 import { renderIndustryTemplate } from "./industry-templates";
 import { buildHunterUrlForPitch } from "./hunter-mapping";
 import { senderForGenerator } from "./sender-identity";
@@ -329,6 +330,12 @@ export async function generatePitchWith(
   // Carried in the audit-tool link (&r=) so a scan can be tied to this pitch.
   const attributionCode = newAttributionCode();
 
+  // Which writer variants this pitch tests (lib/autopilot/learn.ts): cite a
+  // sourced statistic or not, and which learned guidance (if any) to follow.
+  // Never throws; without arms, today's behaviour.
+  const writerArms = await chooseWriterArms(supabase, user.tenantId);
+  const offeredBenchmarks = writerArms.evidence === "no_benchmark" ? [] : benchmarks;
+
   const generatorInputs: GeneratorInputs = {
     prospect: {
       ...prospect,
@@ -339,7 +346,8 @@ export async function generatePitchWith(
     contacts,
     case_studies,
     notable_clients: notableClientRows,
-    benchmarks,
+    benchmarks: offeredBenchmarks,
+    guidance: writerArms.guidance?.text ?? null,
     // Signed by the per-language sender (Nils ES / Henry EN · Runna Advertising),
     // never the name of whoever clicked "Generate".
     sender: senderForGenerator(prospect.language),
@@ -520,8 +528,8 @@ export async function generatePitchWith(
       id: composed.pain_id,
       label: pains.find((p) => p.pain_id && p.pain_id === composed.pain_id)?.pain_label ?? chosenPainLabel,
     },
-    benchmarks_offered: benchmarks.map((b) => ({ id: b.id, figure: b.figure })),
-    benchmark_cited: detectCitedBenchmark(composed.body, benchmarks),
+    benchmarks_offered: offeredBenchmarks.map((b) => ({ id: b.id, figure: b.figure })),
+    benchmark_cited: detectCitedBenchmark(composed.body, offeredBenchmarks),
     attribution_code: insertWithPreview.attribution_code,
     recipient: recipientSummary(
       topUsable
@@ -532,6 +540,10 @@ export async function generatePitchWith(
     gate: gateAtGeneration
       ? { version: gateAtGeneration.version, pass: gateAtGeneration.pass, codes: gateAtGeneration.failures.map((f) => f.code) }
       : null,
+    // Only an AI-written pitch tests writer variants; a template tests nothing.
+    ...(method === "claude"
+      ? { arms: { "writer.evidence": writerArms.evidence, "writer.guidance": writerArms.guidance?.key ?? "none" } }
+      : {}),
   };
   const { error: decisionErr } = await supabase
     .from("pitches")
