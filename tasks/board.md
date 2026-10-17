@@ -28,7 +28,7 @@ for the current phase; move older ones to the retro.
 | Slug | Module | Model/effort | Branch | Session | PR | Depends on | Status | Blocked on | Turns | Review findings | CI reds | Rework |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|
 | opportunities-calendar-sync | opportunities (new) + api | opus/high | claude/opportunities-calendar-sync | session_012RWb5yLGodvUPrkTCx1cyV | #5 | — | in-review | — | 20 | | | |
-| opportunities-pipeline-ui | opportunities UI | sonnet/medium | claude/opportunities-pipeline-ui | session_01EPMCtSCVAJ4Pzs49KhxxcZ | #1 | — | fix pushed, delta in re-review | — | 18 | 1 (6 optional) | 0 | 1 |
+| opportunities-pipeline-ui | opportunities UI | sonnet/medium | claude/opportunities-pipeline-ui | archived | #1 merged 2a25f8d | — | merged | — | 18 | 1 (6 optional) + 4 optional on delta | 0 | 1 | tokens: 13.7k out / 1.35M cache-read / $0.58 |
 | pitches-hot-lead-badge | pitches UI + query | sonnet/medium | claude/pitches-hot-lead-badge | archived | #3 merged 808af20 | — | merged | — | 12 | 0 (6 optional) | 0 | 0 |
 | learning-arms-dashboard | learning UI | sonnet/medium | claude/learning-arms-dashboard | archived | #2 merged 5d9e88c | — | merged | — | 12 | 0 (6 optional) | 0 | 0 |
 | contact-source-url | research + discover inserts | opus/medium | claude/contact-source-url | session_01VQw8xTBcjWonaKZruNCydk | #4 | — | in-review | — | 14 | | | |
@@ -68,3 +68,4 @@ These four columns feed the retro and the routing table.
 - 2026-10-17 16:31 UTC — PR #1 review: fix-then-merge (blocking: won/lost event attached to latest SENT pitch, which is a follow-up child; must be the root). Conductor landed lib/pitches/root-pitch.ts + audit opportunity actions. PR #2 (learning) and #3 (hot-lead) opened, 504/505 tests, in review.
 - 2026-10-17 16:35 UTC — PR #3 merged (505 tests), PR #2 merged (510 tests), both reviewed merge/0 blocking. Sessions archived. Sonnet lane evidence: 2 clean runs on UI tasks.
 - 2026-10-17 16:39 UTC — PR #5 (calendar-sync, 524 tests, 20 turns; does NOT use latestRootSentPitchId, reviewer told) and PR #4 (contact-source-url, 505 tests, 14 turns) opened, CI green, both in review. PR #1 fix pushed (508 tests), delta re-review running. Brief-quality note: contact-source-url brief contradicted SUBPAGE_PRIORITY (About before Contact).
+- 2026-10-17 16:40 UTC — PR #1 merged after one fix round (root-pitch bug; reviewer verified the test fails without the fix). Integration: 519 tests. Remaining: PR #4, PR #5 in review; wave 2 next.
