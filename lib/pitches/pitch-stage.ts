@@ -25,6 +25,9 @@ import {
   type DecisionRecord,
 } from "./decision";
 import { recordPitchEvent } from "./events";
+import { fetchExemplars } from "./exemplar-queries";
+import { decisionExemplarFields } from "./exemplars";
+import { segmentOf } from "@/lib/learning/segments";
 import { chooseWriterArms } from "@/lib/autopilot/learn";
 import { renderIndustryTemplate } from "./industry-templates";
 import { buildHunterUrlForPitch } from "./hunter-mapping";
@@ -333,7 +336,19 @@ export async function generatePitchWith(
   // Which writer variants this pitch tests (lib/autopilot/learn.ts): cite a
   // sourced statistic or not, and which learned guidance (if any) to follow.
   // Never throws; without arms, today's behaviour.
-  const writerArms = await chooseWriterArms(supabase, user.tenantId);
+  // Alongside: up to two of our own best past pitches for this segment
+  // (lib/pitches/exemplars.ts), scrubbed, as the writer's model and the
+  // critic's bar. Never throws; none → today's exact prompts.
+  const [writerArms, exemplars] = await Promise.all([
+    chooseWriterArms(supabase, user.tenantId),
+    claudeIsAvailable()
+      ? fetchExemplars(supabase, user.tenantId, {
+          segment: segmentOf(prospect),
+          lang: prospect.language,
+          prospect_id: prospect.id,
+        })
+      : Promise.resolve([]),
+  ]);
   const offeredBenchmarks = writerArms.evidence === "no_benchmark" ? [] : benchmarks;
 
   const generatorInputs: GeneratorInputs = {
@@ -348,6 +363,7 @@ export async function generatePitchWith(
     notable_clients: notableClientRows,
     benchmarks: offeredBenchmarks,
     guidance: writerArms.guidance?.text ?? null,
+    exemplars,
     // Signed by the per-language sender (Nils ES / Henry EN · Runna Advertising),
     // never the name of whoever clicked "Generate".
     sender: senderForGenerator(prospect.language),
@@ -544,6 +560,8 @@ export async function generatePitchWith(
     ...(method === "claude"
       ? { arms: { "writer.evidence": writerArms.evidence, "writer.guidance": writerArms.guidance?.key ?? "none" } }
       : {}),
+    // A template uses no exemplars, even when some were loaded for the AI path.
+    ...decisionExemplarFields(method === "claude" ? "claude" : "template", exemplars),
   };
   const { error: decisionErr } = await supabase
     .from("pitches")

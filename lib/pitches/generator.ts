@@ -167,6 +167,12 @@ export type GeneratorInputs = {
    * lib/autopilot/learn.ts). Added to the user prompt; never overrides rules.
    */
   guidance?: string | null;
+  /**
+   * Up to two of our own best past pitches for this segment, already scrubbed
+   * (lib/pitches/exemplars.ts). Shown in the writer's user message as a model
+   * and to the critic as a bar. Absent or empty → today's exact prompts.
+   */
+  exemplars?: Array<{ pitch_id: string; score: number; subject: string; body: string }> | null;
   forced_angle?: {
     pain_label: string;
     pain_id: string | null;

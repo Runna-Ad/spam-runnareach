@@ -20,6 +20,7 @@ import { ANTHROPIC_HAIKU_MODEL, structuredCall, type ClaudeUsage } from "../anth
 import { pickAddressContact } from "../research/email-utils.ts";
 import { composePitchWithClaude } from "./claude-composer.ts";
 import type { CriticVerdict } from "./decision.ts";
+import { criticExemplarSection } from "./exemplars.ts";
 import type { ComposedPitch, GeneratorInputs } from "./generator.ts";
 import { evaluateSendGate, type GateCode, type GateFailure } from "./send-gate.ts";
 
@@ -168,7 +169,7 @@ function criticUser(input: GeneratorInputs, composed: Pick<ComposedPitch, "subje
     benchmarks: input.benchmarks.map((b) => ({ statistic: b.statistic, figure: b.figure, publisher: b.publisher, caveat: b.caveat ?? null })),
     recipient: contact ? { name: contact.full_name, email: contact.email, role_based: contact.email_is_role_based } : null,
   };
-  return `Payload:\n\`\`\`json\n${JSON.stringify(payload, null, 2)}\n\`\`\`\n\nEmail to review:\nSubject: ${composed.subject}\n\n${asReaderSees(composed.body)}`;
+  return `Payload:\n\`\`\`json\n${JSON.stringify(payload, null, 2)}\n\`\`\`${criticExemplarSection(input.exemplars)}\n\nEmail to review:\nSubject: ${composed.subject}\n\n${asReaderSees(composed.body)}`;
 }
 
 export async function critiquePitch(

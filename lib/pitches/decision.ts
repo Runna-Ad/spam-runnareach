@@ -61,6 +61,14 @@ export type DecisionRecord = {
    * the learners existed.
    */
   arms?: Record<string, string>;
+  /**
+   * Our own past pitches shown to the writer and critic as exemplars
+   * (lib/pitches/exemplars.ts), with the outcome score that qualified each.
+   * Empty when none were shown; absent before exemplar memory existed.
+   */
+  exemplars_used?: Array<{ pitch_id: string; score: number }>;
+  /** EXEMPLAR_PROMPT_VERSION when exemplars were shown, else null. */
+  exemplar_prompt_version?: string | null;
 };
 
 export type SizeBand = "smb" | "mid_market" | "enterprise" | "unknown";
