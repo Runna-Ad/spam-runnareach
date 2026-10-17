@@ -7,7 +7,7 @@ Cost rule (CLAUDE.md): near-free until proven. AI API spend OK; no paid
 external platforms; scheduler = Supabase `pg_cron` + `pg_net`.
 
 **Goal (Pedro, 2026-10-17): total automation that learns.** Phase 2 (autopilot
-+ learners + Hunter loop) is SHIPPED and running: main = `02b773c`, migrations
++ learners + Hunter loop) is SHIPPED and running: main = `57fb392`+, migrations
 0040 + 0041 applied, runna-hunter `867d007`. See project-state "Phase 2".
 Previous leads were testing; don't look back at them.
 
