@@ -1,6 +1,6 @@
 # NEXT SESSION — start here
 
-Prod = `main` (2026-10-17): Phase 0 + Phase 1 part 1 shipped (Nils/Henry sender, pitch prompt v2, send gate v2, sourced benchmarks). Phase 1 part 2 is ready on the branch, waiting for "ship it". Read `tasks/audit-2026-10-16.md` (the full audit + plan) and the
+Prod = `main` (2026-10-17): Phase 0 + Phase 1 part 1 shipped (Nils/Henry sender, pitch prompt v2, send gate v2, sourced benchmarks). Phase 1 part 2 shipped the same day (review loop, decision record + events, warmup placement / chain filter / domain ownership). Read `tasks/audit-2026-10-16.md` (the full audit + plan) and the
 "Phase 0" section of `tasks/project-state.md` first.
 
 Cost rule (CLAUDE.md): near-free until proven. AI API spend OK; no paid
@@ -32,19 +32,17 @@ evidence), send gate v2 enforced everywhere, 48 sourced benchmarks the
 composer may quote. See project-state "Phase 1".
 
 Phase 1 part 2 (P1.4 review loop, P1.5 decision record + events, P1.6 warmup
-placement / chain filter / domain ownership) is DONE on
-`claude/great-planck-w6w25t`, not shipped. See project-state "Phase 1 part 2".
+placement / chain filter / domain ownership) is SHIPPED.
+See project-state "Phase 1 part 2".
 
-To ship (only on Pedro's explicit "ship it"):
-1. Apply `supabase/migrations/0038_pitch_decision_record.sql` to prod (record as
-   version 0038). It must land BEFORE the code: generation inserts
-   `attribution_code`.
-2. Fast-forward `main` to the branch, push, watch the Vercel deploy go READY.
-3. Generate one pitch on /pitches: check the "AI review" panel, then
-   `select decision from pitches order by created_at desc limit 1` and
-   `select * from pitch_events order by created_at desc limit 5`.
-4. Next warmup tick (14:00–15:00 UTC): `warmup_log` rows should get RFC
-   Message-IDs (contain "@") and the day after, `landed_in_inbox` values.
+SHIPPED 2026-10-17 on Pedro's "ship it": migration 0038 applied (recorded as
+version 0038), main = `ae03703`. Verify after the first real use:
+1. Generate one pitch on /pitches: the "AI review" panel shows, and
+   `select decision from pitches order by created_at desc limit 1` is filled.
+2. `select * from pitch_events order by event_at desc limit 5` has a
+   "generated" row (column is event_at, not created_at).
+3. After the next warmup tick (14:00–15:00 UTC): new `warmup_log` rows have
+   RFC Message-IDs (contain "@"); the tick after, `landed_in_inbox` values.
 
 Still open from Phase 1:
 - runna-hunter must store the `r` query parameter (attribution code) on scans

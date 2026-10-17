@@ -13,10 +13,11 @@
 - **Sibling repo:** `runna-hunter` (separate Vercel project) — the self-serve Inefficiency Hunter the pitch CTA deep-links to.
 
 ## What's deployed
-- Prod = `main` (2026-10-17, Phase 1 part 1 shipped on Pedro's "ship": `8d1cfd0` + fixes for numbers in a prospect's own name and whole-word industry matching for benchmarks). `main` = prod.
+- Prod = `main` = `ae03703` (2026-10-17, Phase 1 parts 1 and 2 shipped on Pedro's "ship it"). `main` = prod.
+- Migration **0038** (pitches.decision + write-once trigger, pitches.attribution_code, pitch_event_type values, prospect_contacts.verify_*) applied to prod 2026-10-17, recorded as version 0038.
 - Migrations **0036** (pitches.gate_verdict + gate_override) and **0037** (sourced benchmarks: 41 seeded + 4 activated → 48 active) applied to prod 2026-10-17, recorded as versions 0036 / 0037.
 - Migration **0035** applied to prod 2026-10-16 (RLS on warmup_buddies / warmup_templates / dmarc_reports / dmarc_report_records; anon + authenticated grants revoked; recorded as version 0035).
-- Warmup engine live (pedro@runnareach.com, now 5/day maintenance; 7 buddy inboxes). Inbox placement has never been measured in prod (1,289 sends, 0 checks: Message-ID bug); fixed on the branch (P1.6), not yet shipped.
+- Warmup engine live (pedro@runnareach.com, now 5/day maintenance; 7 buddy inboxes). Inbox placement has never been measured in prod (1,289 sends, 0 checks: Message-ID bug); fixed in P1.6 (shipped 2026-10-17); first real placement data expected from the 2026-10-18 tick.
 - Pipeline: discovery → scrape → deep research → SnapVerify → score → triage → draft. **Nothing has run since Jul 21 (discovery) / Aug 16 (last send)** — discovery is manual-only.
 - Full audit + autopilot/learning plan: `tasks/audit-2026-10-16.md` (read it first).
 
@@ -44,8 +45,8 @@ Still open after the ship:
 - **Sourced numbers** (Pedro, 2026-10-16: "not inventing numbers but do be flexible… research real data… and use that"): benchmark library of 48 active, sourced stats (publisher, URL, caveat, vendor flag) across enquiry response, automation, dashboards, B2B online buying, clinic reminders/booking, site speed, restaurants, online stores, retention, reviews, hotels. The prompt USES a matching benchmark, attributed and framed as what businesses like theirs see; the gate holds any other number. Checked via search excerpts of each publisher's page (the session couldn't open pages); review/deactivate on /benchmarks.
 - **Cold-email evidence in the prompt**: 60–100 words, ~5th-grade reading level, 1–2 sentence paragraphs, 2–6 word subjects; sender-made % / ROI claims LOWER replies in the data (Gong −15%), so stats describe the reader's world, never promise a result. Stat-vs-no-stat should be measured once the decision record (P1.5) exists.
 
-### Phase 1 part 2 — on `claude/great-planck-w6w25t`, NOT shipped (needs Pedro's "ship it")
-425 tests, build green. **Apply migration 0038 to prod BEFORE fast-forwarding main** (the pitch insert writes `attribution_code`; without the column every generation fails).
+### Phase 1 part 2 — SHIPPED 2026-10-17 (`ae03703`, migration 0038 applied first)
+425 tests, build green.
 - **P1.4 `de91b92` Write → review → revise** (`lib/pitches/review.ts`): every Claude pitch is checked by the gate's writing rules + a Haiku critic (rubric: grounded, relevant, plain, native language, fit, shape); issues go back to the writer, max 2 revisions inside the 60s action (deadline startedAt+48s); best draft wins. Verdict on /pitches ("AI review" panel). Rewrite-with-angle uses the same loop.
 - **P1.5 `de91b92` Traceability**: `pitches.decision` (immutable JSONB, trigger-enforced: path, prompt version, model, fallback, lang/register, segment, pain, benchmarks offered + cited, recipient shape, critic, gate) · `pitches.attribution_code` → `&r=` on the audit-tool link (runna-hunter must store `r`) · `pitch_events` rows for generated / approved / gate_held / sent (recipient source, verify verdict, accepted gate codes, edit ratio) / reply / bounce / unsubscribe · `prospect_contacts.verify_*` · test addresses (`RUNNA_TEST_EMAILS`, default pedrojr22@gmail.com, +tags and Gmail dots normalized) excluded from pitch/reply analytics · hunter link market check was case-sensitive (prospects store "CA"/"MX") so every prospect fell back to language — fixed.
 - **P1.6 Quality fixes**:
