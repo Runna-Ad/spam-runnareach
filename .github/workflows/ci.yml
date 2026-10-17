@@ -4,7 +4,7 @@ on:
   push:
     branches: [main]
   pull_request:
-    branches: [main]
+    # All PRs, so worker PRs into claude/<phase>-integration branches are checked too.
 
 jobs:
   check:
