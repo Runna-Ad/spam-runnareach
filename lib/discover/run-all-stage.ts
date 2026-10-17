@@ -114,9 +114,14 @@ function _deriveKeyword(icp: {
 
 // ── Entry point ───────────────────────────────────────────────────────────────
 
+/** A scout-chosen search cell: one keyword (and optionally one region) of an ICP. */
+export type DiscoveryFocus = { keyword: string; region: string | null };
+
 export async function runAllSourcesWith(
   actor: Actor,
-  icpId: string): Promise<RunAllResult> {
+  icpId: string,
+  focus?: DiscoveryFocus | null,
+): Promise<RunAllResult> {
   const { user } = actor;
   if (user.role === "viewer") {
     return { ok: false, error: "Viewers cannot run discovery." };
@@ -141,6 +146,13 @@ export async function runAllSourcesWith(
 
   if (icpErr || !icp) {
     return { ok: false, error: icpErr?.message ?? "ICP not found." };
+  }
+
+  // The autopilot's scout picks one cell (keyword × region) per run, so each
+  // run's yield can be credited to that cell (lib/learning/scout.ts).
+  if (focus?.keyword.trim()) {
+    icp.search_keywords = [focus.keyword.trim()];
+    if (focus.region?.trim()) icp.geo_regions = [focus.region.trim()];
   }
 
   // LATAM is retired (removed from the ICP selector 2026-07-17). Legacy rows

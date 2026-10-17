@@ -26,6 +26,9 @@
     },
     "app/api/replies/nudge/route.ts": {
       "maxDuration": 120
+    },
+    "app/api/autopilot/tick/route.ts": {
+      "maxDuration": 120
     }
   },
   "crons": [

@@ -23,8 +23,10 @@ import "server-only";
  * actor.user.tenantId explicitly (they already do).
  */
 
-import { timingSafeEqual } from "node:crypto";
 import { requireUser, type CurrentUser } from "./auth";
+import { isCronAuthorized } from "./cron-auth";
+// The worker chain authenticates with CRON_SECRET (systemAuthHeaders); only
+// app-internal calls build a system actor.
 import { createClient } from "./supabase/server";
 import { createServiceRoleClient } from "./supabase/service-role";
 
@@ -47,14 +49,7 @@ export async function sessionActor(): Promise<Actor> {
   return { user, supabase: await createClient(), system: false };
 }
 
-/** Constant-time check of `Authorization: Bearer <CRON_SECRET>`. */
-export function isCronAuthorized(req: Request): boolean {
-  const secret = process.env.CRON_SECRET;
-  if (!secret) return false;
-  const got = Buffer.from(req.headers.get("authorization") ?? "");
-  const want = Buffer.from(`Bearer ${secret}`);
-  return got.length === want.length && timingSafeEqual(got, want);
-}
+export { isCronAuthorized };
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 

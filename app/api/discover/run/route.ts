@@ -199,7 +199,7 @@ export async function POST(req: NextRequest) {
         void bumpHeartbeat(supabase, job.id);
       }, 20_000);
       try {
-        result = await runAllSourcesWith(actor, job.icp_id);
+        result = await runAllSourcesWith(actor, job.icp_id, stats.focus ?? null);
       } catch (e) {
         // A 504 / thrown server-action error — fall back to whatever was inserted.
         result = { ok: false, error: e instanceof Error ? e.message : "Discovery failed." };

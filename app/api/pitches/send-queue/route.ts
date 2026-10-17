@@ -12,6 +12,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { type NextRequest, NextResponse } from "next/server";
+import { isSchedulerAuthorized } from "@/lib/cron-auth";
 import { createServiceRoleClient } from "@/lib/supabase/service-role";
 import { getAccessToken, sendGmailMessage } from "@/lib/gmail/client";
 import { bodyWithFooter, getOutboundCompliance } from "@/lib/compliance/outbound";
@@ -144,10 +145,9 @@ async function recoverStuckSends(supabase: AnySupabase): Promise<SendOutcome[]> 
   return out;
 }
 
-function isAuthorized(req: NextRequest): boolean {
-  const cronSecret = process.env.CRON_SECRET;
-  if (!cronSecret) return false;
-  return req.headers.get("authorization") === `Bearer ${cronSecret}`;
+/** Vercel cron (CRON_SECRET) or the autopilot's pg_cron schedule (Vault token). */
+function isAuthorized(req: NextRequest): Promise<boolean> {
+  return isSchedulerAuthorized(req);
 }
 
 type DuePitch = {
@@ -168,7 +168,7 @@ type SendOutcome = {
 };
 
 export async function GET(req: NextRequest) {
-  if (!isAuthorized(req)) {
+  if (!(await isAuthorized(req))) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 

@@ -38,6 +38,14 @@ export type DiscoveryJobStats = {
    * forever. This counter bounds that loop.
    */
   discover_attempts?: number;
+  /**
+   * Set by the autopilot's scout: the one search cell (keyword × region) this
+   * job runs, so its yield can be credited to that cell. Absent for manual runs,
+   * which search all of the ICP's keywords.
+   */
+  focus?: { keyword: string; region: string | null; cell_key: string };
+  /** "autopilot" when the scout started the job. */
+  started_by?: string;
 };
 
 export type DiscoveryJob = {

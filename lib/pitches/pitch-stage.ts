@@ -946,7 +946,7 @@ export async function transitionPitchStatusWith(
       tenantId: user.tenantId,
       pitchId: parsed.data.pitch_id,
       type: "approved",
-      payload: { by: user.id, accepted_gate_codes: acceptedOverride?.codes ?? [] },
+      payload: { by: user.id, accepted_gate_codes: acceptedOverride?.codes ?? [], autopilot: actor.system },
     });
   }
 

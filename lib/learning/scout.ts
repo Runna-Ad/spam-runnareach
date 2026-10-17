@@ -93,6 +93,19 @@ export function chooseCell(cells: readonly CellStats[], opts: { rng?: Rng } = {}
   return arm ? parseCellKey(arm.key) : null;
 }
 
+/**
+ * The same choice from stored arms (learning_arms rows, whose reward/trials a
+ * learner keeps current from cellArm) plus each cell's consecutive empty runs.
+ */
+export function chooseCellFromArms(
+  cells: ReadonlyArray<{ arm: Arm; emptyRuns: number }>,
+  opts: { rng?: Rng } = {},
+): SearchCell | null {
+  const live = cells.filter((c) => c.arm.status !== "retired" && c.emptyRuns < EXHAUSTED_AFTER_EMPTY_RUNS);
+  const arm = chooseArm(live.map((c) => c.arm), { rng: opts.rng, controlShare: 0 });
+  return arm ? parseCellKey(arm.key) : null;
+}
+
 /** Candidate cells from active ICPs: each keyword × each region (or no region). */
 export function candidateCells(
   icps: ReadonlyArray<{ id: string; search_keywords: string[] | null; geo_regions: string[] | null }>,
