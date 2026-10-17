@@ -25,11 +25,11 @@ Loose ends:
    domain to the Vercel project, set `UNSUBSCRIBE_BASE_URL` (link targets still
    point at spam-runnareach.vercel.app; visible text no longer shows it).
 
-## 2. Phase 1 — in progress on `claude/great-planck-w6w25t` (see project-state "Phase 1")
+## 2. Phase 1 — part 1 SHIPPED 2026-10-17 (`8d1cfd0`, migrations 0036 + 0037 applied)
 
-Done on the branch, NOT shipped: P1.1 sender identity (Nils/Henry · Runna
-Advertising), P1.2 pitch prompt v2, P1.3 send gate v2. On "ship it": apply
-migration 0036 to prod BEFORE deploying (the code reads its columns).
+Live: Nils/Henry · Runna Advertising sender, pitch prompt v2 (+ cold-email
+evidence), send gate v2 enforced everywhere, 48 sourced benchmarks the
+composer may quote. See project-state "Phase 1".
 
 Remaining Phase 1 items (from audit §7):
 
