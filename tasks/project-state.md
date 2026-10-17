@@ -75,6 +75,43 @@ SHIPPED on Pedro's "ship it": migrations 0040 + 0041 applied, main = `4b22ad1`+,
 - **Scheduler** (migration 0041): pg_cron + pg_net; token generated inside Postgres, kept in Vault, checked via `scheduler_token_valid` (service role only); tick every 15 min, reply poll every 30 min, send-queue every 10 min and follow-ups hourly Mon–Fri 15–22 UTC. Vercel daily crons stay as backstop.
 - Session note: the Auto-mode safety check refused the service-role pipeline and creating an account; Pedro switched the session to "Accept edits" and approved. Permission rules were not edited.
 
+## Phase 3 — batch 1 (ON INTEGRATION BRANCH `claude/gallant-gauss-gly093`, awaiting Pedro's "ship it")
+First batch run through the conductor/worker workflow (`.claude/skills/conductor/SKILL.md`,
+retro in `tasks/retros/2026-10-17-phase3-batch1.md`). 593 tests, build green, 6 PRs reviewed
+and merged into the integration branch in 58 minutes. NOT in prod yet.
+- **Booking → opportunities** (`lib/opportunities/calendar-sync.ts`, `/api/opportunities/calendar-sync`,
+  migration 0044 = hourly pg_cron): Google Calendar appointment-schedule bookings on the
+  connected inbox become `opportunities` rows (stage meeting_booked, source calendar,
+  idempotent on calendar_event_id), a `meeting_booked` pitch event on the ROOT pitch,
+  audit `opportunity.booked`, and `prospects.status = 'booked'` (which stops follow-ups).
+  Cancellations → lost / "booking cancelled". Only events the inbox organizes count.
+  Needs `calendar.readonly` scope: **Pedro reconnects Google once after ship**; until then
+  the sync reports `needsReconnect` (HTTP 200, no error). Optional env `CALENDAR_BOOKING_INBOX`.
+- **Pipeline on /opportunities** (`lib/opportunities/{queries,actions,outcome}.ts`): list +
+  mark won (value) / mark lost (reason); sets `prospects.status`, writes `won`/`lost`
+  pitch events on the root pitch and audit `opportunity.won/lost`.
+- **Hot-lead badge on /pitches** (`lib/pitches/hot-lead.ts`): "Asked to talk" / "Ran the
+  check" from `pitch_events.audit_scan`, plus a "Hot leads" filter. One extra query.
+- **Learners section on /learning** (`lib/learning/{report,queries}.ts`): arms per learner
+  with trials, rate, confidence label (<20 trials: rate hidden). Observation only.
+- **Contact source URL** (`prospect_contacts.source_url`, migration 0043): the scraper
+  records the page each address was mined from (Contact page wins); other sources null.
+- **Exemplar memory** (`lib/pitches/exemplars.ts`, `exemplar-queries.ts`): up to 2 scrubbed
+  past pitches from the same segment (score ≥ 0.5, settled ≥ 14 d, root, sent, critic pass)
+  go into the writer's and critic's USER messages; system prompts byte-identical; fails
+  closed (exemplar dropped if any distinctive company/name/city token survives scrubbing);
+  recorded in `decision.exemplars_used`. No embeddings (would need a paid API).
+- Shared: migration 0043 (opportunities.source/calendar_event_id, pitch_event_type
+  +meeting_booked/won/lost, prospect_contacts.source_url), `lib/pitches/root-pitch.ts`
+  (`latestRootSentPitchId`, the one lookup for timeline events), audit actions
+  `opportunity.booked/won/lost`, send-gate blocks 1-char placeholders (`[n]`).
+
+**Ship steps:** apply 0043 then 0044 in the SQL editor BEFORE deploying (the enum values
+must exist before code writes them; 0044 schedules the hourly sync); merge the integration
+PR; reconnect Google in Settings; optionally set `CALENDAR_BOOKING_INBOX`.
+**Open questions** (board): invite you send counts as booked before acceptance (default keep);
+cancel-then-rebook makes two opportunities (default accept).
+
 ## API integrations
 | Service | Status |
 |---|---|
