@@ -28,6 +28,13 @@ export function originFromHeaders(h: Headers): string | null {
   return `${proto}://${host}`;
 }
 
+// How long the caller waits on the next slice. A slice only answers once its
+// whole batch is done (up to ~105s), and awaiting that kept every slice alive
+// through its successor's work too: twice the function time, and the caller hit
+// maxDuration inside after(). A few seconds is plenty to hand the request over;
+// the slice keeps running after we hang up (Vercel doesn't cancel on disconnect).
+const HANDOFF_WAIT_MS = 8_000;
+
 /**
  * Fire-and-forget the next worker slice. Caller should schedule this via
  * next/server `after()` so the platform keeps the function alive long enough to
@@ -46,11 +53,12 @@ export async function triggerNextSlice(
         ...(auth.kind === "system" ? systemAuthHeaders(auth.tenantId) : { cookie: auth.cookie }),
       },
       body: JSON.stringify({ jobId }),
-      // Don't wait on the slice itself — it re-triggers its own successor.
       cache: "no-store",
+      signal: AbortSignal.timeout(HANDOFF_WAIT_MS),
     });
   } catch {
-    // A dropped trigger leaves the job mid-run; the janitor cron's stale-heartbeat
-    // sweep will mark it failed so the user can re-run. Nothing to do here.
+    // The usual case: we stopped waiting while the slice works. A trigger that
+    // truly never arrived leaves a stale heartbeat, which the watchdog (browser
+    // or autopilot tick) resumes. Nothing to do here.
   }
 }
