@@ -19,6 +19,7 @@ export type CalendarAttendee = {
   email?: string;
   self?: boolean;
   organizer?: boolean;
+  optional?: boolean;
   responseStatus?: string;
 };
 
@@ -26,12 +27,14 @@ export type CalendarEvent = {
   id: string;
   status?: string;
   summary?: string;
+  organizer?: { email?: string; self?: boolean };
   start?: { dateTime?: string; date?: string };
   attendees?: CalendarAttendee[];
 };
 
 export type ListEventsResult =
-  | { ok: true; events: CalendarEvent[] }
+  /** truncated: Google returned a nextPageToken; only the first page was read. */
+  | { ok: true; events: CalendarEvent[]; truncated: boolean }
   | { ok: false; needsReconnect: true; error: string }
   | { ok: false; needsReconnect: false; error: string };
 
@@ -71,10 +74,10 @@ export async function listRecentEvents(
     return { ok: false, needsReconnect: false, error: `Calendar list failed (${res.status}): ${body.slice(0, 200)}` };
   }
 
-  const json = (await res.json().catch(() => null)) as { items?: unknown } | null;
+  const json = (await res.json().catch(() => null)) as { items?: unknown; nextPageToken?: unknown } | null;
   const items = Array.isArray(json?.items) ? (json.items as unknown[]) : [];
   const events = items.filter(
     (e): e is CalendarEvent => typeof e === "object" && e !== null && typeof (e as { id?: unknown }).id === "string",
   );
-  return { ok: true, events };
+  return { ok: true, events, truncated: typeof json?.nextPageToken === "string" && json.nextPageToken !== "" };
 }

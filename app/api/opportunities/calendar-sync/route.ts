@@ -3,7 +3,7 @@
 // Hourly Google Calendar booking sync. Supabase pg_cron calls it at :05
 // (migration 0044); it can also be called by hand with the cron secret.
 //
-// For every tenant with a connected, unpaused inbox, runs one sync as that
+// For every tenant with a Google-connected inbox, runs one sync as that
 // tenant's system actor (lib/opportunities/calendar-sync.ts): bookings become
 // meeting_booked opportunities, cancellations mark them lost. Until Google is
 // reconnected with calendar.readonly the report says needsReconnect (HTTP 200).
@@ -15,6 +15,7 @@
 import { type NextRequest } from "next/server";
 import { systemActorFor } from "@/lib/actor";
 import { isCronAuthorized, isSchedulerAuthorized } from "@/lib/cron-auth";
+import { writeAuditLog } from "@/lib/audit/log";
 import { getAccessToken } from "@/lib/gmail/client";
 import { handleCalendarSync, syncCalendarWith } from "@/lib/opportunities/calendar-sync";
 import { listRecentEvents } from "@/lib/opportunities/google-calendar";
@@ -26,7 +27,6 @@ async function connectedTenantIds(): Promise<string[]> {
   const { data, error } = await createServiceRoleClient()
     .from("sender_inboxes")
     .select("tenant_id")
-    .eq("paused", false)
     .not("gmail_refresh_token_encrypted", "is", null);
   if (error) throw new Error(`inbox lookup failed: ${error.message}`);
   return [...new Set((data ?? []).map((r) => r.tenant_id))];
@@ -37,7 +37,12 @@ async function handle(req: NextRequest) {
     authorize: async (r) => (await isSchedulerAuthorized(r)) || isCronAuthorized(r),
     tenantIds: connectedTenantIds,
     actorFor: systemActorFor,
-    sync: (actor) => syncCalendarWith(actor, { getAccessToken, listEvents: (token) => listRecentEvents(token) }),
+    sync: (actor) =>
+      syncCalendarWith(actor, {
+        getAccessToken,
+        listEvents: (token) => listRecentEvents(token),
+        writeAuditLog,
+      }),
   });
 }
 
