@@ -1,4 +1,17 @@
 {
+  "permissions": {
+    "allow": [
+      "mcp__Supabase__execute_sql",
+      "mcp__Supabase__list_tables",
+      "mcp__Supabase__list_migrations",
+      "mcp__Supabase__list_extensions",
+      "mcp__Supabase__get_advisors",
+      "mcp__Supabase__query_logs"
+    ],
+    "ask": [
+      "mcp__Supabase__apply_migration"
+    ]
+  },
   "hooks": {
     "UserPromptSubmit": [
       {
