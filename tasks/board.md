@@ -32,7 +32,7 @@ for the current phase; move older ones to the retro.
 | pitches-hot-lead-badge | pitches UI + query | sonnet/medium | claude/pitches-hot-lead-badge | archived | #3 merged 808af20 | — | merged | — | 12 | 0 (6 optional) | 0 | 0 |
 | learning-arms-dashboard | learning UI | sonnet/medium | claude/learning-arms-dashboard | archived | #2 merged 5d9e88c | — | merged | — | 12 | 0 (6 optional) | 0 | 0 |
 | contact-source-url | research + discover inserts | opus/medium | claude/contact-source-url | archived | #4 merged ce22264 | — | merged | — | 14 | 0 (3 optional) | 0 | 0 |
-| pitch-exemplar-memory | pitches (hub) | opus/high | claude/pitch-exemplar-memory | session_01B7aax1BaonbKt33EWPXomB | #6 | none (serialized: only pitches worker) | reworked (fix-then-merge) | — | 35 | 1 (7 optional, 4 pulled into the fix) | 0 | 1 |
+| pitch-exemplar-memory | pitches (hub) | opus/high | claude/pitch-exemplar-memory | session_01B7aax1BaonbKt33EWPXomB | #6 | none (serialized: only pitches worker) | reworked round 2 (last; conductor spot-check next) | — | ~50 | 2 rounds (7 + 5 optional) | 0 | 2 |
 
 Column meanings: Turns = assistant turns in the worker session (proxy for tokens).
 Review findings = blocking findings the reviewer raised. CI reds = failed CI runs on the
@@ -79,3 +79,4 @@ These four columns feed the retro and the routing table.
 - 2026-10-17 16:50 UTC — PR #5 merged after one fix round (root pitch + 5 pulled-in items; reviewer verified the regression test). WAVE 1 COMPLETE: 5/5 merged, integration 565 tests green. Wave 2 (exemplar memory) running.
 - 2026-10-17 16:52 UTC — Wave 2: PR #6 (exemplar memory, 545 tests, 35 turns) open, in review. Conductor fixed the gate's placeholder regex (3+ chars → 1+) in send-gate.ts and claude-composer.ts with tests; 565 green on integration.
 - 2026-10-17 16:58 UTC — PR #6 review: fix-then-merge. Blocking: scrubber leaks company short forms, hyphenated surnames, honorifics, lowercase cities. Sent back with a fail-closed invariant (drop exemplar if any distinctive token survives) + property test, per the sim lesson (invariant, not longer regex). Reviewer: ~114k tokens, 45 tool uses, 7 min (hub-level rigor).
+- 2026-10-17 17:11 UTC — PR #6 round 2: fail-closed invariant landed (592 tests) but the common-word case gate also covered cities/brands (victoria, surrey, summit leak in lowercase subjects). Sent the precise fix as the last round; conductor will verify with the reviewer's probe script instead of a 3rd review (G15). Reviewer round 2: ~142k tokens cumulative.
