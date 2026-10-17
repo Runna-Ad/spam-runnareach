@@ -182,7 +182,9 @@ export function findUnsourcedNumbers(
   // Times of day ("at 10pm", "después de las 6 p.m.") describe when, not how much.
   scrubbed = scrubbed.replace(/\b\d{1,2}(?::\d{2})?\s?(?:am|pm|a\.\s?m\.|p\.\s?m\.|hrs|h)(?![a-z])/gi, " ");
 
-  const haystack = fold(normalizeNumbers(opts.sources.join(" \n ")));
+  // The company's own name is a source too: "Hi 43 North team" shortens
+  // "43 North Restaurant Group", so whole-name scrubbing alone misses it.
+  const haystack = fold(normalizeNumbers([...opts.sources, opts.companyName ?? ""].join(" \n ")));
   const unsourced: string[] = [];
 
   // A digit glued to a letter on its left is part of a name or code (B2B,

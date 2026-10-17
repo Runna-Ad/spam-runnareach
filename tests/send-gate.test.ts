@@ -484,3 +484,13 @@ test("a pitch quoting a seeded benchmark passes; a near-miss figure does not", (
   const drift = withBody("Hi John,\n\nThe average reply to a web enquiry takes 48 hours, and yours sit until Monday." + BODY_TAIL, { benchmarkFigures: bench });
   assert.ok(has(drift, "unsourced_metric"));
 });
+
+test("a number from the prospect's own name passes even when the name is shortened", () => {
+  const r = evaluateSendGate(goodPitch({
+    subject: "43 north: who answers after close",
+    body: "Hi 43 North team,\n\nHenry from Runna Advertising here. Reservations at your venues go by phone only, so late requests wait until morning." + BODY_TAIL,
+    companyName: "43 North Restaurant Group",
+    siteName: null,
+  }));
+  assert.ok(!has(r, "unsourced_metric"), JSON.stringify(r));
+});
