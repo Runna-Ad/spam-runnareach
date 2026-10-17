@@ -464,6 +464,7 @@ export async function processSingleProspectWith(
           priority_rank: isRoleBasedEmail(snapResult.email) ? 5 : 1,
           selected_by: "snapverify_smtp",
           selected_at: new Date().toISOString(),
+          source_url: null,
         });
         snapVerifyFoundContact = true;
       }

@@ -62,6 +62,7 @@ export async function enrichContactsForProspect(
         priority_rank: isRoleBasedEmail(snapResult.email) ? 5 : 1,
         selected_by: "snapverify_smtp",
         selected_at: new Date().toISOString(),
+        source_url: null,
       });
       return;
     }
@@ -86,6 +87,7 @@ export async function enrichContactsForProspect(
       priority_rank: roleBased ? 5 : 1,
       selected_by: "anymail",
       selected_at: new Date().toISOString(),
+      source_url: null,
     });
     return; // short-circuit — Anymail found someone, skip Hunter
   }
@@ -138,6 +140,7 @@ export async function enrichContactsForProspect(
         priority_rank: rank,
         selected_by: "hunter",
         selected_at: new Date().toISOString(),
+        source_url: null,
       });
     }
     return; // Hunter found at least one — done.
@@ -160,6 +163,7 @@ export async function enrichContactsForProspect(
       priority_rank: 4,
       selected_by: "snapverify_catchall_guess",
       selected_at: new Date().toISOString(),
+      source_url: null,
     });
   }
 }

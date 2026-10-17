@@ -341,6 +341,7 @@ export async function deepResearchProspectWith(
         full_name: name,
         role_title: cleanTitle,
         priority_rank: 2, // lower priority than confirmed email contacts
+        source_url: null, // no address yet — nothing to re-check before a send
       });
       if (contactErr && contactErr.code !== "23505") {
         console.warn("[deep-research] Could not save contact:", contactErr.message);
