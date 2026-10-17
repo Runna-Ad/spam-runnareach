@@ -27,11 +27,11 @@ for the current phase; move older ones to the retro.
 ## Active and queued tasks
 | Slug | Module | Model/effort | Branch | Session | PR | Depends on | Status | Blocked on | Turns | Review findings | CI reds | Rework |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|
-| opportunities-calendar-sync | opportunities (new) + api | opus/high | claude/opportunities-calendar-sync | — | — | — | queued | — | | | | |
+| opportunities-calendar-sync | opportunities (new) + api | opus/high | claude/opportunities-calendar-sync | session_012RWb5yLGodvUPrkTCx1cyV | — | — | running | — | | | | |
 | opportunities-pipeline-ui | opportunities UI | sonnet/medium | claude/opportunities-pipeline-ui | session_01EPMCtSCVAJ4Pzs49KhxxcZ | #1 | — | pr-open | — | 12 | | | |
-| pitches-hot-lead-badge | pitches UI + query | sonnet/medium | claude/pitches-hot-lead-badge | — | — | — | queued | — | | | | |
-| learning-arms-dashboard | learning UI | sonnet/medium | claude/learning-arms-dashboard | — | — | — | queued | — | | | | |
-| contact-source-url | research + discover inserts | opus/medium | claude/contact-source-url | — | — | — | queued | — | | | | |
+| pitches-hot-lead-badge | pitches UI + query | sonnet/medium | claude/pitches-hot-lead-badge | session_019USzyNMvBuS2nVtHefbPwy | — | — | running | — | | | | |
+| learning-arms-dashboard | learning UI | sonnet/medium | claude/learning-arms-dashboard | session_01Puhp34C8K7qKKGnBEJ8tzb | — | — | running | — | | | | |
+| contact-source-url | research + discover inserts | opus/medium | claude/contact-source-url | session_01VQw8xTBcjWonaKZruNCydk | — | — | running | — | | | | |
 | pitch-exemplar-memory | pitches (hub) | opus/high | claude/pitch-exemplar-memory | — | — | wave 1 merged | queued (wave 2) | wave 1 | | | | |
 
 Column meanings: Turns = assistant turns in the worker session (proxy for tokens).
@@ -51,9 +51,10 @@ These four columns feed the retro and the routing table.
 ## Shared-file changes pending (conductor does these)
 | Requested by | File | Change | Done |
 |---|---|---|---|
-| opportunities-pipeline-ui | lib/pitches/events.ts, lib/audit/log.ts | extend PitchEventType and audit unions with meeting_booked / won / lost | |
+| opportunities-pipeline-ui | lib/pitches/events.ts, lib/audit/log.ts | extend PitchEventType and audit unions with meeting_booked / won / lost | events.ts done (0375052); audit union left as-is, worker reused an existing action |
 
 ## Log
 - 2026-10-17 16:16 UTC — phase3-batch1 opened on claude/gallant-gauss-gly093 (main acf53e2 merged). Wave 0: migration 0043 + types. 5 briefs written. Wave 1 = calendar-sync, pipeline-ui, hot-lead-badge, learning-dashboard, contact-source-url in parallel (remote sessions). Wave 2 = exemplar memory after wave 1 merges.
 - 2026-10-17 16:18 UTC — create_session refused permission_mode acceptEdits (server records this session as default; Pedro says the app shows Accept edits). Probe: pipeline-ui spawned with inherited mode; check-in at 16:25 UTC decides remote vs in-session for the rest.
 - 2026-10-17 16:24 UTC — PROBE RESULT: remote worker in inherited (default) mode ran install, tests, build, push and PR creation with NO prompts; only its final send_message to the conductor prompted. PR #1 open (499→507 tests). Allowing mcp__claude-code-remote__send_message in .claude/settings.json so later workers don't prompt. Spawning the other four next.
+- 2026-10-17 16:25 UTC — 4 remaining wave-1 workers spawned as remote sessions (inherited mode, proven by the probe). PR #1 under review. Safety check-in armed for 17:16 UTC.
