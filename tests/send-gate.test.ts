@@ -494,3 +494,62 @@ test("a number from the prospect's own name passes even when the name is shorten
   }));
   assert.ok(!has(r, "unsourced_metric"), JSON.stringify(r));
 });
+
+// ── domain_ownership_unsure: is the address on THIS company's domain? ─────────
+
+test("holds the Corvex case: a scraped address on a domain that isn't the company's", () => {
+  const r = evaluateSendGate(
+    goodPitch({
+      body: goodPitch().body.replace("Hi John,", "Hi there,"),
+      companyName: "Corvex Manufacturing",
+      siteName: "Linamar",
+      domain: "linamar.com",
+      recipientEmail: "jdoe@linamar.com",
+    }),
+  );
+  assert.ok(codes(r).includes("domain_ownership_unsure"));
+  assert.equal(GATE_SEVERITY.domain_ownership_unsure, "review");
+});
+
+test("holds an address on a parked domain, and says so", () => {
+  const r = evaluateSendGate(
+    goodPitch({
+      body: goodPitch().body.replace("Hi John,", "Hi there,"),
+      companyName: "Perry's Tackle Wholesale",
+      siteName: "HugeDomains",
+      domain: "perrystackle.com",
+      recipientEmail: "info@perrystackle.com",
+    }),
+  );
+  assert.equal(r.pass, false);
+  const f = r.pass ? undefined : r.failures.find((x) => x.code === "domain_ownership_unsure");
+  assert.ok(f?.detail.includes("parked"));
+});
+
+test("domain ownership: an acronym domain that spells the name is fine without a site name", () => {
+  const r = evaluateSendGate(
+    goodPitch({
+      body: goodPitch().body.replace("Hi John,", "Hi there,"),
+      companyName: "South Bruce Grey Health Centre",
+      siteName: null,
+      domain: "sbghc.on.ca",
+      recipientEmail: "hberry@sbghc.on.ca",
+    }),
+  );
+  assert.ok(!codes(r).includes("domain_ownership_unsure"));
+});
+
+test("domain ownership: not re-checked for manual addresses, off-domain addresses or follow-ups", () => {
+  const corvex = {
+    body: goodPitch().body.replace("Hi John,", "Hi there,"),
+    companyName: "Corvex Manufacturing",
+    siteName: "Linamar",
+    domain: "linamar.com",
+  };
+  const manual = evaluateSendGate(goodPitch({ ...corvex, recipientEmail: "jdoe@linamar.com", recipientSelectedBy: "manual" }));
+  assert.ok(!codes(manual).includes("domain_ownership_unsure"));
+  const offDomain = evaluateSendGate(goodPitch({ ...corvex, recipientEmail: "corvex.owner@gmail.com" }));
+  assert.ok(!codes(offDomain).includes("domain_ownership_unsure"));
+  const followUp = evaluateSendGate(goodPitch({ ...corvex, recipientEmail: "jdoe@linamar.com", checkRecipientSource: false }));
+  assert.ok(!codes(followUp).includes("domain_ownership_unsure"));
+});

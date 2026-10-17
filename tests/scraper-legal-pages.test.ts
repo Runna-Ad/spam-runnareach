@@ -310,6 +310,14 @@ test("siteOwnership: parked domains are their own verdict", () => {
   assert.equal(siteOwnership("NR Accounting", "Coming Soon", "nraccounting.ca"), "parked");
 });
 
+test("siteOwnership: an acronym domain spelling the initials is a yes, without a site name", () => {
+  assert.equal(siteOwnership("South Bruce Grey Health Centre", null, "sbghc.on.ca"), "yes");
+  assert.equal(siteOwnership("Calgary Regional Fabrication Works Ltd", null, "crfw.ca"), "yes");
+  // Three letters is too short to prove anything; a different acronym is not a match.
+  assert.equal(siteOwnership("Corvex Manufacturing Group", null, "cmg.ca"), "unsure");
+  assert.equal(siteOwnership("South Bruce Grey Health Centre", null, "sbgh-other.ca"), "unsure");
+});
+
 test("siteOwnership: no distinctive tokens is unsure, never a false yes", () => {
   // Every token is generic — there is nothing to match on either way.
   assert.equal(siteOwnership("Canada Services Ltd", null, "example.com"), "unsure");

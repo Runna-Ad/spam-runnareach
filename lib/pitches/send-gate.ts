@@ -15,6 +15,7 @@
 // and the gate can be dry-run over history before it's ever allowed to send.
 
 import { hasUsableEmail, isRoleBasedEmail } from "../research/email-utils.ts";
+import { siteOwnership } from "../research/site-ownership.ts";
 import {
   INTERNAL_NAMES,
   findBannedTerms,
@@ -43,6 +44,7 @@ export type GateSeverity = "block" | "review";
 export type GateCode =
   | "unusable_email"
   | "unverified_recipient"
+  | "domain_ownership_unsure"
   | "greeting_mismatch"
   | "greeting_not_a_name"
   | "company_name_unverified"
@@ -69,6 +71,7 @@ export const GATE_SEVERITY: Record<GateCode, GateSeverity> = {
   client_name: "block",
   internal_name: "block",
   unverified_recipient: "review",
+  domain_ownership_unsure: "review",
   greeting_mismatch: "review",
   greeting_not_a_name: "review",
   company_name_unverified: "review",
@@ -270,6 +273,37 @@ export function evaluateSendGate(input: GateInput): GateResult {
       `Address came from "${input.recipientSelectedBy ?? "unknown"}" — not a verified source. ` +
         `Guessed addresses may reach nobody; approve manually or re-enrich.`,
     );
+  }
+
+  // ── 1b. …and on a domain that is actually THIS company's ─────────────────
+  // Discovery attaches wrong domains (Corvex Manufacturing → linamar.com,
+  // Holiday Inn Niagara → ihg.com), and a scraped or pattern-built address on
+  // that domain is real and deliverable: to a stranger. When the site's own
+  // name and the domain can't be tied to the company, a person looks first.
+  // A manually entered address is the person's call already.
+  const recipientDomain = (input.recipientEmail ?? "").split("@")[1]?.trim().toLowerCase() ?? "";
+  const prospectDomain = (input.domain ?? "").trim().toLowerCase().replace(/^www\./, "");
+  if (
+    input.checkRecipientSource !== false &&
+    input.recipientSelectedBy !== "manual" &&
+    prospectDomain &&
+    hasUsableEmail(input.recipientEmail) &&
+    (recipientDomain === prospectDomain || recipientDomain.endsWith(`.${prospectDomain}`))
+  ) {
+    const ownership = siteOwnership(input.companyName, input.siteName, prospectDomain);
+    if (ownership === "parked") {
+      fail(
+        "domain_ownership_unsure",
+        `${prospectDomain} is a parked page ("${input.siteName}"): ${input.recipientEmail} reaches whoever holds the domain, not ${input.companyName}.`,
+      );
+    } else if (ownership === "unsure") {
+      fail(
+        "domain_ownership_unsure",
+        `Can't confirm ${prospectDomain} belongs to ${input.companyName}` +
+          (input.siteName ? ` (the site calls itself "${input.siteName}")` : "") +
+          `. ${input.recipientEmail} may reach a different company: open the site, then approve anyway if it's theirs.`,
+      );
+    }
   }
 
   // ── 2. The greeting must name the ACTUAL recipient ───────────────────────

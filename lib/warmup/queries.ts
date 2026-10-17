@@ -204,18 +204,26 @@ export async function getRecentLogByConfig(
   return (data as WarmupLogEntry[]) ?? [];
 }
 
-/** Returns log entries from yesterday (direction=sent) that haven't been inbox-checked yet. */
-export async function getPendingInboxChecks(configId: string): Promise<WarmupLogEntry[]> {
+/**
+ * Sends from the last 3 days (direction=sent) that haven't been inbox-checked,
+ * newest first. The engine runs once a day and the cron can fire anywhere in
+ * its hour, so a 24h window missed yesterday's sends whenever today's tick ran
+ * earlier than yesterday's. Newest first: the engine checks a small sample per
+ * tick, and fresh sends say the most about today's reputation.
+ */
+export async function getPendingInboxChecks(configId: string, limit = 20): Promise<WarmupLogEntry[]> {
   const supabase = createServiceRoleClient() as AnySupabase;
-  const yesterday = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+  const since = new Date(Date.now() - 72 * 60 * 60 * 1000).toISOString();
   const { data } = await supabase
     .from("warmup_log")
     .select("*")
     .eq("config_id", configId)
     .eq("direction", "sent")
     .is("landed_in_inbox", null)
-    .gte("created_at", yesterday)
-    .not("message_id", "is", null);
+    .gte("created_at", since)
+    .not("message_id", "is", null)
+    .order("created_at", { ascending: false })
+    .limit(limit);
   return (data as WarmupLogEntry[]) ?? [];
 }
 

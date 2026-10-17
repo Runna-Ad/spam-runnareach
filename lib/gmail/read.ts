@@ -156,6 +156,26 @@ function stripAngle(raw: string | null): string | null {
 const MESSAGES_URL = "https://gmail.googleapis.com/gmail/v1/users/me/messages";
 
 /**
+ * The RFC 5322 Message-ID header (without angle brackets) of a message in the
+ * caller's own mailbox, from Gmail's internal id. messages.send returns only
+ * the internal id, but another mailbox (a warmup buddy's, over IMAP) can only
+ * find the message by its Message-ID header. Null when it can't be read.
+ */
+export async function fetchRfcMessageId(accessToken: string, gmailMessageId: string): Promise<string | null> {
+  try {
+    const res = await fetch(
+      `${MESSAGES_URL}/${encodeURIComponent(gmailMessageId)}?format=metadata&metadataHeaders=Message-ID`,
+      { headers: { Authorization: `Bearer ${accessToken}` } },
+    );
+    if (!res.ok) return null;
+    const msg = (await res.json()) as GmailMessage;
+    return stripAngle(header(msg, "Message-ID"));
+  } catch {
+    return null;
+  }
+}
+
+/**
  * Look in the sender's Sent folder for a message to `to` with exactly `subject`,
  * sent after `afterEpochSec`. The source of truth for "did that send actually
  * happen?" when a send was interrupted and our own row can't say.

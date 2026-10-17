@@ -1,6 +1,6 @@
 # NEXT SESSION — start here
 
-Prod = `main` (2026-10-17): Phase 0 + Phase 1 part 1 shipped (Nils/Henry sender, pitch prompt v2, send gate v2, sourced benchmarks). Read `tasks/audit-2026-10-16.md` (the full audit + plan) and the
+Prod = `main` (2026-10-17): Phase 0 + Phase 1 part 1 shipped (Nils/Henry sender, pitch prompt v2, send gate v2, sourced benchmarks). Phase 1 part 2 is ready on the branch, waiting for "ship it". Read `tasks/audit-2026-10-16.md` (the full audit + plan) and the
 "Phase 0" section of `tasks/project-state.md` first.
 
 Cost rule (CLAUDE.md): near-free until proven. AI API spend OK; no paid
@@ -31,17 +31,23 @@ Live: Nils/Henry · Runna Advertising sender, pitch prompt v2 (+ cold-email
 evidence), send gate v2 enforced everywhere, 48 sourced benchmarks the
 composer may quote. See project-state "Phase 1".
 
-Remaining Phase 1 items (from audit §7):
+Phase 1 part 2 (P1.4 review loop, P1.5 decision record + events, P1.6 warmup
+placement / chain filter / domain ownership) is DONE on
+`claude/great-planck-w6w25t`, not shipped. See project-state "Phase 1 part 2".
 
-- Gate v2, enforcing on every path (approve, queue, send, follow-ups, website
-  pitch, edits); verdict shown on /pitches.
-- AI critic + auto-revise loop; templates out of any automatic path.
-- One coherent pitch prompt (it contradicts itself on numbers and client names).
-- Decision record per pitch (prompt version, path, angle, CTA, verifier
-  verdict…), immutable step/intent history, `pitch_events`.
-- Audit-tool attribution token (needs a runna-hunter change).
-- Persist SPAM Verify verdicts on contacts + per-contact source URL (enables
-  the just-in-time page-freshness check).
-- Fix warmup placement measurement (Message-ID), chain-filter false positives,
-  "unsure" domain ownership → review.
-- Exclude test addresses (e.g. pedrojr22@gmail.com) from metrics.
+To ship (only on Pedro's explicit "ship it"):
+1. Apply `supabase/migrations/0038_pitch_decision_record.sql` to prod (record as
+   version 0038). It must land BEFORE the code: generation inserts
+   `attribution_code`.
+2. Fast-forward `main` to the branch, push, watch the Vercel deploy go READY.
+3. Generate one pitch on /pitches: check the "AI review" panel, then
+   `select decision from pitches order by created_at desc limit 1` and
+   `select * from pitch_events order by created_at desc limit 5`.
+4. Next warmup tick (14:00–15:00 UTC): `warmup_log` rows should get RFC
+   Message-IDs (contain "@") and the day after, `landed_in_inbox` values.
+
+Still open from Phase 1:
+- runna-hunter must store the `r` query parameter (attribution code) on scans
+  and write an `audit_scan` pitch_event (or a row SPAM can join on).
+- Per-contact source URL (enables the just-in-time page-freshness check).
+- Follow-up template fallback in the cron (Pedro's call, see project-state).

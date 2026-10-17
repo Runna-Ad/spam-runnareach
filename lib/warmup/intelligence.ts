@@ -3,8 +3,8 @@
 // Auto-adjustment logic: pause on spam spikes, rotate buddies, surface alerts.
 // ─────────────────────────────────────────────────────────────────────────────
 
-import type { WarmupConfig, WarmupLogEntry, DomainHealth } from "./types";
-import { resolveDailyTarget, resolvePhaseLabel } from "./types";
+import type { WarmupConfig, WarmupLogEntry, DomainHealth } from "./types.ts";
+import { resolveDailyTarget, resolvePhaseLabel } from "./types.ts";
 
 // ── Thresholds ─────────────────────────────────────────────────────────────────
 
@@ -29,6 +29,30 @@ export type SpamAnalysis = {
   shouldPause: boolean;
   reason: string | null;
 };
+
+// ── Inbox placement ────────────────────────────────────────────────────────────
+
+/**
+ * Whether a stored warmup message id is an RFC 5322 Message-ID (what a buddy's
+ * IMAP search can find) rather than Gmail's internal hex id. Every send before
+ * 2026-10-17 stored the internal id, so no placement check ever matched and
+ * the spam-rate pause below never had data.
+ */
+export function isRfcMessageId(id: string | null | undefined): id is string {
+  return typeof id === "string" && /^[^\s@<>]+@[^\s@<>]+$/.test(id);
+}
+
+/**
+ * The placement to record from a buddy-side check. Found in the inbox (or a
+ * category tab, or archived) = inbox. Found in spam = spam, even though the
+ * check then rescues it to the inbox: the rescue is a warmup signal, the
+ * placement is what the spam rate has to count.
+ */
+export function placementFromCheck(check: { foundInInbox: boolean; foundInSpam: boolean }): boolean | null {
+  if (check.foundInInbox) return true;
+  if (check.foundInSpam) return false;
+  return null;
+}
 
 export function analyzeSpamRate(recentLogs: WarmupLogEntry[]): SpamAnalysis {
   const sent = recentLogs.filter((l) => l.direction === "sent");

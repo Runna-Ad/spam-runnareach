@@ -17,6 +17,7 @@ import { type NextRequest, NextResponse } from "next/server";
 import { HOBBY_CHECKIN_MARGIN, withCronMonitor } from "@/lib/sentry/cron";
 import { createServiceRoleClient } from "@/lib/supabase/service-role";
 import { getAccessToken, sendGmailMessage } from "@/lib/gmail/client";
+import { fetchRfcMessageId } from "@/lib/gmail/read";
 import {
   getAllActiveConfigs,
   updateWarmupConfigDay,
@@ -37,6 +38,8 @@ import {
 } from "@/lib/warmup/imap";
 import {
   analyzeSpamRate,
+  isRfcMessageId,
+  placementFromCheck,
   shouldIncrementDay,
   computeDayPlan,
   pickNextBuddyIndex,
@@ -119,11 +122,23 @@ async function processConfig(config: WarmupConfig): Promise<EngineTickResult> {
       });
     }
 
+    // The sending inbox's OAuth token, fetched once and only when needed: the
+    // placement checks need it to read older sends' Message-IDs, the send loop
+    // to send.
+    let senderAuth: Promise<{ inbox: InboxRow; accessToken: string } | { error: string }> | null = null;
+    const getSenderAuth = () =>
+      (senderAuth ??= (async () => {
+        const inbox = await getSendingInbox(config.tenant_id, config.sending_email);
+        if (!inbox?.gmail_refresh_token_encrypted) return { error: "No active Gmail inbox found for sending email" };
+        const token = await getAccessToken(inbox.gmail_refresh_token_encrypted);
+        if (!token.ok) return { error: `Token refresh failed: ${token.error}` };
+        return { inbox, accessToken: token.accessToken };
+      })());
+
     // ── Step 2: IMAP check of previous sends (landed in inbox vs spam?)
     // Cap at 4 per tick — each IMAP check takes ~8-12s worst case. 4 checks = ~48s max,
-    // leaving room for sending emails. Remaining checks carry over to the next day's tick.
-    const allPendingChecks = await getPendingInboxChecks(config.id);
-    const pendingChecks = allPendingChecks.slice(0, 4);
+    // leaving room for sending emails. Newest sends first; the rest are a sample we skip.
+    const pendingChecks = (await getPendingInboxChecks(config.id)).slice(0, 4);
     const buddies = await getActiveBuddies();
 
     for (const log of pendingChecks) {
@@ -131,11 +146,21 @@ async function processConfig(config: WarmupConfig): Promise<EngineTickResult> {
       const buddy = buddies.find((b) => b.id === log.buddy_id);
       if (!buddy) continue;
 
-      const check = await checkMessageInbox(buddy, log.message_id);
-      if (check !== null) {
-        await updateWarmupLog(log.id, {
-          landed_in_inbox: check.foundInInbox || check.movedToInbox,
-        });
+      // The buddy's IMAP search needs the RFC Message-ID. Sends logged before
+      // 2026-10-17 (or whose lookup failed at send time) hold Gmail's internal
+      // id: read the real header from the sender's mailbox and keep it.
+      let rfcMessageId: string | null = log.message_id;
+      if (!isRfcMessageId(rfcMessageId)) {
+        const auth = await getSenderAuth();
+        rfcMessageId = "accessToken" in auth ? await fetchRfcMessageId(auth.accessToken, log.message_id) : null;
+        if (!isRfcMessageId(rfcMessageId)) continue;
+        await updateWarmupLog(log.id, { message_id: rfcMessageId });
+      }
+
+      const check = await checkMessageInbox(buddy, rfcMessageId);
+      const landed = check ? placementFromCheck(check) : null;
+      if (landed !== null) {
+        await updateWarmupLog(log.id, { landed_in_inbox: landed });
         result.checked++;
       }
     }
@@ -165,17 +190,12 @@ async function processConfig(config: WarmupConfig): Promise<EngineTickResult> {
     }
 
     // ── Step 5: Get sending inbox credentials
-    const inbox = await getSendingInbox(config.tenant_id, config.sending_email);
-    if (!inbox?.gmail_refresh_token_encrypted) {
-      result.skipped_reason = "No active Gmail inbox found for sending email";
+    const auth = await getSenderAuth();
+    if ("error" in auth) {
+      result.skipped_reason = auth.error;
       return result;
     }
-
-    const tokenResult = await getAccessToken(inbox.gmail_refresh_token_encrypted);
-    if (!tokenResult.ok) {
-      result.skipped_reason = `Token refresh failed: ${tokenResult.error}`;
-      return result;
-    }
+    const { inbox, accessToken } = auth;
 
     // ── Step 6: Send all remaining emails for today in one tick
     // (Cron fires once/day on Hobby tier — no burst risk, send the full daily target)
@@ -212,7 +232,7 @@ async function processConfig(config: WarmupConfig): Promise<EngineTickResult> {
       await new Promise((r) => setTimeout(r, Math.random() * 500));
 
       const sendResult = await sendGmailMessage({
-        accessToken: tokenResult.accessToken,
+        accessToken,
         fromEmail: inbox.email,
         fromName: inbox.display_name,
         to: buddyEmail,
@@ -221,13 +241,19 @@ async function processConfig(config: WarmupConfig): Promise<EngineTickResult> {
       });
 
       if (sendResult.ok) {
+        // Log the RFC Message-ID: it is what tomorrow's placement check
+        // searches the buddy's mailbox for. Falls back to Gmail's id, which
+        // the check resolves later.
+        const rfcMessageId = sendResult.gmailMessageId
+          ? await fetchRfcMessageId(accessToken, sendResult.gmailMessageId)
+          : null;
         await insertWarmupLog({
           tenant_id: config.tenant_id,
           config_id: config.id,
           buddy_id: buddy.id,
           direction: "sent",
           subject: template.subject,
-          message_id: sendResult.gmailMessageId || null,
+          message_id: rfcMessageId ?? (sendResult.gmailMessageId || null),
           thread_id: sendResult.threadId ?? null,
           landed_in_inbox: null,
           reply_sent: false,
