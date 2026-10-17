@@ -7,26 +7,26 @@ Cost rule (CLAUDE.md): near-free until proven. AI API spend OK; no paid
 external platforms; scheduler = Supabase `pg_cron` + `pg_net`.
 
 **Goal (Pedro, 2026-10-17): total automation that learns.** Phase 2 (autopilot
-+ learners) is built on `claude/great-planck-w6w25t`, NOT shipped. See
-project-state "Phase 2". Previous leads were testing; don't look back at them.
++ learners + Hunter loop) is SHIPPED and running: main = `02b773c`, migrations
+0040 + 0041 applied, runna-hunter `867d007`. See project-state "Phase 2".
+Previous leads were testing; don't look back at them.
 
-## 0. Ship Phase 2 (only on Pedro's explicit "ship it")
+## 0. Phase 2 is LIVE: check on it first
 
-Order matters (0041 turns the autopilot on):
-1. Apply migration 0040 (brain tables) to prod; record version 0040. No DROP
-   statements (the Supabase MCP holds DROPs for a confirmation, lessons.md).
-2. Clear the one stale queued pitch from July (43 North,
-   e341491c-5412-47a4-9cc9-51a650161302: approved + scheduled, never sent;
-   blocked by the first-touch guard): set status draft, scheduled_send_at null.
-3. Fast-forward main → push → Vercel deploy READY.
-4. Apply migration 0041 (pg_cron + pg_net jobs, Vault-held scheduler token,
-   autonomy_state veto/enabled for the Rünna tenant); record version 0041.
-5. runna-hunter: fast-forward its main to `867d007` (learned finding weights).
-6. Verify: `select * from cron.job_run_details order by start_time desc limit 10`,
-   `select status_code, left(content::text, 300) from net._http_response order by created desc limit 5`,
-   `select * from autonomy_state`, `select * from learning_insights order by created_at desc limit 10`,
-   and Vercel runtime errors for /api/autopilot/tick.
-Kill switch: `update autonomy_state set enabled = false`.
+Autopilot stage **veto** for the Rünna tenant. Kill switch:
+`update autonomy_state set enabled = false`.
+1. `select j.jobname, d.status, d.start_time from cron.job_run_details d join cron.job j using (jobid) order by d.start_time desc limit 10`
+   and `select status_code, left(content::text, 400) from net._http_response order by created desc limit 5`.
+   Every tick should be 200 with `errors: []`.
+2. Discovery: `select created_at, status, phase, stats->'focus'->>'cell_key', stats->>'processed', stats->>'pitched', stats->>'max_processed' from discovery_jobs where stats->>'started_by' = 'autopilot' order by created_at desc`.
+   At most 6 a day; no `Task timed out after 60 seconds` in Vercel runtime errors
+   for /api/discover/run (the 120s limit applies since `2dee217`).
+3. Learners: `select learner, key, status, trials, reward from learning_arms order by updated_at desc`.
+   Writer arms appear after the first pitch; scout cells settle 14 days after a send.
+4. Drafts: `select autopilot_lane, autopilot_reasons from pitches where autopilot_lane is not null order by created_at desc limit 10`.
+5. Search quality: the first cell ("direct to consumer × Alberta") returned
+   news/government pages. If the scout keeps choosing junk cells, give the ICPs
+   concrete category keywords (the ICP learner's `SEARCH_TERMS` are the model).
 
 ---
 

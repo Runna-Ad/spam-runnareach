@@ -4,6 +4,18 @@ Running log of mistakes, root causes, and rules to prevent recurrence. Newest at
 
 ---
 
+[2026-10-17] LESSON: in vercel.json `functions`, the FIRST matching pattern wins
+WHAT HAPPENED: the first autopilot discovery run lost half its prospects to "Task timed out after 60 seconds" on /api/discover/run, a route vercel.json gives 120s. `@vercel/build-utils` `findMatchingFunction` walks the patterns in object order and returns the first match. `"app/**": 60` was listed first, so every route got 60s and none of the 120s overrides ever applied (errors since 2026-06-16). Every "105s of a 120s budget" comment in this repo was really running against 60s.
+FIX: catch-all moved to the end; `tests/vercel-config.test.ts` keeps it last and checks every per-route pattern names a real file.
+ALSO: `await fetch(nextSlice)` waits for the next slice's whole response, so each slice lived through its successor's work too (double function time, timeouts inside after()). Hand the request over and stop waiting (AbortSignal.timeout); Vercel doesn't cancel the callee on disconnect.
+RULE: specific patterns first, globs last. A timeout figure in Vercel's error text is the truth about the limit; trust it over the config file.
+TAGS: #lesson #vercel #maxDuration #background-jobs
+
+[2026-10-17] LESSON: a "per day" budget must count what today already spent
+WHAT HAPPENED: the autopilot tick computed "discover N prospects today" but checked it per job. Whenever no job was running it started another, so a search cell that yields nothing would have re-crawled every 15 minutes.
+RULE: a rate limit needs a ledger. Count usage over the window (jobs started, prospects researched in the last 24h) and cap the number of attempts, not just their size: empty attempts cost money too.
+TAGS: #lesson #autopilot #cost
+
 [2026-10-16] LESSON: a "positive reply" in the metrics was our own test
 WHAT HAPPENED: the audit reported GYMVMT's "did the audit and interested" as the one positive reply and the proof that the audit-tool CTA converts. The pitch had gone to pedrojr22@gmail.com (a manual contact, not GYMVMT's address) and the reply came from the same address — a test of the flow.
 RULE: before quoting a funnel number, check WHO the outcome came from. Test sends to our own addresses must be excluded (or tagged) at the source, or every metric — and every future learning loop — trains on us.
