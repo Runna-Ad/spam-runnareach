@@ -25,6 +25,8 @@ import { firstTouchConflict } from "@/lib/pitches/send-guards";
 import { verifyRecipient } from "@/lib/research/verify-recipient";
 import { reconcileSignOff, senderIdentity } from "@/lib/pitches/sender-identity";
 import { checkPitchGate } from "@/lib/pitches/gate";
+import { recordPitchEvent } from "@/lib/pitches/events";
+import { editRatio } from "@/lib/pitches/decision";
 import { describeFailures, gateAllows } from "@/lib/pitches/send-gate";
 
 /** Same set the send-queue cron refuses (app/api/pitches/send-queue/route.ts). */
@@ -289,6 +291,23 @@ export async function sendPitch(input: {
     .update(bumpSendsTodayPayload(inbox.sends_today, inbox.last_reset_date))
     .eq("id", inbox_id)
     .eq("tenant_id", user.tenantId);
+
+  await recordPitchEvent(supabase, {
+    tenantId: user.tenantId,
+    pitchId: pitch_id,
+    type: "sent",
+    payload: {
+      path: "manual",
+      step: 1,
+      lang,
+      recipient_domain: toEmail.split("@")[1]?.toLowerCase() ?? null,
+      recipient_source: toSelectedBy,
+      verify_verdict: verify.verdict,
+      gate_version: gate.verdict.version,
+      gate_accepted: gate.override?.codes ?? [],
+      edit_ratio: editRatio(pitch.body_original ?? "", signedBody),
+    },
+  });
 
   await writeAuditLog({
     tenantId: user.tenantId,

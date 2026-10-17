@@ -247,8 +247,27 @@ export async function verifyRecipient(
   }
 
   const dns = domain ? await checkDomainMail(domain, resolver) : "unknown";
-  return verifyEmailPure(
+  const result = verifyEmailPure(
     { email: args.email, selectedBy: args.selectedBy, prospectDomain: args.prospectDomain, bouncedDomains },
     dns,
   );
+
+  // Keep the verdict on the contact row(s) for this address, so its trust is
+  // visible without re-running the check. Best effort: a failed write must
+  // never change the verdict or block the send.
+  try {
+    await supabase
+      .from("prospect_contacts")
+      .update({
+        verify_verdict: result.verdict,
+        verify_reasons: result.reasons,
+        verify_checked_at: new Date().toISOString(),
+      })
+      .eq("tenant_id", args.tenantId)
+      .ilike("email", likeLiteral(args.email.trim()));
+  } catch {
+    /* evidence, not a dependency */
+  }
+
+  return result;
 }

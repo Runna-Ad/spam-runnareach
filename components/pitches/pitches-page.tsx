@@ -36,6 +36,7 @@ import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { sendPitch, queueApprovedForSend } from "@/lib/pitches/send-action";
 import type { StoredGateVerdict } from "@/lib/pitches/gate";
 import type { GateFailure } from "@/lib/pitches/send-gate";
+import type { CriticVerdict } from "@/lib/pitches/decision";
 import { PitchAngleAdvisor } from "@/components/pitches/pitch-angle-advisor";
 import type { PitchListRow, PitchStatus } from "@/lib/pitches/queries";
 import type { SenderInbox } from "@/lib/settings/sending-queries";
@@ -549,6 +550,7 @@ function PitchDetail({
   // flags an approve attempt came back with (shown with "Approve anyway").
   const [gate, setGate] = React.useState<StoredGateVerdict | null>(null);
   const [pendingAccept, setPendingAccept] = React.useState<GateFailure[] | null>(null);
+  const [critic, setCritic] = React.useState<CriticVerdict | null>(null);
 
   // Inbox selector for the Send panel
   const connectedInboxes = inboxes.filter((i) => i.gmail_connected && !i.paused);
@@ -576,11 +578,12 @@ function PitchDetail({
     setBodyLoaded(false);
     fetch(`/api/pitches/${pitch.id}/body`)
       .then((r) => (r.ok ? r.json() : Promise.reject(r.statusText)))
-      .then((d: { subject: string; body: string; gate_verdict: StoredGateVerdict | null }) => {
+      .then((d: { subject: string; body: string; gate_verdict: StoredGateVerdict | null; critic: CriticVerdict | null }) => {
         if (cancelled) return;
         setSubject(d.subject);
         setBody(d.body);
         setGate(d.gate_verdict ?? null);
+        setCritic(d.critic ?? null);
         setPendingAccept(null);
         setBodyLoaded(true);
       })
@@ -791,6 +794,8 @@ function PitchDetail({
           </div>
         )}
       </div>
+
+      {critic ? <CriticPanel critic={critic} /> : null}
 
       {!isLocked ? (
         <GatePanel
@@ -1171,3 +1176,38 @@ function GatePanel({
     </div>
   );
 }
+
+/**
+ * The AI reviewer's verdict from when the pitch was written: a second model
+ * that checked grounding, relevance, plain language, native Spanish and fit,
+ * and sent the draft back to the writer up to twice. Shown so a person knows
+ * what it already caught, and what it still flagged.
+ */
+function CriticPanel({ critic }: { critic: CriticVerdict }) {
+  const rewrites =
+    critic.revisions === 0 ? "" : ` after ${critic.revisions} rewrite${critic.revisions === 1 ? "" : "s"}`;
+  if (critic.pass) {
+    return (
+      <p className="flex items-center gap-1.5 rounded-[var(--radius-md)] bg-[var(--color-bg-800)] px-3 py-2 text-[11px] text-[var(--color-fg-300)] ring-1 ring-inset ring-[var(--color-border-default)]">
+        <Sparkles className="h-3.5 w-3.5 text-[var(--color-accent-300)]" aria-hidden />
+        AI review: passed{rewrites} (score {Math.round(critic.score * 100)}%).
+      </p>
+    );
+  }
+  return (
+    <div className="flex flex-col gap-1.5 rounded-[var(--radius-md)] bg-[var(--color-bg-800)] p-3 ring-1 ring-inset ring-[var(--color-border-default)]">
+      <div className="flex items-center gap-1.5 text-[11px] font-medium text-[var(--color-fg-300)]">
+        <Sparkles className="h-3.5 w-3.5 text-[var(--color-warning-300)]" aria-hidden />
+        AI review: still flagged{rewrites} (score {Math.round(critic.score * 100)}%)
+      </div>
+      <ul className="flex flex-col gap-1">
+        {critic.issues.map((issue, i) => (
+          <li key={i} className="text-[11px] leading-relaxed text-[var(--color-fg-300)]">
+            · {issue}
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+

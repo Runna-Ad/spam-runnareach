@@ -33,6 +33,9 @@ import { isUnderDailyCap, recordClaudeCall } from "@/lib/anthropic/cost-tracking
 import { fetchTopUsableContact } from "@/lib/pitches/contacts";
 import { senderSignature } from "@/lib/pitches/sender-identity";
 import { refreshGateAfterChange } from "@/lib/pitches/gate";
+import { recordPitchEvent } from "@/lib/pitches/events";
+import { DECISION_VERSION, recipientSummary, registerFor, type DecisionRecord } from "@/lib/pitches/decision";
+import { isRoleBasedEmail } from "@/lib/research/email-utils";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -219,7 +222,37 @@ export async function generateWebsitePitch(
   if (!created) return { ok: false, error: "Insert returned no row." };
 
   // Send gate v2 verdict, shown on /pitches; approve and send re-check.
-  await refreshGateAfterChange(supabase, user.tenantId, created.id);
+  const gateAtGeneration = await refreshGateAfterChange(supabase, user.tenantId, created.id);
+
+  // Decision record (write-once), same shape as first-touch pitches.
+  const decision: DecisionRecord = {
+    v: DECISION_VERSION,
+    created_at: new Date().toISOString(),
+    path: method === "claude" ? "website_claude" : "website_template",
+    prompt_version: "website-v1",
+    model: method === "claude" ? ANTHROPIC_HAIKU_MODEL : null,
+    fallback_reason: null,
+    lang: prospect.language,
+    // No size estimate on this path; the copy uses the tú/plural register.
+    register: registerFor(prospect.language, "smb"),
+    segment: { industry: prospect.industry, market: prospect.market, size_band: "unknown" },
+    pain: { id: null, label: "no website" },
+    benchmarks_offered: [],
+    benchmark_cited: null,
+    attribution_code: null,
+    recipient: recipientSummary({ ...topUsable, email_is_role_based: isRoleBasedEmail(topUsable.email) }),
+    critic: null,
+    gate: gateAtGeneration
+      ? { version: gateAtGeneration.version, pass: gateAtGeneration.pass, codes: gateAtGeneration.failures.map((f) => f.code) }
+      : null,
+  };
+  await supabase.from("pitches").update({ decision } as never).eq("id", created.id).eq("tenant_id", user.tenantId);
+  await recordPitchEvent(supabase, {
+    tenantId: user.tenantId,
+    pitchId: created.id,
+    type: "generated",
+    payload: { path: decision.path, prompt_version: decision.prompt_version, gate_pass: decision.gate?.pass ?? null },
+  });
 
   revalidatePath("/pitches");
   revalidatePath(`/companies/${prospectId}`);

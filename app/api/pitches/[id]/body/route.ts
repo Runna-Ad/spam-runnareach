@@ -21,5 +21,6 @@ export async function GET(
     body: pitch.body_edited ?? pitch.body_original,
     gate_verdict: pitch.gate_verdict,
     gate_override_codes: pitch.gate_override_codes,
+    critic: pitch.critic,
   });
 }

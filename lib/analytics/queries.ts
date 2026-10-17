@@ -1,4 +1,5 @@
 import { createClient } from "@/lib/supabase/server";
+import { isTestAddress } from "@/lib/compliance/test-addresses";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -97,17 +98,19 @@ export async function getPitchStats(tenantId: string): Promise<PitchStats> {
     auto_rejected: boolean;
     prompt_variant_id: string | null;
     quality_self_score: number | null;
+    prospect_contacts: { email: string | null } | null;
   };
 
   const { data, error } = await supabase
     .from("pitches")
-    .select("status, auto_rejected, prompt_variant_id, quality_self_score")
+    .select("status, auto_rejected, prompt_variant_id, quality_self_score, prospect_contacts:contact_id(email)")
     .eq("tenant_id", tenantId)
     .returns<PitchRow[]>();
 
   if (error) throw new Error(`getPitchStats: ${error.message}`);
 
-  const rows = data ?? [];
+  // Test sends (Pedro's own inbox) are not outreach.
+  const rows = (data ?? []).filter((r) => !isTestAddress(r.prospect_contacts?.email));
   const total = rows.length;
   const sent = rows.filter((r) => r.status === "sent").length;
   const autoRejected = rows.filter((r) => r.auto_rejected === true).length;
@@ -236,14 +239,15 @@ export async function getReplyIntents(
 
   const { data, error } = await supabase
     .from("replies")
-    .select("intent")
+    .select("intent, from_email")
     .eq("tenant_id", tenantId)
-    .returns<{ intent: string | null }[]>();
+    .returns<{ intent: string | null; from_email: string | null }[]>();
 
   if (error) throw new Error(`getReplyIntents: ${error.message}`);
 
   const counts: Record<string, number> = {};
-  for (const r of data ?? []) {
+  // A test reply from Pedro's own inbox once showed up as the only "positive".
+  for (const r of (data ?? []).filter((x) => !isTestAddress(x.from_email))) {
     const key = r.intent ?? "unclassified";
     counts[key] = (counts[key] ?? 0) + 1;
   }

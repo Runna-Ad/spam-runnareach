@@ -1,6 +1,21 @@
 import { createClient } from "@/lib/supabase/server";
 import { pickTopUsableContact, isGuessedContact } from "@/lib/pitches/contacts";
 import { parseGateOverride, parseGateVerdict, type StoredGateVerdict } from "@/lib/pitches/gate";
+import type { CriticVerdict } from "@/lib/pitches/decision";
+
+/** The critic block of a decision record, if present and well-formed. */
+function criticFromDecision(decision: unknown): CriticVerdict | null {
+  const c = (decision as { critic?: unknown } | null)?.critic as Partial<CriticVerdict> | null | undefined;
+  if (!c || typeof c.pass !== "boolean") return null;
+  return {
+    model: String(c.model ?? ""),
+    pass: c.pass,
+    score: Number(c.score ?? 0),
+    issues: Array.isArray(c.issues) ? c.issues.map(String) : [],
+    revisions: Number(c.revisions ?? 0),
+    history: Array.isArray(c.history) ? (c.history as CriticVerdict["history"]) : [],
+  };
+}
 
 export type PitchStatus =
   | "draft"
@@ -143,6 +158,8 @@ export type PitchDetail = PitchListRow & {
   gate_verdict: StoredGateVerdict | null;
   /** Review-level codes a person accepted with "Approve anyway". */
   gate_override_codes: string[];
+  /** The AI reviewer's final verdict at generation (decision record), if it ran. */
+  critic: CriticVerdict | null;
 };
 
 export async function getPitch(
@@ -172,6 +189,7 @@ export async function getPitch(
     rejection_reason: string | null;
     gate_verdict: unknown;
     gate_override: unknown;
+    decision: unknown;
     prospects: {
       company_name: string;
       market: "CA" | "MX" | "US" | "LATAM";
@@ -190,7 +208,7 @@ export async function getPitch(
       quality_self_score, cost_usd, pain_id, approved_at, scheduled_send_at, sent_at,
       body_original, body_edited, body_sent,
       measurable_result_included, auto_rejected, auto_rejected_reason,
-      rejection_reason, gate_verdict, gate_override,
+      rejection_reason, gate_verdict, gate_override, decision,
       prospects(company_name, market, language, prospect_contacts(full_name, email, priority_rank, selected_by)),
       case_studies(client_name),
       pain_taxonomy:pain_id(display_name_en)
@@ -237,6 +255,7 @@ export async function getPitch(
     rejection_reason: r.rejection_reason,
     gate_verdict: parseGateVerdict(r.gate_verdict),
     gate_override_codes: parseGateOverride(r.gate_override)?.codes ?? [],
+    critic: criticFromDecision(r.decision),
   };
 }
 

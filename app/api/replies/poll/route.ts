@@ -51,6 +51,8 @@ import {
 import type { ReplyIntent } from "@/lib/replies/queries";
 import { addEmailToDnc, type DncInsertClient } from "@/lib/discover/dnc-check";
 import { extractBouncedRecipient } from "@/lib/replies/bounce-parse";
+import { recordPitchEvent } from "@/lib/pitches/events";
+import { isTestAddress } from "@/lib/compliance/test-addresses";
 
 /** An out-of-office pushes the next follow-up at least this far out. */
 const OOO_POSTPONE_DAYS = 7;
@@ -262,6 +264,22 @@ export async function GET(req: NextRequest) {
             source: "gmail_poll",
           },
         });
+
+        // The pitch's timeline: a bounce is not a reply; a delay is neither.
+        if (!delay) {
+          await recordPitchEvent(supabase, {
+            tenantId: thread.tenant_id,
+            pitchId: thread.pitch_id,
+            type: classification.intent === "bounced" ? "bounce" : "reply",
+            payload: {
+              reply_id: insertedReply.id,
+              intent: classification.intent,
+              sentiment: classification.sentiment,
+              // Pedro's own test sends must never count as a real reply.
+              test: isTestAddress(inbound.fromEmail),
+            },
+          });
+        }
 
         if (delay) continue;
 

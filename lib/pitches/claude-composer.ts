@@ -90,6 +90,7 @@ function addUsage(a: ClaudeUsage, b: ClaudeUsage): ClaudeUsage {
 
 export async function composePitchWithClaude(
   input: GeneratorInputs,
+  opts: { timeoutMs?: number } = {},
 ): Promise<
   | { ok: true; result: ClaudeComposeResult }
   | { ok: false; error: string; reason: string; usage: ClaudeUsage | null }
@@ -135,7 +136,7 @@ export async function composePitchWithClaude(
     // A larger response takes longer to generate — give it more than the 20s
     // default so a slow generation doesn't time out into the heuristic. Stays
     // well under the 60s Vercel function budget (this is the only Sonnet call).
-    timeoutMs: 35_000,
+    timeoutMs: opts.timeoutMs ?? 35_000,
     schema: responseSchema,
   });
 
@@ -581,7 +582,20 @@ function buildStage2UserPrompt(input: GeneratorInputs): string {
       }, under the same FACTS rules: no client, no number. Everything else stays the same.\n`
     : "";
 
-  return `Write the pitch from this payload.${rewriteDirective}
+  // The AI review sent the previous draft back. Name each issue; keep what
+  // worked. The rules in the system prompt still apply in full.
+  const revisionDirective = input.revision
+    ? `\n⚑ REVISION: your previous draft was sent back by a reviewer. Rewrite it so every issue below is fixed, keep what was already good, and follow every rule in the system prompt. Never mention the review.
+Issues to fix:
+${input.revision.issues.map((i) => `- ${i}`).join("\n")}
+
+Previous draft:
+Subject: ${input.revision.subject}
+${input.revision.body}
+`
+    : "";
+
+  return `Write the pitch from this payload.${rewriteDirective}${revisionDirective}
 
 \`\`\`json
 ${JSON.stringify(payload, null, 2)}

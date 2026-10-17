@@ -677,6 +677,8 @@ export type Database = {
           sequence_paused_at: string | null;
           gate_verdict: unknown;
           gate_override: unknown;
+          decision: unknown;
+          attribution_code: string | null;
         };
         Insert: {
           id?: UUID;
@@ -714,6 +716,8 @@ export type Database = {
           token_count_in?: number | null;
           token_count_out?: number | null;
           preview_text?: string | null;
+          attribution_code?: string | null;
+          decision?: unknown;
         };
         Update: {
           subject?: string;
@@ -759,6 +763,8 @@ export type Database = {
           sequence_paused_at?: string | null;
           gate_verdict?: unknown;
           gate_override?: unknown;
+          decision?: unknown;
+          attribution_code?: string | null;
         };
         Relationships: NoRels;
       };
@@ -971,6 +977,9 @@ export type Database = {
           priority_rank: number;
           selected_at: Timestamptz | null;
           selected_by: string | null;
+          verify_verdict: string | null;
+          verify_reasons: string[] | null;
+          verify_checked_at: string | null;
           created_at: Timestamptz;
           updated_at: Timestamptz;
         };
@@ -988,6 +997,9 @@ export type Database = {
           priority_rank?: number;
           selected_at?: Timestamptz | null;
           selected_by?: string | null;
+          verify_verdict?: string | null;
+          verify_reasons?: string[] | null;
+          verify_checked_at?: string | null;
         };
         Update: {
           full_name?: string | null;
@@ -1000,6 +1012,9 @@ export type Database = {
           priority_rank?: number;
           selected_at?: Timestamptz | null;
           selected_by?: string | null;
+          verify_verdict?: string | null;
+          verify_reasons?: string[] | null;
+          verify_checked_at?: string | null;
         };
         Relationships: NoRels;
       };

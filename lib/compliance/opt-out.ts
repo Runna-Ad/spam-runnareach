@@ -18,6 +18,8 @@
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type AnySupabase = any;
 
+import { recordPitchEvent } from "../pitches/events.ts";
+
 export type OptOutSource = "unsubscribe_link" | "one_click" | "reply";
 
 export async function recordOptOut(
@@ -68,7 +70,34 @@ export async function recordOptOut(
       .is("sequence_paused_at", null);
   }
 
-  // 4. Audit (best effort).
+  // 4. The pitch timeline: which email this opt-out answered (the latest sent
+  // first-touch to this prospect). Best effort, like the audit row.
+  if (args.prospectId) {
+    try {
+      const { data: lastSent } = await supabase
+        .from("pitches")
+        .select("id")
+        .eq("prospect_id", args.prospectId)
+        .eq("tenant_id", args.tenantId)
+        .is("parent_pitch_id", null)
+        .eq("status", "sent")
+        .order("sent_at", { ascending: false })
+        .limit(1)
+        .maybeSingle();
+      if (lastSent?.id) {
+        await recordPitchEvent(supabase, {
+          tenantId: args.tenantId,
+          pitchId: lastSent.id,
+          type: "unsubscribe",
+          payload: { source: args.source },
+        });
+      }
+    } catch {
+      /* evidence, not a dependency */
+    }
+  }
+
+  // 5. Audit (best effort).
   await supabase.from("audit_log").insert({
     tenant_id: args.tenantId,
     actor_id: null,

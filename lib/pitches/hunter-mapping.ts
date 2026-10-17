@@ -238,6 +238,8 @@ export type BuildHunterUrlInput = {
   tools?: string[] | null;
   website?: string | null;
   lead?: string | null;
+  /** Attribution code, sent as &r= (see buildHunterUrl). */
+  ref?: string | null;
 };
 
 /**
@@ -255,6 +257,9 @@ export function buildHunterUrl(input: BuildHunterUrlInput): string {
   if (tools.length) params.set("tools", tools.join(","));
   if (input.website?.trim()) params.set("website", input.website.trim());
   if (input.lead) params.set("lead", input.lead);
+  // Attribution: the pitch's short code, so a scan can be tied to the email
+  // that prompted it. runna-hunter must store it for that to work.
+  if (input.ref?.trim()) params.set("r", input.ref.trim());
   params.set("v", "1");
   return `${HUNTER_URL}?${params.toString()}`;
 }
@@ -272,12 +277,17 @@ export function buildHunterUrlForPitch(args: {
   techStack: string[] | null | undefined;
   domain: string | null | undefined;
   websiteUrl: string | null | undefined;
+  /** The pitch's attribution code (pitches.attribution_code). */
+  ref?: string | null;
 }): string {
   // Market: trust an explicit ca/mx, else derive from language (en→ca, es→mx)
-  // to match the historical hunterUrlForLanguage behavior.
+  // to match the historical hunterUrlForLanguage behavior. prospects.market is
+  // stored upper-case ("CA"/"MX"), so compare case-insensitively: the strict
+  // lower-case check never matched and every prospect fell back to language.
+  const explicit = args.market?.trim().toLowerCase();
   const market: "ca" | "mx" =
-    args.market === "ca" || args.market === "mx"
-      ? args.market
+    explicit === "ca" || explicit === "mx"
+      ? explicit
       : args.language === "en"
         ? "ca"
         : "mx";
@@ -291,5 +301,6 @@ export function buildHunterUrlForPitch(args: {
     tools: args.techStack ?? [],
     website: domainFromWebsite(args.domain, args.websiteUrl),
     lead: painToLeadKey(args.painLabel, industry),
+    ref: args.ref ?? null,
   });
 }

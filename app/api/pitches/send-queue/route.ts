@@ -23,6 +23,8 @@ import { firstTouchConflict } from "@/lib/pitches/send-guards";
 import { verifyRecipient } from "@/lib/research/verify-recipient";
 import { reconcileSignOff, senderIdentity } from "@/lib/pitches/sender-identity";
 import { auditGateHold, checkPitchGate } from "@/lib/pitches/gate";
+import { recordPitchEvent } from "@/lib/pitches/events";
+import { editRatio } from "@/lib/pitches/decision";
 import { describeFailures, gateAllows } from "@/lib/pitches/send-gate";
 
 // Prospect states that must never receive a queued cold pitch, even if the
@@ -378,6 +380,12 @@ export async function GET(req: NextRequest) {
             path: "send-queue",
             failures: allowed.outstanding,
           });
+          await recordPitchEvent(supabase, {
+            tenantId: pitch.tenant_id,
+            pitchId: pitch.id,
+            type: "gate_held",
+            payload: { path: "send-queue", codes: allowed.outstanding.map((f) => f.code) },
+          });
           results.push({ pitch_id: pitch.id, status: "skipped", reason });
           continue;
         }
@@ -449,6 +457,24 @@ export async function GET(req: NextRequest) {
           .from("sender_inboxes")
           .update({ sends_today: inbox.sends_today, last_reset_date: utcToday() })
           .eq("id", pitch.sender_inbox_id);
+
+        await recordPitchEvent(supabase, {
+          tenantId: pitch.tenant_id,
+          pitchId: pitch.id,
+          type: "sent",
+          payload: {
+            path: "send-queue",
+            step: 1,
+            lang,
+            recipient_domain: toEmail.split("@")[1]?.toLowerCase() ?? null,
+            recipient_source: contact?.selected_by ?? null,
+            verify_verdict: verify.verdict,
+            gate_version: gate.verdict.version,
+            gate_accepted: gate.override?.codes ?? [],
+            // How much a person changed the AI's draft before it went out.
+            edit_ratio: editRatio(pitch.body_original ?? "", signedBody),
+          },
+        });
 
         sentThisTick += 1;
         results.push({ pitch_id: pitch.id, status: "sent" });

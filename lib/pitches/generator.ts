@@ -153,6 +153,15 @@ export type GeneratorInputs = {
    * this exact pain and uses ONLY this case study (or none → capability-led),
    * instead of picking its own. Never set on first generation.
    */
+  /**
+   * Set when the AI review (lib/pitches/review.ts) sends a draft back: the
+   * previous draft and the concrete issues to fix. Never set on first writing.
+   */
+  revision?: {
+    subject: string;
+    body: string;
+    issues: string[];
+  } | null;
   forced_angle?: {
     pain_label: string;
     pain_id: string | null;

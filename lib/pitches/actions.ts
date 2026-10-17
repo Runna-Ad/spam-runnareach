@@ -9,14 +9,26 @@ import {
 } from "@/lib/pitches/gate";
 import { GATE_SEVERITY, describeFailures, gateAllows, type GateFailure } from "@/lib/pitches/send-gate";
 import { z } from "zod";
-import { claudeIsAvailable, type ClaudeUsage } from "@/lib/anthropic/client";
+import { ANTHROPIC_DEFAULT_MODEL, claudeIsAvailable, type ClaudeUsage } from "@/lib/anthropic/client";
 import { isUnderDailyCap, recordClaudeCall } from "@/lib/anthropic/cost-tracking";
 import { writeAuditLog } from "@/lib/audit/log";
 import { requireUser } from "@/lib/auth";
 import type { CurrentUser } from "@/lib/auth";
 import { createClient } from "@/lib/supabase/server";
 import type { Database } from "@/lib/supabase/types";
-import { composePitchWithClaude } from "./claude-composer";
+import { PITCH_PROMPT_VERSION } from "./claude-composer";
+import { composeWithReview, type ReviewCall } from "./review";
+import {
+  DECISION_VERSION,
+  detectCitedBenchmark,
+  newAttributionCode,
+  recipientSummary,
+  registerFor,
+  sizeBand,
+  type CriticVerdict,
+  type DecisionRecord,
+} from "./decision";
+import { recordPitchEvent } from "./events";
 import { renderIndustryTemplate } from "./industry-templates";
 import { buildHunterUrlForPitch } from "./hunter-mapping";
 import { senderForGenerator } from "./sender-identity";
@@ -112,6 +124,8 @@ export async function generatePitch(
 
   const parsed = generateSchema.safeParse({ prospect_id: prospectId });
   if (!parsed.success) return { ok: false, error: "Invalid prospect id." };
+  // The server action has 60s; the write → review → revise loop gets what's left.
+  const startedAt = Date.now();
 
   // Load prospect + research in parallel — research fields feed directly into pitch quality.
   type ProspectRow = {
@@ -318,6 +332,9 @@ export async function generatePitch(
     market: prospect.market,
   });
 
+  // Carried in the audit-tool link (&r=) so a scan can be tied to this pitch.
+  const attributionCode = newAttributionCode();
+
   const generatorInputs: GeneratorInputs = {
     prospect: {
       ...prospect,
@@ -344,6 +361,7 @@ export async function generatePitch(
       techStack: research?.tech_stack ?? [],
       domain: prospect.domain,
       websiteUrl: prospect.website_url,
+      ref: attributionCode,
     }),
   };
 
@@ -356,30 +374,35 @@ export async function generatePitch(
   let claudeUsage: ClaudeUsage | null = null;
   let claudeModel: string | null = null;
   let claudeFallbackReason: string | null = null;
+  // Every Claude call the write → review → revise loop made, for cost tracking.
+  let reviewCalls: ReviewCall[] = [];
+  let critic: CriticVerdict | null = null;
 
   if (claudeIsAvailable()) {
     const cap = await isUnderDailyCap(user.tenantId);
     if (!cap.under) {
       claudeFallbackReason = `daily cap hit (spent $${cap.spent_today_usd.toFixed(2)} of $${cap.cap_usd.toFixed(2)})`;
     } else {
-      const claudeResult = await composePitchWithClaude(generatorInputs);
-      if (claudeResult.ok) {
-        composed = claudeResult.result.composed;
+      const reviewed = await composeWithReview(generatorInputs, { deadline: startedAt + 48_000 });
+      reviewCalls = reviewed.calls;
+      if (reviewed.ok) {
+        composed = reviewed.composed;
         method = "claude";
-        claudeUsage = claudeResult.result.usage;
-        claudeModel = claudeResult.result.model;
+        claudeModel = reviewed.model;
+        critic = reviewed.critic;
+        claudeUsage = sumUsage(reviewed.calls.map((c) => c.usage));
       } else {
-        claudeFallbackReason = `${claudeResult.reason}: ${claudeResult.error.slice(0, 200)}`;
-        // We still got a usage object (sometimes parse failures cost
-        // tokens) — record it so the daily cap stays honest.
-        if (claudeResult.usage) {
+        claudeFallbackReason = `${reviewed.reason}: ${reviewed.error.slice(0, 200)}`;
+        // Failed calls can still cost tokens — record them so the daily cap
+        // stays honest.
+        for (const c of reviewed.calls) {
           await recordClaudeCall({
             tenantId: user.tenantId,
-            model: "claude-sonnet-4-5-20250929",
+            model: c.model === "unknown" ? ANTHROPIC_DEFAULT_MODEL : c.model,
             entity_type: "pitch",
             entity_id: parsed.data.prospect_id,
-            usage: claudeResult.usage,
-            metadata: { fallback: true, reason: claudeResult.reason, error: claudeResult.error.slice(0, 500) },
+            usage: c.usage,
+            metadata: { fallback: true, kind: c.kind, reason: reviewed.reason, error: reviewed.error.slice(0, 500) },
           });
         }
       }
@@ -424,7 +447,12 @@ export async function generatePitch(
   };
   // preview_text added in migration 0014 — spread after typed insert until
   // types are regenerated with `npx supabase gen types typescript`.
-  const insertWithPreview = { ...insert, preview_text: composed.preview_text };
+  const insertWithPreview = {
+    ...insert,
+    preview_text: composed.preview_text,
+    // Only set when the code actually made it into the email's link.
+    attribution_code: composed.body.includes(attributionCode) ? attributionCode : null,
+  };
 
   // Delete any existing draft pitches for this prospect so we don't accumulate
   // stale copies. Drafts haven't been approved or sent, so deletion is safe.
@@ -444,17 +472,19 @@ export async function generatePitch(
   if (insertErr) return { ok: false, error: `Could not save pitch: ${insertErr.message}` };
   if (!created) return { ok: false, error: "Insert returned no row." };
 
-  // Record successful Claude call cost (failures recorded earlier
-  // in the fallback branch).
-  if (method === "claude" && claudeUsage && claudeModel) {
-    await recordClaudeCall({
-      tenantId: user.tenantId,
-      model: claudeModel,
-      entity_type: "pitch",
-      entity_id: created.id,
-      usage: claudeUsage,
-      metadata: { pitch_id: created.id, prospect_id: parsed.data.prospect_id },
-    });
+  // Record each Claude call's cost (writer and critic are different models).
+  // Failures were recorded earlier, in the fallback branch.
+  if (method === "claude") {
+    for (const c of reviewCalls) {
+      await recordClaudeCall({
+        tenantId: user.tenantId,
+        model: c.model === "unknown" ? ANTHROPIC_DEFAULT_MODEL : c.model,
+        entity_type: "pitch",
+        entity_id: created.id,
+        usage: c.usage,
+        metadata: { pitch_id: created.id, prospect_id: parsed.data.prospect_id, kind: c.kind },
+      });
+    }
   }
 
   await writeAuditLog({
@@ -477,7 +507,57 @@ export async function generatePitch(
 
   // Send gate v2: store the verdict so /pitches shows what needs fixing before
   // anyone tries to approve. Approve and send re-check; this is for display.
-  await refreshGateAfterChange(supabase, user.tenantId, created.id);
+  const gateAtGeneration = await refreshGateAfterChange(supabase, user.tenantId, created.id);
+
+  // Decision record: written once (a trigger refuses later changes), so every
+  // later outcome can be traced to what was decided here.
+  const band = sizeBand(prospect.employee_size_estimate);
+  const decision: DecisionRecord = {
+    v: DECISION_VERSION,
+    created_at: new Date().toISOString(),
+    path: method === "claude" ? "claude" : "template",
+    prompt_version: method === "claude" ? PITCH_PROMPT_VERSION : "industry-templates",
+    model: method === "claude" ? claudeModel : null,
+    fallback_reason: claudeFallbackReason,
+    lang: prospect.language,
+    register: registerFor(prospect.language, band),
+    segment: { industry: prospect.industry, market: prospect.market, size_band: band },
+    pain: {
+      id: composed.pain_id,
+      label: pains.find((p) => p.pain_id && p.pain_id === composed.pain_id)?.pain_label ?? chosenPainLabel,
+    },
+    benchmarks_offered: benchmarks.map((b) => ({ id: b.id, figure: b.figure })),
+    benchmark_cited: detectCitedBenchmark(composed.body, benchmarks),
+    attribution_code: insertWithPreview.attribution_code,
+    recipient: recipientSummary(
+      topUsable
+        ? { ...topUsable, email_is_role_based: isRoleBasedEmail(topUsable.email) }
+        : null,
+    ),
+    critic,
+    gate: gateAtGeneration
+      ? { version: gateAtGeneration.version, pass: gateAtGeneration.pass, codes: gateAtGeneration.failures.map((f) => f.code) }
+      : null,
+  };
+  const { error: decisionErr } = await supabase
+    .from("pitches")
+    .update({ decision } as never)
+    .eq("id", created.id)
+    .eq("tenant_id", user.tenantId);
+  if (decisionErr) console.warn("[generatePitch] decision record not saved:", decisionErr.message);
+  await recordPitchEvent(supabase, {
+    tenantId: user.tenantId,
+    pitchId: created.id,
+    type: "generated",
+    payload: {
+      path: decision.path,
+      prompt_version: decision.prompt_version,
+      critic_pass: critic?.pass ?? null,
+      revisions: critic?.revisions ?? 0,
+      benchmark_cited: decision.benchmark_cited?.figure ?? null,
+      gate_pass: decision.gate?.pass ?? null,
+    },
+  });
 
   // Advance the prospect to "pitched" so the funnel/list reflect reality.
   // Guarded to pre-pitch states only (raw/researched) via the WHERE filter, so
@@ -552,10 +632,10 @@ export async function rewritePitchWithAngle(
   const supabase = await createClient();
 
   // Locked pitches can't be rewritten.
-  type PitchRow = { id: string; prospect_id: string; status: string };
+  type PitchRow = { id: string; prospect_id: string; status: string; attribution_code: string | null };
   const { data: pitch } = await supabase
     .from("pitches")
-    .select("id, prospect_id, status")
+    .select("id, prospect_id, status, attribution_code")
     .eq("id", parsed.data.pitch_id)
     .eq("tenant_id", user.tenantId)
     .maybeSingle<PitchRow>();
@@ -664,6 +744,9 @@ export async function rewritePitchWithAngle(
       techStack: research?.tech_stack ?? [],
       domain: prospect.domain,
       websiteUrl: prospect.website_url,
+      // Keep the pitch's attribution code so a scan from the rewritten email
+      // still traces back to it.
+      ref: pitch.attribution_code,
     }),
     forced_angle: {
       pain_label: parsed.data.pain_label,
@@ -673,11 +756,22 @@ export async function rewritePitchWithAngle(
     },
   };
 
-  const result = await composePitchWithClaude(generatorInputs);
+  // Same write → review → revise loop as first generation.
+  const result = await composeWithReview(generatorInputs, { deadline: Date.now() + 45_000 });
   if (!result.ok) {
+    for (const c of result.calls) {
+      await recordClaudeCall({
+        tenantId: user.tenantId,
+        model: c.model === "unknown" ? ANTHROPIC_DEFAULT_MODEL : c.model,
+        entity_type: "pitch",
+        entity_id: parsed.data.pitch_id,
+        usage: c.usage,
+        metadata: { kind: "pitch.rewritten_with_angle", failed: true, step: c.kind },
+      });
+    }
     return { ok: false, error: `Rewrite failed (${result.reason}). Try again.` };
   }
-  const composed = result.result.composed;
+  const composed = result.composed;
 
   // supabase-js 2.47 narrows the update payload to `never` with our hand-written
   // Database type (see tasks/lessons.md). Cast at the call site; the object above
@@ -699,13 +793,30 @@ export async function rewritePitchWithAngle(
   if (updErr) return { ok: false, error: `Could not save rewrite: ${updErr.message}` };
   await refreshGateAfterChange(supabase, user.tenantId, parsed.data.pitch_id);
 
-  await recordClaudeCall({
+  for (const c of result.calls) {
+    await recordClaudeCall({
+      tenantId: user.tenantId,
+      model: c.model === "unknown" ? ANTHROPIC_DEFAULT_MODEL : c.model,
+      entity_type: "pitch",
+      entity_id: parsed.data.pitch_id,
+      usage: c.usage,
+      metadata: { kind: "pitch.rewritten_with_angle", step: c.kind, pitch_id: parsed.data.pitch_id, pain_label: parsed.data.pain_label },
+    });
+  }
+  // The decision record describes the first writing and is write-once; a
+  // rewrite is an event on the pitch's history instead.
+  await recordPitchEvent(supabase, {
     tenantId: user.tenantId,
-    model: result.result.model,
-    entity_type: "pitch",
-    entity_id: parsed.data.pitch_id,
-    usage: result.result.usage,
-    metadata: { kind: "pitch.rewritten_with_angle", pitch_id: parsed.data.pitch_id, pain_label: parsed.data.pain_label, case_study_id: composed.case_study_id },
+    pitchId: parsed.data.pitch_id,
+    type: "generated",
+    payload: {
+      path: "rewrite",
+      prompt_version: PITCH_PROMPT_VERSION,
+      angle: parsed.data.pain_label,
+      critic_pass: result.critic?.pass ?? null,
+      critic_issues: result.critic?.issues ?? [],
+      revisions: result.critic?.revisions ?? 0,
+    },
   });
 
   revalidatePath("/pitches");
@@ -832,6 +943,15 @@ export async function transitionPitchStatus(
     .eq("tenant_id", user.tenantId);
 
   if (error) return { ok: false, error: `Could not transition: ${error.message}` };
+
+  if (parsed.data.next_status === "approved") {
+    await recordPitchEvent(supabase, {
+      tenantId: user.tenantId,
+      pitchId: parsed.data.pitch_id,
+      type: "approved",
+      payload: { by: user.id, accepted_gate_codes: acceptedOverride?.codes ?? [] },
+    });
+  }
 
   if (acceptedOverride) {
     await writeAuditLog({
@@ -963,6 +1083,15 @@ export async function bulkApprovePitches(
 
   if (error) return { ok: false, error: `Could not approve: ${error.message}` };
 
+  for (const row of (data ?? []) as { id: string }[]) {
+    await recordPitchEvent(supabase, {
+      tenantId: user.tenantId,
+      pitchId: row.id,
+      type: "approved",
+      payload: { by: user.id, bulk: true, accepted_gate_codes: [] },
+    });
+  }
+
   revalidatePath("/pitches");
   return {
     ok: true,
@@ -1062,4 +1191,18 @@ function normalizePains(raw: unknown): GeneratorInputResearchPain[] {
     if (!pain_id && !pain_label) return [];
     return [{ pain_id, pain_label, evidence_quote }];
   });
+}
+
+/** Total of several calls' usage (the review loop makes 1–6). */
+function sumUsage(usages: ClaudeUsage[]): ClaudeUsage {
+  return usages.reduce<ClaudeUsage>(
+    (t, u) => ({
+      input_tokens: t.input_tokens + u.input_tokens,
+      output_tokens: t.output_tokens + u.output_tokens,
+      cache_read_input_tokens: t.cache_read_input_tokens + u.cache_read_input_tokens,
+      cache_creation_input_tokens: t.cache_creation_input_tokens + u.cache_creation_input_tokens,
+      cost_usd: Math.round((t.cost_usd + u.cost_usd) * 1_000_000) / 1_000_000,
+    }),
+    { input_tokens: 0, output_tokens: 0, cache_read_input_tokens: 0, cache_creation_input_tokens: 0, cost_usd: 0 },
+  );
 }

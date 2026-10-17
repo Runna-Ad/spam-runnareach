@@ -24,6 +24,7 @@ import { getAccessToken, sendGmailMessage } from "@/lib/gmail/client";
 import { bodyWithFooter, getOutboundCompliance } from "@/lib/compliance/outbound";
 import { threadBlocksSend } from "@/lib/pitches/send-guards";
 import { auditGateHold, gateInputFor, loadGateContext } from "@/lib/pitches/gate";
+import { recordPitchEvent } from "@/lib/pitches/events";
 import { evaluateSendGate, describeFailures, type GateResult } from "@/lib/pitches/send-gate";
 import { senderIdentity, senderSignature } from "@/lib/pitches/sender-identity";
 import {
@@ -509,6 +510,21 @@ async function processFollowup(pitch: DuePitchRow): Promise<FollowupResult> {
       gmail_message_id: sendResult.gmailMessageId,
       gmail_thread_id: pitch.gmail_thread_id,
       composed_by: composedBy,
+    },
+  });
+
+  // Recorded against the ROOT pitch: one timeline per conversation.
+  await recordPitchEvent(supabase, {
+    tenantId: pitch.tenant_id,
+    pitchId: pitch.id,
+    type: "sent",
+    payload: {
+      path: "follow-up",
+      step: nextStep,
+      follow_up_pitch_id: newPitch?.id ?? null,
+      composed_by: composedBy,
+      lang,
+      recipient_domain: contactEmail.split("@")[1]?.toLowerCase() ?? null,
     },
   });
 
