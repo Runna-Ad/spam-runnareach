@@ -21,12 +21,17 @@ export type NotableClient = {
 /**
  * List all active notable clients for a tenant, optionally filtered by market.
  * Ordered by sort_order ascending.
+ *
+ * `client`: the caller's Supabase client. The pipeline passes its actor's, so
+ * the autopilot (no session) still sees the list the gate's client-name rule
+ * depends on. Defaults to the request's cookie client.
  */
 export async function listNotableClients(
   tenantId: string,
   market?: string,
+  client?: Awaited<ReturnType<typeof createClient>>,
 ): Promise<NotableClient[]> {
-  const supabase = await createClient();
+  const supabase = client ?? (await createClient());
 
   let query = supabase
     .from("notable_clients")

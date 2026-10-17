@@ -1,4 +1,5 @@
 import "server-only";
+import { systemAuthHeaders } from "@/lib/actor";
 
 /**
  * Self-invocation helper for the background discovery worker.
@@ -11,9 +12,13 @@ import "server-only";
  *    and prod without configuration. (NEXT_PUBLIC_APP_URL can be stale/wrong
  *    port in dev, so we don't trust it here.)
  * 2. There is no user session on a bare server-to-server fetch, so we FORWARD
- *    the caller's session cookie — keeping the pipeline's cookie-based
- *    requireUser() working across the whole chain with no session-less refactor.
+ *    either the caller's session cookie, or, for a job the autopilot runs, the
+ *    cron secret + tenant (the worker then builds the system actor, see
+ *    lib/actor.ts).
  */
+
+/** How the next slice proves who it runs for. */
+export type SliceAuth = { kind: "cookie"; cookie: string } | { kind: "system"; tenantId: string };
 
 /** Build an absolute origin from a Headers object (host + forwarded proto). */
 export function originFromHeaders(h: Headers): string | null {
@@ -30,7 +35,7 @@ export function originFromHeaders(h: Headers): string | null {
  */
 export async function triggerNextSlice(
   jobId: string,
-  cookieHeader: string,
+  auth: SliceAuth,
   origin: string,
 ): Promise<void> {
   try {
@@ -38,7 +43,7 @@ export async function triggerNextSlice(
       method: "POST",
       headers: {
         "content-type": "application/json",
-        cookie: cookieHeader,
+        ...(auth.kind === "system" ? systemAuthHeaders(auth.tenantId) : { cookie: auth.cookie }),
       },
       body: JSON.stringify({ jobId }),
       // Don't wait on the slice itself — it re-triggers its own successor.
