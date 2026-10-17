@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { __test__ } from "../lib/anthropic/client.ts";
-import { asReaderSees, better, composeWithReview, revisionIssues, writingFailures } from "../lib/pitches/review.ts";
+import { asReaderSees, better, composeWithReview, criticVerdict, revisionIssues, writingFailures } from "../lib/pitches/review.ts";
 import type { GeneratorInputs } from "../lib/pitches/generator.ts";
 
 process.env.ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY ?? "test-key";
@@ -156,4 +156,37 @@ test("the reviewer sees the CTA as the button the reader gets, not the tracking 
   assert.ok(seen.includes("👉 Revisa tu sitio gratis: [button]."));
   assert.ok(!seen.includes("runna-hunter"));
   assert.ok(seen.includes("manthraspa.com"), "only the 👉 line changes");
+});
+
+test("only blocking issues hold a draft; polish rides along, marked, and blocking caps the score", () => {
+  const polish = criticVerdict({ score: 0.84, issues: [{ issue: "Say 'book' instead of 'schedule'.", blocking: false }] });
+  assert.deepEqual(polish, { pass: true, score: 0.84, issues: ["(polish) Say 'book' instead of 'schedule'."] });
+
+  const held = criticVerdict({
+    score: 0.85,
+    issues: [
+      { issue: "Tighten the subject.", blocking: false },
+      { issue: "The 53% figure is from 2016; it is presented as current.", blocking: true },
+    ],
+  });
+  assert.equal(held.pass, false);
+  assert.equal(held.score, 0.79);
+  assert.equal(held.issues[0], "The 53% figure is from 2016; it is presented as current.");
+});
+
+test("a draft with only polish notes passes without a rewrite", async () => {
+  const calls = install((r) =>
+    sysText(r).includes("You review a cold email")
+      ? JSON.stringify({ score: 0.85, issues: [{ issue: "Shorter subject.", blocking: false }] })
+      : pitchJson(GOOD),
+  );
+  try {
+    const r = await composeWithReview(inputs(), { deadline: Date.now() + 120_000 });
+    assert.ok(r.ok);
+    assert.equal(r.ok && r.critic?.pass, true);
+    assert.equal(r.ok && r.critic?.revisions, 0);
+    assert.equal(calls.length, 2); // one draft, one review
+  } finally {
+    __test__.setClient(null);
+  }
 });
