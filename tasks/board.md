@@ -5,7 +5,8 @@ file alone. Update it on every spawn, every status change, every merge. Keep clo
 for the current phase; move older ones to the retro.
 
 ## Current phase
-`phase3-batch1` · integration branch `claude/gallant-gauss-gly093` (this session's branch doubles as the integration branch) · opened from `main` at `acf53e2` · integration → main PR: https://github.com/Runna-Ad/spam-runnareach/pull/7 (awaiting Pedro's ship-it)
+`phase3-batch1` CLOSED 2026-10-18 (shipped a15d1d8; calendar sync verified live; PR #11 scout credit shipped c869323). Owner: session_012bGmp5nHP9Lx5ke69JkaBk (batch 1 conductor, retiring).
+**Next: `phase3-batch2`, NOT started. No conductor owns it yet.** The next conductor session writes its id here before doing anything else (see "Hand-off" below).
 
 ## Approvals and checks
 | Item | State |
@@ -19,8 +20,8 @@ for the current phase; move older ones to the retro.
 ## Reserved migration numbers
 | Number | Reserved for | Status (reserved → used → applied) |
 |---|---|---|
-| 0043 | conductor wave 0: opportunities.source/calendar_event_id, pitch_event_type +meeting_booked/won/lost, prospect_contacts.source_url | used (merged, NOT applied; apply BEFORE deploy: inserts name source_url) |
-| 0044 | opportunities-calendar-sync (cron schedule) | used (merged, NOT applied; apply AFTER deploy) |
+| 0043 | conductor wave 0: opportunities.source/calendar_event_id, pitch_event_type +meeting_booked/won/lost, prospect_contacts.source_url | APPLIED 2026-10-17 17:40 UTC via connector; row normalised to version `0043` on 2026-10-18 |
+| 0044 | opportunities-calendar-sync (cron schedule) | APPLIED 2026-10-17 after the prod deploy (job spam-calendar-sync, 5 * * * *); row normalised to version `0044` on 2026-10-18 |
 | 0045 | pitch-exemplar-memory (wave 2, if a table is needed) | reserved |
 | 0046 | — | free |
 
@@ -42,7 +43,7 @@ These four columns feed the retro and the routing table.
 ## Questions for Pedro (batched, asked once per batch)
 | # | From task | Question | Default if unanswered | Answer |
 |---|---|---|---|---|
-| 1 | opportunities-calendar-sync | Reconnect Google once after ship so the calendar.readonly scope is granted | sync reports needsReconnect until done | |
+| 1 | opportunities-calendar-sync | Reconnect Google once after ship so the calendar.readonly scope is granted | sync reports needsReconnect until done | done 2026-10-18; also had to enable the Calendar API in GCP 892318428312 |
 | 2 | contact-source-url | structured-research-stage.ts also inserts contacts (outside the brief's allow-list); leave source_url null there until a later task? | yes, next batch | |
 | 3 | opportunities-calendar-sync | Set env CALENDAR_BOOKING_INBOX to the inbox whose calendar holds the appointment schedule (optional; default = oldest connected inbox) | default | |
 | 4 | opportunities-calendar-sync | An invite YOU send from the connected inbox counts as a booked meeting before the prospect accepts (current behaviour). Keep, or require acceptance? | keep | |
@@ -83,3 +84,28 @@ These four columns feed the retro and the routing table.
 - 2026-10-17 17:11 UTC — PR #6 round 2: fail-closed invariant landed (592 tests) but the common-word case gate also covered cities/brands (victoria, surrey, summit leak in lowercase subjects). Sent the precise fix as the last round; conductor will verify with the reviewer's probe script instead of a 3rd review (G15). Reviewer round 2: ~142k tokens cumulative.
 - 2026-10-17 17:23 UTC — PR #6 merged after conductor spot-check (23 probes, 593 tests). BATCH COMPLETE: 6/6 merged, 593 tests, build green. Fable batch audit: MERGE, conditional on applying 0043 BEFORE deploy (contact inserts name source_url; a code-first deploy would silently drop contacts in the autopilot research path). Retro written, lessons merged, project-state updated. Opening integration → main PR; waiting on Pedro's ship-it.
 - 2026-10-17 17:24 UTC — Integration → main PR #7 opened and subscribed. Batch is DONE on the conductor side; waiting on Pedro: apply 0043, ship it, apply 0044, reconnect Google.
+- 2026-10-17 17:42 UTC — Pedro: 'applied 0043, ship it'. DB check showed 0043 NOT applied (0 columns, 0 enum values, latest migration 0042) → applied via Supabase connector, verified, THEN merged PR #7 → main a15d1d8. Remaining for Pedro: apply 0044 after deploy, reconnect Google. Check-in trigger cancelled.
+- 2026-10-17 17:45 UTC — Prod deploy of a15d1d8 READY on Vercel. 0044 applied via connector; cron job spam-calendar-sync scheduled. Only Pedro's Google reconnect remains (optional: CALENDAR_BOOKING_INBOX).
+- 2026-10-18 04:09 UTC — Pedro reconnected Google. 04:05 UTC sync: needsReconnect false (inbox pedro@runnareach.com) but 403: Google Calendar API not enabled in GCP project 892318428312. One console toggle by Pedro; no code change. Earlier hourly runs (18:05 → 03:05) all needsReconnect true as expected.
+- 2026-10-18 04:36 UTC — Pedro enabled the Calendar API in GCP 892318428312. Manual sync run 04:35 UTC (via spam_cron_call): needsReconnect false, counts events 0 / created 0 / cancelled 0 / unmatched 0 / errors []. Calendar sync LIVE. Phase 3 batch 1 fully closed; question #1 on the Pedro table answered (reconnect + API enable).
+- 2026-10-18 05:17 UTC — Other session (Phase 2 conductor, great-planck) could not find 0043/0044: connector had recorded them under timestamp versions. Normalised both rows to 0043/0044 (verified). Steward skill gained a post-ship checklist (verify every manual step by query; check migrations by name; normalise connector versions; enable the API behind any new Google scope; first cron run read from net._http_response).
+- 2026-10-18 05:53 UTC — Pedro closing the Phase 2 session (PR #8 merged, main dc0fdff, deployed) and the AI-budget session (PR #9 open, CI green). Conductor took over: (a) the Phase 2 session's 09:20 UTC check-in (old trigger deleted, new send_later trig_01MEw63katHBZye8pXK7QNMp into this session); (b) the scout-credit branch: merged PR #9's branch into it, resolved tick.ts, 603 tests, opened PR #11 → main, subscribed. Backfill SQL scripts/backfill-scout-found-ids.sql NOT run (Pedro's call). Waiting on Pedro: merge #9 and #11.
+- 2026-10-18 05:56 UTC — While wrapping scout: PR #9 squash-merged (9b89128), its prod build failed on a duplicate isUnderDailyCap import (#8 + #9), PR #10 fixed it (8e5d7c3, prod READY 05:50 UTC). Merged main into PR #11's branch (ba936cc), resolved tick.ts + project-state, 603 tests. PR #11 now = scout change only. Lesson for steward: two PRs squash-merged into main within minutes with no integration branch → red prod build; this is exactly what the integration branch prevents.
+
+## Hand-off to the next conductor (written 2026-10-18 by the batch 1 conductor)
+Start a NEW session on Opus 5.5 with: "Read .claude/skills/conductor/SKILL.md, resume from tasks/board.md". Then:
+1. Write your session id into "Current phase" and push that commit before anything else (the board is the lock).
+2. `main` is prod. Last known: c869323 (PR #11). Confirm the Vercel production deployment of the current `main` head is READY before cutting the integration branch (`get_deployment spam-runnareach.vercel.app`).
+3. Cut `claude/phase3-batch2-integration` from `origin/main`. Refresh `tasks/briefs/_core-context.md` (migration count now 0044; repo map unchanged).
+4. Pending housekeeping that belongs to batch 2's close, not its start: merge `tasks/lessons-inbox/scout-cell-credit.md` into `tasks/lessons.md` (newest first) and delete it.
+5. Batch 2 candidates (pick ≤6, one module each; Pedro approves the plan with "go"):
+   - learning: meeting_booked / won / lost feed `scoreOutcome` and the exemplar shortlist (opus/medium)
+   - prospects status: one `closeProspectStatus` predicate for the three writers (opportunities outcome, calendar sync, PR #9's suppressUnfinished); skip `suppressed` (opus/medium; touches discover + opportunities → hub-ish, serialize)
+   - replies: `opt-out.ts` → `latestRootSentPitchId()` (sonnet/medium, has tests)
+   - gmail (CONDUCTOR): `getAccessToken` timeout; `needsReconnect` Sentry breadcrumb after 24h
+   - api: `maxDuration` for `/api/opportunities/calendar-sync` in vercel.json (CONDUCTOR, wave 0)
+   - pitches UI: `/pitches` list resilient to a `pitch_events` query error (sonnet/medium)
+   - research: structured-research-stage inserts set `source_url` (opus/medium)
+   - roadmap Phase 3: one-click hold in the veto digest (opus/medium); Phase 4: weekly learning review → approvable proposals on /learning (opus/high)
+6. Decisions still open for Pedro (ask once, in the batch plan message): run `scripts/backfill-scout-found-ids.sql`? set `CALENDAR_BOOKING_INBOX`? invites you send count as booked before acceptance (default keep)? cancel-then-rebook = two opportunities (default accept)?
+7. The 09:20 UTC 2026-10-18 check-in on PR #8's resolve step fires into the batch 1 session, not yours; its result lands in this log.

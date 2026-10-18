@@ -13,7 +13,7 @@
 - **Sibling repo:** `runna-hunter` (separate Vercel project) — the self-serve Inefficiency Hunter the pitch CTA deep-links to.
 
 ## What's deployed
-- Prod = `main` = `ae03703` (2026-10-17, Phase 1 parts 1 and 2 shipped on Pedro's "ship it"). `main` = prod.
+- Prod = `main` = `a15d1d8` (2026-10-17, Phase 3 batch 1 shipped on Pedro's "ship it"; Phase 2 and earlier below). `main` = prod.
 - Migration **0038** (pitches.decision + write-once trigger, pitches.attribution_code, pitch_event_type values, prospect_contacts.verify_*) applied to prod 2026-10-17, recorded as version 0038.
 - Migration **0039** (hunter_scans.ref + trigger `hunter_scans_pitch_event`: a scan carrying a pitch's attribution code → `pitch_events` 'audit_scan' {stage: scan}; its contact-form submit → {stage: contact_request}) applied 2026-10-17, recorded as version 0039. runna-hunter `3b4077f` sends `?r=` with each scan. Before this: `hunter_scans` had 6 rows ever, the last on 2026-06-25, i.e. the Jul–Aug sends produced no logged scans.
 - Migrations **0036** (pitches.gate_verdict + gate_override) and **0037** (sourced benchmarks: 41 seeded + 4 activated → 48 active) applied to prod 2026-10-17, recorded as versions 0036 / 0037.
@@ -79,10 +79,20 @@ SHIPPED on Pedro's "ship it": migrations 0040 + 0041 applied, main = `4b22ad1`+,
 - **Scheduler** (migration 0041): pg_cron + pg_net; token generated inside Postgres, kept in Vault, checked via `scheduler_token_valid` (service role only); tick every 15 min, reply poll every 30 min, send-queue every 10 min and follow-ups hourly Mon–Fri 15–22 UTC. Vercel daily crons stay as backstop.
 - Session note: the Auto-mode safety check refused the service-role pipeline and creating an account; Pedro switched the session to "Accept edits" and approved. Permission rules were not edited.
 
-## Phase 3 — batch 1 (ON INTEGRATION BRANCH `claude/gallant-gauss-gly093`, awaiting Pedro's "ship it")
+## Phase 3 — batch 1 (SHIPPED 2026-10-17 on Pedro's "ship it": main = `a15d1d8`, PR #7)
 First batch run through the conductor/worker workflow (`.claude/skills/conductor/SKILL.md`,
 retro in `tasks/retros/2026-10-17-phase3-batch1.md`). 593 tests, build green, 6 PRs reviewed
-and merged into the integration branch in 58 minutes. NOT in prod yet.
+and merged into the integration branch in 58 minutes. Migration **0043** applied via the Supabase
+connector right before the merge (Pedro's SQL-editor run had not landed: the column check returned
+0 rows). Prod deploy of `a15d1d8` READY, then **0044 applied** via the connector (hourly
+`spam-calendar-sync` job at :05). The connector had recorded both under timestamp versions
+(20261017174016 / 20261017174536), which made another session believe they were missing; on
+2026-10-18 both rows were normalised to `0043` / `0044` in `supabase_migrations.schema_migrations`.
+**Check applied migrations by name, not version** (steward skill, ship checklist). Google reconnected 2026-10-18
+(04:05 UTC run: `needsReconnect: false`, inbox pedro@runnareach.com); that run then got
+`403 Calendar API not enabled in GCP project 892318428312`. Pedro enabled it and the 04:35 UTC
+run returned clean counts (events 0, created 0, cancelled 0, unmatched 0, errors []). **Calendar
+sync is fully live**; the hourly :05 job now reports counts. Nothing left to do for batch 1.
 - **Booking → opportunities** (`lib/opportunities/calendar-sync.ts`, `/api/opportunities/calendar-sync`,
   migration 0044 = hourly pg_cron): Google Calendar appointment-schedule bookings on the
   connected inbox become `opportunities` rows (stage meeting_booked, source calendar,
@@ -110,7 +120,7 @@ and merged into the integration branch in 58 minutes. NOT in prod yet.
   (`latestRootSentPitchId`, the one lookup for timeline events), audit actions
   `opportunity.booked/won/lost`, send-gate blocks 1-char placeholders (`[n]`).
 
-**Ship steps (order matters, batch audit):** 1) apply 0043 in the SQL editor FIRST: every
+**Ship steps (all done 2026-10-17/18; step 4 also needed enabling the Calendar API in GCP project 892318428312; optional step 5 not set):** 1) apply 0043 in the SQL editor FIRST: every
 contact insert now names `source_url`, so code deployed before 0043 would fail each insert
 and the autopilot research path would silently stop saving contacts; 2) merge the integration
 PR (deploy); 3) apply 0044 (schedules the hourly calendar sync; before deploy it would 404);

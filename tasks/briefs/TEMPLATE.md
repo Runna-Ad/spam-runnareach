@@ -11,7 +11,7 @@
 | PR target | `claude/<phase>-integration` |
 | Reserved migration | none  (or `0042_<name>.sql`, do not take another number) |
 | Depends on | none  (or `<slug>` merged first; what it provides at runtime) |
-| Conductor session | `session_...` (send_message here when done or blocked) |
+| Conductor session | `session_...` (send_message here ONLY if blocked; the PR body is the report) |
 | Size | S / M / L |
 
 ## Goal (2–4 sentences)
@@ -43,6 +43,17 @@ Concrete, runnable. The reviewer re-runs these.
 1. `npm test` passes and includes a new test for <behaviour>.
 2. <SQL or command> returns <expected>.
 3. <Edge case> is handled: <how to demonstrate>.
+
+## External prerequisites
+Everything outside this repo that must be true before the feature works in prod, with who
+does it: an OAuth scope (and the API enabled in the OAuth client's Google Cloud project,
+which the scope alone does not do), an env var in Vercel, a credential, a DNS record, a
+console toggle. "none" is an answer; "unknown, worker to list in the PR" is not.
+
+## Prod verification
+One query, URL or log line the conductor runs after the deploy to show the feature is
+live, and what it should return (e.g. the first `net._http_response` row for a new cron
+path showing counts and no error). The batch is not closed until this returns clean.
 
 ## Out of scope
 What a diligent worker might be tempted to fix and must not. Write it to the lessons inbox

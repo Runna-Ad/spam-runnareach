@@ -44,6 +44,10 @@ Checklist (grown by retros; add a line when a retro records a miss):
   poll, discovery, governor) and say which transitions each one honours.
 - Does this task's output combine at runtime with another task in the batch (a rule one
   module writes, a cron another reads)? Say so under OPTIONAL so the batch audit looks.
+- Task adds an integration, a cron, an OAuth scope or an env var: does the PR body list
+  the external prerequisites (API enabled in the Google Cloud project, not just the
+  scope) and a prod verification query? Missing → BLOCKING; the batch cannot be closed
+  without them (phase 3 batch 1: calendar sync sat 11 h on an unlisted console toggle).
 
 Trace a real path from an input to the failure before calling something blocking. If you
 cannot, it is optional. A finding you are unsure of is optional with "unsure" in front.

@@ -117,4 +117,5 @@ send-queue → follow-ups → reply poll. Paid enrichment fires only at score �
 3. Acceptance checks in the brief demonstrated (command output) in the PR body.
 4. PR opened against the branch named in the brief, body per `.claude/skills/worker/SKILL.md`.
 5. `tasks/lessons-inbox/<slug>.md` written (even if "nothing new").
-6. Conductor messaged with the 20-line report. Then stop.
+6. The Report block at the top of the PR body is filled in. No message to the conductor
+   unless blocked (the PR event wakes it). Then stop.
