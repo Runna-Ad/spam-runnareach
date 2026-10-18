@@ -28,7 +28,7 @@ import "server-only";
 import type { Actor } from "@/lib/actor";
 import { isUnderDailyCap } from "@/lib/anthropic/cost-tracking";
 import { evolveSearchSpace, learnFromOutcomes, weeklyReview } from "./learn";
-import { buildVetoDigest, type DigestItem } from "./hold";
+import { buildVetoDigest, DIGEST_HORIZON_HOURS, digestDue, lastDigestSlot, VETO_WINDOW_HOURS, type DigestItem } from "./hold";
 import { holdSecret } from "./hold-token";
 import { resumeDiscoveryJobWith, startDiscoveryJobWith } from "@/lib/discover/job-stage";
 import { EMPTY_JOB_STATS } from "@/lib/discover/job-types";
@@ -68,8 +68,8 @@ import {
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type Db = any;
 
-/** Veto stage: how long a person has to hold an AUTO pitch before it sends. */
-export const VETO_WINDOW_HOURS = 18;
+/** Veto stage: how long a person has to hold an AUTO pitch before it sends (lib/autopilot/hold.ts). */
+export { VETO_WINDOW_HOURS };
 /** A running job whose heartbeat is older than this has a dead chain. */
 const STALE_JOB_MS = 100_000;
 const LABEL_BATCH = 40;
@@ -99,6 +99,8 @@ export type TickReport = {
   labelled: Record<Lane, number>;
   resolved: { rewritten: number; dropped: number; waiting: string | null };
   scheduled: number;
+  /** Emails listed in the twice-daily veto digest this tick (0 when no slot was due). */
+  digest?: number;
   stageChange: { from: Stage; to: Stage; reason: string } | null;
   review?: { ran: boolean; reason: string; guidance: string[] } | null;
   errors: string[];
@@ -151,6 +153,9 @@ export async function runTick(actor: Actor, now: Date = new Date()): Promise<Tic
   report.resolved = await step("resolve", () => resolveHeld(actor, db, deadline), report.resolved);
   if ((s.stage === "veto" || s.stage === "auto") && !sendingHalted) {
     report.scheduled = await step("schedule", () => scheduleAuto(actor, db, s.stage, now, deadline), 0);
+  }
+  if (s.stage === "veto") {
+    report.digest = await step("digest", () => sendVetoDigest(db, tenantId, now), 0);
   }
   report.stageChange = await step("stage", () => evaluateStage(db, s, now), null);
   // Learning: re-score every arm from settled outcomes (cheap), and once a
@@ -668,7 +673,7 @@ async function scheduleAuto(actor: Actor, db: Db, stage: Stage, now: Date, deadl
   }
 
   const sendAt = new Date(now.getTime() + (stage === "veto" ? VETO_WINDOW_HOURS * 3_600_000 : 0)).toISOString();
-  const scheduled: DigestItem[] = [];
+  let scheduled = 0;
   let i = 0;
   for (const p of candidates) {
     if (held.has(p.id)) continue;
@@ -690,22 +695,60 @@ async function scheduleAuto(actor: Actor, db: Db, stage: Stage, now: Date, deadl
       .eq("id", p.id)
       .eq("tenant_id", tenantId)
       .eq("status", "approved");
-    scheduled.push({ pitchId: p.id, company: p.prospects?.company_name ?? "?", subject: p.subject });
+    scheduled++;
   }
 
-  if (scheduled.length > 0 && stage === "veto") {
-    // Each line carries its own hold link (lib/autopilot/hold.ts); no key → no links.
-    const digest = buildVetoDigest({
-      items: scheduled,
-      tenantId,
-      sendAt,
-      windowHours: VETO_WINDOW_HOURS,
-      appUrl: appUrl(),
-      secret: holdSecret(),
-    });
-    await notify(db, tenantId, digest.subject, digest.body);
-  }
-  return scheduled.length;
+  // The veto digest is sent twice a day by sendVetoDigest, not per tick.
+  return scheduled;
+}
+
+/**
+ * Twice a day (lib/autopilot/hold.ts DIGEST_SLOTS_UTC), one email listing every
+ * approved autopilot email that will send in the next 24h, each with its hold
+ * link. The slot is recorded (audit_log autopilot.digest) before sending, so a
+ * failed send is not retried every 15 minutes; sendNotification reports a
+ * failure to Sentry.
+ */
+async function sendVetoDigest(db: Db, tenantId: string, now: Date): Promise<number> {
+  const { data: last } = await db
+    .from("audit_log")
+    .select("created_at")
+    .eq("tenant_id", tenantId)
+    .eq("action", "autopilot.digest")
+    .order("created_at", { ascending: false })
+    .limit(1);
+  const lastAt = ((last ?? []) as Array<{ created_at: string }>)[0]?.created_at ?? null;
+  if (!digestDue(now, lastAt)) return 0;
+
+  const horizon = new Date(now.getTime() + DIGEST_HORIZON_HOURS * 3_600_000).toISOString();
+  const { data, error } = await db
+    .from("pitches")
+    .select("id, subject, scheduled_send_at, prospects(company_name)")
+    .eq("tenant_id", tenantId)
+    .eq("status", "approved")
+    .eq("autopilot_lane", "auto")
+    .not("scheduled_send_at", "is", null)
+    .lte("scheduled_send_at", horizon)
+    .order("scheduled_send_at", { ascending: true })
+    .limit(200);
+  if (error) throw new Error(`digest pitches: ${error.message}`);
+  const items: DigestItem[] = ((data ?? []) as Array<{ id: string; subject: string; scheduled_send_at: string; prospects: { company_name: string } | null }>).map(
+    (p) => ({ pitchId: p.id, company: p.prospects?.company_name ?? "?", subject: p.subject, sendAt: p.scheduled_send_at }),
+  );
+
+  await db.from("audit_log").insert({
+    tenant_id: tenantId,
+    actor_id: null,
+    action: "autopilot.digest",
+    entity_type: "tenant",
+    entity_id: tenantId,
+    metadata: { count: items.length, slot: lastDigestSlot(now).toISOString() },
+  });
+  if (items.length === 0) return 0;
+
+  const digest = buildVetoDigest({ items, tenantId, appUrl: appUrl(), secret: holdSecret() });
+  await notify(db, tenantId, digest.subject, digest.body);
+  return items.length;
 }
 
 // ── 6. Autonomy stage ─────────────────────────────────────────────────────────

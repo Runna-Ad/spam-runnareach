@@ -121,7 +121,40 @@ export async function holdPitch(db: Db, payload: HoldPayload): Promise<HoldResul
 
 // ── The veto digest ──────────────────────────────────────────────────────────
 
-export type DigestItem = { pitchId: string; company: string; subject: string };
+export type DigestItem = { pitchId: string; company: string; subject: string; sendAt: string };
+
+/**
+ * The veto digest goes out twice a day, not once per scheduling tick (Pedro,
+ * 2026-10-18: 18 digests in one day was too many). Slots are 01:00 and 13:00 UTC
+ * = 19:00 and 07:00 Mexico City (no DST). Twelve hours apart is below the 18h veto
+ * window, so every scheduled email is listed in at least one digest before it can
+ * send; a missed slot is caught up by the next tick.
+ */
+export const DIGEST_SLOTS_UTC: readonly number[] = [1, 13];
+/** Veto stage: how long a person has to hold an AUTO pitch before it sends. Must stay above the 12h slot gap. */
+export const VETO_WINDOW_HOURS = 18;
+/** A digest lists every approved email scheduled within this many hours, overdue ones included. */
+export const DIGEST_HORIZON_HOURS = 24;
+
+/** The most recent digest slot at or before `now`. */
+export function lastDigestSlot(now: Date): Date {
+  const day = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate());
+  for (let d = 0; d <= 1; d++) {
+    for (const h of [...DIGEST_SLOTS_UTC].sort((a, b) => b - a)) {
+      const t = day - d * 86_400_000 + h * 3_600_000;
+      if (t <= now.getTime()) return new Date(t);
+    }
+  }
+  return new Date(day - 86_400_000);
+}
+
+/** Due when no digest was recorded at or after the most recent slot. */
+export function digestDue(now: Date, lastDigestAt: string | null): boolean {
+  if (!lastDigestAt) return true;
+  return new Date(lastDigestAt).getTime() < lastDigestSlot(now).getTime();
+}
+
+const when = (iso: string) => `${new Date(iso).toISOString().slice(0, 16).replace("T", " ")} UTC`;
 
 /**
  * Body of the veto digest. Each line gets its own hold link when a secret is
@@ -131,27 +164,25 @@ export type DigestItem = { pitchId: string; company: string; subject: string };
 export function buildVetoDigest(opts: {
   items: DigestItem[];
   tenantId: string;
-  sendAt: string;
-  windowHours: number;
   appUrl: string;
   secret: string | null;
 }): { subject: string; body: string } {
-  const { items, tenantId, sendAt, windowHours, secret } = opts;
+  const { items, tenantId, secret } = opts;
   const appUrl = opts.appUrl.replace(/\/+$/, "");
-  const exp = holdExpiry(sendAt);
   const lines = items.map((s) => {
-    const line = `• ${s.company}: "${s.subject}"`;
+    const line = `• ${s.company}: "${s.subject}" (scheduled ${when(s.sendAt)})`;
     if (!secret) return line;
-    const token = signHoldToken({ pitchId: s.pitchId, tenantId, exp }, secret);
+    const token = signHoldToken({ pitchId: s.pitchId, tenantId, exp: holdExpiry(s.sendAt) }, secret);
     return `${line}\n  Hold: ${appUrl}/api/autopilot/hold?t=${encodeURIComponent(token)}`;
   });
   const how = secret
-    ? "To hold one, tap its Hold link (or move it back to draft on /pitches) before then."
-    : "To hold one, move it back to draft on /pitches before then.";
+    ? "To hold one, tap its Hold link (or move it back to draft on /pitches) before it sends."
+    : "To hold one, move it back to draft on /pitches before it sends.";
   return {
-    subject: `Autopilot scheduled ${items.length} email${items.length === 1 ? "" : "s"} (sends in ${windowHours}h unless held)`,
+    subject: `Autopilot: ${items.length} email${items.length === 1 ? "" : "s"} will send in the next ${DIGEST_HORIZON_HOURS}h unless held`,
     body:
-      `These passed every check and will send in about ${windowHours} hours:\n\n` +
+      `These passed every check and are scheduled to send in the next ${DIGEST_HORIZON_HOURS} hours. ` +
+      `The send queue runs weekdays 15:00–23:00 UTC, so anything scheduled outside that goes out when it opens.\n\n` +
       lines.join("\n") +
       `\n\n${how} Holding one counts as a veto; few vetoes over two weeks lets the autopilot send without the wait.\n\n${appUrl}/pitches`,
   };

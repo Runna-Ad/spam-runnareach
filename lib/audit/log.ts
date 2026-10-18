@@ -39,7 +39,9 @@ export type AuditAction =
   // A person held an autopilot-scheduled pitch from the veto digest link.
   | "pitch.held"
   // The hourly health check emailed an emergency (lib/reports; 24h dedupe per kind).
-  | "health.alert";
+  | "health.alert"
+  // The twice-daily veto digest slot was handled (lib/autopilot/tick.ts sendVetoDigest).
+  | "autopilot.digest";
 
 export type AuditPayload = {
   tenantId: string;

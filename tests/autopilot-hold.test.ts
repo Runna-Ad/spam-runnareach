@@ -9,7 +9,7 @@ import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import test from "node:test";
 import { signUnsubscribeToken, verifyUnsubscribeToken } from "../lib/compliance/unsubscribe-token.ts";
-import { buildVetoDigest, holdPitch, holdStateFor, HOLD_REASON, loadHoldTarget } from "../lib/autopilot/hold.ts";
+import { buildVetoDigest, DIGEST_HORIZON_HOURS, digestDue, holdPitch, holdStateFor, HOLD_REASON, lastDigestSlot, loadHoldTarget, VETO_WINDOW_HOURS } from "../lib/autopilot/hold.ts";
 import { holdExpiry, holdSecret, signHoldToken, verifyHoldToken } from "../lib/autopilot/hold-token.ts";
 import { countVetoes, heldAction, HELD_BY_PERSON } from "../lib/autopilot/governor.ts";
 
@@ -269,54 +269,79 @@ test("holdStateFor: only approved is holdable", () => {
 // ── Digest ───────────────────────────────────────────────────────────────────
 
 const ITEMS = [
-  { pitchId: PITCH, company: "Acme Plumbing", subject: "Quick idea for Acme" },
-  { pitchId: "44444444-4444-4444-4444-444444444444", company: "Northwind HVAC", subject: "Your booking page" },
+  { pitchId: PITCH, company: "Acme Plumbing", subject: "Quick idea for Acme", sendAt: SEND_AT },
+  { pitchId: "44444444-4444-4444-4444-444444444444", company: "Northwind HVAC", subject: "Your booking page", sendAt: "2026-10-19T09:30:00Z" },
 ];
 
-test("digest: every line gets its own hold link that verifies for its pitch", () => {
-  const digest = buildVetoDigest({
-    items: ITEMS,
-    tenantId: TENANT,
-    sendAt: SEND_AT,
-    windowHours: 18,
-    appUrl: "https://spam-runnareach.vercel.app/",
-    secret: SECRET,
-  });
+test("digest: every line gets its own hold link that verifies for its pitch, with its scheduled time", () => {
+  const digest = buildVetoDigest({ items: ITEMS, tenantId: TENANT, appUrl: "https://spam-runnareach.vercel.app/", secret: SECRET });
   // Printed so the PR body can show a rendered digest (node --test shows stdout).
   console.log(`--- digest subject ---\n${digest.subject}\n--- digest body ---\n${digest.body}\n--- end ---`);
-  assert.equal(digest.subject, "Autopilot scheduled 2 emails (sends in 18h unless held)");
+  assert.equal(digest.subject, "Autopilot: 2 emails will send in the next 24h unless held");
   const links = [...digest.body.matchAll(/Hold: (https:\/\/spam-runnareach\.vercel\.app\/api\/autopilot\/hold\?t=(\S+))/g)];
   assert.equal(links.length, 2);
   const ids = links.map((m) => verifyHoldToken(decodeURIComponent(m[2]!), SECRET, NOW)?.pitchId);
   assert.deepEqual(ids, ITEMS.map((i) => i.pitchId));
-  assert.match(digest.body, /• Acme Plumbing: "Quick idea for Acme"\n {2}Hold: /);
+  assert.match(digest.body, /• Acme Plumbing: "Quick idea for Acme" \(scheduled 2026-10-19 06:00 UTC\)\n {2}Hold: /);
+  assert.match(digest.body, /• Northwind HVAC: "Your booking page" \(scheduled 2026-10-19 09:30 UTC\)/);
   assert.match(digest.body, /Holding one counts as a veto/);
   assert.match(digest.body, /https:\/\/spam-runnareach\.vercel\.app\/pitches$/);
 });
 
+test("digest: each hold link expires 24h after ITS email's send time", () => {
+  const digest = buildVetoDigest({ items: ITEMS, tenantId: TENANT, appUrl: "https://x.test", secret: SECRET });
+  const tokens = [...digest.body.matchAll(/hold\?t=(\S+)/g)].map((m) => decodeURIComponent(m[1]!));
+  assert.ok(verifyHoldToken(tokens[1]!, SECRET, new Date("2026-10-20T09:29:00Z")));
+  assert.equal(verifyHoldToken(tokens[0]!, SECRET, new Date("2026-10-20T06:00:00Z")), null);
+});
+
 test("digest without a key: no hold links, /pitches instructions kept", () => {
-  const digest = buildVetoDigest({
-    items: ITEMS,
-    tenantId: TENANT,
-    sendAt: SEND_AT,
-    windowHours: 18,
-    appUrl: "https://spam-runnareach.vercel.app",
-    secret: null,
-  });
+  const digest = buildVetoDigest({ items: ITEMS, tenantId: TENANT, appUrl: "https://spam-runnareach.vercel.app", secret: null });
   assert.doesNotMatch(digest.body, /Hold:/);
   assert.doesNotMatch(digest.body, /api\/autopilot\/hold/);
-  assert.match(digest.body, /To hold one, move it back to draft on \/pitches before then\./);
+  assert.match(digest.body, /To hold one, move it back to draft on \/pitches before it sends\./);
   assert.match(digest.body, /• Northwind HVAC: "Your booking page"/);
 });
 
 test("digest subject is singular for one email", () => {
-  const digest = buildVetoDigest({
-    items: ITEMS.slice(0, 1),
-    tenantId: TENANT,
-    sendAt: SEND_AT,
-    windowHours: 18,
-    appUrl: "https://x.test",
-    secret: SECRET,
-  });
-  assert.equal(digest.subject, "Autopilot scheduled 1 email (sends in 18h unless held)");
+  const digest = buildVetoDigest({ items: ITEMS.slice(0, 1), tenantId: TENANT, appUrl: "https://x.test", secret: SECRET });
+  assert.equal(digest.subject, "Autopilot: 1 email will send in the next 24h unless held");
+});
+
+// ── Digest slots: twice a day, never per tick ────────────────────────────────
+
+test("lastDigestSlot: 01:00 and 13:00 UTC, the most recent at or before now", () => {
+  assert.equal(lastDigestSlot(new Date("2026-10-18T15:40:00Z")).toISOString(), "2026-10-18T13:00:00.000Z");
+  assert.equal(lastDigestSlot(new Date("2026-10-18T13:00:00Z")).toISOString(), "2026-10-18T13:00:00.000Z");
+  assert.equal(lastDigestSlot(new Date("2026-10-18T12:59:00Z")).toISOString(), "2026-10-18T01:00:00.000Z");
+  assert.equal(lastDigestSlot(new Date("2026-10-18T00:30:00Z")).toISOString(), "2026-10-17T13:00:00.000Z");
+});
+
+test("digestDue: once per slot, every tick after a missed slot catches up", () => {
+  const ticks = ["2026-10-18T13:00:00Z", "2026-10-18T13:15:00Z", "2026-10-18T18:00:00Z", "2026-10-19T00:45:00Z"];
+  let last: string | null = "2026-10-18T01:00:05Z";
+  const sent: string[] = [];
+  for (const t of ticks) {
+    if (digestDue(new Date(t), last)) { sent.push(t); last = t; }
+  }
+  assert.deepEqual(sent, ["2026-10-18T13:00:00Z"]);
+  // A slot whose ticks all failed: the next tick (even hours later) sends it.
+  assert.equal(digestDue(new Date("2026-10-18T16:00:00Z"), "2026-10-18T01:00:05Z"), true);
+  assert.equal(digestDue(new Date("2026-10-18T16:00:00Z"), null), true);
+});
+
+test("every email scheduled 18h out is listed in at least one digest before it can send", () => {
+  // Property over a week of 15-minute ticks: an email scheduled at tick T sends at T+18h;
+  // the first digest at or after T (each lists sendAt <= now+24h) must come before T+18h.
+  const start = Date.parse("2026-10-18T00:00:00Z");
+  for (let t = start; t < start + 7 * 86_400_000; t += 15 * 60_000) {
+    const sendAt = t + VETO_WINDOW_HOURS * 3_600_000;
+    // The first tick at or after the first slot that falls after the scheduling tick.
+    let firstDigest = Number.POSITIVE_INFINITY;
+    for (let u = t + 15 * 60_000; u <= sendAt; u += 15 * 60_000) {
+      if (lastDigestSlot(new Date(u)).getTime() > t) { firstDigest = u; break; }
+    }
+    assert.ok(firstDigest < sendAt, `scheduled ${new Date(t).toISOString()} has no digest before ${new Date(sendAt).toISOString()}`);
+    assert.ok(sendAt <= firstDigest + DIGEST_HORIZON_HOURS * 3_600_000);
+  }
 });
