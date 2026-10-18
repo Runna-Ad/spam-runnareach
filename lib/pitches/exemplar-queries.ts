@@ -68,6 +68,10 @@ export async function fetchExemplars(
   target: ExemplarTarget,
   now: Date = new Date(),
 ): Promise<Exemplar[]> {
+  // Kill switch (conductor, 2026-10-18): off until the allow-list leak check
+  // (PR #17) is merged. The deny-list scrubber still leaks some name and city
+  // spellings; no exemplar has qualified in prod yet, so this costs nothing today.
+  if (process.env.EXEMPLARS_ENABLED !== "1") return [];
   if (target.segment.industry === "other") return [];
   const signal = AbortSignal.timeout(EXEMPLAR_FETCH_BUDGET_MS);
   try {
