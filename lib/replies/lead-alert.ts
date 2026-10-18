@@ -7,13 +7,20 @@
  * out-of-office replies are left to the weekly report. Hot replies first,
  * with what the prospect actually wrote (quoted thread stripped, clipped).
  *
- * Durable: the alert is driven by the replies table, not by memory. Each poll
- * run sends every human reply received in the last 48 hours whose
- * replies.hot_alert_sent_at is null, after claiming the rows (set the column,
- * only where still null). A send that reaches nobody releases the claim, so the
- * next run retries; a run killed mid-way leaves rows unclaimed for the next
- * run. replies.hot_alert_sent_at now means "lead alert sent" for every human
- * reply, not only hot ones (the column predates this and was never set).
+ * Durable: the alert is driven by the replies table, not by memory. A row is
+ * sent after it is claimed (hot_alert_sent_at set, only where still null); a
+ * send that reaches nobody releases the claim. The claim → send step only runs
+ * with time left, so Vercel cannot kill a run between the two:
+ *   - at the START of every poll run, before any thread work: every unclaimed
+ *     human reply received in the last 48 hours (leftovers of earlier runs);
+ *   - at the END of the run: this run's replies (and settled leftovers), only
+ *     if at least 60s remain before maxDuration; otherwise nothing is claimed
+ *     and the next run's start sweep sends them.
+ * A row another run inserted is only swept once its classified_at is 2
+ * minutes old, so the alert never goes out before that run has written the
+ * draft or recorded the opt-out.
+ * replies.hot_alert_sent_at now means "lead alert sent" for every human reply,
+ * not only hot ones (the column predates this and was never set).
  *
  * Formatters are pure; the store is swappable: tested in tests/lead-alert.test.ts.
  */
@@ -126,7 +133,10 @@ export function formatLeadAlert(items: LeadAlertItem[]): { subject: string; body
 export const LEAD_ALERT_WINDOW_HOURS = 48;
 const LEAD_ALERT_BATCH = 100;
 
-export type PendingLeadReply = { id: string; tenantId: string; item: LeadAlertItem };
+/** Another run's reply is swept only once it is this old (its draft / opt-out are written). */
+export const LEAD_ALERT_SETTLE_MS = 2 * 60_000;
+
+export type PendingLeadReply = { id: string; tenantId: string; classifiedAt: string | null; item: LeadAlertItem };
 
 export type LeadAlertStore = {
   /** Human replies (not bounced / auto_reply) received since `sinceIso`, hot_alert_sent_at null. */
@@ -144,6 +154,7 @@ export type LeadReplyRow = {
   intent: ReplyIntent;
   body_text: string | null;
   draft_status: string | null;
+  classified_at: string | null;
   prospects: { company_name: string | null; language: string | null; status: string | null } | null;
 };
 
@@ -168,14 +179,16 @@ export function supabaseLeadAlertStore(db: any, isTest: (email: string) => boole
     async pending(sinceIso) {
       const { data, error } = await db
         .from("replies")
-        .select("id, tenant_id, from_email, intent, body_text, draft_status, prospects(company_name, language, status)")
+        .select("id, tenant_id, from_email, intent, body_text, draft_status, classified_at, prospects(company_name, language, status)")
         .is("hot_alert_sent_at", null)
         .not("intent", "in", "(bounced,auto_reply)")
         .gte("received_at", sinceIso)
         .order("received_at", { ascending: true })
         .limit(LEAD_ALERT_BATCH);
       if (error) throw new Error(`lead alert lookup failed: ${error.message}`);
-      return ((data ?? []) as LeadReplyRow[]).map((r) => ({ id: r.id, tenantId: r.tenant_id, item: leadItemFromRow(r, isTest) }));
+      return ((data ?? []) as LeadReplyRow[]).map((r) => ({
+        id: r.id, tenantId: r.tenant_id, classifiedAt: r.classified_at, item: leadItemFromRow(r, isTest),
+      }));
     },
     async claim(ids) {
       if (ids.length === 0) return [];
@@ -198,6 +211,14 @@ export function supabaseLeadAlertStore(db: any, isTest: (email: string) => boole
 
 export type TenantLeadSender = (tenantId: string, message: NotificationMessage) => Promise<NotificationResult>;
 
+export type LeadAlertRunOptions = {
+  /** Epoch ms after which nothing is claimed (rows stay for the next run). */
+  deadline?: number;
+  /** Replies this run inserted: claimed without waiting for them to settle. */
+  ownIds?: ReadonlySet<string>;
+  clock?: () => number;
+};
+
 /**
  * One lead alert per tenant for every unalerted human reply in the window.
  * Partial delivery keeps the claim (no duplicate to those who got it); zero
@@ -206,21 +227,29 @@ export type TenantLeadSender = (tenantId: string, message: NotificationMessage) 
 export async function sendPendingLeadAlerts(
   store: LeadAlertStore,
   send: TenantLeadSender,
-  now: Date = new Date(),
+  opts: LeadAlertRunOptions = {},
 ): Promise<NotificationResult> {
+  const clock = opts.clock ?? Date.now;
   const total: NotificationResult = { sent: 0, failed: [] };
+  if (opts.deadline !== undefined && clock() > opts.deadline) return total;
   let pending: PendingLeadReply[];
   try {
-    pending = await store.pending(new Date(now.getTime() - LEAD_ALERT_WINDOW_HOURS * 3_600_000).toISOString());
+    pending = await store.pending(new Date(clock() - LEAD_ALERT_WINDOW_HOURS * 3_600_000).toISOString());
   } catch (err) {
     total.failed.push((err as Error).message);
     return total;
   }
+  const settledBefore = clock() - LEAD_ALERT_SETTLE_MS;
+  pending = pending.filter(
+    (p) => opts.ownIds?.has(p.id) || (p.classifiedAt !== null && Date.parse(p.classifiedAt) <= settledBefore),
+  );
 
   const byTenant = new Map<string, PendingLeadReply[]>();
   for (const p of pending) byTenant.set(p.tenantId, [...(byTenant.get(p.tenantId) ?? []), p]);
 
   for (const [tenantId, rows] of byTenant) {
+    // Never claim what this run may not have time to send.
+    if (opts.deadline !== undefined && clock() > opts.deadline) break;
     let claimed: string[] = [];
     try {
       claimed = await store.claim(rows.map((r) => r.id));

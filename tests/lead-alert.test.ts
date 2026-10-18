@@ -134,7 +134,7 @@ function memoryStore(rows: Row[]): LeadAlertStore & { rows: Row[] } {
     async pending(sinceIso) {
       return rows
         .filter((r) => r.hot_alert_sent_at === null && r.intent !== "bounced" && r.intent !== "auto_reply" && r.received_at >= sinceIso)
-        .map((r) => ({ id: r.id, tenantId: r.tenant_id, item: leadItemFromRow(r, isTestAddress) }));
+        .map((r) => ({ id: r.id, tenantId: r.tenant_id, classifiedAt: r.classified_at, item: leadItemFromRow(r, isTestAddress) }));
     },
     async claim(ids) {
       const won: string[] = [];
@@ -153,6 +153,7 @@ function memoryStore(rows: Row[]): LeadAlertStore & { rows: Row[] } {
 }
 
 const NOW = new Date("2026-10-18T12:00:00Z");
+const AT = { clock: () => NOW.getTime() };
 
 function row(id: string, intent: Row["intent"], over: Partial<Row> = {}): Row {
   return {
@@ -162,6 +163,7 @@ function row(id: string, intent: Row["intent"], over: Partial<Row> = {}): Row {
     intent,
     body_text: `Reply ${id}\n\nOn Mon, Oct 12, Henry wrote:\n> our pitch`,
     draft_status: intent === "wants_meeting" ? "pending" : null,
+    classified_at: "2026-10-18T11:00:00.000Z",
     prospects: { company_name: `Co ${id}`, language: "en", status: intent === "hard_no" ? "suppressed" : "replied" },
     received_at: "2026-10-18T11:00:00.000Z",
     hot_alert_sent_at: null,
@@ -185,7 +187,7 @@ const delivered = () => ({ sent: 3, failed: [] });
 test("acceptance: wants_meeting + hard_no + a bounce stored → ONE lead alert with 2 lines, kind lead", async () => {
   const store = memoryStore([row("a", "wants_meeting"), row("b", "hard_no"), row("c", "bounced")]);
   const { send, calls } = recordingSend(delivered);
-  const res = await sendPendingLeadAlerts(store, send, NOW);
+  const res = await sendPendingLeadAlerts(store, send, AT);
   assert.equal(calls.length, 1);
   assert.equal(calls[0]?.message.kind, "lead");
   assert.equal(calls[0]?.message.subject, "2 new replies (1 wants a meeting)");
@@ -201,13 +203,13 @@ test("acceptance: wants_meeting + hard_no + a bounce stored → ONE lead alert w
 test("B1: send fails in run 1 → nothing marked; run 2 alerts it exactly once; run 3 sends nothing", async () => {
   const store = memoryStore([row("a", "wants_meeting")]);
   const { send, calls } = recordingSend((n) => (n === 1 ? { sent: 0, failed: ["x: 503"] } : delivered()));
-  const r1 = await sendPendingLeadAlerts(store, send, NOW);
+  const r1 = await sendPendingLeadAlerts(store, send, AT);
   assert.deepEqual(r1, { sent: 0, failed: ["x: 503"] });
   assert.equal(store.rows[0]?.hot_alert_sent_at, null);
-  const r2 = await sendPendingLeadAlerts(store, send, NOW);
+  const r2 = await sendPendingLeadAlerts(store, send, AT);
   assert.equal(r2.sent, 3);
   assert.equal(calls.length, 2);
-  const r3 = await sendPendingLeadAlerts(store, send, NOW);
+  const r3 = await sendPendingLeadAlerts(store, send, AT);
   assert.deepEqual(r3, { sent: 0, failed: [] });
   assert.equal(calls.length, 2);
 });
@@ -215,7 +217,7 @@ test("B1: send fails in run 1 → nothing marked; run 2 alerts it exactly once; 
 test("a throwing sender releases the claim and is reported, never thrown", async () => {
   const store = memoryStore([row("a", "not_now")]);
   const { send } = recordingSend(() => new Error("gmail down"));
-  const res = await sendPendingLeadAlerts(store, send, NOW);
+  const res = await sendPendingLeadAlerts(store, send, AT);
   assert.deepEqual(res, { sent: 0, failed: ["tenant t1: gmail down"] });
   assert.equal(store.rows[0]?.hot_alert_sent_at, null);
 });
@@ -223,8 +225,8 @@ test("a throwing sender releases the claim and is reported, never thrown", async
 test("partial delivery keeps the claim: no duplicate to those who got it", async () => {
   const store = memoryStore([row("a", "wants_info")]);
   const { send, calls } = recordingSend(() => ({ sent: 2, failed: ["nila@runna.com.mx: 500"] }));
-  await sendPendingLeadAlerts(store, send, NOW);
-  await sendPendingLeadAlerts(store, send, NOW);
+  await sendPendingLeadAlerts(store, send, AT);
+  await sendPendingLeadAlerts(store, send, AT);
   assert.equal(calls.length, 1);
 });
 
@@ -232,7 +234,7 @@ test("a run killed before sending: the unclaimed reply is alerted by the next ru
   // Run 1 inserted the row and died before step 5: nothing claimed.
   const store = memoryStore([row("a", "wants_meeting")]);
   const { send, calls } = recordingSend(delivered);
-  await sendPendingLeadAlerts(store, send, NOW);
+  await sendPendingLeadAlerts(store, send, AT);
   assert.equal(calls.length, 1);
 });
 
@@ -243,14 +245,14 @@ test("replies older than 48h, bounces and out-of-office are never alerted; nothi
     row("o", "auto_reply"),
   ]);
   const { send, calls } = recordingSend(delivered);
-  assert.deepEqual(await sendPendingLeadAlerts(store, send, NOW), { sent: 0, failed: [] });
+  assert.deepEqual(await sendPendingLeadAlerts(store, send, AT), { sent: 0, failed: [] });
   assert.equal(calls.length, 0);
 });
 
 test("one alert per tenant, each claimed separately", async () => {
   const store = memoryStore([row("a", "wants_meeting"), row("b", "not_now", { tenant_id: "t2" })]);
   const { send, calls } = recordingSend(delivered);
-  await sendPendingLeadAlerts(store, send, NOW);
+  await sendPendingLeadAlerts(store, send, AT);
   assert.deepEqual(calls.map((c) => c.tenantId).sort(), ["t1", "t2"]);
 });
 
@@ -264,7 +266,7 @@ test("a concurrent run that already claimed a row: it is not sent twice", async 
     },
   };
   const { send, calls } = recordingSend(delivered);
-  await sendPendingLeadAlerts(racing, send, NOW);
+  await sendPendingLeadAlerts(racing, send, AT);
   assert.equal(calls[0]?.message.subject, "Reply from Co b: wants more info");
 });
 
@@ -328,4 +330,56 @@ test("store.claim only sets rows still null and returns the ids won; release cle
   const failing = supabaseLeadAlertStore(recordingDb(() => ({ data: null, error: { message: "down" } })).client, isTestAddress);
   await assert.rejects(failing.pending("x"), /lead alert lookup failed: down/);
   await assert.rejects(failing.claim(["a"]), /claim failed/);
+});
+
+// ── Review round 2: claim only with time to send; never claim another run's fresh row ──
+
+test("deadline passed → claim is never called, the row stays for the next run", async () => {
+  const store = memoryStore([row("a", "wants_meeting")]);
+  let claims = 0;
+  const counting: LeadAlertStore = { ...store, claim: async (ids) => (claims++, store.claim(ids)) };
+  const { send, calls } = recordingSend(delivered);
+  const res = await sendPendingLeadAlerts(counting, send, { clock: () => NOW.getTime(), deadline: NOW.getTime() - 1, ownIds: new Set(["a"]) });
+  assert.deepEqual(res, { sent: 0, failed: [] });
+  assert.equal(claims, 0);
+  assert.equal(calls.length, 0);
+  assert.equal(store.rows[0]?.hot_alert_sent_at, null);
+});
+
+test("a row run 1 left unclaimed (end of run past the deadline) is alerted by run 2's start sweep, once", async () => {
+  const justInserted = "2026-10-18T11:59:50.000Z";
+  const store = memoryStore([row("a", "wants_meeting", { classified_at: justInserted })]);
+  const { send, calls } = recordingSend(delivered);
+  // Run 1 end: inserted "a", but only 50s left before maxDuration.
+  await sendPendingLeadAlerts(store, send, { clock: () => NOW.getTime(), deadline: NOW.getTime() - 10_000, ownIds: new Set(["a"]) });
+  assert.equal(calls.length, 0);
+  // Run 2 start sweep, 30 minutes later: no ownIds, no deadline.
+  const later = { clock: () => NOW.getTime() + 30 * 60_000 };
+  await sendPendingLeadAlerts(store, send, later);
+  assert.equal(calls.length, 1);
+  await sendPendingLeadAlerts(store, send, later);
+  assert.equal(calls.length, 1);
+});
+
+test("overlapping runs: another run's row younger than 2 minutes is not claimed; this run's own row is", async () => {
+  const fresh = "2026-10-18T11:59:30.000Z"; // 30s before NOW
+  const store = memoryStore([row("other", "hard_no", { classified_at: fresh }), row("mine", "wants_info", { classified_at: fresh })]);
+  const { send, calls } = recordingSend(delivered);
+  await sendPendingLeadAlerts(store, send, { clock: () => NOW.getTime(), ownIds: new Set(["mine"]) });
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0]?.message.subject, "Reply from Co mine: wants more info");
+  assert.equal(store.rows.find((r) => r.id === "other")?.hot_alert_sent_at, null);
+  // Settled 2 minutes later: swept.
+  await sendPendingLeadAlerts(store, send, { clock: () => NOW.getTime() + 2 * 60_000 });
+  assert.equal(calls.length, 2);
+  assert.match(calls[1]?.message.subject ?? "", /Co other/);
+});
+
+test("a row with no classified_at is only sent by the run that inserted it", async () => {
+  const store = memoryStore([row("a", "not_now", { classified_at: null })]);
+  const { send, calls } = recordingSend(delivered);
+  await sendPendingLeadAlerts(store, send, AT);
+  assert.equal(calls.length, 0);
+  await sendPendingLeadAlerts(store, send, { ...AT, ownIds: new Set(["a"]) });
+  assert.equal(calls.length, 1);
 });

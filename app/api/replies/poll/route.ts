@@ -19,9 +19,11 @@
 //        - anything a human wrote → sequence paused, prospect 'replied'
 //   4. Draft a response (Claude → heuristic) for engageable intents →
 //      draft_status='pending'. The reply cap is enforced when a human sends.
-//   5. Email the lead list ONE alert listing every human reply not yet alerted
-//      (bounces and out-of-office excluded), hot ones first, with their text.
-//      Driven by replies.hot_alert_sent_at, so a failed or killed run retries.
+//   0/5. Email the lead list ONE alert listing every human reply not yet
+//      alerted (bounces and out-of-office excluded), hot ones first, with
+//      their text. Driven by replies.hot_alert_sent_at (lib/replies/lead-alert.ts):
+//      swept at the START of the run (leftovers get the full budget) and at
+//      the END for this run's replies, only with >= 60s left.
 //
 // Auth: Authorization: Bearer <CRON_SECRET>.
 // ─────────────────────────────────────────────────────────────────────────────
@@ -61,7 +63,11 @@ import { sendPendingLeadAlerts, supabaseLeadAlertStore } from "@/lib/replies/lea
 
 /** An out-of-office pushes the next follow-up at least this far out. */
 const OOO_POSTPONE_DAYS = 7;
-/** Stop starting threads after this long (maxDuration is 120s; leaves room for the digest). */
+/** vercel.json maxDuration for this route. */
+const MAX_DURATION_MS = 120_000;
+/** The end-of-run alert claims only with at least this long left. */
+const ALERT_RESERVE_MS = 60_000;
+/** Stop starting threads after this long (maxDuration is 120s). */
 const POLL_BUDGET_MS = 100_000;
 /**
  * A normal run reads only threads with inbound mail this recent (one list call
@@ -108,6 +114,14 @@ export async function GET(req: NextRequest) {
   // the half-hourly pg_cron run reads only threads with recent inbound mail.
   const fullSweep =
     req.nextUrl.searchParams.get("full") === "1" || (req.headers.get("user-agent") ?? "").startsWith("vercel-cron");
+
+  const alertStore = supabaseLeadAlertStore(supabase, isTestAddress);
+  const sendLeadAlert = (tenantId: string, message: Parameters<typeof sendNotification>[2]) =>
+    sendNotification(supabase, tenantId, message);
+  // ── 0. Leftover lead alerts first, while the whole budget is ahead ──────
+  const startAlerts = await sendPendingLeadAlerts(alertStore, sendLeadAlert);
+  // Replies inserted by this run, alerted at the end without the settle wait.
+  const ownReplyIds = new Set<string>();
 
   // ── 1. Find candidate threads ────────────────────────────────────────────
   const { data: pitchRows, error: pitchErr } = await supabase
@@ -285,6 +299,7 @@ export async function GET(req: NextRequest) {
 
         if (!insertedReply) continue;
         imported += 1;
+        ownReplyIds.add(insertedReply.id);
 
         await supabase.from("audit_log").insert({
           tenant_id: thread.tenant_id,
@@ -450,16 +465,17 @@ export async function GET(req: NextRequest) {
     }
   }
 
-  // ── 5. One lead alert per tenant for every human reply not yet alerted ────
-  // The inserted reply row is the durable record; this claims and sends the
-  // unalerted ones (this run's and any a failed run left). Never throws.
-  // Self-loop: the alert is a NEW Gmail thread (no threadId), so it is never a
-  // pitch's gmail_thread_id and step 1 never reads it; it is also From the
-  // inbox itself, which fetchThreadReplies skips as our own send.
-  const alerts = await sendPendingLeadAlerts(
-    supabaseLeadAlertStore(supabase, isTestAddress),
-    (tenantId, message) => sendNotification(supabase, tenantId, message),
-  );
+  // ── 5. Lead alert for this run's replies, only with time to send it ──────
+  // The inserted reply row is the durable record. With < 60s left nothing is
+  // claimed; the next run's step 0 sends it. Never throws.
+  // Self-loop: the alert is sent without a threadId, so it starts a NEW Gmail
+  // thread in every mailbox; step 1 only reads threads whose id is a sent
+  // pitch's gmail_thread_id, so an alert is never read as a prospect reply.
+  const endAlerts = await sendPendingLeadAlerts(alertStore, sendLeadAlert, {
+    ownIds: ownReplyIds,
+    deadline: startTime + MAX_DURATION_MS - ALERT_RESERVE_MS,
+  });
+  const alerts = { sent: startAlerts.sent + endAlerts.sent, failed: [...startAlerts.failed, ...endAlerts.failed] };
 
   return NextResponse.json({
     ok: true,
