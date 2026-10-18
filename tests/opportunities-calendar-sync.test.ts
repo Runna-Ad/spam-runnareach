@@ -367,7 +367,10 @@ test("store.markProspectBooked never overwrites won / lost", async () => {
   const call = fake.calls[0]!;
   assert.equal(call.table, "prospects");
   assert.ok(has(call, "update", { status: "booked" }));
-  assert.ok(has(call, "not", "status", "in", "(won,lost)"));
+  // The filter comes from lib/prospects/status.ts; compare as a set (order is the enum's).
+  const not = call.ops.find(([o, a]) => o === "not" && (a as unknown[])[0] === "status");
+  const list = String((not?.[1] as unknown[] | undefined)?.[2] ?? "");
+  assert.deepEqual(new Set(list.replace(/[()]/g, "").split(",")), new Set(["won", "lost"]));
   assert.ok(has(call, "eq", "tenant_id", "t1"));
 });
 

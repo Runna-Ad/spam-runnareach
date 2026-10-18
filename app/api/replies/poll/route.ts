@@ -59,6 +59,7 @@ import { addEmailToDnc, type DncInsertClient } from "@/lib/discover/dnc-check";
 import { extractBouncedRecipient } from "@/lib/replies/bounce-parse";
 import { recordPitchEvent } from "@/lib/pitches/events";
 import { isTestAddress } from "@/lib/compliance/test-addresses";
+import { protectedStatusFilter } from "@/lib/prospects/status";
 import { sendPendingLeadAlerts, supabaseLeadAlertStore } from "@/lib/replies/lead-alert";
 
 /** An out-of-office pushes the next follow-up at least this far out. */
@@ -355,7 +356,9 @@ export async function GET(req: NextRequest) {
               `Auto-added ${new Date().toISOString().slice(0, 10)}: hard bounce (undeliverable).`,
             );
           }
-          await supabase
+          // A real outcome (booked/won/lost) keeps its status (lib/prospects/status.ts);
+          // the sequence is paused either way.
+          const { data: suppressedRows } = await supabase
             .from("prospects")
             .update({
               status: "suppressed",
@@ -363,16 +366,20 @@ export async function GET(req: NextRequest) {
               suppressed_reason: "Email bounced (undeliverable) — auto-suppressed",
               cooldown_until: new Date(Date.now() + 365 * 24 * 60 * 60 * 1000).toISOString(),
             })
-            .eq("id", thread.prospect_id);
+            .eq("id", thread.prospect_id)
+            .not("status", "in", protectedStatusFilter("suppressed", "automation")!)
+            .select("id");
           await pauseSequence(supabase, thread.tenant_id, thread.prospect_id);
-          await supabase.from("audit_log").insert({
-            tenant_id: thread.tenant_id,
-            actor_id: null,
-            action: "prospect.suppressed",
-            entity_type: "prospect",
-            entity_id: thread.prospect_id,
-            metadata: { reply_id: insertedReply.id, reason: "bounced_auto", source: "gmail_poll" },
-          });
+          if ((suppressedRows ?? []).length > 0) {
+            await supabase.from("audit_log").insert({
+              tenant_id: thread.tenant_id,
+              actor_id: null,
+              action: "prospect.suppressed",
+              entity_type: "prospect",
+              entity_id: thread.prospect_id,
+              metadata: { reply_id: insertedReply.id, reason: "bounced_auto", source: "gmail_poll" },
+            });
+          }
           // Without this the end-of-thread block re-marked the prospect
           // "replied" from its stale status, undoing the suppression.
           terminal = true;
@@ -456,7 +463,7 @@ export async function GET(req: NextRequest) {
             .from("prospects")
             .update({ status: "replied" })
             .eq("id", thread.prospect_id)
-            .not("status", "in", "(archived_no_meeting,suppressed,booked,won,lost)");
+            .not("status", "in", protectedStatusFilter("replied", "automation")!);
         }
       }
     } catch (err) {

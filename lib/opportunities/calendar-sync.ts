@@ -43,6 +43,7 @@ import type { NotificationMessage, NotificationResult } from "../notify/send.ts"
 import { isTestAddress, normalizeMailbox } from "../compliance/test-addresses.ts";
 import { recordPitchEvent, type PitchEventType } from "../pitches/events.ts";
 import { latestRootSentPitchId } from "../pitches/root-pitch.ts";
+import { protectedStatusFilter } from "../prospects/status.ts";
 import { formatBookingAlert } from "./booking-alert.ts";
 import type { CalendarEvent, ListEventsResult } from "./google-calendar.ts";
 
@@ -179,7 +180,7 @@ export function supabaseSyncStore(supabase: AnySupabase, tenantId: string): Sync
         .update({ status: "booked" })
         .eq("id", prospectId)
         .eq("tenant_id", tenantId)
-        .not("status", "in", "(won,lost)");
+        .not("status", "in", protectedStatusFilter("booked", "automation")!);
       if (error) throw new Error(`prospect status update failed: ${error.message}`);
     },
     async createOpportunity({ eventId, match, notes }) {
