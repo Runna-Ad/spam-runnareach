@@ -5,8 +5,9 @@
  * No vectors. A past pitch qualifies when it is a root pitch that was sent at
  * least ATTRIBUTION_WINDOW_DAYS ago (so its outcome is settled), was written in
  * the same language for the same industry, scored ≥ 0.5 on the shared outcome
- * scale (lib/learning/reward.ts: a reply or a free-check run), had no opt-out,
- * did not fail the critic, did not go out under a gate override, and was not
+ * scale (lib/learning/reward.ts: a reply, a free-check run, a booked meeting or
+ * a deal), had no opt-out, did not bounce (a later booking does not mean anyone
+ * read that email), did not fail the critic, did not go out under a gate override, and was not
  * sent to a test address. Same industry and market first, then same industry
  * in any market, then none; at most two.
  *
@@ -18,7 +19,7 @@
  * Pure — tested in tests/pitch-exemplars.test.ts.
  */
 
-import { ATTRIBUTION_WINDOW_DAYS, scoreOutcome, type OutcomeEvent } from "../learning/reward.ts";
+import { ATTRIBUTION_WINDOW_DAYS, addressOutcome, scoreOutcome, type OutcomeEvent } from "../learning/reward.ts";
 import { segmentOf, type Segment } from "../learning/segments.ts";
 
 /** Recorded in the decision record when exemplars were shown. */
@@ -128,6 +129,9 @@ export function selectExemplars(
     if (!isEligibleCandidate(c, target, { ...opts, now })) continue;
     // A test send anywhere on the timeline: not outreach, not an exemplar.
     if (c.events.some((e) => e.payload?.test)) continue;
+    // A bounced email was never read, whatever the prospect did later: a
+    // meeting booked another way scores 1 and would otherwise outweigh it.
+    if (addressOutcome(c.events) === "bounced") continue;
     // Pitches sent before pitch_events existed have no "sent" row; the pitch's
     // own sent_at is the same fact.
     const events = c.events.some((e) => e.type === "sent")

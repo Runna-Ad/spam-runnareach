@@ -532,3 +532,11 @@ test("negative set: an all-generic past prospect keeps an exemplar of ordinary t
 test("exemplar prompt version is v2", () => {
   assert.equal(EXEMPLAR_PROMPT_VERSION, "exemplar-v2-2026-10-18");
 });
+
+test("a bounced root is never an exemplar, even when the prospect later booked a meeting", () => {
+  const booked: OutcomeEvent = { type: "meeting_booked", at: daysAgo(20), payload: null };
+  const bouncedThenBooked = cand({ events: [sent(30), { type: "bounce", at: daysAgo(30) }, booked] });
+  const deliveredAndBooked = cand({ events: [sent(30), booked] });
+  assert.deepEqual(pick([bouncedThenBooked]), []);
+  assert.deepEqual(pick([deliveredAndBooked]), [deliveredAndBooked.pitch_id]);
+});
