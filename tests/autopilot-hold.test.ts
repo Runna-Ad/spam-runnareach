@@ -11,6 +11,7 @@ import test from "node:test";
 import { signUnsubscribeToken, verifyUnsubscribeToken } from "../lib/compliance/unsubscribe-token.ts";
 import { buildVetoDigest, holdPitch, holdStateFor, HOLD_REASON, loadHoldTarget } from "../lib/autopilot/hold.ts";
 import { holdExpiry, holdSecret, signHoldToken, verifyHoldToken } from "../lib/autopilot/hold-token.ts";
+import { countVetoes, heldAction, HELD_BY_PERSON } from "../lib/autopilot/governor.ts";
 
 const KEY = "base-token-encryption-key";
 const SECRET = holdSecret(KEY)!;
@@ -76,7 +77,7 @@ test("no TOKEN_ENCRYPTION_KEY → no secret (fail closed)", () => {
 
 type Row = Record<string, unknown>;
 
-function fakeDb(pitches: Row[], opts: { forbidWrites?: boolean } = {}) {
+function fakeDb(pitches: Row[], opts: { forbidWrites?: boolean; updateLosesRace?: boolean } = {}) {
   const audit: Row[] = [];
   const writes: string[] = [];
   const db = {
@@ -89,7 +90,8 @@ function fakeDb(pitches: Row[], opts: { forbidWrites?: boolean } = {}) {
       const matching = () => pitches.filter((r) => filters.every(([k, v]) => r[k] === v));
       const run = () => {
         if (patch) {
-          const hit = matching();
+          // updateLosesRace: the send-queue held the row ('sending') during our update.
+          const hit = opts.updateLosesRace ? [] : matching();
           for (const r of hit) Object.assign(r, patch);
           return { data: returning ? hit.map((r) => ({ id: r.id })) : null, error: null };
         }
@@ -220,6 +222,40 @@ test("the GET path (loadHoldTarget) never writes", async () => {
   });
   assert.equal(row.status, "approved");
   assert.equal((await loadHoldTarget(fakeDb([], { forbidWrites: true }), PAYLOAD)).state, "not_found");
+});
+
+test("a hold that loses the race to the send-queue says try again, never 'held'", async () => {
+  // The guarded update matched nothing; the re-read sees 'approved' again
+  // (the queue claimed it, then put it back).
+  const row = pitch("approved");
+  const db = fakeDb([row], { updateLosesRace: true });
+  const result = await holdPitch(db, PAYLOAD);
+  assert.equal(result.state, "try_again");
+  assert.equal(row.status, "approved");
+  assert.equal(db.audit.length, 0);
+});
+
+test("a held draft is left alone by the next tick's resolve step (heldAction)", () => {
+  assert.ok(HOLD_REASON.startsWith(HELD_BY_PERSON));
+  const base = { lane: "review" as const, isRewrite: false, editedByPerson: false };
+  assert.equal(heldAction({ ...base, reasons: [HOLD_REASON] }, new Set()).action, "leave");
+  assert.equal(heldAction({ ...base, reasons: [HOLD_REASON], isRewrite: true }, new Set()).action, "leave");
+  // The reason §5 writes for a /pitches veto, built from the same constant.
+  assert.equal(heldAction({ ...base, reasons: [`${HELD_BY_PERSON} after the autopilot scheduled it`] }, new Set()).action, "leave");
+});
+
+test("countVetoes: an autopilot-approved pitch back in draft counts, whatever its lane", () => {
+  const approved = new Set(["a", "b", "c", "d"]);
+  const current = [
+    { id: "a", status: "draft" }, // held from the digest (lane review): counts
+    { id: "b", status: "reviewer_rejected" }, // rejected after approval: counts
+    { id: "c", status: "sent" }, // sent: no
+    { id: "d", status: "approved" }, // still queued: no
+    { id: "e", status: "draft" }, // never autopilot-approved: no
+    { id: "a", status: "draft" }, // duplicate row: counted once
+  ];
+  assert.equal(countVetoes(approved, current), 2);
+  assert.equal(countVetoes(new Set(), current), 0);
 });
 
 test("holdStateFor: only approved is holdable", () => {

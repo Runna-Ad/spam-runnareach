@@ -25,11 +25,12 @@ const COPY = {
   failed: "Something went wrong and the email was NOT held. Open /pitches and move it back to draft there.",
   states: {
     already_sent: "This email has already been sent. Nothing was changed.",
-    sending: "This email is being sent right now and can't be held. Nothing was changed.",
+    sending: "This email is being sent right now and can't be held. Nothing was changed. Try the link again in a minute: if the send didn't go through, you can hold it then.",
     already_held: "This email is already held (back in draft). Nothing was changed.",
     not_scheduled: "This email isn't scheduled to send any more. Nothing was changed.",
     not_found: "This email no longer exists. Nothing was changed.",
-  } satisfies Record<Exclude<HoldState, "holdable">, string>,
+    try_again: "This email was NOT held: it was being picked up for sending at that moment. Try again in a minute.",
+  } satisfies Record<Exclude<HoldState, "holdable"> | "try_again", string>,
 } as const;
 
 function readToken(request: NextRequest): HoldPayload | null {

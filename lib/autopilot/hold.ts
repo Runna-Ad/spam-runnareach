@@ -13,13 +13,15 @@
  * verified token.
  */
 
+import { HELD_BY_PERSON } from "./governor.ts";
 import { holdExpiry, signHoldToken, type HoldPayload } from "./hold-token.ts";
 
 // Untyped like tick.ts: the autopilot columns aren't in every generated type.
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type Db = any;
 
-export const HOLD_REASON = "held from the digest link";
+/** Starts with HELD_BY_PERSON so §4 resolveHeld (heldAction) leaves the draft alone. */
+export const HOLD_REASON = `${HELD_BY_PERSON} from the digest link`;
 
 export type HoldState = "holdable" | "already_sent" | "sending" | "already_held" | "not_scheduled" | "not_found";
 
@@ -30,7 +32,8 @@ export type HoldTarget = {
   scheduledSendAt: string | null;
 };
 
-export type HoldResult = { state: "held" | Exclude<HoldState, "holdable">; target: HoldTarget | null };
+/** "try_again": the row read 'approved' after our guarded update matched nothing (a race with the send-queue). */
+export type HoldResult = { state: "held" | "try_again" | Exclude<HoldState, "holdable">; target: HoldTarget | null };
 
 /** What a hold would do to a pitch in this status. */
 export function holdStateFor(status: string | null | undefined): HoldState {
@@ -109,10 +112,11 @@ export async function holdPitch(db: Db, payload: HoldPayload): Promise<HoldResul
     return { state: "held", target: null };
   }
 
-  // Nothing changed: say why. A row that read 'approved' here lost a race
-  // between our update and this read; it isn't held, so don't claim it is.
+  // Nothing changed: say why. A row that reads 'approved' here was claimed by
+  // the send-queue during our update and put back (approved → sending →
+  // approved); it isn't held, so say so and ask for another try.
   const target = await loadHoldTarget(db, payload);
-  return { state: target.state === "holdable" ? "not_scheduled" : target.state, target };
+  return { state: target.state === "holdable" ? "try_again" : target.state, target };
 }
 
 // ── The veto digest ──────────────────────────────────────────────────────────

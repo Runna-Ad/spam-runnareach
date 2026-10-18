@@ -8,7 +8,11 @@ WHAT HAPPENED: The digest hold link (app/api/autopilot/hold) reuses the unsubscr
 RULE: Every public token gets its own purpose-labelled key; the action is one conditional write whose row count decides the answer; the read path is tested with a fake that throws on any write.
 TAGS: security, routes, tokens
 
+[2026-10-18] A new writer of a magic-string reason must reuse the constant the reader matches on
+WHAT HAPPENED: governor.ts `heldAction` leaves a draft alone only if a reason starts with "held by a person". The first version of the digest hold wrote "held from the digest link", so the next tick's §4 resolveHeld would have rewritten (deleted and regenerated) the draft a person had just held. The reviewer caught it. The fix is `HELD_BY_PERSON` in governor.ts, used by heldAction, tick.ts §5 and hold.ts.
+RULE: Before writing a state that another stage branches on (a reason prefix, a lane, a status), grep for every reader of that field and run the new value through each reader in a test. A string that a predicate matches on is an exported constant, never a literal written twice.
+TAGS: autopilot, state, review
+
 ## Out of scope, noticed
-- `lib/autopilot/tick.ts` `evaluateStage`: `vetoed` filters `rows` (lane = 'auto'), but held rows are moved to lane 'review' by §5 first, so vetoes are effectively never counted. Fix: query autopilot-approved pitch ids (already in `autopilotApproved`) for status in ('draft','reviewer_rejected') without the lane filter.
 - `lib/pitches/pitch-stage.ts` `transitionPitchStatusWith`: the update has no current-status guard, so a /pitches "move to draft" can flip a row the send-queue just claimed (`sending`) or sent. Same gap the brief names.
 - `lib/audit/log.ts` `AuditAction` has no `"pitch.held"`; hold.ts inserts into `audit_log` directly (via the injected client) instead of `writeAuditLog`. Add the union member and switch over when convenient.

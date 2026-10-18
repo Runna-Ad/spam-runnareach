@@ -51,7 +51,9 @@ import { checkDeliverabilityHealth } from "@/lib/warmup/deliverability";
 import { analyzeSpamRate } from "@/lib/warmup/intelligence";
 import type { WarmupLogEntry } from "@/lib/warmup/types";
 import {
+  countVetoes,
   evaluateBreakers,
+  HELD_BY_PERSON,
   heldAction,
   laneFor,
   nextStage,
@@ -660,7 +662,7 @@ async function scheduleAuto(actor: Actor, db: Db, stage: Stage, now: Date, deadl
   if (held.size) {
     await db
       .from("pitches")
-      .update({ autopilot_lane: "review", autopilot_reasons: ["held by a person after the autopilot scheduled it"] })
+      .update({ autopilot_lane: "review", autopilot_reasons: [`${HELD_BY_PERSON} after the autopilot scheduled it`] })
       .in("id", [...held])
       .eq("tenant_id", tenantId);
   }
@@ -733,7 +735,19 @@ async function evaluateStage(db: Db, s: AutonomyState, now: Date): Promise<TickR
     (r) => r.status !== "reviewer_rejected" && editRatio(r.body_original ?? "", r.body_edited ?? r.body_original ?? "") < 0.05,
   );
   const rejected = rows.filter((r) => r.status === "reviewer_rejected").length;
-  const vetoed = rows.filter((r) => autopilotApproved.has(r.id) && ["draft", "reviewer_rejected"].includes(r.status)).length;
+  // Vetoes by approval event, whatever the lane: a held pitch is moved to the
+  // review lane (§5, the digest hold), so `rows` (lane auto) never holds it.
+  const approvedIds = [...autopilotApproved];
+  const current: Array<{ id: string; status: string }> = [];
+  for (let k = 0; k < approvedIds.length; k += 200) {
+    const { data: chunk } = await db
+      .from("pitches")
+      .select("id, status")
+      .eq("tenant_id", tenantId)
+      .in("id", approvedIds.slice(k, k + 200));
+    current.push(...((chunk ?? []) as Array<{ id: string; status: string }>));
+  }
+  const vetoed = countVetoes(autopilotApproved, current);
   const sentAuto = rows.filter((r) => autopilotApproved.has(r.id) && r.sent_at).map((r) => r.id);
   let bounces = 0;
   if (sentAuto.length) {
