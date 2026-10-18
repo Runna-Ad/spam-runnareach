@@ -69,6 +69,7 @@ interface PitchesPageProps {
   counts: { total: number; draft: number; queued: number; approved: number; queuedForSend: number; sent: number };
   canEdit: boolean;
   inboxes: SenderInbox[];
+  hotLeadsUnavailable?: boolean;
 }
 
 // "queued_for_send" is a DERIVED view (status 'approved' + scheduled_send_at set),
@@ -86,7 +87,7 @@ function pitchMeta(p: PitchListRow): { label: string; tone: "neutral" | "info" |
   return STATUS_META[p.status];
 }
 
-export function PitchesPage({ pitches, counts, canEdit, inboxes }: PitchesPageProps) {
+export function PitchesPage({ pitches, counts, canEdit, inboxes, hotLeadsUnavailable = false }: PitchesPageProps) {
   const router = useRouter();
   const [filter, setFilter] = React.useState<FilterValue>("draft");
   const [selectedId, setSelectedId] = React.useState<string | null>(
@@ -111,6 +112,9 @@ export function PitchesPage({ pitches, counts, canEdit, inboxes }: PitchesPagePr
   const [hotOnly, setHotOnly] = React.useState(false);
   React.useEffect(() => setChecked(new Set()), [hotOnly]);
 
+  // A filter left ticked from before the badges went unavailable must not hide every row.
+  const hotFilterOn = hotOnly && !hotLeadsUnavailable;
+
   const visible = React.useMemo(() => {
     const byStatus = (() => {
       if (filter === "ALL") return pitches;
@@ -119,8 +123,8 @@ export function PitchesPage({ pitches, counts, canEdit, inboxes }: PitchesPagePr
       if (filter === "approved") return pitches.filter((p) => p.status === "approved" && !p.scheduled_send_at);
       return pitches.filter((p) => p.status === filter);
     })();
-    return hotOnly ? byStatus.filter((p) => p.hot_lead !== null) : byStatus;
-  }, [pitches, filter, hotOnly]);
+    return hotFilterOn ? byStatus.filter((p) => p.hot_lead !== null) : byStatus;
+  }, [pitches, filter, hotFilterOn]);
 
   const selected = React.useMemo(
     () => pitches.find((p) => p.id === selectedId) ?? null,
@@ -292,16 +296,19 @@ export function PitchesPage({ pitches, counts, canEdit, inboxes }: PitchesPagePr
               Queue {counts.approved} for send
             </Button>
           ) : null}
-          <label className="flex cursor-pointer items-center gap-1.5 text-xs text-[var(--color-fg-300)]">
+          <label
+            className={`flex items-center gap-1.5 text-xs text-[var(--color-fg-300)] ${hotLeadsUnavailable ? "cursor-not-allowed opacity-50" : "cursor-pointer"}`}
+          >
             <input
               type="checkbox"
-              checked={hotOnly}
+              checked={hotFilterOn}
+              disabled={hotLeadsUnavailable}
               onChange={(e) => {
                 setHotOnly(e.target.checked);
                 // Hot leads are sent pitches; the default "Draft" view would hide them all.
                 if (e.target.checked) setFilter("ALL");
               }}
-              className="h-3.5 w-3.5 cursor-pointer accent-[var(--color-accent-300)]"
+              className="h-3.5 w-3.5 cursor-pointer accent-[var(--color-accent-300)] disabled:cursor-not-allowed"
             />
             Hot leads
           </label>
@@ -321,6 +328,14 @@ export function PitchesPage({ pitches, counts, canEdit, inboxes }: PitchesPagePr
           </Select>
         </div>
       </header>
+      {hotLeadsUnavailable ? (
+        <div
+          role="status"
+          className="shrink-0 border-b border-[var(--color-border-subtle)] bg-[var(--color-warning-300)]/10 px-4 py-1.5 text-xs text-[var(--color-warning-300)]"
+        >
+          Hot-lead badges couldn&apos;t be loaded. The list is complete; the &quot;Hot leads&quot; filter is unavailable.
+        </div>
+      ) : null}
 
       <div className="flex flex-1 overflow-hidden">
         {/* List pane */}
