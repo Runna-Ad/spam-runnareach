@@ -11,6 +11,7 @@
  *
  * so a cell that only yields chains and dead websites sinks within days,
  * long before replies could say so, while replies dominate once they exist.
+ * A cell is credited with the prospects its own crawl found (scoutCredits).
  * Cells that keep producing nothing new (exhausted) are skipped.
  *
  * New cells come from active ICPs' keywords × regions; later the ICP learner
@@ -82,6 +83,45 @@ export function cellArm(c: CellStats): Arm {
     if (f.negative) negatives += 1;
   }
   return { key: c.key, status: c.status, reward, trials, negatives };
+}
+
+/** What one scout discovery job left behind (a discovery_jobs row). */
+export type ScoutJob = {
+  /** stats.focus.cell_key */
+  cellKey: string;
+  /** stats.found_ids: what its own crawl inserted. Absent on jobs from before 2026-10-18. */
+  foundIds?: readonly string[] | null;
+  /** The row's prospect_ids, read only when foundIds is absent. */
+  prospectIds?: readonly string[] | null;
+};
+
+/**
+ * The prospects each cell is credited with: what its own crawl found,
+ * whichever job ended up researching them. Pass jobs oldest first.
+ *
+ * A job researches in batches and refills from the oldest raw prospects of
+ * the whole ICP, so it can research another crawl's leftovers, and a later job
+ * can research its own. Credit follows the crawl, not the researcher: the
+ * reward judges the search, and the order the worker happened to work in says
+ * nothing about it. Crediting nobody would throw that evidence away. A find
+ * nobody researched is raw or pruned, which funnelForProspect counts as
+ * pending, so it costs the cell nothing.
+ *
+ * Jobs from before found_ids fall back to prospect_ids (their last batch, or
+ * the pitching phase's list), never claiming a prospect another job's crawl
+ * found. Each prospect is credited once, to the earliest job.
+ */
+export function scoutCredits(jobs: readonly ScoutJob[]): Map<string, string[]> {
+  const owner = new Map<string, string>();
+  const claim = (ids: readonly string[] | null | undefined, cellKey: string) => {
+    for (const id of ids ?? []) if (!owner.has(id)) owner.set(id, cellKey);
+  };
+  for (const j of jobs) claim(j.foundIds, j.cellKey);
+  for (const j of jobs) if (!j.foundIds) claim(j.prospectIds, j.cellKey);
+
+  const out = new Map<string, string[]>(jobs.map((j) => [j.cellKey, []]));
+  for (const [id, cellKey] of owner) out.get(cellKey)?.push(id);
+  return out;
 }
 
 export const EXHAUSTED_AFTER_EMPTY_RUNS = 3;

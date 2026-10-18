@@ -380,17 +380,18 @@ async function maybeStartDiscovery(actor: Actor, db: Db, now: Date): Promise<Tic
     .gte("created_at", new Date(now.getTime() - 14 * DAY).toISOString());
 
   // Recent yield: pitches produced per prospect researched by finished jobs.
+  // Counters only: stats also carries id lists, and this runs every tick.
   const { data: jobs } = await db
     .from("discovery_jobs")
-    .select("stats")
+    .select("pitched:stats->pitched, processed:stats->processed")
     .eq("tenant_id", tenantId)
     .eq("status", "done")
     .gte("created_at", new Date(now.getTime() - 30 * DAY).toISOString());
   let pitched = 0;
   let processed = 0;
-  for (const j of (jobs ?? []) as Array<{ stats: { pitched?: number; processed?: number } | null }>) {
-    pitched += j.stats?.pitched ?? 0;
-    processed += j.stats?.processed ?? 0;
+  for (const j of (jobs ?? []) as Array<{ pitched: number | null; processed: number | null }>) {
+    pitched += j.pitched ?? 0;
+    processed += j.processed ?? 0;
   }
   const pitchYield = processed >= 20 ? pitched / processed : 0.2;
 
@@ -399,15 +400,15 @@ async function maybeStartDiscovery(actor: Actor, db: Db, now: Date): Promise<Tic
 
   const { data: todays } = await db
     .from("discovery_jobs")
-    .select("stats")
+    .select("processed:stats->processed")
     .eq("tenant_id", tenantId)
     .eq("stats->>started_by", "autopilot")
     .gte("created_at", new Date(now.getTime() - DAY).toISOString());
-  const todayRows = (todays ?? []) as Array<{ stats: { processed?: number } | null }>;
+  const todayRows = (todays ?? []) as Array<{ processed: number | null }>;
   const daily = dailyAllowance({
     budget,
     jobsToday: todayRows.length,
-    researchedToday: todayRows.reduce((sum, j) => sum + (j.stats?.processed ?? 0), 0),
+    researchedToday: todayRows.reduce((sum, j) => sum + (j.processed ?? 0), 0),
   });
   if (daily.prospects === 0) return { started: false, reason: daily.reason, budget };
 

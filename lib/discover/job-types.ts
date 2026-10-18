@@ -25,6 +25,12 @@ export type DiscoveryJobStats = {
   // target-seeking discovery loop: cumulative prospects researched this run (drives
   // the per-run safety cap) and the pitched-lead count last observed for the ICP.
   processed?: number;
+  /**
+   * Every prospect this run researched, across refills (`processed` counts
+   * them). prospect_ids can't tell: each refill and the pitching phase
+   * overwrite it with the next list to work through.
+   */
+  processed_ids?: string[];
   pitched_pool?: number;
   // true for a manual "run these specific prospects" job — skip the top-30 prune
   // (the user hand-picked them; don't delete any).
@@ -44,6 +50,14 @@ export type DiscoveryJobStats = {
    * which search all of the ICP's keywords.
    */
   focus?: { keyword: string; region: string | null; cell_key: string };
+  /**
+   * Scout jobs only: the prospects this job's own crawl inserted. Its cell is
+   * credited with these, whichever job researches them, and never with the
+   * other crawls' prospects a refill picks up (lib/learning/scout.ts
+   * scoutCredits). Empty when the crawl's own prospects couldn't be identified
+   * and the job fell back to the ICP's raw pool.
+   */
+  found_ids?: string[];
   /** "autopilot" when the scout started the job. */
   started_by?: string;
   /** Research cap for this run: what's left of the autopilot's daily budget. */

@@ -29,7 +29,7 @@ import { chooseArm, meanReward, reviewArms, type Arm, type ArmAction } from "@/l
 import { armStats, funnelForProspect, sanitizeGuidance, type PitchOutcomeInput } from "@/lib/learning/outcomes";
 import { hunterDemand, industryScore, proposeCells, type IcpForCells, type IndustryEvidence } from "@/lib/learning/icp";
 import type { OutcomeEvent } from "@/lib/learning/reward";
-import { cellArm, cellKey, prospectReward, type ProspectFunnel } from "@/lib/learning/scout";
+import { cellArm, cellKey, prospectReward, scoutCredits } from "@/lib/learning/scout";
 import { normalizeIndustry, type SegmentIndustry } from "@/lib/learning/segments";
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -193,18 +193,29 @@ export async function learnFromOutcomes(db: Db, tenantId: string, now: Date = ne
     await settleLearner(db, tenantId, learner, armStats(inputs, learner, now), 30);
   }
 
-  // Scout cells: autopilot discovery jobs and what their prospects became.
+  // Scout cells: autopilot discovery jobs and what their crawls' prospects
+  // became. Only the stats keys read here: stats also carries processed_ids.
   const { data: jobs } = await db
     .from("discovery_jobs")
-    .select("id, status, stats, prospect_ids, created_at")
+    .select("id, status, prospect_ids, created_at, cell_key:stats->focus->>cell_key, new_count:stats->new, found_ids:stats->found_ids")
     .eq("tenant_id", tenantId)
     .not("stats->focus", "is", null)
     .gte("created_at", since)
     .order("created_at", { ascending: true });
-  const jobRows = (jobs ?? []) as Array<{ id: string; status: string; stats: { focus?: { cell_key: string }; new?: number }; prospect_ids: string[] | null }>;
+  const jobRows = (jobs ?? []) as Array<{
+    id: string;
+    status: string;
+    prospect_ids: string[] | null;
+    cell_key: string | null;
+    new_count: number | null;
+    found_ids: string[] | null;
+  }>;
   if (jobRows.length === 0) return;
 
-  const prospectIds = [...new Set(jobRows.flatMap((j) => j.prospect_ids ?? []))];
+  const credits = scoutCredits(
+    jobRows.flatMap((j) => (j.cell_key ? [{ cellKey: j.cell_key, foundIds: j.found_ids, prospectIds: j.prospect_ids }] : [])),
+  );
+  const prospectIds = [...credits.values()].flat();
   const statusById = new Map<string, string>();
   const pitchesByProspect = new Map<string, Array<{ id: string; gatePass: boolean; sent: boolean }>>();
   for (let i = 0; i < prospectIds.length; i += 200) {
@@ -223,21 +234,18 @@ export async function learnFromOutcomes(db: Db, tenantId: string, now: Date = ne
   const sentIds = [...pitchesByProspect.values()].flat().filter((p) => p.sent).map((p) => p.id);
   const scoutEvents = await eventsFor(db, tenantId, sentIds);
 
-  const funnels = new Map<string, ProspectFunnel[]>();
   const emptyRuns = new Map<string, number>();
   for (const job of jobRows) {
-    const key = job.stats.focus?.cell_key;
+    const key = job.cell_key;
     if (!key) continue;
-    if (job.status === "done") emptyRuns.set(key, (job.stats.new ?? 0) === 0 ? (emptyRuns.get(key) ?? 0) + 1 : 0);
-    const list = funnels.get(key) ?? [];
-    for (const pid of job.prospect_ids ?? []) {
-      const ps = (pitchesByProspect.get(pid) ?? []).map((p) => ({ ...p, events: scoutEvents.get(p.id) ?? [] }));
-      list.push(funnelForProspect(statusById.get(pid) ?? "raw", ps, now));
-    }
-    funnels.set(key, list);
+    if (job.status === "done") emptyRuns.set(key, (job.new_count ?? 0) === 0 ? (emptyRuns.get(key) ?? 0) + 1 : 0);
   }
   const totals = new Map<string, { reward: number; trials: number; negatives: number }>();
-  for (const [key, list] of funnels) {
+  for (const [key, ids] of credits) {
+    const list = ids.map((pid) => {
+      const ps = (pitchesByProspect.get(pid) ?? []).map((p) => ({ ...p, events: scoutEvents.get(p.id) ?? [] }));
+      return funnelForProspect(statusById.get(pid) ?? "raw", ps, now);
+    });
     const a = cellArm({ key, status: "challenger", funnels: list, emptyRuns: 0 });
     totals.set(key, { reward: a.reward, trials: a.trials, negatives: a.negatives ?? 0 });
   }
@@ -275,10 +283,18 @@ export async function evolveSearchSpace(db: Db, tenantId: string, now: Date = ne
   const since = new Date(now.getTime() - 90 * DAY).toISOString();
   const { data: jobs } = await db
     .from("discovery_jobs")
-    .select("prospect_ids")
+    .select("prospect_ids, processed_ids:stats->processed_ids")
     .eq("tenant_id", tenantId)
     .gte("created_at", since);
-  const prospectIds = [...new Set(((jobs ?? []) as Array<{ prospect_ids: string[] | null }>).flatMap((j) => j.prospect_ids ?? []))];
+  // prospect_ids is only a job's last list; processed_ids is everything it researched.
+  const prospectIds = [
+    ...new Set(
+      ((jobs ?? []) as Array<{ prospect_ids: string[] | null; processed_ids: string[] | null }>).flatMap((j) => [
+        ...(j.processed_ids ?? []),
+        ...(j.prospect_ids ?? []),
+      ]),
+    ),
+  ];
 
   const evidence = new Map<SegmentIndustry, IndustryEvidence>();
   const bump = (ind: SegmentIndustry, reward: number | null, scans = 0) => {

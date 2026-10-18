@@ -3,6 +3,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { seededRng } from "../lib/learning/bandit.ts";
+import { funnelForProspect } from "../lib/learning/outcomes.ts";
 import {
   affordableProspects,
   aiBudgetAllowance,
@@ -14,6 +15,7 @@ import {
   discoveryBudget,
   parseCellKey,
   prospectReward,
+  scoutCredits,
   type CellStats,
   type ProspectFunnel,
 } from "../lib/learning/scout.ts";
@@ -56,6 +58,52 @@ test("the scout learns to avoid a cell full of chains, and skips exhausted cells
   }
   assert.ok((picks.dentist ?? 0) > 950);
   assert.equal(picks.lawyer ?? 0, 0);
+});
+
+const ids = (prefix: string, from: number, to: number) => Array.from({ length: to - from + 1 }, (_, i) => `${prefix}${from + i}`);
+
+/** What learnFromOutcomes does with the credits: each prospect's funnel by its status, into the cell's arm. */
+const trialsByCell = (credits: Map<string, string[]>, status: (id: string) => string) =>
+  Object.fromEntries([...credits].map(([key, list]) => [key, cellArm({ key, status: "challenger", emptyRuns: 0, funnels: list.map((id) => funnelForProspect(status(id), [])) }).trials]));
+
+test("a two-batch autopilot job credits its cell for both batches", () => {
+  // As the worker leaves the row: the crawl found 70; batch 1 researched 50, the
+  // refill batch the other 20; then the pitching phase overwrote prospect_ids
+  // with the two high scorers that still needed a pitch.
+  const found = ids("p", 1, 70);
+  const credits = scoutCredits([{ cellKey: "i1|dentist|calgary", foundIds: found, prospectIds: ["p3", "p41"] }]);
+  assert.deepEqual(credits.get("i1|dentist|calgary"), found);
+  assert.deepEqual(trialsByCell(credits, () => "researched"), { "i1|dentist|calgary": 70 });
+});
+
+test("a refill from another crawl is credited to the cell whose crawl found it", () => {
+  // Job A's crawl found a1–a3 but researched only a1–a2; job B's refill took a3
+  // (the ICP's oldest raw prospect) after its own b1–b2.
+  const credits = scoutCredits([
+    { cellKey: "A", foundIds: ["a1", "a2", "a3"], prospectIds: ["a1", "a2"] },
+    { cellKey: "B", foundIds: ["b1", "b2"], prospectIds: ["a3"] },
+  ]);
+  assert.deepEqual(credits.get("A"), ["a1", "a2", "a3"]);
+  assert.deepEqual(credits.get("B"), ["b1", "b2"]);
+  // A find nobody researched (still raw, or pruned) is pending, not a failure.
+  assert.deepEqual(trialsByCell(credits, (id) => (id === "b2" ? "raw" : "researched")), { A: 3, B: 1 });
+});
+
+test("a job whose own finds are unknown credits nothing, never the ICP's raw pool", () => {
+  const credits = scoutCredits([{ cellKey: "A", foundIds: [], prospectIds: ["x1", "x2"] }]);
+  assert.deepEqual(credits.get("A"), []);
+});
+
+test("jobs from before found_ids fall back to prospect_ids, never over another crawl's finds", () => {
+  const credits = scoutCredits([
+    { cellKey: "old1", prospectIds: ["x1", "x2", "n1"] },
+    { cellKey: "old2", foundIds: null, prospectIds: ["x2", "x3"] },
+    { cellKey: "new", foundIds: ["n1", "n2"], prospectIds: ["n2"] },
+  ]);
+  assert.deepEqual(credits.get("old1"), ["x1", "x2"]);
+  // x2 sat in both old lists: once, to the earlier job.
+  assert.deepEqual(credits.get("old2"), ["x3"]);
+  assert.deepEqual(credits.get("new"), ["n1", "n2"]);
 });
 
 test("candidate cells: every keyword in every region, deduplicated", () => {
