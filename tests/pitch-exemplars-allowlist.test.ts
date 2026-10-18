@@ -202,3 +202,146 @@ test(`drop rate: ${N} clean house-style pitches (industry and follow-up template
   console.log(`drop rate: ${dropped}/${N} (${((100 * dropped) / N).toFixed(1)}%); top dropping tokens: ${top.map(([t, c]) => `${t}×${c}`).join(", ") || "none"}`);
   assert.ok(dropped / N <= 0.1, `dropped ${dropped}/${N}: ${top.map(([t, c]) => `${t}×${c}`).join(", ")}`);
 });
+
+// ── Round 5: positions, the names net, the address as a name, letter-like symbols ──
+
+const ARBOL: ExemplarProspect = { company_name: "Arbol Rojo Consultores", domain: "arbolrojo.mx", recipient_name: "Ximena Quiroga", city: "Puebla" };
+const wrap = (line: string) => `Hi there,\n\n${line}\n\nHenry\nRunna Advertising`;
+/** Kept with nothing of `forbidden` left, or dropped: both are safe. */
+function keptWith(subject: string, body: string, p: ExemplarProspect, forbidden: readonly string[]): string | null {
+  const e = toExemplar({ pitch_id: "x", score: 1 }, { subject, body, ...p });
+  if (!e) return null;
+  const text = `${e.subject}\n${e.body}`.normalize("NFKD").replace(/\p{M}/gu, "").toLowerCase();
+  const hit = forbidden.find((f) => text.includes(f.normalize("NFKD").replace(/\p{M}/gu, "").toLowerCase()));
+  return hit ? `${hit} in: ${e.subject} | ${e.body}` : null;
+}
+
+test("S1: a name after an initial, a short title or a colon is mid-sentence, and all capitals are strict", () => {
+  const kept: string[] = [];
+  for (const n of ["M. Peña", "J. Torres", "A. Lee", "R. Flores", "D. Grant", "A.J. Cruz", "M.V.Z. Flores", "Q.F.B. Torres", "Nut. Cruz", "Rev. Grant", "Hon. Lee"]) {
+    const r = keptWith("evening calls", wrap(`We heard from ${n} about the evening calls.`), ARBOL, [n.split(" ").pop()!]);
+    if (r) kept.push(r);
+  }
+  for (const [body, name] of [
+    [wrap("La recepción de C.D. Torres no contesta de noche."), "Torres"],
+    [wrap("Front desk: Grant, every evening."), "Grant"],
+    [wrap("ROSA dijo que nadie contesta."), "rosa"],
+    [wrap("TORRES runs the front desk."), "torres"],
+    [wrap("GRANT HILL answers the phone."), "grant"],
+  ] as const) {
+    const r = keptWith("evening calls", body, ARBOL, [name]);
+    if (r) kept.push(r);
+  }
+  assert.deepEqual(kept, []);
+  // A real sentence start still allows a name that is a common word.
+  assert.ok(toExemplar({ pitch_id: "x", score: 1 }, { subject: "evening calls", body: wrap("Calls go unanswered. Mark the date for the change."), ...ARBOL }));
+});
+
+test("S2: a given name that is no common word drops at a sentence start; a lower-case real word passes", () => {
+  const kept: string[] = [];
+  for (const [body, name] of [
+    ["Hola,\n\nLas llamadas se pierden de noche. Guadalupe dijo lo mismo la semana pasada.\n\nNils", "guadalupe"],
+    [wrap("Amparo contesta el teléfono hasta las seis."), "amparo"],
+    [wrap("Jazmín lleva la agenda de la clínica."), "jazmin"],
+  ] as const) {
+    const r = keptWith("llamadas", body, ARBOL, [name]);
+    if (r) kept.push(r);
+  }
+  assert.deepEqual(kept, []);
+});
+
+test("S2: ordinary words from real pitches pass in lower case", () => {
+  // The conductor's re-measure on 30 prod pitches: ordinary words that dropped them (round 4).
+  const words = ["corresponda", "asesoria", "trabas", "traba", "availability", "spec", "monitoreo", "compiten", "agendaron",
+    "armariamos", "asesorando", "calificarlas", "califica", "resolviste", "confiaron", "desktop", "usable", "multi", "storefront",
+    "outage", "enthusiasts", "rigging", "fabrication", "skus", "mro", "jobsite", "handrail", "woodworking", "bandsaw", "tutorials",
+    "oftalmologia"];
+  const none: ExemplarProspect = { company_name: null, domain: null, recipient_name: null };
+  assert.deepEqual(words.filter((w) => exemplarLeaks(`we saw ${w} on the site`, none).length > 0), []);
+});
+
+test("S2: third-party names, places and acronyms in real pitches still drop", () => {
+  const none: ExemplarProspect = { company_name: "Bluefin Plumbing", domain: "bluefin.ca", recipient_name: "Sean Ng", city: null };
+  for (const line of ["Clients of Zona Benessere book at night.", "Shops like MEC sell online.", "Brands like Fjällräven ship fast.",
+    "Shops in the Bulkley Valley close early.", "The team at IRT answers by phone.", "Most clinics in Monterrey answer by phone."]) {
+    assert.equal(toExemplar({ pitch_id: "x", score: 1 }, { subject: "evening calls", body: wrap(line), ...none }), null, line);
+  }
+});
+
+test("S3: O'Brien and friends are one word, anywhere", () => {
+  for (const n of ["O’Brien", "O'Brien", "O’Connor", "O’Neill", "O’Reilly", "O’Hara", "O’Grady", "O’Dell"]) {
+    for (const [subject, body] of [[`a note for ${n}`, wrap("Calls go unanswered.")], ["evening calls", wrap(`We spoke with ${n} today.`)], ["evening calls", wrap(`${n} runs the desk.`)]] as const) {
+      assert.equal(toExemplar({ pitch_id: "x", score: 1 }, { subject, body, ...ARBOL }), null, `${n}: ${subject} | ${body}`);
+    }
+  }
+});
+
+test("S4: with no contact name, the address's given name is a field: scrubbed, or the exemplar drops", () => {
+  const p: ExemplarProspect = { company_name: "Clínica Dental Sonrisa", domain: "sonrisadental.mx", recipient_name: null, recipient_email: "monica@sonrisadental.mx", city: "Puebla" };
+  const subject = "lo que le cuestan a Clínica Dental Sonrisa las respuestas lentas";
+  for (const last of ["", " Escobar"]) {
+    const body = `Hola Monica,\n\nSoy Nils, de Runna Advertising. Revisé tu sitio: no hay forma de agendar fuera de horario.\n\nSi quieres, Monica${last}, lo vemos en una llamada corta.\n\nNils\nRunna Advertising`;
+    assert.equal(keptWith(subject, body, p, ["monica", "escobar", "sonrisa"]), null, last);
+  }
+  assert.equal(scrubExemplar("Si quieres, Monica, lo vemos.", p), "Si quieres, [name], lo vemos.");
+  // A role inbox is not a name.
+  assert.equal(scrubExemplar("Las citas se agendan por correo.", { ...p, recipient_email: "citas@sonrisadental.mx" }), "Las citas se agendan por correo.");
+});
+
+test("S5: letters drawn as symbols and visible in-word separators drop the exemplar", () => {
+  const kept: string[] = [];
+  const smile: ExemplarProspect = { company_name: "🅢🅜🅘🅛🅔 Dental", domain: "smiledental.ca", recipient_name: "Sean Ng", city: "Calgary" };
+  if (toExemplar({ pitch_id: "x", score: 1 }, { subject: "evening calls", body: wrap("The team at 🅢🅜🅘🅛🅔 Dental answers by phone."), ...smile })) kept.push("🅢🅜🅘🅛🅔");
+  for (const s of ["🅟🅐🅣🅔🅛", "🅿🅰🆃🅴🅻", "\u{1f1f5}\u{1f1e6}\u{1f1f9}\u{1f1ea}\u{1f1f1}", "⒫⒜⒯⒠⒧", "Wil·son", "Wiŀson", "Pa‧tel", "Pa᠆tel", "Pa⠀tel"]) {
+    if (toExemplar({ pitch_id: "x", score: 1 }, { subject: "evening calls", body: wrap(`We spoke with ${s} today.`), ...ARBOL })) kept.push(s);
+  }
+  assert.deepEqual(kept, []);
+});
+
+test("reviewer probes: common names capitalized mid-sentence drop", () => {
+  const names = ["Pedro", "Mónica", "Claudia", "Carmen", "Héctor", "Arturo", "Liam", "Emma", "Olivia", "Peter", "Chris", "Graham",
+    "Kennedy", "Gordon", "Cameron", "Ferguson", "Sinclair", "Morrison", "Henderson", "Wallace", "Chan", "Huang", "Leung", "Cheung",
+    "Lau", "Yip", "Sharma", "Gupta", "Kumar", "Méndez", "Bautista", "Cortés", "Ávila", "Carrillo", "Acosta", "Escobar", "Salinas"];
+  const kept = names.filter((n) => toExemplar({ pitch_id: "x", score: 1 }, { subject: "evening calls", body: wrap(`We spoke with ${n} about the evening calls.`), ...ARBOL }));
+  assert.deepEqual(kept, []);
+});
+
+/**
+ * Held out: written for this test from general knowledge of names common in
+ * Canada and Mexico, NOT taken from the SSA or Census lists that build the
+ * names net (lib/pitches/wordlists/names.ts), and not the reviewer's list.
+ */
+const HELD_OUT = [
+  // Mexican given names.
+  "Alejandro", "Fernanda", "Rodrigo", "Itzel", "Valentina", "Santiago", "Regina", "Emiliano", "Renata", "Diego", "Mariana", "Joaquín",
+  "Paola", "Leonardo", "Andrea", "Iker", "Camila", "Mateo", "Montserrat", "Sebastián", "Daniela", "Gerardo", "Yolanda", "Rubén",
+  "Araceli", "Ignacio", "Verónica", "Eduardo", "Leticia", "Ricardo", "Beatriz", "Fidel", "Graciela", "Octavio", "Rocío", "Xóchitl",
+  // Mexican surnames.
+  "Hernández", "Martínez", "Ramírez", "Vázquez", "Morales", "Jiménez", "Ruiz", "Domínguez", "Gutiérrez", "Ortega", "Delgado", "Castañeda",
+  "Mejía", "Ríos", "Sandoval", "Guerrero", "Cervantes", "Ibarra", "Zamora", "Cárdenas", "Velázquez", "Maldonado", "Fuentes", "Pacheco",
+  "Ochoa", "Navarro", "Espinoza", "Valdez", "Contreras", "Lozano", "Barrera", "Arellano", "Zúñiga", "Trujillo", "Galindo", "Saldaña",
+  // English-Canadian given names and surnames.
+  "Brandon", "Courtney", "Dylan", "Hailey", "Logan", "Madison", "Owen", "Paige", "Tyler", "Brianna", "Connor", "Kayla",
+  "MacLeod", "MacKinnon", "McLean", "Campbell", "Stewart", "Robertson", "Thomson", "Fraser", "Gillespie", "Murray", "Douglas", "Bennett",
+  "Sutherland", "Matheson", "Chisholm", "Patterson", "Forsyth", "Dunlop", "Lindsay", "Buchanan", "McAllister", "Kerr", "Duncan", "Hamilton",
+  // French-Canadian.
+  "Gagnon", "Bouchard", "Gauthier", "Lavoie", "Fortin", "Gagné", "Ouellet", "Pelletier", "Bélanger", "Lévesque", "Bergeron", "Leblanc",
+  "Girard", "Simard", "Boucher", "Caron", "Beaulieu", "Cloutier", "Poirier", "Fournier", "Lapointe", "Leclerc", "Lefebvre", "Mercier",
+  "Thibault", "Dufour", "Lachance", "Desrosiers", "Paquette", "Charbonneau", "Mélanie", "Geneviève", "Sébastien", "Mathieu", "Étienne", "Josée",
+  // Chinese-Canadian.
+  "Wong", "Chen", "Li", "Zhang", "Liu", "Wang", "Yang", "Zhao", "Wu", "Zhou", "Xu", "Sun",
+  "Ma", "Zhu", "Hu", "Guo", "He", "Lin", "Luo", "Liang", "Song", "Tang", "Feng", "Deng",
+  "Cheng", "Tsang", "Kwan", "Fong", "Ho", "Tam", "Yuen", "Mok", "Siu", "Chu", "Lo", "Kwok",
+  // South Asian Canadian.
+  "Singh", "Kaur", "Gill", "Sandhu", "Dhillon", "Grewal", "Sidhu", "Brar", "Sekhon", "Bains", "Mann", "Johal",
+  "Patel", "Shah", "Desai", "Mehta", "Joshi", "Rao", "Reddy", "Iyer", "Nair", "Pillai", "Menon", "Krishnan",
+  "Banerjee", "Chatterjee", "Mukherjee", "Bose", "Das", "Ghosh", "Khan", "Ahmed", "Hussain", "Malik", "Qureshi", "Siddiqui",
+  "Anjali", "Deepak", "Harpreet", "Gurpreet", "Manpreet", "Navdeep", "Rajesh", "Sunita", "Vikram", "Arjun", "Divya", "Pooja",
+];
+
+test(`held-out names: ${HELD_OUT.length} names capitalized mid-sentence are dropped or scrubbed (≥ 98%)`, () => {
+  const misses = HELD_OUT.filter((n) => keptWith("evening calls", wrap(`We spoke with ${n} about the evening calls.`), ARBOL, [n]));
+  console.log(`held-out names: ${HELD_OUT.length - misses.length}/${HELD_OUT.length} caught; misses: ${misses.join(", ") || "none"}`);
+  assert.ok(HELD_OUT.length >= 200);
+  assert.ok(misses.length / HELD_OUT.length <= 0.02, `misses: ${misses.join(", ")}`);
+});

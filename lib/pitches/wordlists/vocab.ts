@@ -9,10 +9,12 @@
  * and prompts in lib/pitches/ for words the frequency lists lack (2026-10-18),
  * and the publishers of the sourced benchmarks (migration 0037) without the
  * authors' surnames (Kim, Li, Zhang are prospects' surnames too).
+ * Names made only of words on these lists ("Blue Sky Dental") are no leak here:
+ * only the exemplar's own field checks protect them.
  */
 export const OWN_VOCABULARY: readonly string[] = [
-  // Us and our senders.
-  "runna", "nils",
+  // Us and our senders (the default sender names, lib/pitches/sender-identity.ts).
+  "runna", "nils", "henry",
   // Cold-email and marketing words.
   "cta", "ctas", "url", "urls", "seo", "sem", "ppc", "cpc", "cpa", "roi", "roas", "ltv", "crm", "cms", "ux", "ui", "kpi",
   "kpis", "ota", "otas", "dtc", "ecommerce", "signup", "signups", "checkout", "inbox", "workflow", "workflows", "triage",
@@ -21,7 +23,14 @@ export const OWN_VOCABULARY: readonly string[] = [
   "online", "offline", "app", "apps", "website", "websites", "webpage", "landing", "homepage", "pagespeed", "mobile",
   "followup", "unbooked", "recaptured", "abandonment", "redesign", "redesigning", "optimize", "optimization",
   "segmentation", "attribution", "recapture", "handoff", "inconsistent", "shoppers", "enquiry", "enquiries", "upsell",
-  "rebooking", "walkins", "voicemail", "voicemails", "intake", "noshow", "noshows", "unanswered", "nurture", "chatbot",
+  "rebooking", "walkins", "voicemail", "voicemails", "intake", "noshow", "noshows", "unanswered", "nurture", "ok",
+  // Trade words of the industries we pitch (manufacturing, construction, retail, health) the 50k lists lack.
+  "sku", "skus", "mro", "jobsite", "jobsites", "handrail", "handrails", "woodworking", "woodworker", "bandsaw",
+  "tutorial", "tutorials", "oftalmologia", "oftalmologo", "oftalmologica", "storefront", "storefronts", "rfq",
+  "rfqs", "cnc", "hvac", "millwork", "drywall", "sitework", "estimator", "estimators", "subcontractor",
+  "subcontractors", "telehealth", "telemedicina", "odontologia", "ortodoncia", "dermatologia", "pediatria",
+  "planograma", "omnicanal", "mayorista", "mayoristas", "refaccionaria", "refacciones", "asesor", "asesora",
+  "asesores", "asesorar",
   // Spanish trade words.
   "agendar", "agende", "agendan", "agenda", "automatizar", "automatizacion", "optimizar", "optimizacion", "prospectos",
   "consultoria", "notaria", "taqueria", "hosteria", "hospedaje", "vacacional", "automotriz", "empaque", "nutricion",
@@ -30,10 +39,12 @@ export const OWN_VOCABULARY: readonly string[] = [
   "agendados", "cotizacion", "cotizaciones", "cotizar", "whatsapps",
   // Tools, platforms and the publishers our benchmarks cite.
   "google", "gmail", "whatsapp", "instagram", "facebook", "linkedin", "tiktok", "youtube", "shopify", "woocommerce",
-  "tiendanube", "wordpress", "wix", "squarespace", "hubspot", "baymard", "statista", "wordstream", "brightlocal",
+  "tiendanube", "wordpress", "wix", "squarespace", "hubspot", "baymard", "statista", "wordstream",
   "semrush", "ahrefs", "moz", "lighthouse", "gtmetrix", "yelp", "tripadvisor", "booking", "airbnb", "opentable",
   "calendly", "stripe", "paypal", "mercadolibre", "mercadopago", "expedia", "rappi", "ubereats", "didi",
-  // Publishers in 0037 (and the hotel benchmark source HVS).
+  // Publishers in 0037 (and the hotel benchmark source HVS), plus words of their names. Some are surnames
+  // (bain, gartner, mckinsey, deloitte, wharton, stanford): those pass even capitalized mid-sentence.
+  "center", "centre", "institute", "review", "digital", "research",
   "bmj", "bain", "brightlocal", "clio", "cloudbeds", "cochrane", "deloitte", "drift", "experian", "forrester", "gartner",
   "harvard", "hbr", "ipsos", "klaviyo", "litmus", "mckinsey", "datamatics", "nber", "nucleus", "omnisend",
   "phocuswright", "phocuswire", "portent", "salesforce", "smartsheet", "spiegel", "northwestern", "sprout", "stanford",
@@ -43,19 +54,27 @@ export const OWN_VOCABULARY: readonly string[] = [
 ];
 
 /**
- * Names that are also everyday words ("vale la pena", "agua de rosa", "miss the
- * mark", "a grant"). Not in the strict tier, so a capitalized one mid-sentence
- * or in a subject drops the exemplar ("we spoke with Rosa"); allowed in the
- * generous tier (lower case, or opening a sentence). Only words used mostly as
- * names: subjects are all strict, so "page", "price" or "will" stay out, and
- * months too ("in May" is a date). The current prospect's own name is caught by the
- * field check whatever its case.
+ * Words written with a capital in the middle of a sentence that are no
+ * prospect's detail, though some are on the names list (Christmas, English,
+ * April and Monday are surnames or given names too): months, days, languages,
+ * nationalities, holidays, countries and directions. They pass capitalized anywhere.
  */
-export const WORD_NAMES: readonly string[] = [
-  "pena", "rosa", "dolores", "amparo", "consuelo", "rocio", "pilar", "mercedes", "guadalupe", "soledad", "rosario",
-  "esperanza", "blanca", "clara", "dulce", "luz", "paz", "cruz", "flores", "torres", "leal", "mark", "grant", "frank",
-  "grace", "dean", "bill", "rose", "victoria", "lee", "earnest", "ernest", "holly", "daisy", "ruby", "ivy", "iris",
-  "jasmine", "violeta", "jazmin",
+export const CAPITALIZED_WORDS: readonly string[] = [
+  "january", "february", "march", "april", "may", "june", "july", "august", "september", "october", "november",
+  "december", "monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday",
+  "enero", "febrero", "marzo", "abril", "mayo", "junio", "julio", "agosto", "septiembre", "octubre", "noviembre",
+  "diciembre", "lunes", "martes", "miercoles", "jueves", "viernes", "sabado", "domingo",
+  "english", "spanish", "french", "canadian", "canadians", "mexican", "mexicans", "american", "americans", "latin",
+  "christmas", "easter", "thanksgiving", "navidad",
+  // Countries, regions and directions ("businesses in Canada", "North America").
+  "canada", "mexico", "america", "usa", "north", "south", "east", "west", "norte", "sur", "oriente", "poniente",
+  // Provinces and states: a region, never one business. Not the ones that are surnames too (Guerrero,
+  // Hidalgo, Morelos, León, Prince Edward): those stay names.
+  "ontario", "quebec", "british", "columbia", "alberta", "manitoba", "saskatchewan", "nova", "scotia", "brunswick",
+  "newfoundland", "labrador", "island", "yukon", "nunavut", "territories", "jalisco", "nuevo",
+  "yucatan", "quintana", "roo", "baja", "california", "sonora", "chihuahua", "coahuila", "tamaulipas",
+  "veracruz", "oaxaca", "chiapas", "michoacan", "guanajuato", "queretaro", "puebla",
+  "tlaxcala", "sinaloa", "durango", "zacatecas", "nayarit", "colima", "tabasco", "campeche", "aguascalientes",
 ];
 
 /**

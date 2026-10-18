@@ -31,3 +31,13 @@ TAGS: pitches, exemplars, allow-list, unicode
 WHAT HAPPENED: One flat allow-list either let names through (if names that are words were allowed) or dropped 30% of clean pitches ("vale la pena", publishers, "platicar"). Two tiers fixed both: strict (no word-names) for the subject, mid-sentence capitals and handle/URL chunks; generous (word-names allowed) for lower case and sentence openers. Drop rate 30.4% → 0.8% on 240 generated house pitches, adversarial set 25 kept → 0. Extending to the 50k frequency lists was measured and rejected: it adds surnames like velasco, nguyen, tremblay, banerjee for no needed gain.
 RULE: When a word list must both block names and pass prose, decide by position and case (where a name would stand), not by one bigger list; measure each list extension for the names it brings in, not only the drops it removes.
 TAGS: pitches, exemplars, allow-list, drop-rate
+
+[2026-10-18] A drop-rate generator built from your own vocabulary measures your vocabulary, not the drop rate
+WHAT HAPPENED: Round 4 of exemplar-scrubber-gaps reported 0.8% dropped on 240 generated pitches; the conductor's run on 30 real prod pitches dropped 24 (80%), mostly on ordinary words (availability, fabrication, agendaron) outside the 20k lists. The generator's text came from the same templates and prompt examples whose words had just been added to OWN_VOCABULARY.
+RULE: Measure a fail-closed filter's drop rate on held-out real data (or text from a source the lists were not grown from) before reporting it; a generator is a regression guard, not a measurement. Do the same for the leak side: a held-out names test from a source the names net was not built from (round 5: 142/228 caught → 226/228).
+TAGS: pitches, exemplars, allow-list, measurement
+
+[2026-10-18] Names data is full of words: classify each name by a dictionary, and decide by position and strength
+WHAT HAPPENED: SSA and Census name lists contain Price, Will, Canada, La, More, Re, Legend, Brand. Using them raw as a deny list broke subjects ("Re:") and prose. What held: a name is "also a word" when a Hunspell dictionary has it in lower case (directly or by inflection); such a name is refused only capitalized mid-sentence, and only when it is strong (a given name or a top-10,000 surname) and not among the 300 most frequent words; long-tail given names that are frequent words count only capitalized.
+RULE: When a deny list comes from real-world data, split it by a second independent source (a dictionary) and by position before using it; never deny a common word everywhere because someone is named after it.
+TAGS: pitches, exemplars, names, allow-list
