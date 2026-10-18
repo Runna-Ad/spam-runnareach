@@ -32,7 +32,9 @@ Invariants (state them in the file's header comment and test each):
 - D1 Due: a `source = 'calendar'` opportunity is due a booking alert while
   `booked_alert_sent_at` is null and it was created in the last 48h; due a cancellation
   alert while it is `stage = 'lost'`, `loss_reason = CANCELLED_LOSS_REASON`,
-  `cancelled_alert_sent_at` is null, updated in the last 48h. Manual opportunities never.
+  `cancelled_alert_sent_at` is null, `cancelled_at` in the last 48h (added to 0047 at
+  review: `markCancelled` sets it; never key a window on `updated_at`, the 0001 trigger
+  bumps it on every claim/release). Manual opportunities never.
 - D2 Claim before send: set the marker only where it is still null and send only the rows
   this run won (atomic UPDATE … RETURNING id). A send that reached nobody (`sent === 0`)
   releases the claim (marker back to null); partial delivery keeps it (no duplicate to
