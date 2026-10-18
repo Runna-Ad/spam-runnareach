@@ -454,3 +454,81 @@ test("decision record: exemplars_used is filled for an AI pitch and empty otherw
   assert.deepEqual(decisionExemplarFields("template", ex), { exemplars_used: [], exemplar_prompt_version: null });
   assert.deepEqual(decisionExemplarFields("website_claude", []), { exemplars_used: [], exemplar_prompt_version: null });
 });
+
+// ── Scrubber gaps closed in exemplar-v2: short tokens, lower-case honorifics, city short forms ──
+
+test("gap: three-letter company and domain words are scrubbed and leak-checked", () => {
+  const abc = { company_name: "ABC Plumbing Ltd.", domain: "abcplumbing.ca", recipient_name: null };
+  assert.equal(scrubExemplar("who answers at abc after hours", abc), "who answers at [company] after hours");
+  assert.deepEqual(exemplarLeaks("who answers at abc after hours", abc), ["abc"]);
+  const bmo = { company_name: "BMO", domain: null, recipient_name: null };
+  assert.equal(scrubExemplar("The BMO branch line rings out.", bmo), "The [company] branch line rings out.");
+  const kpi = { company_name: null, domain: "kpi-law.ca", recipient_name: null };
+  assert.equal(scrubExemplar("kpi takes intake by phone", kpi), "[company] takes intake by phone");
+  assert.deepEqual(exemplarLeaks("kpi takes intake by phone", kpi), ["kpi"]);
+  // Generic short words are neither scrubbed alone nor counted.
+  assert.deepEqual(exemplarLeaks("plumbing and law offices", abc), []);
+});
+
+test("gap: two- and three-letter surnames are scrubbed and leak-checked", () => {
+  for (const [name, short] of [["Priya Ng", "ng"], ["Sean Wu", "wu"], ["Raúl Li", "li"], ["Ana Lee", "lee"]] as const) {
+    const p = { company_name: null, domain: null, recipient_name: name };
+    assert.deepEqual(exemplarLeaks(`thanks, ${short}`, p), [short], name);
+    assert.deepEqual(exemplarLeaks(`thanks, ${short.toUpperCase()}`, p), [short], name);
+    const e = toExemplar({ pitch_id: "x", score: 1 }, { subject: `${short}'s desk after hours`, body: `Hi there,\n\nMs. ${short} picks up.`, ...p });
+    assert.ok(e, name);
+    assert.deepEqual(present(`${e.subject}\n${e.body}`, [short]), [], `${name}: ${e.subject} ${e.body}`);
+  }
+  // A two-letter surname that is also a word stays capital-only, like "Will".
+  const to = { company_name: null, domain: null, recipient_name: "Minh To" };
+  assert.equal(scrubExemplar("Mr. To wants to talk", to), "Mr. [name] wants to talk");
+  assert.deepEqual(exemplarLeaks("a way to book", to), []);
+});
+
+test("gap: a lower-case name after a dotted honorific goes, whoever the contact row names", () => {
+  const other = { company_name: null, domain: null, recipient_name: "John Sipos" };
+  assert.equal(scrubExemplar("dr. patel after hours", other), "dr. [name] after hours");
+  assert.equal(scrubExemplar("¿lic. núñez contesta de noche?", other), "¿lic. [name] contesta de noche?");
+  assert.equal(scrubExemplar("Ask Dr. patel's desk or prof. dr. gómez.", other), "Ask Dr. [name]'s desk or prof. dr. [name].");
+  assert.equal(scrubExemplar("SRA. HERNÁNDEZ books them; ing.ruiz too.", other), "SRA. [name] books them; ing. [name] too.");
+  // The words "marketing." or "dr" without a dot are not honorifics.
+  assert.equal(scrubExemplar("Better marketing. Patients call.", other), "Better marketing. Patients call.");
+  assert.deepEqual(exemplarLeaks("dr. patel after hours", other), ["dr. patel"]);
+  assert.equal(toExemplar({ pitch_id: "x", score: 1 }, { subject: "dr. patel after hours", body: "Hi there,\n\nBody.", ...other })?.subject, "dr. [name] after hours");
+});
+
+test("gap: a city's short forms and nicknames are scrubbed and leak-checked", () => {
+  const city = (c: string) => ({ company_name: null, domain: null, recipient_name: null, city: c });
+  assert.equal(scrubExemplar("clínicas en cdmx, en el D.F. y en la CDMX y el df", city("Ciudad de México")), "clínicas en [city], en el [city]. y en la [city] y el [city]");
+  assert.deepEqual(exemplarLeaks("clínicas en cdmx", city("Ciudad de México")), ["cdmx"]);
+  assert.deepEqual(exemplarLeaks("clínicas en la ciudad de méxico", city("Ciudad de México")), ["ciudad de mexico"]);
+  assert.equal(scrubExemplar("dentists in the gta and TO, open to all", city("Toronto")), "dentists in the [city] and [city], open to all");
+  assert.deepEqual(exemplarLeaks("open to all in TO", city("Toronto")), ["TO"]);
+  assert.deepEqual(exemplarLeaks("To book, reply to this", city("Toronto")), []);
+  for (const [c, alias] of [["Guadalajara", "gdl"], ["Monterrey", "MTY"], ["Querétaro", "qro"], ["Vancouver", "YVR"], ["Calgary", "yyc"], ["Edmonton", "YEG"], ["Ottawa", "yow"], ["Montréal", "mtl"], ["Montreal", "YUL"]] as const) {
+    assert.equal(scrubExemplar(`firms in ${alias} after hours`, city(c)), "firms in [city] after hours", c);
+    assert.deepEqual(exemplarLeaks(`firms in ${alias}`, city(c)), [alias.toLowerCase()], c);
+  }
+  // Whichever name the row carries, the others are aliases.
+  assert.equal(scrubExemplar("clinics in mexico city and cdmx", city("CDMX")), "clinics in [city] and [city]");
+});
+
+test("gap: placeholders are never matched by a field word (surname Hunter, company word url)", () => {
+  const p = { company_name: "URL Media", domain: null, recipient_name: "Kate Hunter" };
+  const out = scrubExemplar("Hi Kate,\n\nHunter, URL Media answers by phone.\n\n👉 Run it: https://runna-hunter.vercel.app/?r=x", p);
+  assert.equal(out, "Hi [name],\n\n[name], [company] answers by phone.\n\n👉 Run it: {hunter_url}");
+  assert.deepEqual(exemplarLeaks(out, p), []);
+});
+
+test("negative set: an all-generic past prospect keeps an exemplar of ordinary text", () => {
+  const p = { company_name: "The Art Spa", domain: null, recipient_name: "Will Smith", city: "Toronto" };
+  const subject = "who books spas after hours";
+  const body =
+    "Hi there,\n\nSpas and art studios lose calls at night, and people will go to the next name on the list. It takes a minute to see what a visitor sees.\n\nHenry\nRunna Advertising";
+  const e = toExemplar({ pitch_id: "x", score: 1 }, { subject, body, ...p });
+  assert.deepEqual(e, { pitch_id: "x", score: 1, subject, body });
+});
+
+test("exemplar prompt version is v2", () => {
+  assert.equal(EXEMPLAR_PROMPT_VERSION, "exemplar-v2-2026-10-18");
+});
