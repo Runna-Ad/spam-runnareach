@@ -80,9 +80,12 @@ SHIPPED on Pedro's "ship it": migrations 0040 + 0041 applied, main = `4b22ad1`+,
 First batch run through the conductor/worker workflow (`.claude/skills/conductor/SKILL.md`,
 retro in `tasks/retros/2026-10-17-phase3-batch1.md`). 593 tests, build green, 6 PRs reviewed
 and merged into the integration branch in 58 minutes. Migration **0043** applied via the Supabase
-connector right before the merge (recorded as version 20261017174016; Pedro's SQL-editor run had
-not landed: the column check returned 0 rows). Prod deploy of `a15d1d8` READY, then **0044 applied**
-via the connector (hourly `spam-calendar-sync` job at :05). Google reconnected 2026-10-18
+connector right before the merge (Pedro's SQL-editor run had not landed: the column check returned
+0 rows). Prod deploy of `a15d1d8` READY, then **0044 applied** via the connector (hourly
+`spam-calendar-sync` job at :05). The connector had recorded both under timestamp versions
+(20261017174016 / 20261017174536), which made another session believe they were missing; on
+2026-10-18 both rows were normalised to `0043` / `0044` in `supabase_migrations.schema_migrations`.
+**Check applied migrations by name, not version** (steward skill, ship checklist). Google reconnected 2026-10-18
 (04:05 UTC run: `needsReconnect: false`, inbox pedro@runnareach.com); that run then got
 `403 Calendar API not enabled in GCP project 892318428312`. Pedro enabled it and the 04:35 UTC
 run returned clean counts (events 0, created 0, cancelled 0, unmatched 0, errors []). **Calendar

@@ -19,8 +19,8 @@ for the current phase; move older ones to the retro.
 ## Reserved migration numbers
 | Number | Reserved for | Status (reserved → used → applied) |
 |---|---|---|
-| 0043 | conductor wave 0: opportunities.source/calendar_event_id, pitch_event_type +meeting_booked/won/lost, prospect_contacts.source_url | APPLIED 2026-10-17 17:40 UTC via connector (version 20261017174016) |
-| 0044 | opportunities-calendar-sync (cron schedule) | APPLIED 2026-10-17 after the prod deploy (job spam-calendar-sync, 5 * * * *) |
+| 0043 | conductor wave 0: opportunities.source/calendar_event_id, pitch_event_type +meeting_booked/won/lost, prospect_contacts.source_url | APPLIED 2026-10-17 17:40 UTC via connector; row normalised to version `0043` on 2026-10-18 |
+| 0044 | opportunities-calendar-sync (cron schedule) | APPLIED 2026-10-17 after the prod deploy (job spam-calendar-sync, 5 * * * *); row normalised to version `0044` on 2026-10-18 |
 | 0045 | pitch-exemplar-memory (wave 2, if a table is needed) | reserved |
 | 0046 | — | free |
 
@@ -87,3 +87,4 @@ These four columns feed the retro and the routing table.
 - 2026-10-17 17:45 UTC — Prod deploy of a15d1d8 READY on Vercel. 0044 applied via connector; cron job spam-calendar-sync scheduled. Only Pedro's Google reconnect remains (optional: CALENDAR_BOOKING_INBOX).
 - 2026-10-18 04:09 UTC — Pedro reconnected Google. 04:05 UTC sync: needsReconnect false (inbox pedro@runnareach.com) but 403: Google Calendar API not enabled in GCP project 892318428312. One console toggle by Pedro; no code change. Earlier hourly runs (18:05 → 03:05) all needsReconnect true as expected.
 - 2026-10-18 04:36 UTC — Pedro enabled the Calendar API in GCP 892318428312. Manual sync run 04:35 UTC (via spam_cron_call): needsReconnect false, counts events 0 / created 0 / cancelled 0 / unmatched 0 / errors []. Calendar sync LIVE. Phase 3 batch 1 fully closed; question #1 on the Pedro table answered (reconnect + API enable).
+- 2026-10-18 05:17 UTC — Other session (Phase 2 conductor, great-planck) could not find 0043/0044: connector had recorded them under timestamp versions. Normalised both rows to 0043/0044 (verified). Steward skill gained a post-ship checklist (verify every manual step by query; check migrations by name; normalise connector versions; enable the API behind any new Google scope; first cron run read from net._http_response).

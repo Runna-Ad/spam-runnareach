@@ -40,3 +40,25 @@ branch. A failure here blocks further merges until fixed.
 - Retro written (`tasks/retros/`), routing and core-context updated from it.
 - Then: one message to Pedro with the PR link, migrations to apply, and the questions
   table from the board. Wait for "ship it". Do not merge.
+
+## After "ship it": the ship checklist (conductor runs it, Pedro only does what needs him)
+Every manual step is verified with a query before the next step; a report of "done" is a
+claim, not a state (0043 was reported applied and was not; the Calendar API was
+reported enabled before it was).
+1. Migrations marked "before deploy": confirm applied, then merge the PR.
+   Check by NAME, never by version: `select version, name from
+   supabase_migrations.schema_migrations order by version desc limit 5`. Pedro's
+   SQL-editor runs record version `NNNN`; the connector records a timestamp. After a
+   connector apply, normalise the row to the repo convention so every session sees the
+   same table: `update supabase_migrations.schema_migrations set version='NNNN',
+   name='<file name without number>' where version='<timestamp>'`.
+2. Deploy READY on Vercel (check the deployment, not the PR merge).
+3. Migrations marked "after deploy": apply, verify, normalise as above.
+4. External prerequisites from the briefs (OAuth scopes, APIs enabled in the Google
+   Cloud project, env vars): ask Pedro for each one, then run the brief's prod
+   verification query. A new Google scope also needs its API enabled in the OAuth
+   client's GCP project; the scope grant alone returns 403.
+5. First prod run of every new cron: read `net._http_response` for its path and record
+   the counts on the board. The batch is closed only when that row shows no error.
+6. Write the ship steps and their verified state into `tasks/project-state.md` so any
+   other session that fetches `main` reads the same facts the conductor has.
