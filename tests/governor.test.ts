@@ -7,6 +7,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   evaluateBreakers,
+  heldAction,
   laneFor,
   nextStage,
   type BreakerMetrics,
@@ -119,4 +120,40 @@ test("stages: trouble from automatic sends demotes a stage at once", () => {
 
 test("stages: off stays off (turning the autopilot on is a person's call)", () => {
   assert.equal(nextStage("off", { ...m0, daysInStage: 99, autoDecided: 999, autoApprovedUnedited: 999 }).stage, "off");
+});
+
+// ── Held drafts: nothing waits on a person ────────────────────────────────────
+
+const FIXABLE = new Set(["banned_jargon", "unsourced_metric", "em_dash"]);
+const held = (reasons: string[], over: Partial<{ lane: "review" | "drop"; isRewrite: boolean; editedByPerson: boolean }> = {}) =>
+  heldAction({ lane: "review", reasons, isRewrite: false, editedByPerson: false, ...over }, FIXABLE);
+
+test("held draft: what a rewrite can fix gets one rewrite", () => {
+  assert.deepEqual(held(["AI review flagged issues"]), { action: "rewrite" });
+  assert.deepEqual(held(["written by a template (templates never go automatically)"]), { action: "rewrite" });
+  assert.deepEqual(held(["gate: banned_jargon", "AI review did not run", "address not verified yet"]), { action: "rewrite" });
+});
+
+test("held draft: a rewrite that is held again is dropped, not rewritten forever", () => {
+  const r = held(["AI review flagged issues"], { isRewrite: true });
+  assert.equal(r.action, "drop");
+  assert.match(r.action === "drop" ? r.why : "", /still held after one rewrite/);
+});
+
+test("held draft: an unsure or untrusted address, a data gate or probation is dropped without a rewrite", () => {
+  for (const reasons of [
+    ["AI review flagged issues", "verifier unsure about the address"],
+    ['address source "guess" not trusted'],
+    ["gate: domain_ownership_unsure"],
+    ["segment on probation after opt-outs"],
+  ]) {
+    const r = held(reasons);
+    assert.equal(r.action, "drop", reasons.join("; "));
+  }
+});
+
+test("held draft: DROP is closed at once; a person's edit or hold is left alone", () => {
+  assert.equal(held(["verifier says the address will not deliver"], { lane: "drop" }).action, "drop");
+  assert.equal(held(["AI review flagged issues"], { editedByPerson: true }).action, "leave");
+  assert.equal(held(["held by a person after the autopilot scheduled it"]).action, "leave");
 });

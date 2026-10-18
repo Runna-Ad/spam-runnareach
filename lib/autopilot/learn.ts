@@ -404,7 +404,7 @@ export async function weeklyReview(db: Db, tenantId: string, now: Date = new Dat
 
   const [{ data: replies }, { data: held }, { data: edited }, { data: drafts }, { data: arms }] = await Promise.all([
     db.from("replies").select("intent, body_text").eq("tenant_id", tenantId).gte("received_at", since).limit(40),
-    db.from("pitches").select("subject, rejection_reason, autopilot_reasons, status").eq("tenant_id", tenantId).in("status", ["reviewer_rejected"]).gte("updated_at", since).limit(20),
+    db.from("pitches").select("subject, rejection_reason, auto_rejected_reason, autopilot_reasons, status").eq("tenant_id", tenantId).in("status", ["reviewer_rejected", "auto_rejected"]).gte("updated_at", since).limit(20),
     db.from("pitches").select("body_original, body_edited").eq("tenant_id", tenantId).not("body_edited", "is", null).gte("updated_at", since).limit(8),
     db.from("pitches").select("gate_verdict, decision").eq("tenant_id", tenantId).gte("created_at", since).limit(200),
     db.from("learning_arms").select("learner, key, status, reward, trials, negatives, config").eq("tenant_id", tenantId).neq("status", "retired"),

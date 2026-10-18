@@ -12,6 +12,9 @@ import "server-only";
  *                 search cell and starts a discovery job for it
  *   4. label      every new draft gets AUTO / REVIEW / DROP (governor.laneFor),
  *                 verifying the recipient first if it hasn't been
+ *   4b. resolve   nothing waits on a person: a held draft gets one rewrite if a
+ *                 rewrite can fix what held it, else it is dropped
+ *                 (governor.heldAction)
  *   5. schedule   veto stage: AUTO pitches approved and scheduled 18h out, with
  *                 a digest so a person can hold any; auto stage: scheduled now
  *   6. stage      promote / demote the autonomy stage on measured results
@@ -30,13 +33,16 @@ import { getAccessToken, sendGmailMessage } from "@/lib/gmail/client";
 import type { Arm } from "@/lib/learning/bandit";
 import { candidateCells, cellKey, chooseCellFromArms, dailyAllowance, discoveryBudget, type SearchCell } from "@/lib/learning/scout";
 import { editRatio } from "@/lib/pitches/decision";
-import { transitionPitchStatusWith } from "@/lib/pitches/pitch-stage";
+import { isUnderDailyCap } from "@/lib/anthropic/cost-tracking";
+import { generatePitchWith, transitionPitchStatusWith } from "@/lib/pitches/pitch-stage";
+import { WRITER_FIXABLE } from "@/lib/pitches/review";
 import { verifyRecipient } from "@/lib/research/verify-recipient";
 import { checkDeliverabilityHealth } from "@/lib/warmup/deliverability";
 import { analyzeSpamRate } from "@/lib/warmup/intelligence";
 import type { WarmupLogEntry } from "@/lib/warmup/types";
 import {
   evaluateBreakers,
+  heldAction,
   laneFor,
   nextStage,
   type BreakerMetrics,
@@ -58,6 +64,10 @@ const LABEL_BATCH = 40;
 const SCHEDULE_BATCH = 25;
 /** Stop starting slow work (verification, approvals) past this, under the route's cap. */
 const TICK_BUDGET_MS = 90_000;
+/** Rewrites per tick: each is a full write + review (up to ~60s). */
+const REWRITES_PER_TICK = 2;
+/** Don't start a rewrite the AI budget can't finish (it would fall back to a template). */
+const REWRITE_MIN_BUDGET_USD = 0.25;
 const DAY = 86_400_000;
 
 export type AutonomyState = {
@@ -75,6 +85,7 @@ export type TickReport = {
   resumedJobs: number;
   discovery: { started: boolean; reason: string; cell?: string; budget?: number };
   labelled: Record<Lane, number>;
+  resolved: { rewritten: number; dropped: number; waiting: string | null };
   scheduled: number;
   stageChange: { from: Stage; to: Stage; reason: string } | null;
   review?: { ran: boolean; reason: string; guidance: string[] } | null;
@@ -93,6 +104,7 @@ export async function runTick(actor: Actor, now: Date = new Date()): Promise<Tic
     resumedJobs: 0,
     discovery: { started: false, reason: "not run" },
     labelled: { auto: 0, review: 0, drop: 0 },
+    resolved: { rewritten: 0, dropped: 0, waiting: null },
     scheduled: 0,
     stageChange: null,
     errors: [],
@@ -124,6 +136,7 @@ export async function runTick(actor: Actor, now: Date = new Date()): Promise<Tic
   report.resumedJobs = await step("watchdog", () => resumeStaleJobs(actor, db, now), 0);
   report.discovery = await step("supply", () => maybeStartDiscovery(actor, db, now), { started: false, reason: "error" });
   report.labelled = await step("label", () => labelDrafts(actor, db, now, deadline), report.labelled);
+  report.resolved = await step("resolve", () => resolveHeld(actor, db, deadline), report.resolved);
   if ((s.stage === "veto" || s.stage === "auto") && !sendingHalted) {
     report.scheduled = await step("schedule", () => scheduleAuto(actor, db, s.stage, now, deadline), 0);
   }
@@ -527,6 +540,78 @@ async function labelDrafts(actor: Actor, db: Db, now: Date, deadline: number): P
     counts[lane]++;
   }
   return counts;
+}
+
+// ── 4b. Resolve held drafts ───────────────────────────────────────────────────
+
+async function resolveHeld(actor: Actor, db: Db, deadline: number): Promise<TickReport["resolved"]> {
+  const tenantId = actor.user.tenantId;
+  const out: TickReport["resolved"] = { rewritten: 0, dropped: 0, waiting: null };
+  const { data } = await db
+    .from("pitches")
+    .select("id, prospect_id, autopilot_lane, autopilot_reasons, body_edited, decision")
+    .eq("tenant_id", tenantId)
+    .eq("status", "draft")
+    .in("autopilot_lane", ["review", "drop"])
+    .is("parent_pitch_id", null)
+    .order("created_at", { ascending: true })
+    .limit(LABEL_BATCH);
+
+  let budget: { ok: boolean } | null = null;
+  for (const p of (data ?? []) as Array<{
+    id: string;
+    prospect_id: string;
+    autopilot_lane: Lane;
+    autopilot_reasons: string[] | null;
+    body_edited: string | null;
+    decision: { retry_of?: string } | null;
+  }>) {
+    if (Date.now() > deadline) break;
+    const next = heldAction(
+      {
+        lane: p.autopilot_lane,
+        reasons: p.autopilot_reasons ?? [],
+        isRewrite: Boolean(p.decision?.retry_of),
+        editedByPerson: p.body_edited !== null,
+      },
+      WRITER_FIXABLE,
+    );
+    if (next.action === "leave") continue;
+    if (next.action === "drop") {
+      await dropDraft(db, tenantId, p.id, next.why);
+      out.dropped++;
+      continue;
+    }
+
+    // Rewrite: a fresh draft through the same writer and reviewer. It replaces
+    // this one (generatePitch clears the prospect's drafts) and is labelled on
+    // the next tick like any new draft.
+    if (out.rewritten >= REWRITES_PER_TICK || deadline - Date.now() < 60_000) continue;
+    if (!budget) {
+      const cap = await isUnderDailyCap(tenantId);
+      budget = { ok: cap.under && cap.cap_usd - cap.spent_today_usd >= REWRITE_MIN_BUDGET_USD };
+      if (!budget.ok) out.waiting = `AI budget: $${cap.spent_today_usd.toFixed(2)} of $${cap.cap_usd.toFixed(2)} used in 24h`;
+    }
+    if (!budget.ok) continue;
+    const rewritten = await generatePitchWith(actor, p.prospect_id, { retryOf: p.id });
+    if (rewritten.ok) {
+      out.rewritten++;
+    } else {
+      await dropDraft(db, tenantId, p.id, `rewrite failed: ${rewritten.error}`);
+      out.dropped++;
+    }
+  }
+  return out;
+}
+
+/** Close a draft the autopilot won't send: off the drafts list, reason kept for the weekly review. */
+async function dropDraft(db: Db, tenantId: string, pitchId: string, why: string): Promise<void> {
+  await db
+    .from("pitches")
+    .update({ status: "auto_rejected", auto_rejected: true, auto_rejected_reason: why.slice(0, 500), autopilot_lane: "drop" })
+    .eq("id", pitchId)
+    .eq("tenant_id", tenantId)
+    .eq("status", "draft");
 }
 
 // ── 5. Schedule AUTO pitches ──────────────────────────────────────────────────
