@@ -21,3 +21,14 @@ test("every per-route limit names a route file that exists", () => {
     assert.ok(existsSync(new URL(`../${p}`, import.meta.url)), `${p} does not exist`);
   }
 });
+
+test("prospect-facing send backstops run Monday to Friday only (Pedro, 2026-10-18)", () => {
+  const crons = (JSON.parse(readFileSync(new URL("../vercel.json", import.meta.url), "utf8")) as {
+    crons: Array<{ path: string; schedule: string }>;
+  }).crons;
+  for (const path of ["/api/pitches/send-queue", "/api/pitches/follow-up", "/api/replies/nudge"]) {
+    const cron = crons.find((c) => c.path === path);
+    assert.ok(cron, `${path} has a Vercel cron`);
+    assert.equal(cron.schedule.split(" ")[4], "1-5", `${path} must not run on weekends`);
+  }
+});

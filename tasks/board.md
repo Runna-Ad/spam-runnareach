@@ -63,8 +63,8 @@ Batch-audit pairs to check (runtime interactions): send-path-safety × autopilot
 ## Questions for Pedro (batched, asked once per batch)
 | # | From task | Question | Default if unanswered | Answer |
 |---|---|---|---|---|
-| 1 | b2 status rule | pipeline-stage reactivation moves suppressed/no_match back to researched (breaks I5): keep or skip do-not-send prospects? | skip them (status rule wins) | |
-| 2 | b3 audit | Vercel daily send-queue backstop also sends on weekends (pg_cron is Mon–Fri): keep? | keep until the atomic sends_today fix | |
+| 1 | b2 status rule | pipeline-stage reactivation moves suppressed/no_match back to researched (breaks I5): keep or skip do-not-send prospects? | skip them (status rule wins) | Pedro 20:10: default (skip) → follow-up PR after the ship |
+| 2 | b3 audit | Vercel daily send-queue backstop also sends on weekends (pg_cron is Mon–Fri): keep? | keep until the atomic sends_today fix | Pedro 20:10: "only monday to friday" → Vercel send-queue/follow-up/nudge backstops 1-5 in this ship (+ digest copy) |
 
 ## Worktrees to clean up (in-session workers only)
 | Path | Branch | Remove after |
@@ -109,3 +109,5 @@ Batch-audit pairs to check (runtime interactions): send-path-safety × autopilot
 - 2026-10-18 19:36 UTC — PR #24 fix (ed96d1d) verified by the conductor: presence check + dnc-check never returns an empty error; empty-message and thrown-Error tests pass (42/42 in the send-path file); canNeverSend shared; failed follow-up release logged. CI green. Merged; conductor moved one stacked doc comment back above queueReleaseFor. Integration: 845 tests, typecheck, lint, build green. Send-path worker archived. All 5 non-#17 tasks merged → batch audit (Fable) next; #17 round 5 still running (off the critical path).
 - 2026-10-18 20:07 UTC — Batch audit (Fable, f5176a5): SHIP, 0 blocking; 5 optional carried (no-op approve skips the autopilot event in a race; Vercel 15:00 + pg_cron send-queue overlap under-counts sends_today — pre-existing, Monday bounded 19 < cap 30; send-queue loop has no time budget; follow-up first-read skip doesn't pause; person-Lost row before its booking alert). Auditor deploy steps folded into project-state. Pre-ship prod: inbox pedro@ cap 30, unpaused; 19 AUTO approved; replies 32, 0 duplicate pairs. (Container restarted ~19:50; nothing lost, branch in sync.) Opening the integration → main PR.
 - 2026-10-18 20:08 UTC — Integration → main PR #25 opened and subscribed. Pinging Pedro for "ship it". #17 round 5 continues off the critical path.
+- 2026-10-18 20:10 UTC — Pedro: "ship it" + Q1 default (reactivation skips do-not-send) + Q2 "only monday to friday".
+- 2026-10-18 20:11 UTC — Q2 in this ship: Vercel backstops for send-queue, follow-up and nudge → `1-5` (pinned by tests/vercel-config.test.ts); the veto digest copy said "once around 15:00 UTC on weekends" → "Monday to Friday only" (test updated). 846 tests, typecheck, lint green. Health E3 already judges weekday windows only. Q1 → follow-up PR after the ship. Starting the ship checklist.

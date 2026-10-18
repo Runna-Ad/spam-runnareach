@@ -187,7 +187,7 @@ export function buildVetoDigest(opts: {
     subject: `Autopilot: ${items.length} email${items.length === 1 ? "" : "s"} will send in the next ${DIGEST_HORIZON_HOURS}h unless held`,
     body:
       `These passed every check and are scheduled to send in the next ${DIGEST_HORIZON_HOURS} hours. ` +
-      `Sending runs every 10 minutes 15:00–23:00 UTC on weekdays and once around 15:00 UTC on weekends; anything scheduled outside those hours goes out the next time sending runs.\n\n` +
+      `Sending runs every 10 minutes 15:00–23:00 UTC, Monday to Friday only; anything scheduled outside those hours goes out the next time sending runs.\n\n` +
       lines.join("\n") +
       `\n\n${how} Holding one counts as a veto; few vetoes over two weeks lets the autopilot send without the wait.\n\n${appUrl}/pitches`,
   };
