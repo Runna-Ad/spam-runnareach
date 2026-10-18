@@ -5,7 +5,8 @@ file alone. Update it on every spawn, every status change, every merge. Keep clo
 for the current phase; move older ones to the retro.
 
 ## Current phase
-`phase3-batch1` · integration branch `claude/gallant-gauss-gly093` (this session's branch doubles as the integration branch) · opened from `main` at `acf53e2` · integration → main PR #7 MERGED a15d1d8 (ship it 2026-10-17)
+`phase3-batch1` CLOSED 2026-10-18 (shipped a15d1d8; calendar sync verified live; PR #11 scout credit shipped c869323). Owner: session_012bGmp5nHP9Lx5ke69JkaBk (batch 1 conductor, retiring).
+**Next: `phase3-batch2`, NOT started. No conductor owns it yet.** The next conductor session writes its id here before doing anything else (see "Hand-off" below).
 
 ## Approvals and checks
 | Item | State |
@@ -90,3 +91,21 @@ These four columns feed the retro and the routing table.
 - 2026-10-18 05:17 UTC — Other session (Phase 2 conductor, great-planck) could not find 0043/0044: connector had recorded them under timestamp versions. Normalised both rows to 0043/0044 (verified). Steward skill gained a post-ship checklist (verify every manual step by query; check migrations by name; normalise connector versions; enable the API behind any new Google scope; first cron run read from net._http_response).
 - 2026-10-18 05:53 UTC — Pedro closing the Phase 2 session (PR #8 merged, main dc0fdff, deployed) and the AI-budget session (PR #9 open, CI green). Conductor took over: (a) the Phase 2 session's 09:20 UTC check-in (old trigger deleted, new send_later trig_01MEw63katHBZye8pXK7QNMp into this session); (b) the scout-credit branch: merged PR #9's branch into it, resolved tick.ts, 603 tests, opened PR #11 → main, subscribed. Backfill SQL scripts/backfill-scout-found-ids.sql NOT run (Pedro's call). Waiting on Pedro: merge #9 and #11.
 - 2026-10-18 05:56 UTC — While wrapping scout: PR #9 squash-merged (9b89128), its prod build failed on a duplicate isUnderDailyCap import (#8 + #9), PR #10 fixed it (8e5d7c3, prod READY 05:50 UTC). Merged main into PR #11's branch (ba936cc), resolved tick.ts + project-state, 603 tests. PR #11 now = scout change only. Lesson for steward: two PRs squash-merged into main within minutes with no integration branch → red prod build; this is exactly what the integration branch prevents.
+
+## Hand-off to the next conductor (written 2026-10-18 by the batch 1 conductor)
+Start a NEW session on Opus 5.5 with: "Read .claude/skills/conductor/SKILL.md, resume from tasks/board.md". Then:
+1. Write your session id into "Current phase" and push that commit before anything else (the board is the lock).
+2. `main` is prod. Last known: c869323 (PR #11). Confirm the Vercel production deployment of the current `main` head is READY before cutting the integration branch (`get_deployment spam-runnareach.vercel.app`).
+3. Cut `claude/phase3-batch2-integration` from `origin/main`. Refresh `tasks/briefs/_core-context.md` (migration count now 0044; repo map unchanged).
+4. Pending housekeeping that belongs to batch 2's close, not its start: merge `tasks/lessons-inbox/scout-cell-credit.md` into `tasks/lessons.md` (newest first) and delete it.
+5. Batch 2 candidates (pick ≤6, one module each; Pedro approves the plan with "go"):
+   - learning: meeting_booked / won / lost feed `scoreOutcome` and the exemplar shortlist (opus/medium)
+   - prospects status: one `closeProspectStatus` predicate for the three writers (opportunities outcome, calendar sync, PR #9's suppressUnfinished); skip `suppressed` (opus/medium; touches discover + opportunities → hub-ish, serialize)
+   - replies: `opt-out.ts` → `latestRootSentPitchId()` (sonnet/medium, has tests)
+   - gmail (CONDUCTOR): `getAccessToken` timeout; `needsReconnect` Sentry breadcrumb after 24h
+   - api: `maxDuration` for `/api/opportunities/calendar-sync` in vercel.json (CONDUCTOR, wave 0)
+   - pitches UI: `/pitches` list resilient to a `pitch_events` query error (sonnet/medium)
+   - research: structured-research-stage inserts set `source_url` (opus/medium)
+   - roadmap Phase 3: one-click hold in the veto digest (opus/medium); Phase 4: weekly learning review → approvable proposals on /learning (opus/high)
+6. Decisions still open for Pedro (ask once, in the batch plan message): run `scripts/backfill-scout-found-ids.sql`? set `CALENDAR_BOOKING_INBOX`? invites you send count as booked before acceptance (default keep)? cancel-then-rebook = two opportunities (default accept)?
+7. The 09:20 UTC 2026-10-18 check-in on PR #8's resolve step fires into the batch 1 session, not yours; its result lands in this log.

@@ -24,6 +24,15 @@ PR is the conductor's.
 - Never skip, disable or quarantine a test to get green. Never push an empty commit to
   re-run CI.
 
+## Never merge two branches straight into `main` back to back
+2026-10-18: PR #8 and PR #9, each CI-green alone, were squash-merged into `main` four
+minutes apart. Both had added the same import on different lines; the merge was clean,
+the prod build was red, and prod kept serving the previous commit until PR #10. CI on a
+PR tests the PR against the base as it was when the PR was last pushed, not against what
+landed since. Every PR goes through the integration branch, where the full suite runs on
+the COMBINED head before the one PR to `main`. A direct `main` PR is for a one-file
+hotfix only, and then nothing else merges until its deploy is READY.
+
 ## Merge order on the integration branch
 1. Shared-infra changes the conductor made (types, migrations, vercel.json) first.
 2. Leaf modules (`research`, `warmup`) next.

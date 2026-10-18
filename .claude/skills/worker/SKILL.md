@@ -60,12 +60,28 @@ One or a few meaningful commits. Message style: `feat(module): what` / `fix(modu
 / `test(module): what`. The harness's attribution trailer (Co-Authored-By / session line)
 is required; no model names anywhere else (titles, bodies, code, comments). Once pushed,
 never amend or force-push: add commits, so the reviewer can review the delta.
+Right before the push, bring the integration branch in (a merge, never a rebase) and
+re-run the three checks on the result. A worker that branched before a wave-0 helper
+landed reinvents it otherwise (phase 3 batch 1: two PRs each wrote their own
+"latest root pitch" query):
 ```
+git fetch origin <integration-branch>
+git merge --no-edit origin/<integration-branch>
+npm run typecheck && npm run lint && npm test
 git push -u origin claude/<slug>
 ```
-Open the PR against the branch named in the brief (never `main`). PR body:
+Open the PR against the branch named in the brief (never `main`). The PR body IS your
+report: the conductor is woken by the PR-opened event and reads the top block first.
+PR body:
 
 ```
+## Report
+DONE <slug> | tests <n>→<m> | turns ~<k>
+Changed: <one line>
+Decisions: <one line or none>
+Needs conductor: <one line or none>
+Lessons: <one line or "nothing new">
+
 ## Brief
 tasks/briefs/<slug>.md
 
@@ -85,26 +101,26 @@ tasks/briefs/<slug>.md
 ## Needs conductor
 - file outside allow-list + the change needed, or "none"
 
+## External prerequisites (anything outside this repo that must be true in prod)
+- OAuth scope / API enabled in the Google Cloud project / env var / credential / DNS,
+  or "none". Say who does it and how to tell it is done.
+
+## Prod verification (the conductor runs this after the deploy)
+- one SQL query, URL or log line that shows the feature working, and the expected result
+
 ## Out of scope, noticed
 - ... or "none"
 ```
 
-## 7. Report and stop
-Send the conductor (session id in the brief) this, at most 20 lines:
+## 7. Stop
+Do NOT `send_message` the conductor when you are done: the PR-opened event already wakes
+it, and the message is the only step that prompts Pedro for permission. Message the
+conductor only when you are BLOCKED (`BLOCKED <slug> | tried … | need … | meanwhile …`).
 
-```
-DONE <slug> | PR <url> | tests <n>→<m> | turns ~<k>
-Changed: <one line>
-Decisions: <one line or none>
-Needs conductor: <one line or none>
-Blocked: none
-Lessons: <one line or "nothing new">
-```
-Or `BLOCKED <slug> | ...` with what you tried, what you need, what you did meanwhile.
-
-If you are an in-session sub-agent rather than a remote session, there is no
-`send_message`: return the same report as your final output.
+If you are an in-session sub-agent rather than a remote session, return the PR body's
+Report block as your final output.
 
 Then stop. Do not keep working, polling, or improving. If the conductor sends review
-findings, fix the blocking ones, push to the same branch, and report again in the same
-format. Optional findings ride along only if you are already pushing.
+findings, fix the blocking ones, push to the same branch (new commits, never amend), and
+update the Report block at the top of the PR body. Optional findings ride along only if
+you are already pushing.

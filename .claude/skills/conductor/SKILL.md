@@ -16,6 +16,11 @@ Goals in order: quality (fewer mistakes reaching Pedro) → speed → tokens.
 Every conductor session starts here, including the first one:
 1. Read `tasks/board.md`. It is the whole state. If it says a phase is active, continue
    it; do not re-plan.
+   **The board is the lock.** "Current phase" names the conductor session that owns it.
+   If that session is not you and `list_sessions` shows it running or idle (not
+   archived), stop and ask Pedro which session conducts; two conductors on one repo is
+   how 2026-10-18 got a red prod build. Take over only when Pedro says so, and then
+   write your session id into "Current phase" before anything else.
 2. Read `tasks/routing.md`, `tasks/project-state.md` (first 60 lines), and the latest
    file in `tasks/retros/` (if only the README exists, skip).
 3. Do NOT read `tasks/lessons.md` or `tasks/session-log.md` in full. Grep them when a
@@ -81,21 +86,22 @@ create_session(
 )
 ```
 Do not pass `permission_mode`: the inherited mode runs install, tests, build, push
-and PR creation without prompts; only the worker's final `send_message` prompts (server
-policy), and Pedro can approve or ignore it since the report is also readable via
-`list_events` (kind control_request). Record session id, branch, model, start time on the board. Spawn every parallel-safe task
-of the current wave in the same turn. Then end your turn; workers report via
-`send_message`, PR events wake you. Never poll with sleep. Arm one `send_later` safety
-check-in 50 minutes out in case a worker dies silently.
+and PR creation without prompts. Workers do NOT `send_message` when done (that was the
+one call that prompted Pedro, six times in batch 1): the PR body's Report block is the
+report and the PR-opened event wakes you. Subscribe to each worker PR as it opens.
+A worker messages you only when BLOCKED. Record session id, branch, model, start time
+on the board. Spawn every parallel-safe task of the current wave in the same turn. Then
+end your turn; PR events wake you. Never poll with sleep. Arm one `send_later` safety
+check-in 50 minutes out in case a worker dies silently (no PR, no message).
 
 Small bounded jobs (one test file, a lint sweep, a doc) may use `Agent` with the
 `opus-worker` / `sonnet-worker` definitions and `isolation: worktree` instead. Never
 `fork` for worker tasks: it copies your whole context.
 
 ## 4. While workers run
-- A worker report arrives → update the board (status, turns, PR). Do not read the
-  worker's transcript. If the report is unclear, ask the worker one question by
-  `send_message`; that is cheaper than reading events.
+- A worker PR opens → read its Report block, update the board (status, turns, PR),
+  subscribe. Do not read the worker's transcript. If the report is unclear, ask the
+  worker one question by `send_message`; that is cheaper than reading events.
 - A worker is BLOCKED → decide within the brief's intent if you can; else add to the
   Pedro questions table with a default, tell the worker the default, let it continue.
 - A worker asks for a shared-file change → do it on the integration branch yourself,
@@ -141,6 +147,10 @@ Small bounded jobs (one test file, a lint sweep, a doc) may use `Agent` with the
    and in what order relative to the deploy (an enum value must exist before code
    writes it). Record `npm run build` sha and push state on the board.
 6. Open the integration → main PR. One message to Pedro per `steward/SKILL.md`. Wait.
+7. After "ship it": run the ship checklist in `steward/SKILL.md` (verify each manual step
+   by query, migrations by name, external prerequisites, first prod run of every new
+   cron). The batch is closed when every brief's "Prod verification" returns clean, not
+   when the PR merges.
 
 ## Token discipline (the conductor's own)
 - Read diffs, not transcripts. Read reports, not sessions.
@@ -152,9 +162,14 @@ Small bounded jobs (one test file, a lint sweep, a doc) may use `Agent` with the
 - Grep history files; never load them whole.
 - Never chain past a command whose non-zero exit is informational (`grep -c`, a diff
   check): one informational command per call, or `|| true`.
-- Keep your own effort at `high`; `xhigh`/`max` only for the batch audit.
-- When your context is getting long, write the board and stop; the next conductor
-  session resumes from §0 at a fraction of the cost of continuing.
+- Run the conductor on Opus 5.5 at `high`. Fable only for the batch audit (spawn it as
+  a reviewer agent or a separate session), never for routine conducting: batch 1's
+  conductor ran on Fable with a long context and was the batch's largest token sink.
+- Hand off before you are compacted: when the batch is merged and the retro written, or
+  when your context passes ~250k tokens, write the board's "Hand-off" section and stop.
+  The next conductor session resumes from §0 at a fraction of the cost of continuing.
+  Pedro starts it with: "Read .claude/skills/conductor/SKILL.md, resume from
+  tasks/board.md".
 
 ## Never
 - Merge to `main`. Pedro does, after "ship it".
