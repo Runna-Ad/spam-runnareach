@@ -82,8 +82,11 @@ retro in `tasks/retros/2026-10-17-phase3-batch1.md`). 593 tests, build green, 6 
 and merged into the integration branch in 58 minutes. Migration **0043** applied via the Supabase
 connector right before the merge (recorded as version 20261017174016; Pedro's SQL-editor run had
 not landed: the column check returned 0 rows). Prod deploy of `a15d1d8` READY, then **0044 applied**
-via the connector (hourly `spam-calendar-sync` job at :05). **Google NOT yet reconnected**: the sync
-returns `needsReconnect` (HTTP 200) every hour until Pedro reconnects in Settings.
+via the connector (hourly `spam-calendar-sync` job at :05). Google reconnected 2026-10-18
+(04:05 UTC run: `needsReconnect: false`, inbox pedro@runnareach.com). **Blocked on one console
+toggle**: the same run got `403 Google Calendar API has not been used in project 892318428312
+before or it is disabled`. Pedro enables the Calendar API in that Google Cloud project (free,
+one click); the next :05 run then reports counts. Nothing to redeploy.
 - **Booking → opportunities** (`lib/opportunities/calendar-sync.ts`, `/api/opportunities/calendar-sync`,
   migration 0044 = hourly pg_cron): Google Calendar appointment-schedule bookings on the
   connected inbox become `opportunities` rows (stage meeting_booked, source calendar,
@@ -111,7 +114,7 @@ returns `needsReconnect` (HTTP 200) every hour until Pedro reconnects in Setting
   (`latestRootSentPitchId`, the one lookup for timeline events), audit actions
   `opportunity.booked/won/lost`, send-gate blocks 1-char placeholders (`[n]`).
 
-**Ship steps (done 2026-10-17 except step 4, Google reconnect, and optional step 5):** 1) apply 0043 in the SQL editor FIRST: every
+**Ship steps (done 2026-10-17/18 except step 4b, enable the Calendar API in GCP project 892318428312, and optional step 5):** 1) apply 0043 in the SQL editor FIRST: every
 contact insert now names `source_url`, so code deployed before 0043 would fail each insert
 and the autopilot research path would silently stop saving contacts; 2) merge the integration
 PR (deploy); 3) apply 0044 (schedules the hourly calendar sync; before deploy it would 404);
