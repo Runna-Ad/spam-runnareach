@@ -42,7 +42,6 @@ import {
   type SearchCell,
 } from "@/lib/learning/scout";
 import { editRatio } from "@/lib/pitches/decision";
-import { isUnderDailyCap } from "@/lib/anthropic/cost-tracking";
 import { generatePitchWith, transitionPitchStatusWith } from "@/lib/pitches/pitch-stage";
 import { WRITER_FIXABLE } from "@/lib/pitches/review";
 import { verifyRecipient } from "@/lib/research/verify-recipient";
