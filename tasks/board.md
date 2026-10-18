@@ -22,7 +22,7 @@ Previous: `phase3-batch1` CLOSED (shipped a15d1d8, calendar sync live). Its rows
 ## Reserved migration numbers
 | Number | Reserved for | Status (reserved → used → applied) |
 |---|---|---|
-| 0045 | platform-reports: `0045_reports_cron.sql` (spam-health-check hourly :25, spam-weekly-report Mon 13:10 UTC) | reserved |
+| 0045 | platform-reports: `0045_reports_cron.sql` (spam-health-check hourly :25, spam-weekly-report Mon 13:10 UTC) | used (on integration 9da266f); apply AFTER the prod deploy, after `/api/reports/health?dry=1` returns no false problem |
 | 0046 | — | free |
 
 ## Active and queued tasks
@@ -34,7 +34,7 @@ Previous: `phase3-batch1` CLOSED (shipped a15d1d8, calendar sync live). Its rows
 | exemplar-scrubber-gaps | lib/pitches/exemplars.ts (hub) | opus/high | claude/exemplar-scrubber-gaps | session_01AZQoKcXaSPYey6575rZq1z | #17 | — | fix-then-merge sent 07:32 (round 2; structural: leak check independent of the scrubber) | | | 5 (one root cause) + 3 optional | | 1 |
 | veto-hold-link | lib/autopilot/tick.ts digest + hold.ts/hold-token.ts + app/api/autopilot/hold | opus/high | claude/veto-hold-link | archived | #16 | wave0 | merged 793a2be (659 tests, build green) | | ~8 min + fix round / $2.00+ | 2 (both conductor brief defects) + 1 optional | | 1 |
 | lead-alerts | app/api/replies/poll (alert section) + lib/opportunities/calendar-sync.ts + formatters | opus/medium | claude/lead-alerts | archived | #15 | wave0 | merged e8f0b1a (691 tests) | | 3 rounds / $4.76 | 1 + 1 (same class: alert durability) | | 2 |
-| platform-reports | lib/reports (new) + app/api/reports/{weekly,health} + 0045 | opus/medium (deviation noted in brief) | claude/platform-reports | session_01EzWfTFzFKDFwMP8cHjsJti | #18 | wave0 | fix-then-merge sent 07:27 (E3 fires on designed states → would be a daily email; rule: emergency = due activity didn't happen in a closed window; silent-state test matrix) | | | 1 + 8 optional | | 1 |
+| platform-reports | lib/reports (new) + app/api/reports/{weekly,health} + 0045 | opus/medium (deviation noted in brief) | claude/platform-reports | archived | #18 | wave0 | merged 9da266f (721 tests); 0045 used, apply after deploy (dry-run health first) | | | 1 + 8 optional | | 1 |
 | pitches-list-resilience | lib/pitches/queries.ts + /pitches | sonnet/medium | claude/pitches-list-resilience | | | exemplar-scrubber-gaps merged | wave 2 (brief written) | | | | | |
 | ~~research-contact-source-url~~ | lib/research/structured-research-stage.ts | — | — | — | — | — | DROPPED 06:30: that path inserted 0 contacts in 10 days (prod query); revisit if it starts inserting | | | | | |
 
@@ -81,7 +81,7 @@ Batch-audit pairs to check (runtime interactions): learning-meeting-outcomes × 
 | pitches-hot-lead-badge (b1) | lib/supabase/types.ts | add pitch_events so the any-cast can go | pending |
 | prospect-status-guard | lib/compliance/opt-out.ts | adopt the status predicate | done 6f9ff16 |
 | prospect-status-guard | app/api/replies/poll/route.ts (bounce ~353 + replied ~449, `@/lib/prospects/status` ok), lib/opportunities/calendar-sync.ts markProspectBooked (RELATIVE `../prospects/status.ts`; tests/opportunities-calendar-sync.test.ts:362 asserts "(won,lost)" → compare as sets) | adopt after lead-alerts merges | done 82a163e (bounce audit row only when the status changed) |
-| platform-reports | vercel.json | daily Vercel cron backstop for /api/reports/health (if the worker asks) | pending |
+| platform-reports | vercel.json | daily Vercel cron backstop for /api/reports/health | done (40 12 * * *) |
 
 ## Log
 - 2026-10-18 06:10 UTC — resumed: session_018Qvu38cNFVCuWNq41wYfxJ took the lock for phase3-batch2 (board commit pushed). Prod af3c4b0 READY. No open PRs. git clean.
@@ -103,3 +103,4 @@ Batch-audit pairs to check (runtime interactions): learning-meeting-outcomes × 
 - 2026-10-18 07:27 UTC — PR #18 review: fix-then-merge, 1 blocking (E3 'emails stuck' counts approved pitches the queue holds back by design: paused inbox, daily-cap drip, cooldown, weekend → re-fires every 24h = a daily email). Sent the rule + a silent-state test matrix. Conductor (4a?): notify falls back to the next inbox then Sentry (an E1 'Google disconnected' alert would otherwise be sent through the dead account); audit actions pitch.held + health.alert. Vercel daily backstop for /api/reports/health at merge. Note for ship: run /api/reports/health?dry=1 before applying 0045.
 - 2026-10-18 07:32 UTC — PR #17 review (hub): fix-then-merge, 5 blocking, ONE root cause: exemplarLeaks and the property test reuse the scrubber's matchers (HONORIFIC_RE, whole-word replacePhrase, exact city key), so the fail-closed check can never see the scrubber's misses (dotted aliases, lowercase multi-word honorific spans, particle surnames, 1–2-letter initials, glued handles/URLs). Sent invariants I1–I5 + 'leak check must not share matching code with the scrubber'. Same class as batch 1 PR #6 → retro: the batch-1 lesson ('fail-closed invariant') was applied in name only; core-context must say the invariant needs an INDEPENDENT, coarser matcher, and the property test must use a third one.
 - 2026-10-18 07:34 UTC — Prod exposure check for the exemplar leaks: 0 of 11 pitches since the batch-1 ship were shown exemplars; 0 pitches have a qualifying positive event (pitch_events began 10-17). Nothing leaked; no kill switch needed. Fix lands before any exemplar qualifies (the first will be a booked meeting or a positive reply).
+- 2026-10-18 07:38 UTC — PR #18 round 2 (50209e8) verified by the conductor: E3 judges only the last closed send window (≤24h after close), only sendable inboxes (token ok, unpaused, cap>0) that sent nothing in it, prospects not in cooldown; 'sending' only if it predates the window; 429 transient; observed-wording E2; silent-state matrix + reviewer repro as tests. CI green. Merged 9da266f, 721 tests. Added the Vercel daily backstop cron (40 12 * * *), build green. Session archived. Wave 1: 5/6 merged; exemplar-scrubber-gaps in round 2.
