@@ -14,13 +14,17 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
 import {
+  followupPausesFor,
   prospectSendBlock,
   queueReleaseFor,
   recheckBeforeSend,
   releaseClaim,
+  releaseFollowupClaim,
+  type FollowupReleaseClient,
   type ReleaseClient,
   type SendCheckClient,
 } from "../lib/pitches/status-transitions.ts";
+import { isEmailOnDncList, type DncClient } from "../lib/discover/dnc-check.ts";
 
 // ── In-memory Supabase stand-in ─────────────────────────────────────────────
 
@@ -210,6 +214,140 @@ test("releaseClaim: the tenant filter applies when given (manual send)", async (
   assert.equal(db.pitches![0]!.status, "sending");
 });
 
+// ── Follow-up: last moment after the step claim ─────────────────────────────
+
+/** A follow-up whose step 1 → 2 this run already claimed (sequence_step = 2). */
+function followupWorld(prospectStatus: string, opts: { dnc?: boolean } = {}): Db {
+  const db = world(prospectStatus, opts);
+  db.pitches = [{ id: "pitch-1", tenant_id: T, status: "sent", sequence_step: 2, next_followup_at: null, sequence_paused_at: null }];
+  return db;
+}
+
+/** The route's tail after the claim: recheck, and on a block release (pausing if it can never send). */
+async function followupTail(db: Db, fail: Record<string, string> = {}) {
+  const { client } = memoryClient(db, fail);
+  let gmailCalls = 0;
+  const lastCheck = await recheckBeforeSend(client as unknown as SendCheckClient, {
+    tenantId: T,
+    prospectId: "p1",
+    email: EMAIL,
+    nowIso: NOW,
+  });
+  if (lastCheck) {
+    await releaseFollowupClaim(client as unknown as FollowupReleaseClient, {
+      pitchId: "pitch-1",
+      claimedStep: 2,
+      priorStep: 1,
+      priorFollowupAt: "2026-10-22T15:00:00.000Z",
+      pause: followupPausesFor(lastCheck),
+      nowIso: NOW,
+    });
+    return { lastCheck, gmailCalls };
+  }
+  gmailCalls++;
+  return { lastCheck, gmailCalls };
+}
+
+test("follow-up: prospect suppressed during compose → no Gmail, step released, sequence paused", async () => {
+  const db = followupWorld("suppressed");
+  const r = await followupTail(db);
+  assert.equal(r.gmailCalls, 0);
+  assert.equal(r.lastCheck?.kind, "do_not_send");
+  const row = db.pitches![0]!;
+  assert.equal(row.sequence_step, 1);
+  assert.equal(row.next_followup_at, "2026-10-22T15:00:00.000Z");
+  assert.equal(row.sequence_paused_at, NOW);
+});
+
+test("follow-up: recipient DNC-listed during compose → no Gmail, step released, sequence paused", async () => {
+  const db = followupWorld("sent", { dnc: true });
+  const r = await followupTail(db);
+  assert.equal(r.gmailCalls, 0);
+  assert.equal(r.lastCheck?.kind, "dnc");
+  assert.equal(db.pitches![0]!.sequence_step, 1);
+  assert.equal(db.pitches![0]!.sequence_paused_at, NOW);
+});
+
+test("follow-up: unreadable prospect or DNC list → released for a later run, NOT paused", async () => {
+  for (const fail of [{ prospects: "timeout" }, { do_not_contact_list: "timeout" }] as Record<string, string>[]) {
+    const db = followupWorld("sent");
+    const r = await followupTail(db, fail);
+    assert.equal(r.gmailCalls, 0);
+    assert.equal(r.lastCheck?.kind, "unreadable");
+    assert.equal(db.pitches![0]!.sequence_step, 1);
+    assert.equal(db.pitches![0]!.sequence_paused_at, null);
+  }
+});
+
+test("follow-up: a sendable prospect still sends (negative set)", async () => {
+  const db = followupWorld("sent");
+  const r = await followupTail(db);
+  assert.equal(r.gmailCalls, 1);
+  assert.equal(db.pitches![0]!.sequence_step, 2);
+});
+
+test("releaseFollowupClaim is guarded on the claimed step", async () => {
+  const db = followupWorld("sent");
+  db.pitches![0]!.sequence_step = 3; // another run moved it on
+  const { client, updates } = memoryClient(db);
+  await releaseFollowupClaim(client as unknown as FollowupReleaseClient, {
+    pitchId: "pitch-1", claimedStep: 2, priorStep: 1, priorFollowupAt: null, pause: true, nowIso: NOW,
+  });
+  assert.equal(db.pitches![0]!.sequence_step, 3);
+  assert.equal(db.pitches![0]!.sequence_paused_at, null);
+  assert.equal(updates[0]?.matched, 0);
+});
+
+test("followupPausesFor: only can-never-send pauses", () => {
+  assert.equal(followupPausesFor({ kind: "do_not_send", reason: "" }), true);
+  assert.equal(followupPausesFor({ kind: "dnc", reason: "" }), true);
+  assert.equal(followupPausesFor({ kind: "cooldown", reason: "" }), false);
+  assert.equal(followupPausesFor({ kind: "unreadable", reason: "" }), false);
+});
+
+// ── DNC query error: unreadable at the last moment only ─────────────────────
+
+test("recheck: DNC query error → unreadable, never send", async () => {
+  const block = await check(world("pitched"), { do_not_contact_list: "statement timeout" });
+  assert.equal(block?.kind, "unreadable");
+  assert.match(block!.reason, /do-not-contact list: statement timeout/);
+});
+
+test("recheck: DNC lookup that throws → unreadable, never send", async () => {
+  const { client } = memoryClient(world("pitched"));
+  const throwing = {
+    from: (t: string) => (t === "do_not_contact_list" ? (() => { throw new Error("socket hang up"); })() : client.from(t)),
+  };
+  const block = await recheckBeforeSend(throwing as unknown as SendCheckClient, {
+    tenantId: T, prospectId: "p1", email: EMAIL, nowIso: NOW,
+  });
+  assert.equal(block?.kind, "unreadable");
+  assert.match(block!.reason, /socket hang up/);
+});
+
+test("isEmailOnDncList: a query error still fails open for first-read callers, with the error visible", async () => {
+  const { client } = memoryClient(world("pitched", { dnc: true }), { do_not_contact_list: "statement timeout" });
+  const hit = await isEmailOnDncList(client as unknown as DncClient, T, EMAIL);
+  assert.equal(hit.blocked, false); // what send-queue / send-action / follow-up / nudge / reply first-reads see
+  assert.equal(!hit.blocked && hit.error, "statement timeout");
+  const ok = await isEmailOnDncList(memoryClient(world("pitched")).client as unknown as DncClient, T, EMAIL);
+  assert.deepEqual(ok, { blocked: false });
+});
+
+test("first-read DNC checks branch on .blocked only (unchanged fail-open)", () => {
+  for (const path of [SEND_PATHS_FIRST_READ.sendQueue, SEND_PATHS_FIRST_READ.sendAction, SEND_PATHS_FIRST_READ.followUp]) {
+    const s = readFileSync(new URL(`../${path}`, import.meta.url), "utf8");
+    assert.ok(/const dnc = await isEmailOnDncList\(/.test(s), path);
+    assert.ok(!/dnc\.error/.test(s), `${path} must keep failing open on a DNC read error`);
+  }
+});
+
+const SEND_PATHS_FIRST_READ = {
+  sendQueue: "app/api/pitches/send-queue/route.ts",
+  sendAction: "lib/pitches/send-action.ts",
+  followUp: "app/api/pitches/follow-up/route.ts",
+} as const;
+
 // ── The call sites, from source ─────────────────────────────────────────────
 
 const SEND_PATHS = {
@@ -242,22 +380,60 @@ function at(s: string, needle: string | RegExp, from = 0, label = String(needle)
   return i;
 }
 
-for (const name of ["sendQueue", "sendAction"] as const) {
-  test(`${name}: claim → recheck (status + DNC) → Gmail, and a blocked recheck releases the claim`, () => {
-    const s = src(SEND_PATHS[name]);
-    const claim = at(s, `update({ status: "sending" })`);
-    const recheck = at(s, "recheckBeforeSend(", claim, "recheckBeforeSend after the claim");
-    const gmail = at(s, "sendGmailMessage({", recheck, "sendGmailMessage after the recheck");
-    // Nothing that waits (token exchange, jitter) sits between the recheck and the send.
-    const between = s.slice(recheck, gmail);
-    assert.ok(!between.includes("getAccessToken("), "token exchange after the recheck");
-    assert.ok(!between.includes("setTimeout"), "jitter sleep after the recheck");
-    assert.ok(between.includes("releaseClaim("), "a blocked recheck must release the claim");
-    assert.ok(/return|continue/.test(between), "a blocked recheck must not fall through to Gmail");
-    if (name === "sendQueue") assert.ok(between.includes("queueReleaseFor("), "queue releases per queueReleaseFor");
-    else assert.ok(between.includes(`to: "approved"`), "manual send returns the pitch to approved");
+/** Index just past the `}` closing the `{` at `open`. Source here has no braces inside strings that matter. */
+function blockEnd(s: string, open: number): number {
+  assert.equal(s[open], "{");
+  let depth = 0;
+  for (let i = open; i < s.length; i++) {
+    if (s[i] === "{") depth++;
+    else if (s[i] === "}" && --depth === 0) return i + 1;
+  }
+  assert.fail("unbalanced braces");
+}
+
+const stripComments = (code: string) => code.replace(/\/\/[^\n]*/g, "").replace(/\/\*[\s\S]*?\*\//g, "");
+
+/**
+ * claim → `await recheckBeforeSend(…)` → `if (lastCheck) { release; return|continue }`
+ * → `await sendGmailMessage(` with NO other await in between: nothing that waits
+ * (token, jitter, DNS verify, a query) may sit between the last question and the send.
+ */
+function assertLastMomentShape(s: string, claimNeedle: string, releaseNeedle: string): void {
+  const claim = at(s, claimNeedle);
+  const recheck = at(s, "await recheckBeforeSend(", claim, "await recheckBeforeSend after the claim");
+  const stmtEnd = at(s, "});", recheck, "end of the recheck call") + 3;
+  const ifAt = at(s, "if (lastCheck) {", stmtEnd, "if (lastCheck) after the recheck");
+  assert.equal(stripComments(s.slice(stmtEnd, ifAt)).trim(), "", "the blocked branch must follow the recheck directly");
+  const open = ifAt + "if (lastCheck) ".length;
+  const close = blockEnd(s, open);
+  const branch = s.slice(open, close);
+  assert.ok(branch.includes(releaseNeedle), `a blocked recheck must release the claim (${releaseNeedle})`);
+  assert.ok(/\b(return|continue)\b/.test(branch), "a blocked recheck must not fall through to Gmail");
+  const gmail = at(s, "await sendGmailMessage(", close, "await sendGmailMessage after the blocked branch");
+  const tail = stripComments(s.slice(close, gmail));
+  assert.ok(!/\bawait\b/.test(tail), `an await sits between the recheck and Gmail: ${tail.trim().slice(0, 160)}`);
+}
+
+const LAST_MOMENT = {
+  sendQueue: { claim: `update({ status: "sending" })`, release: "queueReleaseFor(" },
+  sendAction: { claim: `update({ status: "sending" })`, release: `to: "approved"` },
+  followUp: { claim: ".update({ sequence_step: nextStep", release: "release(pause)" },
+} as const;
+
+for (const name of ["sendQueue", "sendAction", "followUp"] as const) {
+  test(`${name}: claim → recheck (status + DNC) → Gmail with no await between, and a blocked recheck releases the claim`, () => {
+    assertLastMomentShape(src(SEND_PATHS[name]), LAST_MOMENT[name].claim, LAST_MOMENT[name].release);
   });
 
+  test(`${name}: the shape check catches an await slipped in before Gmail`, () => {
+    const s = src(SEND_PATHS[name]);
+    const gmail = s.indexOf("await sendGmailMessage(");
+    const slipped = `${s.slice(0, gmail)}await verifyRecipient(supabase, x);\n  ${s.slice(gmail)}`;
+    assert.throws(() => assertLastMomentShape(slipped, LAST_MOMENT[name].claim, LAST_MOMENT[name].release), /an await sits between/);
+  });
+}
+
+for (const name of ["sendQueue", "sendAction"] as const) {
   test(`${name}: every release from 'sending' is guarded (no bare approved rollback)`, () => {
     const s = src(SEND_PATHS[name]);
     // A direct write back to approved must carry .eq("status", "sending") in the same statement.
