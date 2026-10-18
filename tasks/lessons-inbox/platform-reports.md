@@ -1,6 +1,6 @@
-[2026-10-18] An age threshold on queued work must follow the consumer's schedule, not the wall clock
-WHAT HAPPENED: The brief's "approved with scheduled_send_at more than 24h ago" would have raised an emergency every weekend, because the send-queue only runs weekdays 15:00–22:50 UTC (0041) and the veto stage schedules sends 18h out at any hour. lib/reports/health.ts `isStuckApproved` now also requires one whole send window to have closed since the pitch was due. Two of my own fixtures failed first because they assumed wall-clock age too.
-RULE: Before alerting on "X has waited too long", read the cron of the job that drains X and express the threshold in that job's run windows. Test it with a Friday-night item checked on Sunday.
+[2026-10-18] An emergency is "due activity that did not happen", never "something is waiting"
+WHAT HAPPENED: My first E3 ("approved, more than 24h past scheduled_send_at, after a whole send window") still fired every day on states the send-queue enters by design: paused inbox, the daily-cap drip (queueApprovedForSend sets scheduled_send_at=now for all), prospect cooldown, a Friday 22:51 "sending" row on Saturday. Review caught it; the old code alerts on 5/5 of the conductor's repro states. lib/reports/health.ts now judges only the last CLOSED send window, within 24h of its close: fire only if it had due pitches on an unpaused, connected, capped inbox with no cooldown AND that inbox sent nothing in it.
+RULE: For every alert, list each reason the consumer skips an item (read its `continue`s) and make each one silent; then require evidence the consumer itself did nothing in a period it should have acted. A 24h dedupe turns any false positive into a daily email. Test a silent matrix, one case per skip reason, plus one true positive each.
 TAGS: reports, alerts, pg_cron
 
 [2026-10-18] An alert about the alert channel has to leave by another channel
@@ -9,7 +9,6 @@ RULE: For every alert, ask "does the failure it reports also break its delivery?
 TAGS: notify, reports, gmail
 
 ## Out of scope, noticed
-- lib/notify/send.ts: `sendNotification` takes the oldest connected inbox without checking its token works; when that inbox is disconnected, EVERY notification (breaker trips, veto digest, weekly report) fails silently even if another inbox is fine. A fallback to the next connected inbox on a token error would fix it (conductor-only file).
-- lib/audit/log.ts: `AuditAction` has no "health.alert"; lib/reports/snapshot.ts inserts into audit_log directly. Add it to the union and switch `recordHealthAlert` to `writeAuditLog`.
+- lib/audit/log.ts: `writeAuditLog` swallows insert errors, so callers that depend on the row (dedupe) can't react; `recordHealthAlert` inserts directly for that reason. A `{ ok }` return would let it use the shared writer.
 - lib/anthropic/cost-tracking.ts: `DAILY_USD_CAP_DEFAULT` (6) isn't exported, so lib/reports/snapshot.ts repeats it; its doc comment at line ~66 still says "default $5".
 - supabase/migrations/0016: `warmup_config.tenant_id` references auth.users, not tenants; the report finds warmup rows through the tenant's sending addresses instead.

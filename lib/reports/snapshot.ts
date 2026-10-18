@@ -6,6 +6,7 @@
  */
 
 import "server-only";
+import * as Sentry from "@sentry/nextjs";
 import { getAccessToken } from "@/lib/gmail/client";
 import { createServiceRoleClient } from "@/lib/supabase/service-role";
 import type { ArmRow } from "@/lib/learning/report";
@@ -222,33 +223,59 @@ async function warmupChecks(db: Db, tenantId: string, since: string): Promise<We
 
 export async function gatherHealthSnapshot(tenantId: string, now: Date): Promise<HealthSnapshot> {
   const db = createServiceRoleClient() as Db;
-  const [state, inboxRows, pending] = await Promise.all([
+  const since48 = new Date(now.getTime() - 2 * DAY).toISOString();
+  const [state, inboxRows, pending, sends] = await Promise.all([
     db.from("autonomy_state").select("enabled, stage, updated_at").eq("tenant_id", tenantId).maybeSingle(),
-    db.from("sender_inboxes").select("email, gmail_refresh_token_encrypted").eq("tenant_id", tenantId).not("gmail_refresh_token_encrypted", "is", null),
-    db.from("pitches").select("id, status, scheduled_send_at, updated_at").eq("tenant_id", tenantId).in("status", ["approved", "sending"]).limit(1000),
+    db.from("sender_inboxes")
+      .select("id, email, paused, daily_cap, gmail_refresh_token_encrypted")
+      .eq("tenant_id", tenantId)
+      .not("gmail_refresh_token_encrypted", "is", null),
+    db.from("pitches")
+      .select("id, status, scheduled_send_at, updated_at, sender_inbox_id, prospects:prospect_id(cooldown_until)")
+      .eq("tenant_id", tenantId)
+      .in("status", ["approved", "sending"])
+      .limit(1000),
+    db.from("pitches").select("sender_inbox_id, sent_at").eq("tenant_id", tenantId).gte("sent_at", since48).limit(1000),
   ]);
   // A failed read must not look healthy: surface it instead of returning empties.
-  for (const [name, r] of [["autonomy_state", state], ["sender_inboxes", inboxRows], ["pitches", pending]] as const) {
+  for (const [name, r] of [["autonomy_state", state], ["sender_inboxes", inboxRows], ["pitches", pending], ["recent sends", sends]] as const) {
     if (r.error) throw new Error(`${name} read failed: ${r.error.message}`);
   }
 
-  const inboxes: HealthSnapshot["inboxes"] = [];
-  for (const row of (inboxRows.data ?? []) as Array<{ email: string; gmail_refresh_token_encrypted: string }>) {
-    const token = await getAccessToken(row.gmail_refresh_token_encrypted);
-    inboxes.push({ email: row.email, tokenOk: token.ok, error: token.ok ? null : token.error });
-  }
+  // In parallel: each refresh can take up to 10s and app/** routes get 60s.
+  type InboxRow = { id: string; email: string; paused: boolean; daily_cap: number | null; gmail_refresh_token_encrypted: string };
+  const inboxes: HealthSnapshot["inboxes"] = await Promise.all(
+    ((inboxRows.data ?? []) as InboxRow[]).map(async (row) => {
+      const token = await getAccessToken(row.gmail_refresh_token_encrypted);
+      return {
+        id: row.id,
+        email: row.email,
+        paused: row.paused === true,
+        dailyCap: row.daily_cap ?? 0,
+        tokenOk: token.ok,
+        error: token.ok ? null : token.error,
+      };
+    }),
+  );
 
+  type PendingRow = { id: string; status: string; scheduled_send_at: string | null; updated_at: string | null; sender_inbox_id: string | null; prospects: unknown };
   const s = state.data as { enabled: boolean; stage: string; updated_at: string | null } | null;
   return {
     now: now.toISOString(),
     appUrl: appUrl(),
     autopilot: s ? { enabled: s.enabled, stage: s.stage, updatedAt: s.updated_at } : null,
     inboxes,
-    pending: ((pending.data ?? []) as Array<{ id: string; status: string; scheduled_send_at: string | null; updated_at: string | null }>).map((p) => ({
+    pending: ((pending.data ?? []) as PendingRow[]).map((p) => ({
       id: p.id,
       status: p.status,
       scheduledSendAt: p.scheduled_send_at,
       updatedAt: p.updated_at,
+      senderInboxId: p.sender_inbox_id,
+      cooldownUntil: (one(p.prospects)?.cooldown_until as string | null | undefined) ?? null,
+    })),
+    recentSends: ((sends.data ?? []) as Array<{ sender_inbox_id: string | null; sent_at: string }>).map((r) => ({
+      senderInboxId: r.sender_inbox_id,
+      sentAt: r.sent_at,
     })),
   };
 }
@@ -272,8 +299,9 @@ export async function recentHealthAlerts(tenantId: string, since: Date): Promise
 }
 
 /**
- * The dedupe row. Written here rather than through writeAuditLog because
- * "health.alert" is not in its AuditAction union (lib/audit is conductor-only).
+ * The dedupe row. A direct insert rather than writeAuditLog, which swallows
+ * the error: a missing row means the next hourly run repeats the email, so a
+ * failure goes to Sentry.
  */
 export async function recordHealthAlert(tenantId: string, problem: HealthProblem): Promise<void> {
   const { error } = await (createServiceRoleClient() as Db).from("audit_log").insert({
@@ -284,5 +312,9 @@ export async function recordHealthAlert(tenantId: string, problem: HealthProblem
     entity_id: tenantId,
     metadata: { kind: problem.kind, title: problem.title, detail: problem.detail },
   });
-  if (error) console.warn("[reports] health alert not recorded:", error.message);
+  if (error) {
+    // Without the row the next hourly run emails the same problem again: say so loudly.
+    console.error("[reports] health alert not recorded:", error.message);
+    Sentry.captureMessage(`S.P.A.M. health alert dedupe row not recorded (${problem.kind}): ${error.message}`, { level: "error" });
+  }
 }

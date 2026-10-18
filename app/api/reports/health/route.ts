@@ -9,7 +9,6 @@
 // (lib/cron-auth.ts isSchedulerAuthorized).
 // ─────────────────────────────────────────────────────────────────────────────
 
-import * as Sentry from "@sentry/nextjs";
 import { type NextRequest } from "next/server";
 import { isSchedulerAuthorized } from "@/lib/cron-auth";
 import { sendNotification } from "@/lib/notify/send";
@@ -27,15 +26,6 @@ const deps: Omit<HealthRouteDeps, "authorize"> = {
   send: (tenantId, message) =>
     sendNotification(createServiceRoleClient(), tenantId, { kind: "ops", fromName: "S.P.A.M. health", ...message }),
   recordAlert: recordHealthAlert,
-  // No inbox could send it (e.g. the only one is the disconnected one): Sentry
-  // alerts by email for free, so the emergency still reaches someone.
-  undelivered: async (tenantId, problems, failed) => {
-    console.error("[reports/health] alert undelivered:", tenantId, problems.map((p) => p.kind).join(","), failed.join(" | "));
-    Sentry.captureMessage(`S.P.A.M. emergency could not be emailed: ${problems.map((p) => p.title).join("; ")}`, {
-      level: "fatal",
-      extra: { tenantId, failed, problems },
-    });
-  },
 };
 
 export async function GET(req: NextRequest) {

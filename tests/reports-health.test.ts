@@ -14,9 +14,8 @@ import {
   formatHealthAlert,
   googleDisconnected,
   handleHealthCheck,
-  isStuckApproved,
+  lastClosedSendWindow,
   newProblems,
-  type HealthProblem,
   type HealthRouteDeps,
   type HealthSnapshot,
 } from "../lib/reports/health.ts";
@@ -26,17 +25,32 @@ const HOUR = 3_600_000;
 const NOW = new Date("2026-10-19T14:25:00Z");
 const ago = (h: number, from: Date = NOW) => new Date(from.getTime() - h * HOUR).toISOString();
 
+type Inbox = HealthSnapshot["inboxes"][number];
+type Pending = HealthSnapshot["pending"][number];
+const inbox = (email: string, over: Partial<Inbox> = {}): Inbox => ({ id: `ib-${email}`, email, paused: false, dailyCap: 20, tokenOk: true, error: null, ...over });
+const pitch = (over: Partial<Pending> = {}): Pending => ({
+  id: "p",
+  status: "approved",
+  scheduledSendAt: null,
+  updatedAt: null,
+  senderInboxId: "ib-henry@runna.ca",
+  cooldownUntil: null,
+  ...over,
+});
+
 function healthy(now: Date = NOW): HealthSnapshot {
   return {
     now: now.toISOString(),
     appUrl: "https://app.test",
     autopilot: { enabled: true, stage: "veto", updatedAt: ago(0.2, now) },
-    inboxes: [{ email: "henry@runna.ca", tokenOk: true, error: null }],
+    inboxes: [inbox("henry@runna.ca")],
     pending: [
-      { id: "p-fresh", status: "approved", scheduledSendAt: ago(2, now), updatedAt: ago(20, now) },
-      { id: "p-future", status: "approved", scheduledSendAt: ago(-10, now), updatedAt: ago(1, now) },
-      { id: "p-sending", status: "sending", scheduledSendAt: null, updatedAt: ago(0.1, now) },
+      pitch({ id: "p-fresh", scheduledSendAt: ago(2, now) }),
+      pitch({ id: "p-future", scheduledSendAt: ago(-10, now) }),
+      pitch({ id: "p-sending", status: "sending", scheduledSendAt: null, updatedAt: ago(0.1, now) }),
     ],
+    // The queue ran in the last closed window.
+    recentSends: [{ senderInboxId: "ib-henry@runna.ca", sentAt: new Date((lastClosedSendWindow(now.getTime())?.start ?? 0) + 600_000).toISOString() }],
   };
 }
 
@@ -48,7 +62,7 @@ test("a healthy snapshot has no problems", () => {
 
 test("E1 fires when a connected inbox's token fails, naming the inbox and the fix", () => {
   const s = healthy();
-  s.inboxes.push({ email: "maria@runna.ca", tokenOk: false, error: 'Token refresh failed (400): {"error":"invalid_grant"}' });
+  s.inboxes.push(inbox("maria@runna.ca", { tokenOk: false, error: 'Token refresh failed (400): {"error":"invalid_grant"}' }));
   const p = googleDisconnected(s);
   assert.ok(p);
   assert.equal(p.kind, "google_disconnected");
@@ -59,13 +73,13 @@ test("E1 fires when a connected inbox's token fails, naming the inbox and the fi
 });
 
 test("E1 ignores a transient token failure (timeout, Google 5xx) and retries next hour", () => {
-  for (const error of ["Token refresh failed: timed out after 10s", "Token refresh failed (503): backend", "Token refresh failed: fetch failed"]) {
+  for (const error of ["Token refresh failed: timed out after 10s", "Token refresh failed (503): backend", "Token refresh failed (429): rate limited", "Token refresh failed: fetch failed"]) {
     const s = healthy();
-    s.inboxes[0] = { email: "henry@runna.ca", tokenOk: false, error };
+    s.inboxes[0] = inbox("henry@runna.ca", { tokenOk: false, error });
     assert.equal(googleDisconnected(s), null, error);
   }
   const s = healthy();
-  s.inboxes[0] = { email: "henry@runna.ca", tokenOk: false, error: "Could not decrypt refresh token." };
+  s.inboxes[0] = inbox("henry@runna.ca", { tokenOk: false, error: "Could not decrypt refresh token." });
   assert.ok(googleDisconnected(s), "an unknown or permanent error counts as disconnected");
 });
 
@@ -77,7 +91,8 @@ test("E2 fires when the autopilot is on and no tick wrote autonomy_state for ove
   const p = autopilotStopped(s);
   assert.ok(p);
   assert.equal(p.kind, "autopilot_stopped");
-  assert.match(p.detail, /3h/);
+  assert.match(p.detail, /last tick recorded is .*, 3h ago/);
+  assert.doesNotMatch(p.detail, /no tick has run/);
   s.autopilot.updatedAt = null;
   assert.ok(autopilotStopped(s));
 });
@@ -95,40 +110,85 @@ test("E2 is quiet when the tick ran within 2h, or the autopilot is switched off"
 });
 
 // ── E3 Emails stuck ─────────────────────────────────────────────────────────
+// Judged on the last CLOSED send window (weekdays 15:00–23:00 UTC), within 24h of its close.
 
-test("E3 fires on an approved pitch more than 24h overdue through a whole send window", () => {
-  const s = healthy();
-  s.pending.push({ id: "p-old", status: "approved", scheduledSendAt: "2026-10-15T16:00:00Z", updatedAt: null }); // Thu: Friday's window passed
-  const p = emailsStuck(s);
-  assert.ok(p);
-  assert.equal(p.kind, "emails_stuck");
-  assert.match(p.detail, /1 approved/);
+const TUE_NIGHT = new Date("2026-10-20T23:25:00Z"); // Tuesday's window closed at 23:00
+const at = (iso: string) => new Date(iso);
+function snapAt(now: Date, over: Partial<HealthSnapshot> = {}): HealthSnapshot {
+  return { ...healthy(now), pending: [], recentSends: [], ...over };
+}
+const dueTue = pitch({ id: "p-due", scheduledSendAt: "2026-10-20T10:00:00Z" });
+
+test("lastClosedSendWindow: weekdays only, closed only", () => {
+  const w = (iso: string) => {
+    const r = lastClosedSendWindow(new Date(iso).getTime());
+    return r ? new Date(r.start).toISOString() : null;
+  };
+  assert.equal(w("2026-10-20T23:25:00Z"), "2026-10-20T15:00:00.000Z");
+  assert.equal(w("2026-10-20T20:00:00Z"), "2026-10-19T15:00:00.000Z", "today's window is still open");
+  assert.equal(w("2026-10-18T12:00:00Z"), "2026-10-16T15:00:00.000Z", "Sunday → Friday");
 });
 
-test("E3 fires on a pitch left in sending for over 1h", () => {
-  const s = healthy();
-  s.pending.push({ id: "p-hung", status: "sending", scheduledSendAt: null, updatedAt: ago(1.5) });
-  const p = emailsStuck(s);
+test("E3 true positive: a sendable pitch was due in the last closed window and its inbox sent nothing", () => {
+  const p = emailsStuck(snapAt(TUE_NIGHT, { pending: [dueTue] }));
+  assert.ok(p);
+  assert.equal(p.kind, "emails_stuck");
+  assert.match(p.detail, /1 approved pitch\(es\) were due in the 2026-10-20 send window/);
+  assert.match(p.detail, /henry@runna\.ca sent nothing/);
+});
+
+test("E3 true positive: a pitch already in sending before the window opened is still sending after it closed", () => {
+  const hung = pitch({ id: "p-hung", status: "sending", updatedAt: "2026-10-20T09:00:00Z" });
+  const p = emailsStuck(snapAt(TUE_NIGHT, { pending: [hung] }));
   assert.ok(p);
   assert.match(p.detail, /p-hung/);
 });
 
-test("E3 does not fire over a weekend: the send-queue only runs weekdays 15:00–23:00 UTC", () => {
-  const due = "2026-10-16T23:30:00Z"; // Friday, after the last run
-  assert.equal(isStuckApproved(due, new Date("2026-10-18T12:00:00Z").getTime()), false, "Sunday");
-  assert.equal(isStuckApproved(due, new Date("2026-10-19T20:00:00Z").getTime()), false, "Monday, window still open");
-  assert.equal(isStuckApproved(due, new Date("2026-10-19T23:00:00Z").getTime()), true, "Monday's window closed without sending it");
-  // A weekday pitch due mid-window: 24h alone is not enough until the next whole window closes.
-  const tue = "2026-10-20T16:00:00Z";
-  assert.equal(isStuckApproved(tue, new Date("2026-10-21T16:30:00Z").getTime()), false);
-  assert.equal(isStuckApproved(tue, new Date("2026-10-21T23:00:00Z").getTime()), true);
+test("E3 is silent for every state the send-queue holds a pitch in by design", () => {
+  const cases: Array<[string, HealthSnapshot]> = [
+    ["paused inbox (a breaker; the tick emails it)", snapAt(TUE_NIGHT, { pending: [dueTue], inboxes: [inbox("henry@runna.ca", { paused: true })] })],
+    ["disconnected inbox (E1's job)", { ...snapAt(TUE_NIGHT, { pending: [dueTue], inboxes: [inbox("henry@runna.ca", { tokenOk: false, error: "Token refresh failed (400): invalid_grant" })] }) }],
+    ["inbox with no daily cap", snapAt(TUE_NIGHT, { pending: [dueTue], inboxes: [inbox("henry@runna.ca", { dailyCap: 0 })] })],
+    [
+      "daily-cap drip backlog: the inbox sent in the window",
+      snapAt(TUE_NIGHT, {
+        pending: Array.from({ length: 30 }, (_, i) => pitch({ id: `p${i}`, scheduledSendAt: "2026-10-19T16:00:00Z" })),
+        recentSends: [{ senderInboxId: "ib-henry@runna.ca", sentAt: "2026-10-20T15:10:00Z" }],
+      }),
+    ],
+    ["prospect in cooldown", snapAt(TUE_NIGHT, { pending: [{ ...dueTue, cooldownUntil: "2026-10-27T00:00:00Z" }] })],
+    ["due after the window's last run (22:50)", snapAt(TUE_NIGHT, { pending: [pitch({ scheduledSendAt: "2026-10-20T22:55:00Z" })] })],
+    ["weekend: due Friday after the last run, checked Saturday", snapAt(at("2026-10-24T12:00:00Z"), { pending: [pitch({ scheduledSendAt: "2026-10-23T23:30:00Z" })] })],
+    ["weekend: Sunday, more than 24h after Friday's window", snapAt(at("2026-10-25T12:00:00Z"), { pending: [pitch({ scheduledSendAt: "2026-10-22T10:00:00Z" })] })],
+    ["outside the window: Tuesday 20:00, window still open", snapAt(at("2026-10-20T20:00:00Z"), { pending: [pitch({ scheduledSendAt: "2026-10-20T19:00:00Z" })] })],
+    ["Friday 22:51 sending row, checked Saturday", snapAt(at("2026-10-24T09:25:00Z"), { pending: [pitch({ status: "sending", updatedAt: "2026-10-23T22:51:00Z" })] })],
+    ["veto stage with nothing sent yet: AUTO pitches scheduled 18h out", snapAt(TUE_NIGHT, { pending: [pitch({ scheduledSendAt: "2026-10-21T17:00:00Z" })] })],
+    ["pitch with no sender inbox", snapAt(TUE_NIGHT, { pending: [{ ...dueTue, senderInboxId: null }] })],
+  ];
+  for (const [name, snap] of cases) assert.equal(emailsStuck(snap), null, name);
+});
+
+test("conductor repro: a pitch due Mon 10:00 behind a cap drip stays silent all week", () => {
+  const backlog = pitch({ id: "p-backlog", scheduledSendAt: "2026-10-19T10:00:00Z" });
+  for (const day of ["2026-10-20", "2026-10-21", "2026-10-22", "2026-10-23"]) {
+    const snap = snapAt(at(`${day}T23:25:00Z`), {
+      pending: [backlog],
+      recentSends: [{ senderInboxId: "ib-henry@runna.ca", sentAt: `${day}T15:00:00Z` }],
+    });
+    assert.deepEqual(findProblems(snap), [], day);
+  }
+});
+
+test("AI cap reached, no discovery for hours, nothing waiting: silent (the tick still writes autonomy_state)", () => {
+  const s = snapAt(TUE_NIGHT, { autopilot: { enabled: true, stage: "veto", updatedAt: ago(0.2, TUE_NIGHT) } });
+  assert.deepEqual(findProblems(s), []);
 });
 
 test("budget cap, breaker trips and a quiet day are not emergencies", () => {
   const s = healthy();
   s.pending = [];
   // Nothing in the snapshot even carries spend or breakers: the rules cannot see them.
-  assert.deepEqual(Object.keys(s).sort(), ["appUrl", "autopilot", "inboxes", "now", "pending"]);
+  assert.deepEqual(Object.keys(s).sort(), ["appUrl", "autopilot", "inboxes", "now", "pending", "recentSends"]);
   assert.deepEqual(findProblems(s), []);
 });
 
@@ -137,7 +197,7 @@ test("budget cap, breaker trips and a quiet day are not emergencies", () => {
 test("the alert names each problem, what it stops, and the one thing to do", () => {
   const s = healthy();
   s.autopilot = { enabled: true, stage: "veto", updatedAt: ago(5) };
-  s.inboxes[0] = { email: "henry@runna.ca", tokenOk: false, error: "Token refresh failed (400): invalid_grant" };
+  s.inboxes[0] = inbox("henry@runna.ca", { tokenOk: false, error: "Token refresh failed (400): invalid_grant" });
   const { subject, body } = formatHealthAlert(findProblems(s));
   assert.match(subject, /EMERGENCY: 2 problems/);
   assert.match(body, /1\. Google disconnected for henry@runna\.ca/);
@@ -148,12 +208,11 @@ test("the alert names each problem, what it stops, and the one thing to do", () 
 
 // ── Route: healthy = no email, dedupe, undelivered, dry, auth ──────────────────
 
-type Sent = { subject: string; body: string; fromEmail?: string };
+type Sent = { subject: string; body: string };
 
 function harness(opts: { snapshot: (now: Date) => HealthSnapshot; deliver?: boolean }) {
   const audit: Array<{ kind: string; at: string }> = [];
   const sent: Sent[] = [];
-  const undelivered: HealthProblem[][] = [];
   let now = NOW;
   const deps: HealthRouteDeps = {
     authorize: async (req) => req.headers.get("authorization") === "Bearer ok",
@@ -167,9 +226,6 @@ function harness(opts: { snapshot: (now: Date) => HealthSnapshot; deliver?: bool
     recordAlert: async (_t, p) => {
       audit.push({ kind: p.kind, at: now.toISOString() });
     },
-    undelivered: async (_t, problems) => {
-      undelivered.push(problems);
-    },
     now: () => now,
   };
   const call = async (at: Date, query = "") => {
@@ -177,15 +233,12 @@ function harness(opts: { snapshot: (now: Date) => HealthSnapshot; deliver?: bool
     const res = await handleHealthCheck(new Request(`https://app.test/api/reports/health${query}`, { headers: { authorization: "Bearer ok" } }), deps);
     return (await res.json()) as { sent: number; results: Array<{ problems: string[]; emailed: string[]; suppressed: string[]; body?: string }> };
   };
-  return { audit, sent, undelivered, deps, call };
+  return { audit, sent, deps, call };
 }
 
 const disconnectedAt = (at: Date): HealthSnapshot => {
   const s = healthy(at);
-  s.inboxes = [
-    { email: "henry@runna.ca", tokenOk: true, error: null },
-    { email: "maria@runna.ca", tokenOk: false, error: "Token refresh failed (400): invalid_grant" },
-  ];
+  s.inboxes = [inbox("henry@runna.ca"), inbox("maria@runna.ca", { tokenOk: false, error: "Token refresh failed (400): invalid_grant" })];
   return s;
 };
 
@@ -206,7 +259,6 @@ test("the same problem two hours running produces ONE email", async () => {
   assert.deepEqual(first.results[0]?.emailed, ["google_disconnected"]);
   assert.deepEqual(second.results[0]?.suppressed, ["google_disconnected"]);
   assert.deepEqual(third.results[0]?.emailed, []);
-  assert.equal(h.sent[0]?.fromEmail, "henry@runna.ca", "sent from an inbox whose token works");
 });
 
 test("a problem that clears and returns after 24h emails again; within 24h it does not", async () => {
@@ -243,13 +295,12 @@ test("one email lists every new problem of the run; an older one stays deduped",
   assert.doesNotMatch(h.sent[1]?.body ?? "", /Google disconnected/);
 });
 
-test("an alert no inbox could deliver is not recorded, goes to the fallback, and retries next hour", async () => {
+test("an alert no inbox could deliver is not recorded and retries next hour (sendNotification reports it to Sentry)", async () => {
   const h = harness({ snapshot: disconnectedAt, deliver: false });
   await h.call(NOW);
   await h.call(new Date(NOW.getTime() + HOUR));
   assert.equal(h.audit.length, 0);
   assert.equal(h.sent.length, 2);
-  assert.equal(h.undelivered.length, 2);
 });
 
 test("?dry=1 returns the text without sending or recording", async () => {

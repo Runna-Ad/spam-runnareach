@@ -2,13 +2,17 @@
  * The hourly health check: emails ONLY when something is wrong, at most once
  * per problem per 24h, and is silent otherwise.
  *
- * Each emergency is a pure rule over a snapshot that snapshot.ts gathers:
+ * An emergency is activity that was due in a period and did not happen, never
+ * "something is waiting": every state the system enters by design is silent,
+ * because the 24h dedupe would turn a false positive into a daily email.
+ * Each is a pure rule over a snapshot that snapshot.ts gathers:
  *   google_disconnected  a connected inbox's refresh token no longer works
  *   autopilot_stopped    the kill switch is on but no tick has run for 2h
- *   emails_stuck         approved pitches long past their send time, or a
- *                        pitch left in "sending"
+ *   emails_stuck         the last closed send window had sendable pitches due
+ *                        and their inbox sent nothing, or a pitch stayed in
+ *                        "sending" through a whole window
  * Not emergencies, by design: the AI budget cap, breaker trips (the tick
- * already emails them), a quiet day.
+ * already emails them), the daily-cap drip, cooldowns, weekends, a quiet day.
  *
  * Dedupe: an audit_log row (action health.alert, metadata.kind = the rule) is
  * written after an email goes out; a rule with such a row in the last 24h is
@@ -20,16 +24,14 @@ const HOUR = 3_600_000;
 export const ALERT_DEDUPE_HOURS = 24;
 /** The tick runs every 15 min (0041); eight missed ticks is not a blip. */
 export const TICK_SILENCE_HOURS = 2;
-export const STUCK_APPROVED_HOURS = 24;
-export const STUCK_SENDING_HOURS = 1;
 
 /**
- * The send-queue only runs on weekdays 15:00–22:50 UTC (0041:
- * `*\/10 15-22 * * 1-5`), so a pitch due Friday night legitimately waits for
- * Monday. "Stuck" therefore also needs one whole send window to have passed
- * since the pitch was due, or every weekend would raise an alert.
+ * The send-queue runs weekdays every 10 min from 15:00 to 22:50 UTC (0041:
+ * `*\/10 15-22 * * 1-5`). Outside a window nothing is supposed to send, so
+ * "emails stuck" is judged on the last CLOSED window only, and only within
+ * 24h of its close: a weekend never re-judges Friday's window.
  */
-const SEND_WINDOW = { days: [1, 2, 3, 4, 5], startHour: 15, endHour: 23 };
+const SEND_WINDOW = { days: [1, 2, 3, 4, 5], startHour: 15, endHour: 23, lastRunMinute: 22 * 60 + 50 };
 
 export type HealthRule = "google_disconnected" | "autopilot_stopped" | "emails_stuck";
 
@@ -37,10 +39,20 @@ export type HealthSnapshot = {
   now: string;
   appUrl: string;
   autopilot: { enabled: boolean; stage: string; updatedAt: string | null } | null;
-  /** Every sender_inboxes row with a refresh token, and what getAccessToken said. */
-  inboxes: Array<{ email: string; tokenOk: boolean; error: string | null }>;
+  /** Every sender_inboxes row with a refresh token, its send state, and what getAccessToken said. */
+  inboxes: Array<{ id: string; email: string; paused: boolean; dailyCap: number; tokenOk: boolean; error: string | null }>;
   /** Pitches in approved or sending. updatedAt is the row's updated_at (trigger-maintained). */
-  pending: Array<{ id: string; status: string; scheduledSendAt: string | null; updatedAt: string | null }>;
+  pending: Array<{
+    id: string;
+    status: string;
+    scheduledSendAt: string | null;
+    updatedAt: string | null;
+    senderInboxId: string | null;
+    /** The prospect's cooldown_until: the send-queue skips the pitch until then. */
+    cooldownUntil: string | null;
+  }>;
+  /** Pitches sent in the last 48h (sent_at, from which inbox): proof the queue ran. */
+  recentSends: Array<{ senderInboxId: string | null; sentAt: string }>;
 };
 
 export type HealthProblem = {
@@ -52,12 +64,12 @@ export type HealthProblem = {
 };
 
 /**
- * A token failure that says nothing about the connection (Google down, a
- * timeout) is retried next hour instead of raising "disconnected". Anything
- * else, including errors we haven't seen, counts as disconnected.
+ * A token failure that says nothing about the connection (Google down or rate
+ * limiting, a timeout) is retried next hour instead of raising
+ * "disconnected". Anything else, including errors we haven't seen, counts.
  */
 export function isTransientTokenError(error: string | null): boolean {
-  return !!error && /timed out|\(5\d\d\)|fetch failed|ECONNRESET|ENOTFOUND|EAI_AGAIN|network/i.test(error);
+  return !!error && /timed out|\((5\d\d|429)\)|fetch failed|ECONNRESET|ENOTFOUND|EAI_AGAIN|network/i.test(error);
 }
 
 export function googleDisconnected(s: HealthSnapshot): HealthProblem | null {
@@ -78,47 +90,85 @@ export function autopilotStopped(s: HealthSnapshot): HealthProblem | null {
   const now = new Date(s.now).getTime();
   const last = a.updatedAt ? new Date(a.updatedAt).getTime() : NaN;
   if (Number.isFinite(last) && now - last <= TICK_SILENCE_HOURS * HOUR) return null;
-  const since = Number.isFinite(last) ? `${Math.floor((now - last) / HOUR)}h (last tick ${new Date(last).toISOString()})` : "ever (no tick recorded)";
+  const observed = Number.isFinite(last)
+    ? `the last tick recorded is ${new Date(last).toISOString()}, ${Math.floor((now - last) / HOUR)}h ago`
+    : "no tick has been recorded";
   return {
     kind: "autopilot_stopped",
     title: "Autopilot stopped running",
-    detail: `The autopilot is switched on (stage ${a.stage}) but no tick has run for ${since}.`,
+    detail: `The autopilot is switched on (stage ${a.stage}); it runs every 15 minutes, but ${observed} (autonomy_state.updated_at).`,
     stops: "New drafts, AUTO scheduling, breakers and learning. Already-approved emails still send.",
     action: "Check the spam-autopilot-tick job in Supabase (cron.job_run_details, net._http_response) and the latest /api/autopilot/tick logs in Vercel.",
   };
 }
 
-/** Start of the first whole send window that opens after `t`. */
-export function firstFullWindowAfter(t: number): number {
-  const d = new Date(t);
+/** The most recent weekday send window that has closed at `now`, or null if none in the last week. */
+export function lastClosedSendWindow(now: number): { start: number; end: number; lastRun: number } | null {
+  const d = new Date(now);
   for (let i = 0; i < 8; i++) {
-    const start = Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate() + i, SEND_WINDOW.startHour);
-    if (start > t && SEND_WINDOW.days.includes(new Date(start).getUTCDay())) return start;
+    const start = Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate() - i, SEND_WINDOW.startHour);
+    const end = Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate() - i, SEND_WINDOW.endHour);
+    if (end <= now && SEND_WINDOW.days.includes(new Date(start).getUTCDay())) {
+      const lastRun = Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate() - i, 0, SEND_WINDOW.lastRunMinute);
+      return { start, end, lastRun };
+    }
   }
-  return t;
+  return null;
 }
 
-/** Due more than 24h ago AND a whole send window has closed since it was due. */
-export function isStuckApproved(scheduledSendAt: string, now: number): boolean {
-  const due = new Date(scheduledSendAt).getTime();
-  if (!Number.isFinite(due) || now - due <= STUCK_APPROVED_HOURS * HOUR) return false;
-  return now >= firstFullWindowAfter(due) + (SEND_WINDOW.endHour - SEND_WINDOW.startHour) * HOUR;
-}
-
+/**
+ * Emails stuck = the last closed send window should have sent something and
+ * did not. Every state the send-queue holds a pitch in BY DESIGN is silent:
+ *   - a paused inbox (a breaker, which the tick already emails), a
+ *     disconnected one (E1's job), or one with no daily cap
+ *   - the daily-cap drip: if the inbox sent anything in the window, the queue
+ *     ran and the backlog is the cap working
+ *   - a prospect in cooldown through the window's last run
+ *   - weekends and the hours outside the window (only a closed window counts)
+ * A "sending" row counts only if it was already sending before that window
+ * opened: recoverStuckSends runs inside the window and should have settled it.
+ */
 export function emailsStuck(s: HealthSnapshot): HealthProblem | null {
   const now = new Date(s.now).getTime();
-  const approved = s.pending.filter((p) => p.status === "approved" && p.scheduledSendAt && isStuckApproved(p.scheduledSendAt, now));
-  const sending = s.pending.filter(
-    (p) => p.status === "sending" && p.updatedAt && now - new Date(p.updatedAt).getTime() > STUCK_SENDING_HOURS * HOUR,
+  const w = lastClosedSendWindow(now);
+  if (!w || now - w.end > 24 * HOUR) return null;
+
+  const sendable = new Map(s.inboxes.filter((i) => i.tokenOk && !i.paused && i.dailyCap > 0).map((i) => [i.id, i]));
+  const sentFrom = new Set(
+    s.recentSends
+      .filter((r) => {
+        const t = new Date(r.sentAt).getTime();
+        return t >= w.start && t < w.end;
+      })
+      .map((r) => r.senderInboxId),
   );
+  const ts = (iso: string | null) => (iso ? new Date(iso).getTime() : NaN);
+
+  const approved = s.pending.filter(
+    (p) =>
+      p.status === "approved" &&
+      ts(p.scheduledSendAt) <= w.lastRun &&
+      p.senderInboxId !== null &&
+      sendable.has(p.senderInboxId) &&
+      !sentFrom.has(p.senderInboxId) &&
+      !(ts(p.cooldownUntil) > w.lastRun),
+  );
+  const sending = s.pending.filter((p) => p.status === "sending" && ts(p.updatedAt) < w.start);
   if (approved.length === 0 && sending.length === 0) return null;
+
+  const day = new Date(w.start).toISOString().slice(0, 10);
   const parts: string[] = [];
   if (approved.length) {
+    const inboxes = [...new Set(approved.map((p) => sendable.get(p.senderInboxId as string)?.email ?? "?"))];
     const oldest = approved.map((p) => p.scheduledSendAt as string).sort()[0];
-    parts.push(`${approved.length} approved pitch(es) more than ${STUCK_APPROVED_HOURS}h past their send time, through a whole send window (oldest due ${oldest}).`);
+    parts.push(
+      `${approved.length} approved pitch(es) were due in the ${day} send window (15:00–23:00 UTC), but ${inboxes.join(", ")} sent nothing in that window although active and connected (oldest due ${oldest}).`,
+    );
   }
   if (sending.length) {
-    parts.push(`${sending.length} pitch(es) in "sending" for over ${STUCK_SENDING_HOURS}h: ${sending.slice(0, 5).map((p) => p.id).join(", ")}.`);
+    parts.push(
+      `${sending.length} pitch(es) were already in "sending" before the ${day} window opened and are still there: ${sending.slice(0, 5).map((p) => p.id).join(", ")}.`,
+    );
   }
   return {
     kind: "emails_stuck",
@@ -166,11 +216,9 @@ export type HealthRouteDeps = {
   tenantIds: () => Promise<string[]>;
   snapshot: (tenantId: string, now: Date) => Promise<HealthSnapshot>;
   recentAlerts: (tenantId: string, since: Date) => Promise<Array<{ kind: string; at: string }>>;
-  /** fromEmail: a connected inbox whose token works, so a disconnect alert can still go out. */
-  send: (tenantId: string, message: { subject: string; body: string; fromEmail?: string }) => Promise<{ sent: number; failed: string[] }>;
+  /** sendNotification: tries each connected inbox, and reports to Sentry when none can send. */
+  send: (tenantId: string, message: { subject: string; body: string }) => Promise<{ sent: number; failed: string[] }>;
   recordAlert: (tenantId: string, problem: HealthProblem) => Promise<void>;
-  /** Last resort when no email went out (e.g. the only inbox is the disconnected one). */
-  undelivered: (tenantId: string, problems: HealthProblem[], failed: string[]) => Promise<void>;
   now?: () => Date;
 };
 
@@ -207,16 +255,13 @@ export async function handleHealthCheck(req: Request, deps: HealthRouteDeps): Pr
         Object.assign(row, message);
         continue;
       }
-      const fromEmail = snap.inboxes.find((i) => i.tokenOk)?.email;
-      const res = await deps.send(tenantId, { ...message, fromEmail });
+      const res = await deps.send(tenantId, message);
       sent += res.sent;
       failed.push(...res.failed.map((f) => `${tenantId}: ${f}`));
+      // Dedupe only what was delivered; an undelivered alert is retried next hour.
       if (res.sent > 0) {
-        // Dedupe only what was delivered; an undelivered alert is retried next hour.
         for (const p of fresh) await deps.recordAlert(tenantId, p);
         row.emailed = fresh.map((p) => p.kind);
-      } else {
-        await deps.undelivered(tenantId, fresh, res.failed);
       }
     } catch (err) {
       failed.push(`${tenantId}: ${(err as Error).message}`);
