@@ -16,9 +16,10 @@ import {
   handleCalendarSync,
   organizedByInbox,
   planEvent,
-  sendBookingAlerts,
+  sendDueBookingAlerts,
   supabaseSyncStore,
   syncCalendarWith,
+  type AlertRow,
   type BookedAudit,
   type CalendarOpportunity,
   type CalendarSyncReport,
@@ -49,7 +50,21 @@ function booking(id: string, attendees: Array<string | CalendarAttendee>, over: 
   };
 }
 
-type Opp = { id: string; eventId: string | null; source: "manual" | "calendar"; stage: string; prospectId: string; lossReason: string | null };
+type Opp = {
+  id: string; eventId: string | null; source: "manual" | "calendar"; stage: string; prospectId: string; lossReason: string | null;
+  contactId?: string | null; meetingStart?: string | null; meetingTimeZone?: string | null;
+  bookedAlertSentAt?: string | null; cancelledAlertSentAt?: string | null; createdAt?: string; updatedAt?: string;
+};
+
+function alertRow(o: Opp): AlertRow {
+  const now = new Date().toISOString();
+  return {
+    id: o.id, source: o.source, prospectId: o.prospectId, contactId: o.contactId ?? null, stage: o.stage,
+    lossReason: o.lossReason, meetingStart: o.meetingStart ?? null, meetingTimeZone: o.meetingTimeZone ?? null,
+    bookedAlertSentAt: o.bookedAlertSentAt ?? null, cancelledAlertSentAt: o.cancelledAlertSentAt ?? null,
+    createdAt: o.createdAt ?? now, updatedAt: o.updatedAt ?? now,
+  };
+}
 
 /** In-memory store with the same constraints as the tables. */
 function memoryStore(
@@ -72,10 +87,13 @@ function memoryStore(
       const s = prospectStatus[prospectId];
       if (s !== "won" && s !== "lost") prospectStatus[prospectId] = "booked";
     },
-    async createOpportunity({ eventId, match }) {
+    async createOpportunity({ eventId, match, meetingStart, meetingTimeZone }) {
       if (opps.some((x) => x.eventId === eventId)) return null;
       const id = `opp-${opps.length + 1}`;
-      opps.push({ id, eventId, source: "calendar", stage: "meeting_booked", prospectId: match.prospectId, lossReason: null });
+      opps.push({
+        id, eventId, source: "calendar", stage: "meeting_booked", prospectId: match.prospectId, lossReason: null,
+        contactId: match.contactId, meetingStart, meetingTimeZone,
+      });
       return { id };
     },
     async markCancelled(id) {
@@ -84,6 +102,31 @@ function memoryStore(
       o.stage = "lost";
       o.lossReason = CANCELLED_LOSS_REASON;
       return true;
+    },
+    async contactEmails(ids) {
+      const byId = new Map(Object.values(contacts).map((c) => [c.contactId, c.email]));
+      return new Map(ids.flatMap((id) => (byId.has(id) ? [[id, byId.get(id) as string] as [string, string]] : [])));
+    },
+    async dueAlerts() {
+      return opps.map(alertRow);
+    },
+    async claimAlert(row, kind, nowIso) {
+      const o = opps.find((x) => x.id === row.id);
+      if (!o) return false;
+      if (kind === "booked") {
+        if (o.bookedAlertSentAt) return false;
+        o.bookedAlertSentAt = nowIso;
+        return true;
+      }
+      if (o.cancelledAlertSentAt || o.stage !== "lost" || o.lossReason !== CANCELLED_LOSS_REASON) return false;
+      o.cancelledAlertSentAt = nowIso;
+      o.bookedAlertSentAt ??= nowIso;
+      return true;
+    },
+    async releaseAlert(id, kind) {
+      const o = opps.find((x) => x.id === id);
+      if (o && kind === "booked") o.bookedAlertSentAt = null;
+      if (o && kind === "cancelled") o.cancelledAlertSentAt = null;
     },
     async rootSentPitchId(prospectId) {
       return rootPitch[prospectId] ?? null;
@@ -326,7 +369,7 @@ function recordingSupabase(result: (call: Call) => { data: unknown; error: { mes
       const call: Call = { table, ops: [] };
       calls.push(call);
       const builder: Record<string, unknown> = {};
-      for (const m of ["select", "eq", "in", "ilike", "not", "is", "order", "limit", "insert", "update"]) {
+      for (const m of ["select", "eq", "in", "ilike", "not", "is", "gte", "order", "limit", "insert", "update"]) {
         builder[m] = (...args: unknown[]) => {
           call.ops.push([m, args]);
           return builder;
@@ -395,7 +438,9 @@ test("store.findContact escapes LIKE wildcards and only reads calendar opportuni
 
 test("store.createOpportunity: unique violation → null (duplicate)", async () => {
   const fake = recordingSupabase(() => ({ data: null, error: { message: "dup", code: "23505" } }));
-  const row = await supabaseSyncStore(fake.client, "t1").createOpportunity({ eventId: "e1", match: ANA, notes: "n" });
+  const row = await supabaseSyncStore(fake.client, "t1").createOpportunity({
+    eventId: "e1", match: ANA, notes: "n", meetingStart: null, meetingTimeZone: null,
+  });
   assert.equal(row, null);
 });
 
@@ -677,46 +722,54 @@ test("formatBookingAlert: booked and cancelled subjects + body", () => {
   assert.match(cancelled.body, /marked lost/);
 });
 
-test("sendBookingAlerts: one lead email per change, company + market from one batch lookup", async () => {
+test("sendDueBookingAlerts: one lead email per due row, company + market and contact email from one batch lookup each", async () => {
   let lookups = 0;
-  const m = memoryStore({}, {}, {}, { "p-ana": { company: "Bakery Co", market: "CA" } });
+  const m = memoryStore({ "ana@bakery.ca": ANA }, {}, {}, { "p-ana": { company: "Bakery Co", market: "CA" } });
+  m.opps.push(
+    { id: "o1", eventId: "e1", source: "calendar", stage: "meeting_booked", prospectId: "p-ana", lossReason: null,
+      contactId: "c-ana", meetingStart: "2026-10-20T15:00:00Z", meetingTimeZone: null },
+    { id: "o2", eventId: "e2", source: "calendar", stage: "lost", prospectId: "p-ana", lossReason: CANCELLED_LOSS_REASON,
+      contactId: null, bookedAlertSentAt: "2026-10-17T00:00:00Z" },
+  );
   const store: SyncStore = { ...m.store, prospectSummaries: async (ids) => (lookups++, m.store.prospectSummaries(ids)) };
   const sent: NotificationMessage[] = [];
-  const res = await sendBookingAlerts(
-    [
-      { kind: "booked", eventId: "e1", prospectId: "p-ana", attendee: "ana@bakery.ca", start: "2026-10-20T15:00:00Z", timeZone: null },
-      { kind: "cancelled", eventId: "e2", prospectId: "p-ana", attendee: null, start: null, timeZone: null },
-    ],
+  const { alerts } = await sendDueBookingAlerts(
     store,
     async (msg) => (sent.push(msg), { sent: 3, failed: [] }),
+    { deadline: Date.now() + 60_000 },
   );
   assert.equal(lookups, 1);
-  assert.deepEqual(sent.map((s) => [s.kind, s.subject]), [
-    ["lead", "Meeting booked: Bakery Co (Tue, Oct 20, 2026, 3:00 PM (UTC))"],
-    ["lead", "Booking cancelled: Bakery Co"],
+  assert.deepEqual(sent.map((s) => [s.kind, s.fromName, s.subject]), [
+    ["lead", "S.P.A.M Bookings", "Meeting booked: Bakery Co (Tue, Oct 20, 2026, 3:00 PM (UTC))"],
+    ["lead", "S.P.A.M Bookings", "Booking cancelled: Bakery Co"],
   ]);
-  assert.deepEqual(res, { sent: 6, failed: [] });
+  assert.match(sent[0]?.body ?? "", /Who: ana@bakery\.ca/);
+  assert.deepEqual(alerts, { sent: 6, failed: [] });
 });
 
-test("sendBookingAlerts: lookup or send failures are reported, never thrown", async () => {
+test("sendDueBookingAlerts: lookup or send failures are reported, never thrown", async () => {
   const m = memoryStore({});
+  m.opps.push(
+    { id: "o1", eventId: "e1", source: "calendar", stage: "meeting_booked", prospectId: "p1", lossReason: null },
+    { id: "o2", eventId: "e2", source: "calendar", stage: "meeting_booked", prospectId: "p2", lossReason: null, meetingStart: "2026-10-20" },
+  );
   const store: SyncStore = { ...m.store, prospectSummaries: async () => { throw new Error("prospect lookup failed: x"); } };
   const sent: NotificationMessage[] = [];
-  const res = await sendBookingAlerts(
-    [
-      { kind: "booked", eventId: "e1", prospectId: "p1", attendee: "a@x.ca", start: null, timeZone: null },
-      { kind: "booked", eventId: "e2", prospectId: "p2", attendee: "b@x.ca", start: null, timeZone: null },
-    ],
+  const { alerts } = await sendDueBookingAlerts(
     store,
     async (msg) => {
-      if (msg.subject.includes("b@x.ca")) throw new Error("gmail down");
+      if (msg.subject.includes("all day")) throw new Error("gmail down");
       sent.push(msg);
       return { sent: 3, failed: [] };
     },
+    { deadline: Date.now() + 60_000 },
   );
   assert.equal(sent.length, 1);
-  assert.equal(sent[0]?.subject, "Meeting booked: a@x.ca (unknown time)");
-  assert.deepEqual(res, { sent: 3, failed: ["prospect lookup failed: x", "event e2: gmail down"] });
+  assert.equal(sent[0]?.subject, "Meeting booked: unknown prospect (unknown time)");
+  assert.deepEqual(alerts, { sent: 3, failed: ["prospect lookup failed: x", "opportunity o2: gmail down"] });
+  // The thrown send released its claim; the delivered one kept it.
+  assert.equal(m.opps[1]?.bookedAlertSentAt, null);
+  assert.ok(m.opps[0]?.bookedAlertSentAt);
 });
 
 test("syncCalendarWith: a booking sends one alert from the booking inbox; report carries bookings + alerts", async () => {

@@ -16,9 +16,34 @@
  *       → stage lost, loss_reason "booking cancelled" + a lost pitch event
  *         (prospects.status is left as it is)
  *
- * Every booking and cancellation applied in a run sends one lead alert
- * (lib/opportunities/booking-alert.ts) after the batch; idempotency above
- * means an event alerts once. An alert failure never fails the sync.
+ * Lead alerts (lib/opportunities/booking-alert.ts) are driven by the
+ * opportunities table, not by memory (migration 0047), the same shape as the
+ * reply alerts in lib/replies/lead-alert.ts. Invariants (tested in
+ * tests/booking-alert-durability.test.ts):
+ *   D1 Due: a source 'calendar' row is due a booking alert while
+ *      booked_alert_sent_at is null and it was created in the last 48h; due a
+ *      cancellation alert while it is lost / "booking cancelled",
+ *      cancelled_alert_sent_at is null and it was updated in the last 48h
+ *      (alertDue). Manual opportunities never.
+ *   D2 Claim before send: the marker is set only where it is still null and
+ *      only the rows this run won are sent. A send that reached nobody
+ *      (sent 0, or a throw) releases the claim; partial delivery keeps it.
+ *      Overlapping runs can never both send one alert.
+ *   D3 Newest state wins: a cancelled row is never due a booking alert; its
+ *      cancellation claim also sets booked_alert_sent_at, so a booked-then-
+ *      cancelled row gets only the cancellation alert and both markers.
+ *   D4 The alert is rebuilt from the database: the row's meeting_start /
+ *      meeting_time_zone (written by createOpportunity, kept on cancel), the
+ *      prospect's company + market and the contact's email via contact_id.
+ *   D5 Kill safety (maxDuration 120s, ~50s per alert: token + 3 Gmail sends
+ *      of 15s): due rows are swept at the START of every run, right after the
+ *      token check and before listing events, and again at the END for this
+ *      run's changes. A row is claimed only while at least 60s remain before
+ *      maxDuration (counted from the route's start); otherwise it is left for
+ *      the next run's start sweep (hourly). The start sweep stops 40s earlier
+ *      still, so the sync's own writes keep their time.
+ *   D6 An alert failure never fails the sync: it lands in report.alerts.failed.
+ * Without a working Google token no sweep is attempted.
  *
  * Events someone else organizes (a vendor invite, a prospect's own meeting)
  * are skipped: only our own calendar's bookings count.
@@ -44,7 +69,7 @@ import { isTestAddress, normalizeMailbox } from "../compliance/test-addresses.ts
 import { recordPitchEvent, type PitchEventType } from "../pitches/events.ts";
 import { latestRootSentPitchId } from "../pitches/root-pitch.ts";
 import { protectedStatusFilter } from "../prospects/status.ts";
-import { formatBookingAlert } from "./booking-alert.ts";
+import { formatBookingAlert, type BookingAlertInput } from "./booking-alert.ts";
 import type { CalendarEvent, ListEventsResult } from "./google-calendar.ts";
 
 export const CANCELLED_LOSS_REASON = "booking cancelled";
@@ -133,6 +158,9 @@ export type SyncStore = {
     eventId: string;
     match: ContactMatch;
     notes: string;
+    /** What the alert shows (D4): Google start and the event's time zone. */
+    meetingStart: string | null;
+    meetingTimeZone: string | null;
   }): Promise<{ id: string } | null>;
   /** Only flips a calendar opportunity still at meeting_booked. */
   markCancelled(opportunityId: string): Promise<boolean>;
@@ -141,9 +169,95 @@ export type SyncStore = {
   recordEvent(pitchId: string, type: PitchEventType, payload: Record<string, unknown>): Promise<void>;
   /** Company name + market per prospect id, one query for the batch. */
   prospectSummaries(prospectIds: string[]): Promise<Map<string, ProspectSummary>>;
+  /** Contact email per contact id, one query for the batch. */
+  contactEmails(contactIds: string[]): Promise<Map<string, string>>;
+  /** Calendar rows that may be due an alert (D1), changed since `sinceIso`. */
+  dueAlerts(sinceIso: string): Promise<AlertRow[]>;
+  /**
+   * Sets the kind's marker only where it is still null (and, for a
+   * cancellation, only while the row is still cancelled; it also sets an
+   * unset booked marker, D3). True when this caller won the row.
+   */
+  claimAlert(row: AlertRow, kind: AlertKind, nowIso: string): Promise<boolean>;
+  /** Clears the kind's marker so the next run retries. */
+  releaseAlert(opportunityId: string, kind: AlertKind): Promise<void>;
 };
 
 export type ProspectSummary = { company: string | null; market: string | null };
+
+export type AlertKind = BookingAlertInput["kind"];
+
+/** An opportunities row as the alert sweep reads it (0043 + 0047 columns). */
+export type AlertRow = {
+  id: string;
+  source: string;
+  prospectId: string;
+  contactId: string | null;
+  stage: string;
+  lossReason: string | null;
+  meetingStart: string | null;
+  meetingTimeZone: string | null;
+  bookedAlertSentAt: string | null;
+  cancelledAlertSentAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+};
+
+/** Rows older than this are never alerted (same window as reply alerts). */
+export const BOOKING_ALERT_WINDOW_HOURS = 48;
+/** vercel.json maxDuration for app/api/opportunities/calendar-sync/route.ts. */
+export const CALENDAR_SYNC_MAX_DURATION_MS = 120_000;
+/** Nothing is claimed with less than this left before maxDuration (one alert ~50s). */
+export const BOOKING_ALERT_RESERVE_MS = 60_000;
+/**
+ * The start sweep also leaves this much for the sync itself (event list 10s
+ * timeout + the batch's writes), so leftovers can't push the meeting_booked
+ * pitch event and audit row past maxDuration.
+ */
+export const CALENDAR_SYNC_WORK_RESERVE_MS = 40_000;
+const ALERT_BATCH = 20;
+
+function isCancelledBooking(row: Pick<AlertRow, "stage" | "lossReason">): boolean {
+  return row.stage === "lost" && row.lossReason === CANCELLED_LOSS_REASON;
+}
+
+/** D1 + D3: which alert this row is due now, if any. */
+export function alertDue(row: AlertRow, nowMs: number): AlertKind | null {
+  if (row.source !== "calendar") return null;
+  const since = nowMs - BOOKING_ALERT_WINDOW_HOURS * 3_600_000;
+  if (isCancelledBooking(row)) {
+    return row.cancelledAlertSentAt === null && Date.parse(row.updatedAt) >= since ? "cancelled" : null;
+  }
+  return row.bookedAlertSentAt === null && Date.parse(row.createdAt) >= since ? "booked" : null;
+}
+
+type AlertRowDb = {
+  id: string;
+  source: string;
+  prospect_id: string;
+  contact_id: string | null;
+  stage: string;
+  loss_reason: string | null;
+  meeting_start: string | null;
+  meeting_time_zone: string | null;
+  booked_alert_sent_at: string | null;
+  cancelled_alert_sent_at: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+const ALERT_ROW_COLUMNS =
+  "id, source, prospect_id, contact_id, stage, loss_reason, meeting_start, meeting_time_zone, " +
+  "booked_alert_sent_at, cancelled_alert_sent_at, created_at, updated_at";
+
+function alertRowFromDb(r: AlertRowDb): AlertRow {
+  return {
+    id: r.id, source: r.source, prospectId: r.prospect_id, contactId: r.contact_id, stage: r.stage,
+    lossReason: r.loss_reason, meetingStart: r.meeting_start, meetingTimeZone: r.meeting_time_zone,
+    bookedAlertSentAt: r.booked_alert_sent_at, cancelledAlertSentAt: r.cancelled_alert_sent_at,
+    createdAt: r.created_at, updatedAt: r.updated_at,
+  };
+}
 
 export function escapeLike(s: string): string {
   return s.replace(/[\\%_]/g, (c) => `\\${c}`);
@@ -183,7 +297,7 @@ export function supabaseSyncStore(supabase: AnySupabase, tenantId: string): Sync
         .not("status", "in", protectedStatusFilter("booked", "automation")!);
       if (error) throw new Error(`prospect status update failed: ${error.message}`);
     },
-    async createOpportunity({ eventId, match, notes }) {
+    async createOpportunity({ eventId, match, notes, meetingStart, meetingTimeZone }) {
       const { data, error } = await supabase
         .from("opportunities")
         .insert({
@@ -194,6 +308,8 @@ export function supabaseSyncStore(supabase: AnySupabase, tenantId: string): Sync
           source: "calendar",
           calendar_event_id: eventId,
           notes,
+          meeting_start: meetingStart,
+          meeting_time_zone: meetingTimeZone,
         })
         .select("id")
         .single();
@@ -235,6 +351,79 @@ export function supabaseSyncStore(supabase: AnySupabase, tenantId: string): Sync
       }
       return out;
     },
+    async contactEmails(contactIds) {
+      const out = new Map<string, string>();
+      if (contactIds.length === 0) return out;
+      const { data, error } = await supabase
+        .from("prospect_contacts")
+        .select("id, email")
+        .eq("tenant_id", tenantId)
+        .in("id", contactIds);
+      if (error) throw new Error(`contact email lookup failed: ${error.message}`);
+      for (const r of (data ?? []) as Array<{ id: string; email: string | null }>) {
+        if (r.email) out.set(r.id, r.email);
+      }
+      return out;
+    },
+    async dueAlerts(sinceIso) {
+      const base = () =>
+        supabase.from("opportunities").select(ALERT_ROW_COLUMNS).eq("tenant_id", tenantId).eq("source", "calendar");
+      const [booked, cancelled] = await Promise.all([
+        base()
+          .is("booked_alert_sent_at", null)
+          .gte("created_at", sinceIso)
+          .order("created_at", { ascending: true })
+          .limit(ALERT_BATCH),
+        base()
+          .eq("stage", "lost")
+          .eq("loss_reason", CANCELLED_LOSS_REASON)
+          .is("cancelled_alert_sent_at", null)
+          .gte("updated_at", sinceIso)
+          .order("updated_at", { ascending: true })
+          .limit(ALERT_BATCH),
+      ]);
+      const error = booked.error ?? cancelled.error;
+      if (error) throw new Error(`booking alert lookup failed: ${error.message}`);
+      const out = new Map<string, AlertRow>();
+      for (const r of [...(booked.data ?? []), ...(cancelled.data ?? [])] as AlertRowDb[]) {
+        out.set(r.id, alertRowFromDb(r));
+      }
+      return [...out.values()];
+    },
+    async claimAlert(row, kind, nowIso) {
+      const q =
+        kind === "booked"
+          ? supabase
+              .from("opportunities")
+              .update({ booked_alert_sent_at: nowIso })
+              .is("booked_alert_sent_at", null)
+          : supabase
+              .from("opportunities")
+              .update({
+                cancelled_alert_sent_at: nowIso,
+                ...(row.bookedAlertSentAt === null ? { booked_alert_sent_at: nowIso } : {}),
+              })
+              .is("cancelled_alert_sent_at", null)
+              .eq("stage", "lost")
+              .eq("loss_reason", CANCELLED_LOSS_REASON);
+      const { data, error } = await q
+        .eq("id", row.id)
+        .eq("tenant_id", tenantId)
+        .eq("source", "calendar")
+        .select("id");
+      if (error) throw new Error(`booking alert claim failed: ${error.message}`);
+      return Array.isArray(data) && data.length > 0;
+    },
+    async releaseAlert(opportunityId, kind) {
+      // A released cancellation keeps the booked marker it set (D3).
+      const column = kind === "booked" ? "booked_alert_sent_at" : "cancelled_alert_sent_at";
+      const { error } = await supabase
+        .from("opportunities")
+        .update({ [column]: null })
+        .eq("id", opportunityId)
+        .eq("tenant_id", tenantId);
+      if (error) throw new Error(`booking alert release failed: ${error.message}`);
+    },
   };
 }
 
@@ -251,7 +440,7 @@ export type SyncCounts = {
   pitchEvents: number;
 };
 
-/** A booking or cancellation the sync applied (one lead alert each). */
+/** A booking or cancellation the sync applied (reported; the alert comes from the row). */
 export type BookingChange = {
   kind: "booked" | "cancelled";
   eventId: string;
@@ -308,7 +497,9 @@ export async function applyCalendarEvents(
         // so the next run retries both (the follow-up route stops on 'booked').
         await store.markProspectBooked(plan.match.prospectId);
         const notes = `Booked via Google Calendar${start ? ` for ${start}` : ""} by ${plan.match.email}.`;
-        const row = await store.createOpportunity({ eventId: event.id, match: plan.match, notes });
+        const row = await store.createOpportunity({
+          eventId: event.id, match: plan.match, notes, meetingStart: start, meetingTimeZone: eventTimeZone(event),
+        });
         if (!row) {
           counts.duplicate++;
           continue;
@@ -355,38 +546,80 @@ export async function applyCalendarEvents(
   return { counts, errors, bookings };
 }
 
+export type BookingAlertRunOptions = {
+  /** Epoch ms after which nothing is claimed (rows stay for the next run). */
+  deadline: number;
+  clock?: () => number;
+};
+
 /**
- * One lead alert per booking change, company + market from one prospect
- * query. Fills company/market into `bookings`. Never throws.
+ * One lead alert per due calendar row (D1–D4), oldest first, each claimed
+ * right before its send and only before `deadline` (D5). Returns the prospect
+ * summaries it read so the report can show company + market. Never throws.
  */
-export async function sendBookingAlerts(
-  bookings: BookingChange[],
+export async function sendDueBookingAlerts(
   store: SyncStore,
   notify: (message: NotificationMessage) => Promise<NotificationResult>,
-): Promise<NotificationResult> {
-  const result: NotificationResult = { sent: 0, failed: [] };
-  if (bookings.length === 0) return result;
+  opts: BookingAlertRunOptions,
+): Promise<{ alerts: NotificationResult; summaries: Map<string, ProspectSummary> }> {
+  const clock = opts.clock ?? Date.now;
+  const alerts: NotificationResult = { sent: 0, failed: [] };
   let summaries = new Map<string, ProspectSummary>();
+  if (clock() > opts.deadline) return { alerts, summaries };
+
+  let due: Array<{ row: AlertRow; kind: AlertKind }>;
   try {
-    summaries = await store.prospectSummaries([...new Set(bookings.map((b) => b.prospectId))]);
+    const now = clock();
+    const rows = await store.dueAlerts(new Date(now - BOOKING_ALERT_WINDOW_HOURS * 3_600_000).toISOString());
+    due = rows.flatMap((row) => {
+      const kind = alertDue(row, now);
+      return kind ? [{ row, kind }] : [];
+    });
+  } catch (err) {
+    alerts.failed.push((err as Error).message);
+    return { alerts, summaries };
+  }
+  if (due.length === 0) return { alerts, summaries };
+
+  let emails = new Map<string, string>();
+  try {
+    summaries = await store.prospectSummaries([...new Set(due.map((d) => d.row.prospectId))]);
   } catch (err) {
     // Still alert, without the company name.
-    result.failed.push((err as Error).message);
+    alerts.failed.push((err as Error).message);
   }
-  for (const b of bookings) {
-    const s = summaries.get(b.prospectId);
-    b.company = s?.company ?? null;
-    b.market = s?.market ?? null;
+  try {
+    emails = await store.contactEmails([...new Set(due.flatMap((d) => (d.row.contactId ? [d.row.contactId] : [])))]);
+  } catch (err) {
+    alerts.failed.push((err as Error).message);
+  }
+
+  for (const { row, kind } of due) {
+    // Never claim what this run may not have time to send.
+    if (clock() > opts.deadline) break;
+    let claimed = false;
     try {
-      const alert = formatBookingAlert({ ...b, company: b.company, market: b.market });
+      claimed = await store.claimAlert(row, kind, new Date(clock()).toISOString());
+      if (!claimed) continue;
+      const s = summaries.get(row.prospectId);
+      const alert = formatBookingAlert({
+        kind,
+        company: s?.company ?? null,
+        market: s?.market ?? null,
+        attendee: (row.contactId ? emails.get(row.contactId) : undefined) ?? null,
+        start: row.meetingStart,
+        timeZone: row.meetingTimeZone,
+      });
       const res = await notify({ kind: "lead", fromName: "S.P.A.M Bookings", ...alert });
-      result.sent += res.sent;
-      result.failed.push(...res.failed);
+      alerts.sent += res.sent;
+      alerts.failed.push(...res.failed);
+      if (res.sent === 0) await store.releaseAlert(row.id, kind);
     } catch (err) {
-      result.failed.push(`event ${b.eventId}: ${(err as Error).message}`);
+      alerts.failed.push(`opportunity ${row.id}: ${(err as Error).message}`);
+      if (claimed) await store.releaseAlert(row.id, kind).catch(() => {});
     }
   }
-  return result;
+  return { alerts, summaries };
 }
 
 // ── One tenant ────────────────────────────────────────────────────────────────
@@ -401,6 +634,9 @@ export type SyncDeps = {
   store?: SyncStore;
   /** Sends a lead alert from the booking inbox; no alerts when absent. */
   notify?: (message: NotificationMessage & { fromEmail: string }) => Promise<NotificationResult>;
+  /** Epoch ms the route started (the D5 deadline counts from it); defaults to now. */
+  startedAt?: number;
+  clock?: () => number;
 };
 
 export type CalendarSyncReport = {
@@ -460,6 +696,22 @@ export async function syncCalendarWith(actor: Actor, deps: SyncDeps): Promise<Ca
     return report;
   }
 
+  const store = deps.store ?? supabaseSyncStore(supabase, tenantId);
+  const clock = deps.clock ?? Date.now;
+  const deadline = (deps.startedAt ?? clock()) + CALENDAR_SYNC_MAX_DURATION_MS - BOOKING_ALERT_RESERVE_MS;
+  const summaries = new Map<string, ProspectSummary>();
+  const notify = deps.notify;
+  const fromEmail = inbox.email;
+  const sweep = async (until: number) => {
+    if (!notify) return;
+    const r = await sendDueBookingAlerts(store, (m) => notify({ ...m, fromEmail }), { deadline: until, clock });
+    report.alerts.sent += r.alerts.sent;
+    report.alerts.failed.push(...r.alerts.failed);
+    for (const [id, s] of r.summaries) summaries.set(id, s);
+  };
+  // D5: leftovers of earlier runs first, before any Google listing.
+  await sweep(deadline - CALENDAR_SYNC_WORK_RESERVE_MS);
+
   const listed = await deps.listEvents(token.accessToken);
   if (!listed.ok) {
     if (listed.needsReconnect) {
@@ -472,7 +724,6 @@ export async function syncCalendarWith(actor: Actor, deps: SyncDeps): Promise<Ca
   }
   report.truncated = listed.truncated;
 
-  const store = deps.store ?? supabaseSyncStore(supabase, tenantId);
   const audit: BookedAudit = (opportunityId, metadata) =>
     deps.writeAuditLog({
       tenantId,
@@ -486,10 +737,14 @@ export async function syncCalendarWith(actor: Actor, deps: SyncDeps): Promise<Ca
   report.counts = counts;
   report.errors.push(...errors);
   report.bookings = bookings;
-  const notify = deps.notify;
-  if (notify) {
-    const fromEmail = inbox.email;
-    report.alerts = await sendBookingAlerts(bookings, store, (m) => notify({ ...m, fromEmail }));
+  if (notify && bookings.length > 0) {
+    // This run's changes, only while there is time to finish (D5).
+    await sweep(deadline);
+    for (const b of bookings) {
+      const s = summaries.get(b.prospectId);
+      b.company = s?.company ?? null;
+      b.market = s?.market ?? null;
+    }
   }
   return report;
 }
