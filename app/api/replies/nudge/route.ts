@@ -24,6 +24,7 @@ import { evaluateSendGate } from "@/lib/pitches/send-gate";
 import { senderIdentity } from "@/lib/pitches/sender-identity";
 import { isEmailOnDncList, type DncClient } from "@/lib/discover/dnc-check";
 import { createServiceRoleClient } from "@/lib/supabase/service-role";
+import { DO_NOT_SEND_STATUSES } from "@/lib/prospects/status";
 import {
   effectiveSendsToday,
   bumpSendsTodayPayload,
@@ -42,10 +43,6 @@ const NUDGE_DELAY_DAYS = 3;
 const MAX_REPLY_ATTEMPTS = 3;
 const MAX_PER_RUN = 20;
 
-// Prospect funnel states where a nudge would be inappropriate.
-const INACTIVE_STATUSES = new Set([
-  "suppressed", "booked", "won", "lost", "archived_no_meeting", "no_match",
-]);
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type AnySupabase = any;
@@ -91,13 +88,19 @@ export async function GET(req: NextRequest) {
     const draftSentAt = reply.draft_sent_at as string;
 
     // ── Prospect gates ──────────────────────────────────────────────────────
-    const { data: prospect } = await supabase
+    const { data: prospect, error: prospectErr } = await supabase
       .from("prospects")
       .select("id, company_name, language, status, reply_attempts, last_nudge_at, cooldown_until")
       .eq("id", prospectId)
       .maybeSingle();
+    // Fails closed: an unreadable prospect is not nudged this run.
+    if (prospectErr) {
+      results.push({ prospect: prospectId, action: "skipped", reason: `couldn't read the prospect: ${prospectErr.message}` });
+      continue;
+    }
     if (!prospect) continue;
-    if (INACTIVE_STATUSES.has(prospect.status)) continue;
+    // Funnel states where a nudge would be inappropriate: the one do-not-send set.
+    if (DO_NOT_SEND_STATUSES.has(prospect.status)) continue;
     const attempts = (prospect.reply_attempts as number | null) ?? 0;
     if (attempts >= MAX_REPLY_ATTEMPTS) continue;
     if (prospect.cooldown_until && prospect.cooldown_until > now.toISOString()) continue;
