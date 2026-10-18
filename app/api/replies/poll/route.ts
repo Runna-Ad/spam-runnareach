@@ -277,7 +277,7 @@ export async function GET(req: NextRequest) {
           : await classifyReply(supabase, thread.tenant_id, inbound);
 
         // Insert the reply row.
-        const { data: insertedReply } = await supabase
+        const { data: insertedReply, error: insertErr } = await supabase
           .from("replies")
           .insert({
             tenant_id: thread.tenant_id,
@@ -298,6 +298,14 @@ export async function GET(req: NextRequest) {
           .select("id")
           .maybeSingle();
 
+        if (insertErr) {
+          // 23505: an overlapping run stored this message first (unique index,
+          // migration 0046); that run owns its opt-out, draft and alert.
+          if (insertErr.code !== "23505") {
+            errors.push(`reply ${inbound.gmailMessageId}: insert failed: ${insertErr.message}`);
+          }
+          continue;
+        }
         if (!insertedReply) continue;
         imported += 1;
         ownReplyIds.add(insertedReply.id);
@@ -367,6 +375,7 @@ export async function GET(req: NextRequest) {
               cooldown_until: new Date(Date.now() + 365 * 24 * 60 * 60 * 1000).toISOString(),
             })
             .eq("id", thread.prospect_id)
+            .eq("tenant_id", thread.tenant_id)
             .not("status", "in", protectedStatusFilter("suppressed", "automation")!)
             .select("id");
           await pauseSequence(supabase, thread.tenant_id, thread.prospect_id);

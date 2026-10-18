@@ -4,11 +4,11 @@
 |---|---|
 | Module | `lib/pitches/queries.ts` (listPitches only) + `/pitches` page and its component |
 | Model / effort | sonnet-5.5 / medium (dashboard/query lane, promoted in batch 1) |
-| Branch | `claude/pitches-list-resilience` from `claude/conductor-skill-board-tasks-cu74t5` |
-| PR target | `claude/conductor-skill-board-tasks-cu74t5` |
+| Branch | `claude/pitches-list-resilience` from `claude/optimistic-tesla-3gceud` |
+| PR target | `claude/optimistic-tesla-3gceud` |
 | Reserved migration | none |
-| Depends on | exemplar-scrubber-gaps merged (pitches tasks run one at a time) |
-| Conductor session | `session_018Qvu38cNFVCuWNq41wYfxJ` (send_message ONLY if blocked) |
+| Depends on | send-path-safety merged (pitches tasks run one at a time; batch 3 wave 2) |
+| Conductor session | `session_017nqBxLFFXKbhDwKiPi6xLf` (send_message ONLY if blocked; the PR body is the report) |
 | Size | S |
 
 ## Goal
