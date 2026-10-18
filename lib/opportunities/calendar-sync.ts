@@ -16,6 +16,10 @@
  *       → stage lost, loss_reason "booking cancelled" + a lost pitch event
  *         (prospects.status is left as it is)
  *
+ * Every booking and cancellation applied in a run sends one lead alert
+ * (lib/opportunities/booking-alert.ts) after the batch; idempotency above
+ * means an event alerts once. An alert failure never fails the sync.
+ *
  * Events someone else organizes (a vendor invite, a prospect's own meeting)
  * are skipped: only our own calendar's bookings count.
  *
@@ -35,9 +39,12 @@
 import type { Actor } from "../actor.ts";
 import type { AuditPayload } from "../audit/log.ts";
 import type { AccessTokenResult } from "../gmail/client.ts";
+import type { NotificationMessage, NotificationResult } from "../notify/send.ts";
 import { isTestAddress, normalizeMailbox } from "../compliance/test-addresses.ts";
 import { recordPitchEvent, type PitchEventType } from "../pitches/events.ts";
 import { latestRootSentPitchId } from "../pitches/root-pitch.ts";
+import { protectedStatusFilter } from "../prospects/status.ts";
+import { formatBookingAlert } from "./booking-alert.ts";
 import type { CalendarEvent, ListEventsResult } from "./google-calendar.ts";
 
 export const CANCELLED_LOSS_REASON = "booking cancelled";
@@ -108,6 +115,12 @@ function eventStart(event: CalendarEvent): string | null {
   return event.start?.dateTime ?? event.start?.date ?? null;
 }
 
+/** Google sends start.timeZone on events; the shared type does not declare it. */
+function eventTimeZone(event: CalendarEvent): string | null {
+  const tz = (event.start as { timeZone?: unknown } | undefined)?.timeZone;
+  return typeof tz === "string" && tz.trim() ? tz.trim() : null;
+}
+
 // ── Store (Supabase, swappable in tests) ──────────────────────────────────────
 
 export type SyncStore = {
@@ -126,7 +139,11 @@ export type SyncStore = {
   /** The prospect's ROOT sent pitch (lib/pitches/root-pitch.ts). */
   rootSentPitchId(prospectId: string): Promise<string | null>;
   recordEvent(pitchId: string, type: PitchEventType, payload: Record<string, unknown>): Promise<void>;
+  /** Company name + market per prospect id, one query for the batch. */
+  prospectSummaries(prospectIds: string[]): Promise<Map<string, ProspectSummary>>;
 };
+
+export type ProspectSummary = { company: string | null; market: string | null };
 
 export function escapeLike(s: string): string {
   return s.replace(/[\\%_]/g, (c) => `\\${c}`);
@@ -163,7 +180,7 @@ export function supabaseSyncStore(supabase: AnySupabase, tenantId: string): Sync
         .update({ status: "booked" })
         .eq("id", prospectId)
         .eq("tenant_id", tenantId)
-        .not("status", "in", "(won,lost)");
+        .not("status", "in", protectedStatusFilter("booked", "automation")!);
       if (error) throw new Error(`prospect status update failed: ${error.message}`);
     },
     async createOpportunity({ eventId, match, notes }) {
@@ -204,6 +221,20 @@ export function supabaseSyncStore(supabase: AnySupabase, tenantId: string): Sync
     async recordEvent(pitchId, type, payload) {
       await recordPitchEvent(supabase, { tenantId, pitchId, type, payload });
     },
+    async prospectSummaries(prospectIds) {
+      const out = new Map<string, ProspectSummary>();
+      if (prospectIds.length === 0) return out;
+      const { data, error } = await supabase
+        .from("prospects")
+        .select("id, company_name, market")
+        .eq("tenant_id", tenantId)
+        .in("id", prospectIds);
+      if (error) throw new Error(`prospect lookup failed: ${error.message}`);
+      for (const r of (data ?? []) as Array<{ id: string; company_name: string | null; market: string | null }>) {
+        out.set(r.id, { company: r.company_name, market: r.market });
+      }
+      return out;
+    },
   };
 }
 
@@ -220,6 +251,18 @@ export type SyncCounts = {
   pitchEvents: number;
 };
 
+/** A booking or cancellation the sync applied (one lead alert each). */
+export type BookingChange = {
+  kind: "booked" | "cancelled";
+  eventId: string;
+  prospectId: string;
+  attendee: string | null;
+  start: string | null;
+  timeZone: string | null;
+  company?: string | null;
+  market?: string | null;
+};
+
 /** Called once per opportunity the sync creates. */
 export type BookedAudit = (opportunityId: string, metadata: Record<string, unknown>) => Promise<void>;
 
@@ -228,11 +271,12 @@ export async function applyCalendarEvents(
   inboxEmail: string,
   store: SyncStore,
   audit: BookedAudit,
-): Promise<{ counts: SyncCounts; errors: string[] }> {
+): Promise<{ counts: SyncCounts; errors: string[]; bookings: BookingChange[] }> {
   const counts: SyncCounts = {
     events: events.length, created: 0, cancelled: 0, duplicate: 0, unmatched: 0, skippedNotOurs: 0, pitchEvents: 0,
   };
   const errors: string[] = [];
+  const bookings: BookingChange[] = [];
   const contactCache = new Map<string, ContactMatch | null>();
 
   for (const event of events) {
@@ -270,6 +314,10 @@ export async function applyCalendarEvents(
           continue;
         }
         counts.created++;
+        bookings.push({
+          kind: "booked", eventId: event.id, prospectId: plan.match.prospectId,
+          attendee: plan.match.email, start, timeZone: eventTimeZone(event),
+        });
         await audit(row.id, { calendar_event_id: event.id, prospect_id: plan.match.prospectId, attendee: plan.match.email, start });
         const pitchId = await store.rootSentPitchId(plan.match.prospectId);
         if (pitchId) {
@@ -287,6 +335,10 @@ export async function applyCalendarEvents(
       // cancel
       if (!(await store.markCancelled(plan.opportunity.id))) continue;
       counts.cancelled++;
+      bookings.push({
+        kind: "cancelled", eventId: event.id, prospectId: plan.opportunity.prospectId,
+        attendee: bookingCandidates(event, inboxEmail)[0] ?? null, start: eventStart(event), timeZone: eventTimeZone(event),
+      });
       const pitchId = await store.rootSentPitchId(plan.opportunity.prospectId);
       if (pitchId) {
         await store.recordEvent(pitchId, "lost", {
@@ -300,7 +352,41 @@ export async function applyCalendarEvents(
       errors.push(`event ${event.id}: ${(err as Error).message}`);
     }
   }
-  return { counts, errors };
+  return { counts, errors, bookings };
+}
+
+/**
+ * One lead alert per booking change, company + market from one prospect
+ * query. Fills company/market into `bookings`. Never throws.
+ */
+export async function sendBookingAlerts(
+  bookings: BookingChange[],
+  store: SyncStore,
+  notify: (message: NotificationMessage) => Promise<NotificationResult>,
+): Promise<NotificationResult> {
+  const result: NotificationResult = { sent: 0, failed: [] };
+  if (bookings.length === 0) return result;
+  let summaries = new Map<string, ProspectSummary>();
+  try {
+    summaries = await store.prospectSummaries([...new Set(bookings.map((b) => b.prospectId))]);
+  } catch (err) {
+    // Still alert, without the company name.
+    result.failed.push((err as Error).message);
+  }
+  for (const b of bookings) {
+    const s = summaries.get(b.prospectId);
+    b.company = s?.company ?? null;
+    b.market = s?.market ?? null;
+    try {
+      const alert = formatBookingAlert({ ...b, company: b.company, market: b.market });
+      const res = await notify({ kind: "lead", fromName: "S.P.A.M Bookings", ...alert });
+      result.sent += res.sent;
+      result.failed.push(...res.failed);
+    } catch (err) {
+      result.failed.push(`event ${b.eventId}: ${(err as Error).message}`);
+    }
+  }
+  return result;
 }
 
 // ── One tenant ────────────────────────────────────────────────────────────────
@@ -313,6 +399,8 @@ export type SyncDeps = {
   bookingInboxEmail?: string;
   /** Defaults to the Supabase store on actor.supabase. */
   store?: SyncStore;
+  /** Sends a lead alert from the booking inbox; no alerts when absent. */
+  notify?: (message: NotificationMessage & { fromEmail: string }) => Promise<NotificationResult>;
 };
 
 export type CalendarSyncReport = {
@@ -323,6 +411,8 @@ export type CalendarSyncReport = {
   truncated: boolean;
   counts: SyncCounts | null;
   errors: string[];
+  bookings: BookingChange[];
+  alerts: NotificationResult;
 };
 
 type InboxRow = { email: string; gmail_refresh_token_encrypted: string };
@@ -351,7 +441,9 @@ async function bookingInbox(
 export async function syncCalendarWith(actor: Actor, deps: SyncDeps): Promise<CalendarSyncReport> {
   const tenantId = actor.user.tenantId;
   const supabase = actor.supabase as AnySupabase;
-  const report: CalendarSyncReport = { tenantId, inbox: null, needsReconnect: false, truncated: false, counts: null, errors: [] };
+  const report: CalendarSyncReport = { tenantId, inbox: null, needsReconnect: false, truncated: false, counts: null, errors: [],
+    bookings: [], alerts: { sent: 0, failed: [] },
+  };
 
   const preferred = (deps.bookingInboxEmail ?? process.env.CALENDAR_BOOKING_INBOX)?.trim() || undefined;
   const { inbox, error } = await bookingInbox(supabase, tenantId, preferred);
@@ -390,9 +482,15 @@ export async function syncCalendarWith(actor: Actor, deps: SyncDeps): Promise<Ca
       entityId: opportunityId,
       metadata,
     });
-  const { counts, errors } = await applyCalendarEvents(listed.events, inbox.email, store, audit);
+  const { counts, errors, bookings } = await applyCalendarEvents(listed.events, inbox.email, store, audit);
   report.counts = counts;
   report.errors.push(...errors);
+  report.bookings = bookings;
+  const notify = deps.notify;
+  if (notify) {
+    const fromEmail = inbox.email;
+    report.alerts = await sendBookingAlerts(bookings, store, (m) => notify({ ...m, fromEmail }));
+  }
   return report;
 }
 
@@ -434,6 +532,10 @@ export async function handleCalendarSync(req: Request, deps: CalendarSyncRouteDe
 
   return Response.json({
     ok: true,
+    alerts: {
+      sent: reports.reduce((n, r) => n + (r.alerts.sent), 0),
+      failed: reports.flatMap((r) => r.alerts.failed),
+    },
     needsReconnect: reports.some((r) => r.needsReconnect),
     truncated: reports.filter((r) => r.truncated).length,
     reports,

@@ -49,5 +49,17 @@ Checklist (grown by retros; add a line when a retro records a miss):
   scope) and a prod verification query? Missing → BLOCKING; the batch cannot be closed
   without them (phase 3 batch 1: calendar sync sat 11 h on an unlisted console toggle).
 
+- A fail-closed check (leak check, invariant, guard): does it call the code it guards?
+  If it reuses the guarded code's matchers it can never fire on that code's misses →
+  BLOCKING. Same for the property test's own matcher.
+- A value written in one module and read in another (a reason string, a status, a
+  column): grep the reader and test the written value against the reader's check.
+- New work at the END of a long route: what if Vercel kills the function right after
+  the first write? Anything claimed/marked before a send must survive that.
+- New alert, digest or emergency rule: run it against the designed-normal states
+  (paused inbox, cap drip, cooldown, weekend, outside the send window, AI cap reached,
+  nothing sent yet). A rule that fires there becomes a daily email under a 24h dedupe →
+  BLOCKING.
+
 Trace a real path from an input to the failure before calling something blocking. If you
 cannot, it is optional. A finding you are unsure of is optional with "unsure" in front.

@@ -16,7 +16,7 @@
 
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { isTestAddress } from "../compliance/test-addresses.ts";
-import { ATTRIBUTION_WINDOW_DAYS, type OutcomeEvent } from "../learning/reward.ts";
+import { ATTRIBUTION_WINDOW_DAYS, OUTCOME_EVENT_TYPES, type OutcomeEvent } from "../learning/reward.ts";
 import {
   EXEMPLAR_SHORTLIST,
   MAX_EXEMPLARS,
@@ -32,7 +32,6 @@ import {
 const CANDIDATE_SCAN = 200;
 /** All three reads together, inside the 48s compose budget; normally ~0.1s. */
 export const EXEMPLAR_FETCH_BUDGET_MS = 3_000;
-const OUTCOME_EVENTS = ["sent", "reply", "audit_scan", "bounce", "unsubscribe"];
 
 type CandidateRow = {
   id: string;
@@ -69,6 +68,10 @@ export async function fetchExemplars(
   target: ExemplarTarget,
   now: Date = new Date(),
 ): Promise<Exemplar[]> {
+  // Kill switch (conductor, 2026-10-18): off until the allow-list leak check
+  // (PR #17) is merged. The deny-list scrubber still leaks some name and city
+  // spellings; no exemplar has qualified in prod yet, so this costs nothing today.
+  if (process.env.EXEMPLARS_ENABLED !== "1") return [];
   if (target.segment.industry === "other") return [];
   const signal = AbortSignal.timeout(EXEMPLAR_FETCH_BUDGET_MS);
   try {
@@ -115,7 +118,7 @@ export async function fetchExemplars(
       .select("pitch_id, event_type, event_at, payload")
       .eq("tenant_id", tenantId)
       .in("pitch_id", shortlist.map((c) => c.pitch_id))
-      .in("event_type", OUTCOME_EVENTS)
+      .in("event_type", OUTCOME_EVENT_TYPES)
       .abortSignal(signal)
       .returns<Array<{ pitch_id: string; event_type: string; event_at: string; payload: OutcomeEvent["payload"] }>>();
     if (evErr) {

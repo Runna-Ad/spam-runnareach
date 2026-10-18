@@ -1,5 +1,117 @@
 # S.P.A.M. — Lessons (newest first)
 
+## Merged from lessons-inbox, Phase 3 batch 2 (2026-10-18)
+
+### from the conductor (batch 2 retro)
+[2026-10-18] A fail-closed check that reuses the guarded code's matchers can never fire
+WHAT HAPPENED: The exemplar leak check (lib/pitches/exemplars.ts exemplarLeaks) and its property test reused the scrubber's own regexes and whole-word matcher, so every spelling the scrubber missed (dotted city aliases, lowercase honorific spans, particle surnames, initials, handles) also passed the check. Two review rounds in batch 2 after two in batch 1. Round 3 moved to an allow-list invariant (every token a placeholder or a common EN/ES word).
+RULE: The guard gets its own, coarser matching; the property test a third. For "may this text reach another customer", prefer an allow-list (known words) over a deny-list (known names): a deny-list is never complete.
+TAGS: pitches, privacy, testing, conductor
+
+[2026-10-18] A value one module writes and another reads needs the reader named in the brief
+WHAT HAPPENED: The veto-hold brief gave the hold reason "held from the digest link"; governor.heldAction only leaves drafts whose reason startsWith("held by a person"), so the next tick would rewrite (delete) a held draft and the rewrite could send. Now one exported HELD_BY_PERSON constant is written by tick §5 and hold.ts and read by heldAction.
+RULE: Grep the consumer of every string, status or enum a brief invents; share it as a constant.
+TAGS: autopilot, briefs, conductor
+
+[2026-10-18] Vetoes were never counted (lane filter after a lane change)
+WHAT HAPPENED: evaluateStage counted vetoes among rows with autopilot_lane='auto', but a held pitch is moved to lane 'review' by §5 in the same tick, so every veto (including /pitches holds since Phase 2) was invisible to the veto → auto promotion. Fixed with countVetoes by approval event, lane-independent.
+RULE: Never count an outcome through a field the same process rewrites; count by the immutable event.
+TAGS: autopilot, governor, metrics
+
+[2026-10-18] A PR that opens does not wake the conductor
+WHAT HAPPENED: subscribe_pr_activity needs a PR number, so worker PRs opened before the conductor subscribed produced no event; 6 PRs were found late (4 by ~8 min, 2 by ~20 min).
+RULE: After spawning, poll list_pull_requests (base = integration) on a short send_later and subscribe each new PR.
+TAGS: conductor, process
+
+### from veto-hold-link
+[2026-10-18] A veto that moves the row out of the set the counter reads is never counted
+WHAT HAPPENED: `scheduleAuto` (lib/autopilot/tick.ts §5) moves a held pitch to `autopilot_lane = 'review'`, and `evaluateStage` (§6) counts vetoes only among rows with `autopilot_lane = 'auto'`. §5 runs before §6 in the same tick, so a person's veto (and now a digest hold) leaves the counted set before it is counted: `autoVetoed` stays ~0 and the veto-rate rule can promote veto → auto on vetoes it never saw.
+RULE: When a state change both "handles" a row and is the signal a later metric counts, the metric must select on something the handling doesn't rewrite (here: the autopilot-approved event set, not the lane). Test the metric on the row as it looks AFTER the handler ran.
+TAGS: autopilot, metrics, veto
+
+[2026-10-18] Public capability links: key per purpose, GET reads only, guarded update
+WHAT HAPPENED: The digest hold link (app/api/autopilot/hold) reuses the unsubscribe pattern: HMAC token with its own derived key (`autopilot-hold-v1:` label) plus a `k: "hold"` field, a GET confirm page that only reads, and a POST that is one `.eq("status","approved")` update returning rows. A fake query builder that applies `.eq()` filters (tests/autopilot-hold.test.ts) tests the guard itself instead of a mock that returns what it was told.
+RULE: Every public token gets its own purpose-labelled key; the action is one conditional write whose row count decides the answer; the read path is tested with a fake that throws on any write.
+TAGS: security, routes, tokens
+
+[2026-10-18] A new writer of a magic-string reason must reuse the constant the reader matches on
+WHAT HAPPENED: governor.ts `heldAction` leaves a draft alone only if a reason starts with "held by a person". The first version of the digest hold wrote "held from the digest link", so the next tick's §4 resolveHeld would have rewritten (deleted and regenerated) the draft a person had just held. The reviewer caught it. The fix is `HELD_BY_PERSON` in governor.ts, used by heldAction, tick.ts §5 and hold.ts.
+RULE: Before writing a state that another stage branches on (a reason prefix, a lane, a status), grep for every reader of that field and run the new value through each reader in a test. A string that a predicate matches on is an exported constant, never a literal written twice.
+TAGS: autopilot, state, review
+
+## Out of scope, noticed
+- `lib/pitches/pitch-stage.ts` `transitionPitchStatusWith`: the update has no current-status guard, so a /pitches "move to draft" can flip a row the send-queue just claimed (`sending`) or sent. Same gap the brief names.
+- `lib/audit/log.ts` `AuditAction` has no `"pitch.held"`; hold.ts inserts into `audit_log` directly (via the injected client) instead of `writeAuditLog`. Add the union member and switch over when convenient.
+
+### from lead-alerts
+[2026-10-18] An alert built inside a draft branch only fires for the branch
+WHAT HAPPENED: The reply poll's only team email was a "drafts awaiting review" digest pushed from inside the draft-created branch (`app/api/replies/poll/route.ts`), so opt-outs, wrong-person replies and any reply whose draft failed never reached anyone. Replaced with a collector (`lib/replies/lead-alert.ts`) fed from every human-reply branch, sent once after the loop.
+RULE: Notify on the event the team cares about (a reply was stored), not on a side effect of handling it (a draft was made). And make the alert durable: when the stored row is the dedupe key, an in-memory alert list is lost for good on a 503 or a killed run. Drive the alert from the table (claim `hot_alert_sent_at` where null, send, release on zero delivery, sweep a recent window every run), never let the send throw into the job. (Review B1 on PR #15.) Round 2 sharpened it: a claim → send step must always run with enough time left that the platform cannot kill it in between. Sweep leftovers at the START of the run (full budget), and at the end claim only with a reserve (60s of 120s) left. And when two runs can overlap, never claim another run's row until it has settled (classified_at ≥ 2 min old), or the alert can describe a draft or opt-out that is not written yet.
+TAGS: replies, notify
+
+[2026-10-18] Google Calendar events carry start.timeZone even though our type does not
+WHAT HAPPENED: `CalendarEvent.start` in `lib/opportunities/google-calendar.ts` declares only dateTime/date; the booking alert reads `start.timeZone` through a local widening in `calendar-sync.ts` because that file was outside the allow-list.
+RULE: When a typed API shape omits a field you need, widen it locally and flag the shared type for the owner, rather than editing a file outside your brief.
+TAGS: opportunities, calendar, types
+
+## Out of scope, noticed
+- `lib/opportunities/google-calendar.ts`: add `timeZone?: string` to `CalendarEvent.start` so `eventTimeZone()` in calendar-sync can drop its cast.
+- Booking alerts stay in-memory (no column to claim). Google already notifies the organizer of each booking, so a lost booking alert is not a lost lead.
+- A reply imported more than 48h after Gmail received it (a missed thread caught by the daily full sweep) falls outside the alert window, because the window keys on `received_at`. replies has no insert timestamp; `classified_at` is close to one but is rewritten on reclassification.
+
+### from platform-reports
+[2026-10-18] An emergency is "due activity that did not happen", never "something is waiting"
+WHAT HAPPENED: My first E3 ("approved, more than 24h past scheduled_send_at, after a whole send window") still fired every day on states the send-queue enters by design: paused inbox, the daily-cap drip (queueApprovedForSend sets scheduled_send_at=now for all), prospect cooldown, a Friday 22:51 "sending" row on Saturday. Review caught it; the old code alerts on 5/5 of the conductor's repro states. lib/reports/health.ts now judges only the last CLOSED send window, within 24h of its close: fire only if it had due pitches on an unpaused, connected, capped inbox with no cooldown AND that inbox sent nothing in it.
+RULE: For every alert, list each reason the consumer skips an item (read its `continue`s) and make each one silent; then require evidence the consumer itself did nothing in a period it should have acted. A 24h dedupe turns any false positive into a daily email. Test a silent matrix, one case per skip reason, plus one true positive each.
+TAGS: reports, alerts, pg_cron
+
+[2026-10-18] An alert about the alert channel has to leave by another channel
+WHAT HAPPENED: The "Google disconnected" emergency is emailed through Gmail. sendNotification (lib/notify/send.ts) picks the tenant's oldest connected inbox, so with one inbox, or the oldest one being the broken one, the alert could never go out. The health check now sends from an inbox whose token just worked (fromEmail), writes the dedupe row only after a delivery, and otherwise raises a fatal Sentry event (free, emails by itself) and retries next hour.
+RULE: For every alert, ask "does the failure it reports also break its delivery?" If yes, pick the sender from the snapshot, never dedupe an undelivered alert, and keep a second channel.
+TAGS: notify, reports, gmail
+
+## Out of scope, noticed
+- lib/audit/log.ts: `writeAuditLog` swallows insert errors, so callers that depend on the row (dedupe) can't react; `recordHealthAlert` inserts directly for that reason. A `{ ok }` return would let it use the shared writer.
+- lib/anthropic/cost-tracking.ts: `DAILY_USD_CAP_DEFAULT` (6) isn't exported, so lib/reports/snapshot.ts repeats it; its doc comment at line ~66 still says "default $5".
+- supabase/migrations/0016: `warmup_config.tenant_id` references auth.users, not tenants; the report finds warmup rows through the tenant's sending addresses instead.
+
+### from prospect-status-guard
+[2026-10-18] A status guard written as invariants exposes gaps the hand-written lists hid
+WHAT HAPPENED: Deriving the `replied` guard from I1–I5 (`lib/prospects/status.ts`) adds `no_match` to the poll route's hand-written list `(archived_no_meeting,suppressed,booked,won,lost)`: a no_match prospect that replies became `replied`, a sendable status, which breaks I5. I3 and I4 turned out to be implied by I1/I2/I5, so the predicate only encodes three rules.
+RULE: When several writers each carry their own `.not("status","in",…)` list, write the invariants once, derive every list from them, and table-test every (current, next, writer) triple. Compare guard lists as sets, not strings: PostgREST `in` is order-free and the derived order (enum order) differs from the hand-written ones.
+TAGS: prospects, status, invariants
+
+## Out of scope, noticed
+- Two copies of the do-not-send set: `MANUAL_DO_NOT_SEND` in `lib/pitches/send-action.ts` and the one in `app/api/pitches/send-queue/route.ts`; both should read `DO_NOT_SEND_STATUSES` from `lib/prospects/status.ts`.
+- `app/api/replies/poll/route.ts` bounce suppress (~line 345) has no tenant filter (`.eq("id", thread.prospect_id)` only) as well as no status guard.
+
+### from learning-meeting-outcomes
+nothing new
+
+The wave-0 `OUTCOME_EVENT_TYPES` export made this a one-file change as intended: adding
+the three opportunity types there is all the exemplar loader needed, and `learn.ts`
+loads every event type, so armStats/funnel inherit the new scoring with no edit.
+
+## Out of scope, noticed
+- `lib/learning/reward.ts` sums points per event (scans already did this), so two
+  distinct `meeting_booked` events on one root pitch (rebooked after a cancel) count
+  20 each. Calendar sync writes one per opportunity, so this is per-meeting, which
+  seems right; flagging in case dashboards want one-per-pitch.
+
+### from scout-cell-credit
+[2026-10-18] A work queue is not a history: the scout read discovery_jobs.prospect_ids as "what this job found"
+WHAT HAPPENED: `learnFromOutcomes` (lib/autopilot/learn.ts) credited each autopilot job's search cell with `discovery_jobs.prospect_ids`. The worker (app/api/discover/run/route.ts) uses that column as its current work list: each refill overwrites it with the ICP's oldest raw prospects (any crawl's), and the pitching phase overwrites it again with the ICP's high scorers still needing a pitch. On 2026-10-17 the six autopilot jobs found 119 prospects; the scout was credited with 45, and three cells with 2–3 each. Fixed with `stats.found_ids` (the crawl's own inserts, recorded in the discovering phase), `stats.processed_ids` (every researched batch) and the pure `scoutCredits` (lib/learning/scout.ts): credit follows the crawl that found a prospect, whoever researched it. `scripts/backfill-scout-found-ids.sql` restores the six old jobs.
+RULE: Before a learner reads a column, find every writer of it. A column a state machine overwrites per phase holds the current step, not the job's history; anything that attributes outcomes needs its own append-only or write-once record, written where the fact is known (here: right after the crawl).
+TAGS: learning, scout, discovery, attribution
+
+[2026-10-18] Putting lists in a jsonb that hot paths select whole multiplies their egress
+WHAT HAPPENED: adding id lists to discovery_jobs.stats would have made the tick (every 15 min, 30 days of jobs) and the learner (180 days) pull them on every run. Those reads now select only the keys they use (`pitched:stats->pitched`, `found_ids:stats->found_ids`), a PostgREST JSON-path select (first use in this repo). Not verified live: the session's proxy blocks supabase.co; the postgrest-js select grammar accepts the syntax.
+RULE: When a jsonb column grows a list, grep its `select("stats")`-style readers and narrow the ones on a schedule to the keys they need.
+TAGS: supabase, cost, autopilot
+
+## Out of scope, noticed
+- app/api/discover/run/route.ts: the refill (`getRawProspectIdsWith`, lib/discover/pipeline-stage.ts) takes the oldest raw prospects of the whole ICP, so after a failed or cancelled job (whose prune never ran) the next autopilot job of that ICP spends its daily budget on the old job's leftovers before its own cell's. Credit is now right either way; whether a scout job should refill only from its own crawl is a separate decision.
+
 ## Merged from lessons-inbox, Phase 3 batch 1 (2026-10-17, conductor/worker workflow)
 
 ### from pitch-exemplar-memory

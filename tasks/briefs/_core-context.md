@@ -1,4 +1,4 @@
-# S.P.A.M. core context for workers (refreshed 2026-10-17 after Phase 2)
+# S.P.A.M. core context for workers (refreshed 2026-10-18 for Phase 3 batch 2)
 
 This is the ONLY project history a worker loads. Do not open `tasks/lessons.md`,
 `tasks/session-log.md`, `tasks/todo.md`, `tasks/project-state.md` or
@@ -24,7 +24,7 @@ SHARED with runna-hunter: never assume a table is SPAM-only) · Anthropic SDK th
 cost-tracked, daily-capped wrapper in `lib/anthropic/` · Gmail API · Sentry · Vercel Hobby.
 
 - `npm ci` once on a fresh clone, then `npm run typecheck` · `npm run lint` · `npm test`
-  (node test runner, `tests/**/*.test.ts`, 499 tests at Phase 2 ship)
+  (node test runner, `tests/**/*.test.ts`, 609 tests at batch 2 start)
 - `npm run build` before claiming a UI change works. `npm run db:types` is conductor-only;
   `lib/supabase/types.ts` is hand-maintained and conductor-only.
 - Pre-commit (lefthook) runs tsc + eslint; CI runs all three on every PR.
@@ -76,6 +76,22 @@ cost-tracked, daily-capped wrapper in `lib/anthropic/` · Gmail API · Sentry ·
   an output invariant that fails closed, plus a property test, and show the new tests
   failing on the old code.
 - Enum values added by a migration ship with their TS union in the same commit.
+- A fail-closed check must not reuse the code it guards: give it its own, coarser
+  matching (letters-only fold, substring), and give the property test a third.
+- A route's last step runs after its time budget. Anything there must be safe to be
+  killed at maxDuration: claim/mark only when there is time to finish, and sweep
+  leftovers at the START of the next run.
+- An alert or emergency rule is "due activity did not happen in a closed window", never
+  "something is waiting"; every state the system enters by design must stay silent.
+- A value you write that another module reads (reason strings, statuses): grep the
+  reader and match its check exactly; share the constant (e.g. `HELD_BY_PERSON`).
+- Prospect status writes go through `lib/prospects/status.ts` (`protectedStatusFilter`);
+  a real outcome (booked/won/lost) is never overwritten by an automated writer.
+- Every notification email to the team (alerts, digests, reports, lead alerts) goes
+  through `lib/notify/send.ts` with `kind: "ops"` (everything: Pedro's two addresses) or
+  `kind: "lead"` (prospect replies and bookings: ops + the sales team). Never read a
+  `*_NOTIFY_EMAIL` variable or hard-code an address. Pedro wants a weekly report and
+  emergency-only alerts, never a routine daily email.
 - Don't widen scope. Unrelated bugs go in your lessons-inbox file; if one is the root
   cause of your own task's risk, say so at the top of your report.
 
@@ -92,18 +108,21 @@ lib/learning/          bandit, reward, segments, outcomes, scout, icp, hunter-we
 lib/discover/  (33)    sources, dedupe, chain filter, DNC, enrich-contacts, pipeline-stage
 lib/research/  (19)    scraper, scrape/deep-research/score stages, SnapVerify, verify-recipient
 lib/pitches/   (25)    composer, review, gate, send-gate, queries, events, stages   THE HUB
-lib/replies/   ( 8)    classify, bounce parse, draft, send-reply
+lib/replies/   ( 8)    classify, bounce parse, draft, send-reply, intent-actions
+lib/opportunities/ (5) calendar-sync (hourly), google-calendar, outcome, actions, queries
+lib/prospects/  ( 2)  detail actions + queries (status writers live in several modules)
+lib/hunter/     ( 3)  hunter_scans → prospects (table shared with runna-hunter)
 lib/warmup/    (10)    deliverability, DMARC, IMAP, placement
-lib/{gmail,compliance,anthropic,supabase,audit,sentry,cron-auth}  shared infra  CONDUCTOR ONLY
+lib/{gmail,compliance,anthropic,supabase,audit,sentry,cron-auth,notify}  shared infra  CONDUCTOR ONLY
 supabase/migrations/0001..0044   numbered; YOUR brief reserves yours (never the next free one)
 vercel.json, CLAUDE.md, lib/supabase/types.ts, package.json         CONDUCTOR ONLY
 ```
 Your brief lists the files you may edit. Anything outside it: say so in the PR body under
 "Needs conductor", do not edit.
 
-## Integrations (status, 2026-10-17)
+## Integrations (status, 2026-10-18)
 Anthropic ✅ · Google Places ✅ (primary discovery) · Yellow Pages CA ✅ · Hunter.io ✅ ·
-Anymail ✅ · Gmail OAuth ✅ (scopes: gmail.send/readonly/modify, postmaster.readonly) ·
+Anymail ✅ · Gmail OAuth ✅ (scopes: gmail.send/readonly/modify, postmaster.readonly, calendar.readonly; Calendar API enabled in GCP) ·
 Brave ⚠ quota · DENUE ❌ off (key invalid) · Yelp ❌ removed.
 
 Pipeline: discovery → scrape → deep research → SnapVerify → score → triage → draft →

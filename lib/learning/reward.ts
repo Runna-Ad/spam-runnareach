@@ -2,17 +2,20 @@
  * What counts as "it worked": one definition every learner optimizes.
  *
  * A pitch's outcome is read from its pitch_events timeline (sent, audit_scan,
- * reply, bounce, unsubscribe). Two numbers come out:
+ * reply, bounce, unsubscribe, and the opportunity events meeting_booked, won,
+ * lost written on the root pitch). Two numbers come out:
  *
- *   value   0..1, the bandit's reward. The strongest signal wins: asking to
- *           talk = 1, a positive reply ≈ 1, running the free check = 0.5, a
+ *   value   0..1, the bandit's reward. The strongest signal wins: a booked
+ *           meeting or a deal (won OR lost: the email did its job) = 1, asking
+ *           to talk = 1, a positive reply ≈ 1, running the free check = 0.5, a
  *           neutral reply a little, silence or an opt-out = 0.
  *   points  a weighted score for dashboards and yield ranking, where an
  *           opt-out costs points (it is a real harm, not just silence).
  *
  * Bounces are excluded from message learning (value = null): a bounce says the
  * ADDRESS was bad, not the email. Discovery and the verifier learn from them
- * instead (see `addressOutcome`). Test addresses are ignored entirely.
+ * instead (see `addressOutcome`). An opportunity event outweighs a bounce: a
+ * prospect who booked got the message. Test addresses are ignored entirely.
  *
  * An outcome is "settled" once a decisive signal arrives or the attribution
  * window passes; learners only count settled outcomes so a pitch sent an hour
@@ -22,7 +25,7 @@
  */
 
 export type OutcomeEvent = {
-  type: "sent" | "audit_scan" | "reply" | "bounce" | "unsubscribe" | string;
+  type: "sent" | "audit_scan" | "reply" | "bounce" | "unsubscribe" | "meeting_booked" | "won" | "lost" | string;
   at: string;
   payload?: {
     stage?: string;
@@ -44,6 +47,8 @@ const REPLY_VALUE: Record<string, number> = {
 };
 
 export const POINTS = {
+  won: 40,
+  meeting_booked: 20,
   contact_request: 15,
   wants_meeting: 12,
   wants_info: 10,
@@ -53,13 +58,34 @@ export const POINTS = {
   unclassified: 0.5,
   hard_no: -3,
   unsubscribe: -5,
+  lost: 0,
 } as const;
+
+/** Opportunity events: the email produced a meeting or a deal. Full success, decisive. */
+const OPPORTUNITY_EVENT_TYPES = ["meeting_booked", "won", "lost"] as const;
+type OpportunityEventType = (typeof OPPORTUNITY_EVENT_TYPES)[number];
+const isOpportunityEvent = (type: string): type is OpportunityEventType =>
+  (OPPORTUNITY_EVENT_TYPES as readonly string[]).includes(type);
+
+/**
+ * The pitch_events types an outcome is read from. Loaders that filter events
+ * (the exemplar shortlist) select exactly these, so a new outcome type is one
+ * edit here.
+ */
+export const OUTCOME_EVENT_TYPES: readonly string[] = [
+  "sent",
+  "reply",
+  "audit_scan",
+  "bounce",
+  "unsubscribe",
+  ...OPPORTUNITY_EVENT_TYPES,
+];
 
 /** Days after the first send before silence counts as a settled "no". */
 export const ATTRIBUTION_WINDOW_DAYS = 14;
 
 export type Outcome = {
-  /** Bandit reward 0..1; null when the pitch must not teach the writer (bounce, never sent, test). */
+  /** Bandit reward 0..1; null when the pitch must not teach the writer (bounce without an opportunity, never sent, test). */
   value: number | null;
   points: number;
   status: "pending" | "settled";
@@ -78,6 +104,7 @@ export function scoreOutcome(events: readonly OutcomeEvent[], now: Date = new Da
   let negative = false;
   let decisive = false;
   let bounced = false;
+  let opportunity = false;
 
   for (const e of real) {
     if (e.type === "audit_scan") {
@@ -102,6 +129,12 @@ export function scoreOutcome(events: readonly OutcomeEvent[], now: Date = new Da
       signals.push("bounce");
       bounced = true;
       decisive = true;
+    } else if (isOpportunityEvent(e.type)) {
+      signals.push(e.type);
+      value = 1;
+      points += POINTS[e.type];
+      opportunity = true;
+      decisive = true;
     }
   }
 
@@ -110,7 +143,7 @@ export function scoreOutcome(events: readonly OutcomeEvent[], now: Date = new Da
   const status: Outcome["status"] = sentAt !== null && (decisive || windowOver) ? "settled" : "pending";
 
   return {
-    value: sentAt === null || bounced ? null : value,
+    value: sentAt === null || (bounced && !opportunity) ? null : value,
     points,
     status,
     signals,

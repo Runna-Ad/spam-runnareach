@@ -70,6 +70,21 @@ rework in retros traces to a missing sentence in the brief. Before spawning, che
 - If this task's output combines at runtime with another task in the batch, the brief
   says what the other task does at runtime (a pause empties a window; a cron reads a
   column), or the batch audit is told to check the pair.
+- A value the brief invents that another module READS (a reason string, an enum value, a
+  column, a status) names that reader and quotes the check it must pass. Grep for the
+  consumer before writing the value (batch 2: a hold reason the governor's
+  `startsWith("held by a person")` did not match would have re-sent held emails).
+- Work added to a long route (poll, tick, send-queue) states the route's time budget and
+  what runs after it: anything at the end must be safe to be killed at maxDuration
+  (batch 2 lead alerts: 3 rounds on "claimed, then killed, never sent").
+- An alert, report or emergency rule lists the designed-normal states that must stay
+  silent (paused inbox, cap drip, cooldown, weekend, outside the send window, AI cap,
+  nothing sent yet) and states the rule as "due activity did not happen in a closed
+  window", never "something is waiting" (a 24h dedupe turns a false positive into a
+  daily email).
+- A scrubber, filter or gate guarded by a fail-closed check: the brief says the check
+  and the property test must use their OWN matching, never the guarded code's (batch 1
+  and batch 2 both lost a round to a leak check that reused the scrubber's regexes).
 - Model/effort copied from `tasks/routing.md`, and the brief says why if it deviates.
 Keep the brief in the repo (commit to the integration branch) so the worker's fresh
 clone has it.
@@ -88,11 +103,14 @@ create_session(
 Do not pass `permission_mode`: the inherited mode runs install, tests, build, push
 and PR creation without prompts. Workers do NOT `send_message` when done (that was the
 one call that prompted Pedro, six times in batch 1): the PR body's Report block is the
-report and the PR-opened event wakes you. Subscribe to each worker PR as it opens.
-A worker messages you only when BLOCKED. Record session id, branch, model, start time
-on the board. Spawn every parallel-safe task of the current wave in the same turn. Then
-end your turn; PR events wake you. Never poll with sleep. Arm one `send_later` safety
-check-in 50 minutes out in case a worker dies silently (no PR, no message).
+report. A worker messages you only when BLOCKED. Record session id, branch, model, start
+time on the board. Spawn every parallel-safe task of the current wave in the same turn.
+**A PR that opens does NOT wake you**: a subscription needs a PR number, so nothing is
+subscribed until you subscribe (batch 2 found 6 PRs late, 4 by ~8 min, 2 by ~20 min).
+So arm a `send_later` at +8 min whose only job is `list_pull_requests` with
+`base=<integration>` → `subscribe_pr_activity` each new PR → re-arm at +8 min until every
+spawned task has a PR. After that, PR events (CI, merge) wake you. Never poll with sleep.
+Keep one 50-minute safety check-in for a worker that dies silently (no PR, no message).
 
 Small bounded jobs (one test file, a lint sweep, a doc) may use `Agent` with the
 `opus-worker` / `sonnet-worker` definitions and `isolation: worktree` instead. Never
