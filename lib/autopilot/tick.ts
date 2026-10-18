@@ -26,12 +26,21 @@ import "server-only";
  */
 
 import type { Actor } from "@/lib/actor";
+import { isUnderDailyCap } from "@/lib/anthropic/cost-tracking";
 import { evolveSearchSpace, learnFromOutcomes, weeklyReview } from "./learn";
 import { resumeDiscoveryJobWith, startDiscoveryJobWith } from "@/lib/discover/job-stage";
 import { EMPTY_JOB_STATS } from "@/lib/discover/job-types";
 import { getAccessToken, sendGmailMessage } from "@/lib/gmail/client";
 import type { Arm } from "@/lib/learning/bandit";
-import { candidateCells, cellKey, chooseCellFromArms, dailyAllowance, discoveryBudget, type SearchCell } from "@/lib/learning/scout";
+import {
+  aiBudgetAllowance,
+  candidateCells,
+  cellKey,
+  chooseCellFromArms,
+  dailyAllowance,
+  discoveryBudget,
+  type SearchCell,
+} from "@/lib/learning/scout";
 import { editRatio } from "@/lib/pitches/decision";
 import { isUnderDailyCap } from "@/lib/anthropic/cost-tracking";
 import { generatePitchWith, transitionPitchStatusWith } from "@/lib/pitches/pitch-stage";
@@ -396,11 +405,17 @@ async function maybeStartDiscovery(actor: Actor, db: Db, now: Date): Promise<Tic
     .eq("stats->>started_by", "autopilot")
     .gte("created_at", new Date(now.getTime() - DAY).toISOString());
   const todayRows = (todays ?? []) as Array<{ stats: { processed?: number } | null }>;
-  const allowance = dailyAllowance({
+  const daily = dailyAllowance({
     budget,
     jobsToday: todayRows.length,
     researchedToday: todayRows.reduce((sum, j) => sum + (j.stats?.processed ?? 0), 0),
   });
+  if (daily.prospects === 0) return { started: false, reason: daily.reason, budget };
+
+  // A job past the AI cap researches on the fallbacks (rule scores, template
+  // pitches), so start one only as big as the budget left still pays for.
+  const cap = await isUnderDailyCap(tenantId);
+  const allowance = aiBudgetAllowance(daily, { spentUsd: cap.spent_today_usd, capUsd: cap.cap_usd });
   if (allowance.prospects === 0) return { started: false, reason: allowance.reason, budget };
 
   const { data: icps } = await db
