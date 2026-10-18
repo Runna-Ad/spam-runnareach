@@ -26,6 +26,7 @@
  */
 
 import type { NotificationMessage, NotificationResult } from "../notify/send.ts";
+import { DO_NOT_SEND_STATUSES } from "../prospects/status.ts";
 import { stripQuotedReply } from "./classify.ts";
 import type { ReplyIntent } from "./queries.ts";
 
@@ -169,7 +170,9 @@ export function leadItemFromRow(row: LeadReplyRow, isTest: (email: string) => bo
     text: stripQuotedReply(row.body_text) || (row.body_text ?? ""),
     draftWaiting: row.draft_status === "pending",
     isTest: isTest(row.from_email),
-    optOutFailed: row.intent === "hard_no" && p?.status !== "suppressed",
+    // Stopped = any do-not-send status (lib/prospects/status.ts): a booked/won/lost
+    // prospect who opts out keeps that status by design, and DNC + pause still apply.
+    optOutFailed: row.intent === "hard_no" && !DO_NOT_SEND_STATUSES.has(p?.status ?? ""),
   };
 }
 

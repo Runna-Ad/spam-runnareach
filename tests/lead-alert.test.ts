@@ -275,6 +275,11 @@ test("leadItemFromRow: draft pending → waiting; hard_no on a non-suppressed pr
   assert.equal(optOut.optOutFailed, true);
   assert.equal(optOut.language, "es");
   assert.equal(leadItemFromRow(row("b", "hard_no"), isTestAddress).optOutFailed, false);
+  // A real outcome keeps its status on opt-out (the status rule); DNC + pause landed, so no false alarm.
+  for (const status of ["booked", "won", "lost"]) {
+    const kept = row("k", "hard_no", { prospects: { company_name: "Acme", language: "en", status } });
+    assert.equal(leadItemFromRow(kept, isTestAddress).optOutFailed, false, status);
+  }
   assert.equal(leadItemFromRow(row("c", "wants_meeting"), isTestAddress).draftWaiting, true);
   assert.equal(leadItemFromRow(row("d", "wants_meeting", { from_email: "pedrojr22+x@gmail.com" }), isTestAddress).isTest, true);
   assert.equal(leadItemFromRow(row("e", "wants_info", { prospects: null }), isTestAddress).company, "e@prospect.ca");
