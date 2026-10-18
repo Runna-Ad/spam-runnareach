@@ -153,12 +153,12 @@ export async function releaseClaim(
   else await q;
 }
 
-/** Where the send-queue releases a claim it may not send: can never send → out of the queue. */
 /** do-not-send status or DNC-listed: no later run may send it either. */
 export function canNeverSend(kind: SendBlock["kind"]): boolean {
   return kind === "do_not_send" || kind === "dnc";
 }
 
+/** Where the send-queue releases a claim it may not send: can never send → out of the queue. */
 export function queueReleaseFor(block: SendBlock): ReleaseTo {
   return canNeverSend(block.kind)
     ? { to: "auto_rejected", reason: block.reason }
