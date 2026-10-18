@@ -6,7 +6,7 @@ for the current phase; move older ones to the retro.
 
 ## Current phase
 `phase3-batch1` CLOSED 2026-10-18 (shipped a15d1d8; calendar sync verified live; PR #11 scout credit shipped c869323). Owner: session_012bGmp5nHP9Lx5ke69JkaBk (batch 1 conductor, retiring).
-**Next: `phase3-batch2`, NOT started. No conductor owns it yet.** The next conductor session writes its id here before doing anything else (see "Hand-off" below).
+**`phase3-batch2` ACTIVE (planning). Owner: session_018Qvu38cNFVCuWNq41wYfxJ (batch 2 conductor, Opus 5.5), took over 2026-10-18 06:10 UTC per the hand-off below. Integration branch: `claude/conductor-skill-board-tasks-cu74t5` (this session's designated branch, cut from main af3c4b0; same pattern as batch 1's gallant-gauss).**
 
 ## Approvals and checks
 | Item | State |
