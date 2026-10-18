@@ -79,6 +79,33 @@ SHIPPED on Pedro's "ship it": migrations 0040 + 0041 applied, main = `4b22ad1`+,
 - **Scheduler** (migration 0041): pg_cron + pg_net; token generated inside Postgres, kept in Vault, checked via `scheduler_token_valid` (service role only); tick every 15 min, reply poll every 30 min, send-queue every 10 min and follow-ups hourly Mon–Fri 15–22 UTC. Vercel daily crons stay as backstop.
 - Session note: the Auto-mode safety check refused the service-role pipeline and creating an account; Pedro switched the session to "Accept edits" and approved. Permission rules were not edited.
 
+## Phase 3 — batch 3 (on integration `claude/optimistic-tesla-3gceud`, waiting for Pedro's "ship it")
+845 tests, build green (integration f5176a5+). Retro: `tasks/retros/2026-10-18-phase3-batch3.md`. Ships:
+- **Send-path safety** (`lib/pitches/status-transitions.ts`): one do-not-send set (`DO_NOT_SEND_STATUSES`) in all four
+  send paths (send-queue, Send now, follow-up, nudge); an unreadable prospect never sends; send-queue, Send now and
+  follow-ups re-check the prospect's status, cooldown and the DNC list AFTER the claim and immediately before Gmail
+  (a DNC read error there counts as "can't send", retried next run); every release of a claim is guarded, so a pitch
+  rejected while sending is never re-approved; `/pitches` status changes (and the autopilot's approve) can no longer
+  move a pitch out of sending/sent or undo a rejection.
+- **Replies stored once**: unique index on replies(tenant_id, gmail_message_id) (0046); the poll skips a message an
+  overlapping run already stored and reports any other insert error instead of dropping it.
+- **Booking alerts are durable**: driven by opportunities.booked_alert_sent_at / cancelled_alert_sent_at (0047),
+  claimed before send, released on a send that reached nobody, swept at the start of every hourly run; only cancellations
+  the sync applied alert (cancelled_at).
+- **/pitches survives** a failing hot-lead lookup: full list, a notice, the Hot leads filter disabled.
+Deploy order (conductor runs each step and verifies by query):
+1. Apply **0046** then **0047** BEFORE the deploy (additive; check prod first: 0 duplicate reply pairs, migration rows by NAME).
+2. Merge → deploy READY.
+3. Right after READY and before the next :05 calendar sync: `update opportunities set booked_alert_sent_at = created_at
+   where source = 'calendar' and booked_alert_sent_at is null and meeting_start is null` (rows the old code created and
+   alerted from memory in the gap; 0 calendar rows exist today).
+4. First runs: reply poll (:00/:30) 200 with no insert errors; calendar-sync (:05) 200 with alerts.failed []; Monday
+   15:00 UTC send-queue: sent > 0, no "couldn't read" skips, AUTO pitches → sent.
+NOT in this ship: PR #17 (exemplar allow-list, round 5 in progress; `EXEMPLARS_ENABLED` stays unset = off).
+Open / next: #17 (then flip EXEMPLARS_ENABLED); pipeline-stage reactivation vs the status rule (Pedro's call); poll
+`DEAD_STATUSES` lacks no_match (drafting gate); nudge route accepts only CRON_SECRET (a pg_cron schedule would 401);
+calendar-sync: a kill between createOpportunity and its pitch event/audit loses those writes (pre-existing).
+
 ## Phase 3 — batch 2 (SHIPPED 2026-10-18 on Pedro's "ship it": main = `8db8b1c`, PR #19)
 Ship verified 2026-10-18 16:23 UTC: deploy dpl_4tQAVaUmhbnXHWyHLSHGUrbYiYR5 READY; dry runs `/api/reports/health?dry=1` → problems [] and `weekly?dry=1` → correct text (0 sent, 139 researched, 19 AUTO scheduled); **0045 applied via connector, version row normalised to `0045`**, cron jobs spam-health-check (25 * * * *) + spam-weekly-report (10 13 * * 1) present. Follow-up PR: veto digest twice a day (see below). Retro: `tasks/retros/2026-10-18-phase3-batch2.md`. 721 tests, build green, Fable batch audit: ship after one
 fix (done). Ships:

@@ -81,3 +81,13 @@ test("transitionPitchStatusWith puts the from-state in the UPDATE's WHERE", asyn
   assert.ok(stmt.includes(`.select("id")`), "0 rows updated must be detectable");
   assert.match(body, /verdict === "noop"\) return \{ ok: true \}/, "same status is a no-op");
 });
+
+test("a failed re-read after a 0-row UPDATE reports what was observed, not a diagnosis", async () => {
+  const { readFileSync } = await import("node:fs");
+  const s = readFileSync(new URL("../lib/pitches/pitch-stage.ts", import.meta.url), "utf8");
+  const start = s.indexOf("export async function transitionPitchStatusWith(");
+  const body = s.slice(start, s.indexOf("\nexport ", start + 10));
+  assert.ok(!body.includes(`"gone"`), "the pitch was never observed to be gone");
+  assert.match(body, /error: rereadErr \} = await supabase/, "the re-read's error is read");
+  assert.match(body, /if \(!now\) return \{ ok: false, error: "Pitch not found\." \}/);
+});

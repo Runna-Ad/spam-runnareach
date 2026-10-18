@@ -37,7 +37,19 @@ export type DncInsertClient = {
   };
 };
 
-export type DncHit = { blocked: true; reason: string } | { blocked: false };
+/**
+ * `error` is set when the lookup failed (the result is fail-open). Callers that
+ * must fail closed at the last moment (recheckBeforeSend) read it; the rest
+ * ignore it and behave as before.
+ */
+export type DncHit = { blocked: true; reason: string } | { blocked: false; error?: string };
+
+/** Never empty: postgrest-js reports an empty-body 502/503/504 as `{ message: "" }`. */
+function errorText(e: unknown): string {
+  const message = e instanceof Error ? e.message : (e as { message?: unknown } | null)?.message;
+  if (typeof message === "string" && message.trim()) return message;
+  return "lookup failed with no error message";
+}
 
 /**
  * True when this address (or its whole domain) is on the do-not-contact list.
@@ -71,7 +83,7 @@ export async function isEmailOnDncList(
 
     if (error) {
       console.error("[dnc] lookup failed — failing open:", error);
-      return { blocked: false };
+      return { blocked: false, error: errorText(error) };
     }
     const hit = (data ?? [])[0] as
       | { email: string | null; domain: string | null; entry_type: string }
@@ -82,7 +94,7 @@ export async function isEmailOnDncList(
     return { blocked: true, reason: `On do-not-contact list (${scope}, ${hit.entry_type})` };
   } catch (err) {
     console.error("[dnc] lookup threw — failing open:", err);
-    return { blocked: false };
+    return { blocked: false, error: errorText(err) };
   }
 }
 

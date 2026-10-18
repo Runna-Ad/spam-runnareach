@@ -40,6 +40,13 @@ import { isUnderDailyCap, recordClaudeCall } from "@/lib/anthropic/cost-tracking
 import { hasUsableEmail } from "@/lib/research/email-utils";
 import { isEmailOnDncList, type DncClient } from "@/lib/discover/dnc-check";
 import { DO_NOT_SEND_STATUSES } from "@/lib/prospects/status";
+import {
+  followupPausesFor,
+  recheckBeforeSend,
+  releaseFollowupClaim,
+  type FollowupReleaseClient,
+  type SendCheckClient,
+} from "@/lib/pitches/status-transitions";
 
 // ── Auth guard ─────────────────────────────────────────────────────────────────
 
@@ -433,6 +440,37 @@ async function processFollowup(pitch: DuePitchRow): Promise<FollowupResult> {
     return { pitch_id: pitch.id, prospect: prospect.company_name, step: nextStep, status: "skipped", reason: "Already handled by another run" };
   }
 
+  // Releases put the step back, guarded on the step this run claimed.
+  const release = (pause: boolean) =>
+    releaseFollowupClaim(supabase as unknown as FollowupReleaseClient, {
+      pitchId: pitch.id,
+      claimedStep: nextStep,
+      priorStep: pitch.sequence_step,
+      priorFollowupAt: pitch.next_followup_at,
+      pause,
+    });
+
+  // ── 7d. Last moment: may this prospect still be emailed? ─────────────────
+  // The prospect was read before the compose (~20s with Claude); a manual or
+  // bulk suppression, or a DNC entry, added since must stop this send. Can
+  // never send → the sequence pauses; unreadable or cooldown → a later run.
+  const lastCheck = await recheckBeforeSend(supabase as unknown as SendCheckClient, {
+    tenantId: pitch.tenant_id,
+    prospectId: pitch.prospect_id,
+    email: contactEmail,
+  });
+  if (lastCheck) {
+    const pause = followupPausesFor(lastCheck);
+    await release(pause);
+    return {
+      pitch_id: pitch.id,
+      prospect: prospect.company_name,
+      step: nextStep,
+      status: "skipped",
+      reason: pause ? `${lastCheck.reason} (sequence paused)` : lastCheck.reason,
+    };
+  }
+
   // ── 8. Send via Gmail in original thread ─────────────────────────────────
   const sendResult = await sendGmailMessage({
     accessToken: tokenResult.accessToken,
@@ -450,12 +488,7 @@ async function processFollowup(pitch: DuePitchRow): Promise<FollowupResult> {
 
   if (!sendResult.ok) {
     // Gmail refused it, so nothing went out: release the claim for a later run.
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    await (supabase as any)
-      .from("pitches")
-      .update({ sequence_step: pitch.sequence_step, next_followup_at: pitch.next_followup_at })
-      .eq("id", pitch.id)
-      .eq("sequence_step", nextStep);
+    await release(false);
     return { pitch_id: pitch.id, prospect: prospect.company_name, step: nextStep, status: "skipped", reason: `Gmail send failed: ${sendResult.error}` };
   }
 

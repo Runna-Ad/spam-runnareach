@@ -992,14 +992,16 @@ export async function transitionPitchStatusWith(
   if (error) return { ok: false, error: `Could not transition: ${error.message}` };
   if (!moved || moved.length === 0) {
     // The row moved since the read (the queue claimed it, someone else acted).
-    const { data: now } = await supabase
+    const { data: now, error: rereadErr } = await supabase
       .from("pitches")
       .select("status")
       .eq("id", parsed.data.pitch_id)
       .eq("tenant_id", user.tenantId)
       .maybeSingle<{ status: string }>();
-    if (now?.status === next) return { ok: true };
-    return { ok: false, error: transitionRefusedMessage(now?.status ?? "gone") };
+    if (rereadErr) return { ok: false, error: `Nothing was changed, and the pitch couldn't be re-read: ${rereadErr.message}` };
+    if (!now) return { ok: false, error: "Pitch not found." };
+    if (now.status === next) return { ok: true };
+    return { ok: false, error: transitionRefusedMessage(now.status) };
   }
 
   if (parsed.data.next_status === "approved") {

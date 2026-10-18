@@ -60,6 +60,15 @@ Checklist (grown by retros; add a line when a retro records a miss):
   (paused inbox, cap drip, cooldown, weekend, outside the send window, AI cap reached,
   nothing sent yet). A rule that fires there becomes a daily email under a 24h dedupe →
   BLOCKING.
+- An error field or flag checked with `if (x.error)` / `if (msg)`: what does an empty
+  string do? (postgrest-js: empty-body 5xx → `message: ""`). Presence, not truthiness.
+- A race/overlap test: delete the guard it claims to test (the claim check, the WHERE
+  guard) and run it. Still green → BLOCKING (the test does not exercise the race).
+- A migration applied before the deploy: what do the OLD prod code's writes look like in
+  the new schema during the gap, and does the NEW code re-act on them (duplicate alert,
+  re-send)? Missing ship step → BLOCKING.
+- UI: a control disabled by a server prop while its client state stays on (useState
+  survives router.refresh): does the stale state still filter or act?
 
 Trace a real path from an input to the failure before calling something blocking. If you
 cannot, it is optional. A finding you are unsure of is optional with "unsure" in front.
