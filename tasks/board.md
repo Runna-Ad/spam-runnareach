@@ -42,7 +42,7 @@ These four columns feed the retro and the routing table.
 ## Questions for Pedro (batched, asked once per batch)
 | # | From task | Question | Default if unanswered | Answer |
 |---|---|---|---|---|
-| 1 | opportunities-calendar-sync | Reconnect Google once after ship so the calendar.readonly scope is granted | sync reports needsReconnect until done | |
+| 1 | opportunities-calendar-sync | Reconnect Google once after ship so the calendar.readonly scope is granted | sync reports needsReconnect until done | done 2026-10-18; also had to enable the Calendar API in GCP 892318428312 |
 | 2 | contact-source-url | structured-research-stage.ts also inserts contacts (outside the brief's allow-list); leave source_url null there until a later task? | yes, next batch | |
 | 3 | opportunities-calendar-sync | Set env CALENDAR_BOOKING_INBOX to the inbox whose calendar holds the appointment schedule (optional; default = oldest connected inbox) | default | |
 | 4 | opportunities-calendar-sync | An invite YOU send from the connected inbox counts as a booked meeting before the prospect accepts (current behaviour). Keep, or require acceptance? | keep | |
@@ -86,3 +86,4 @@ These four columns feed the retro and the routing table.
 - 2026-10-17 17:42 UTC — Pedro: 'applied 0043, ship it'. DB check showed 0043 NOT applied (0 columns, 0 enum values, latest migration 0042) → applied via Supabase connector, verified, THEN merged PR #7 → main a15d1d8. Remaining for Pedro: apply 0044 after deploy, reconnect Google. Check-in trigger cancelled.
 - 2026-10-17 17:45 UTC — Prod deploy of a15d1d8 READY on Vercel. 0044 applied via connector; cron job spam-calendar-sync scheduled. Only Pedro's Google reconnect remains (optional: CALENDAR_BOOKING_INBOX).
 - 2026-10-18 04:09 UTC — Pedro reconnected Google. 04:05 UTC sync: needsReconnect false (inbox pedro@runnareach.com) but 403: Google Calendar API not enabled in GCP project 892318428312. One console toggle by Pedro; no code change. Earlier hourly runs (18:05 → 03:05) all needsReconnect true as expected.
+- 2026-10-18 04:36 UTC — Pedro enabled the Calendar API in GCP 892318428312. Manual sync run 04:35 UTC (via spam_cron_call): needsReconnect false, counts events 0 / created 0 / cancelled 0 / unmatched 0 / errors []. Calendar sync LIVE. Phase 3 batch 1 fully closed; question #1 on the Pedro table answered (reconnect + API enable).
