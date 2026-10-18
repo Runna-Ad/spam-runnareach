@@ -26,7 +26,7 @@ export type ProspectStatusValue = (typeof PROSPECT_STATUSES)[number];
 
 export type StatusWriter = "automation" | "person";
 
-/** Statuses no send path may email (same set as MANUAL_DO_NOT_SEND in lib/pitches/send-action.ts). */
+/** Statuses no send path may email. The ONLY copy: every send path imports it (tests/send-path-safety.test.ts pins that). */
 export const DO_NOT_SEND_STATUSES: ReadonlySet<string> = new Set([
   "suppressed", "archived_no_meeting", "no_match", "lost", "won", "booked",
 ]);

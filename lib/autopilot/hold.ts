@@ -5,8 +5,9 @@
  * schedule cleared, and the tick (§5 scheduleAuto) sees "autopilot approved,
  * back in draft" and never re-queues it. It is ONE conditional update guarded
  * on status = 'approved', so it can't flip a row the send-queue has already
- * claimed ('sending') or sent back to draft. (transitionPitchStatusWith is not
- * used: its update has no current-status guard.)
+ * claimed ('sending') or sent back to draft. (It stays separate from
+ * transitionPitchStatusWith, which is guarded too since batch 3, because a hold
+ * also clears the schedule and writes the hold reason in the same update.)
  *
  * The db is injected so the logic is tested with a fake (tests/autopilot-hold.test.ts).
  * The route (app/api/autopilot/hold) passes the service-role client, behind a

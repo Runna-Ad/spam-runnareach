@@ -27,13 +27,14 @@ import { auditGateHold, checkPitchGate } from "@/lib/pitches/gate";
 import { recordPitchEvent } from "@/lib/pitches/events";
 import { editRatio } from "@/lib/pitches/decision";
 import { describeFailures, gateAllows } from "@/lib/pitches/send-gate";
-
-// Prospect states that must never receive a queued cold pitch, even if the
-// pitch was approved before the state changed. Checked at send time — the
-// last line of defense (suppression can happen any time after queuing).
-const DO_NOT_SEND_STATUSES = new Set([
-  "suppressed", "archived_no_meeting", "no_match", "lost", "won", "booked",
-]);
+import {
+  prospectSendBlock,
+  queueReleaseFor,
+  recheckBeforeSend,
+  releaseClaim,
+  type ReleaseClient,
+  type SendCheckClient,
+} from "@/lib/pitches/status-transitions";
 
 // Conservative drip. The cron runs daily (Hobby-tier limit), so this is the
 // cold-email volume PER DAY: a queue of N pitches goes out ~SEND_PER_TICK/day,
@@ -260,19 +261,17 @@ export async function GET(req: NextRequest) {
 
         // ── Prospect must still be sendable ─────────────────────────────────
         // A prospect can be suppressed/lost/booked AFTER its pitch was queued;
-        // without this check the cron would still email them.
-        const { data: prospectRow } = await supabase
+        // without this check the cron would still email them. Fails closed: an
+        // unreadable prospect is skipped (kept queued), never sent or dropped.
+        const { data: prospectRow, error: prospectErr } = await supabase
           .from("prospects")
           .select("status, cooldown_until, language, domain")
           .eq("id", pitch.prospect_id)
           .maybeSingle();
-        if (prospectRow && DO_NOT_SEND_STATUSES.has(prospectRow.status)) {
-          await dropFromQueue(supabase, pitch.id, `Prospect is ${prospectRow.status}`);
-          results.push({ pitch_id: pitch.id, status: "skipped", reason: `Prospect is ${prospectRow.status}` });
-          continue;
-        }
-        if (prospectRow?.cooldown_until && prospectRow.cooldown_until > nowIso) {
-          results.push({ pitch_id: pitch.id, status: "skipped", reason: "Prospect in cooldown" });
+        const prospectBlock = prospectSendBlock(prospectRow, prospectErr, nowIso);
+        if (prospectBlock) {
+          if (prospectBlock.kind === "do_not_send") await dropFromQueue(supabase, pitch.id, prospectBlock.reason);
+          results.push({ pitch_id: pitch.id, status: "skipped", reason: prospectBlock.reason });
           continue;
         }
 
@@ -404,15 +403,30 @@ export async function GET(req: NextRequest) {
         }
 
         // ── Send ─────────────────────────────────────────────────────────────
+        const releaser = supabase as unknown as ReleaseClient;
         const tokenResult = await getAccessToken(inbox.token);
         if (!tokenResult.ok) {
-          await supabase.from("pitches").update({ status: "approved" }).eq("id", pitch.id);
+          await releaseClaim(releaser, { pitchId: pitch.id, to: "approved" });
           results.push({ pitch_id: pitch.id, status: "error", reason: `Auth: ${tokenResult.error}` });
           continue;
         }
 
         if (sentThisTick > 0) {
           await new Promise((r) => setTimeout(r, Math.random() * JITTER_MS));
+        }
+
+        // ── Last moment: may this prospect still be emailed? ─────────────────
+        // Everything above (DNS verify, gate, token, jitter) takes seconds; an
+        // opt-out the reply poll records meanwhile must stop this send.
+        const lastCheck = await recheckBeforeSend(supabase as unknown as SendCheckClient, {
+          tenantId: pitch.tenant_id,
+          prospectId: pitch.prospect_id,
+          email: toEmail,
+        });
+        if (lastCheck) {
+          await releaseClaim(releaser, { pitchId: pitch.id, ...queueReleaseFor(lastCheck) });
+          results.push({ pitch_id: pitch.id, status: "skipped", reason: lastCheck.reason });
+          continue;
         }
 
         const toName = contact?.full_name ?? null;
@@ -429,7 +443,7 @@ export async function GET(req: NextRequest) {
         });
 
         if (!sendResult.ok) {
-          await supabase.from("pitches").update({ status: "approved" }).eq("id", pitch.id);
+          await releaseClaim(releaser, { pitchId: pitch.id, to: "approved" });
           results.push({ pitch_id: pitch.id, status: "error", reason: `Send: ${sendResult.error}` });
           continue;
         }
