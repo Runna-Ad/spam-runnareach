@@ -13,7 +13,7 @@
 - **Sibling repo:** `runna-hunter` (separate Vercel project) — the self-serve Inefficiency Hunter the pitch CTA deep-links to.
 
 ## What's deployed
-- Prod = `main` = `a15d1d8` (2026-10-17, Phase 3 batch 1 shipped on Pedro's "ship it"; Phase 2 and earlier below). `main` = prod.
+- Prod = `main` = `8db8b1c` (2026-10-18, Phase 3 batch 2). Before that `a15d1d8` (2026-10-17, Phase 3 batch 1 shipped on Pedro's "ship it"; Phase 2 and earlier below). `main` = prod.
 - Migration **0038** (pitches.decision + write-once trigger, pitches.attribution_code, pitch_event_type values, prospect_contacts.verify_*) applied to prod 2026-10-17, recorded as version 0038.
 - Migration **0039** (hunter_scans.ref + trigger `hunter_scans_pitch_event`: a scan carrying a pitch's attribution code → `pitch_events` 'audit_scan' {stage: scan}; its contact-form submit → {stage: contact_request}) applied 2026-10-17, recorded as version 0039. runna-hunter `3b4077f` sends `?r=` with each scan. Before this: `hunter_scans` had 6 rows ever, the last on 2026-06-25, i.e. the Jul–Aug sends produced no logged scans.
 - Migrations **0036** (pitches.gate_verdict + gate_override) and **0037** (sourced benchmarks: 41 seeded + 4 activated → 48 active) applied to prod 2026-10-17, recorded as versions 0036 / 0037.
@@ -79,8 +79,8 @@ SHIPPED on Pedro's "ship it": migrations 0040 + 0041 applied, main = `4b22ad1`+,
 - **Scheduler** (migration 0041): pg_cron + pg_net; token generated inside Postgres, kept in Vault, checked via `scheduler_token_valid` (service role only); tick every 15 min, reply poll every 30 min, send-queue every 10 min and follow-ups hourly Mon–Fri 15–22 UTC. Vercel daily crons stay as backstop.
 - Session note: the Auto-mode safety check refused the service-role pipeline and creating an account; Pedro switched the session to "Accept edits" and approved. Permission rules were not edited.
 
-## Phase 3 — batch 2 (READY 2026-10-18, integration `claude/conductor-skill-board-tasks-cu74t5`, waiting on "ship it")
-Retro: `tasks/retros/2026-10-18-phase3-batch2.md`. 721 tests, build green, Fable batch audit: ship after one
+## Phase 3 — batch 2 (SHIPPED 2026-10-18 on Pedro's "ship it": main = `8db8b1c`, PR #19)
+Ship verified 2026-10-18 16:23 UTC: deploy dpl_4tQAVaUmhbnXHWyHLSHGUrbYiYR5 READY; dry runs `/api/reports/health?dry=1` → problems [] and `weekly?dry=1` → correct text (0 sent, 139 researched, 19 AUTO scheduled); **0045 applied via connector, version row normalised to `0045`**, cron jobs spam-health-check (25 * * * *) + spam-weekly-report (10 13 * * 1) present. Follow-up PR: veto digest twice a day (see below). Retro: `tasks/retros/2026-10-18-phase3-batch2.md`. 721 tests, build green, Fable batch audit: ship after one
 fix (done). Ships:
 - **One notify list** (`lib/notify/`): every alert, digest and report → pedro@runnareach.com + petedv31@gmail.com
   (until now every alert went ONLY to petedv31@gmail.com: no *_NOTIFY_EMAIL var was ever set in Vercel); prospect

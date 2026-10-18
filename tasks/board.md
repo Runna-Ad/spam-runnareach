@@ -5,7 +5,7 @@ file alone. Update it on every spawn, every status change, every merge. Keep clo
 for the current phase; move older ones to the retro.
 
 ## Current phase
-`phase3-batch2` CLOSING: integration ready, integration → main PR open, waiting on Pedro's "ship it". #17 (exemplar allow-list) continues as a follow-up behind the EXEMPLARS_ENABLED kill switch. **Owner: session_018Qvu38cNFVCuWNq41wYfxJ** (batch 2 conductor, Opus 5.5), took over 2026-10-18 06:10 UTC per batch 1's hand-off.
+`phase3-batch2` SHIPPED (main 8db8b1c). Open: first cron runs to verify; follow-up PR "veto digest twice a day" (Pedro: 18 digests/day too many); #17 → batch 3. **Owner: session_018Qvu38cNFVCuWNq41wYfxJ** (batch 2 conductor, Opus 5.5), took over 2026-10-18 06:10 UTC per batch 1's hand-off.
 Integration branch: `claude/conductor-skill-board-tasks-cu74t5` (this session's designated branch, cut from main af3c4b0; same pattern as batch 1's gallant-gauss). Workers PR into it.
 Previous: `phase3-batch1` CLOSED (shipped a15d1d8, calendar sync live). Its rows, log and hand-off are in `tasks/retros/2026-10-17-phase3-batch1.md` (appendix).
 
@@ -14,7 +14,7 @@ Previous: `phase3-batch1` CLOSED (shipped a15d1d8, calendar sync live). Its rows
 |---|---|
 | Prod = main head READY before cutting integration | yes: af3c4b0 READY (dpl_FK9wsisyQ9D7A8EaYFmqG2gexazX) |
 | Batch plan sent to Pedro | 2026-10-18 06:20 UTC (in chat) |
-| Integration → main PR | #19 opened, waiting on "ship it" |
+| Integration → main PR | #19 merged 8db8b1c on "ship it"; deploy READY; 0045 applied + normalised |
 | Batch plan approved | yes, 2026-10-18 ~06:25 UTC ("go with all the rest" = every default) + two new asks: notify routing (copies to petedv31 + nila) and NO daily report, weekly + emergency-only |
 | Questions sent | with the plan (table below) |
 | `npm run build` green on integration | yes, 09b7425 (721 tests) |
@@ -23,7 +23,7 @@ Previous: `phase3-batch1` CLOSED (shipped a15d1d8, calendar sync live). Its rows
 ## Reserved migration numbers
 | Number | Reserved for | Status (reserved → used → applied) |
 |---|---|---|
-| 0045 | platform-reports: `0045_reports_cron.sql` (spam-health-check hourly :25, spam-weekly-report Mon 13:10 UTC) | used (on integration 9da266f); apply AFTER the prod deploy, after `/api/reports/health?dry=1` returns no false problem |
+| 0045 | platform-reports: `0045_reports_cron.sql` (spam-health-check hourly :25, spam-weekly-report Mon 13:10 UTC) | APPLIED 2026-10-18 16:23 UTC via connector after dry runs were clean; version normalised to `0045` |
 | 0046 | — | free |
 
 ## Active and queued tasks
@@ -108,3 +108,7 @@ Batch-audit pairs to check (runtime interactions): learning-meeting-outcomes × 
 - 2026-10-18 15:34 UTC — Batch audit (Fable, ~189k tokens): ship-after-fixes, 1 blocking (lead-alert optOutFailed used its own 'status !== suppressed' predicate → false 'removal NOT confirmed' for booked/won/lost opt-outs under the status rule). Fixed with DO_NOT_SEND_STATUSES + test (82e1123). #17 round 2 review: 6 more leak classes → round 3 = allow-list invariant; batch ships WITHOUT #17 behind an exemplar kill switch (EXEMPLARS_ENABLED unset = off; 0 exemplars ever shown in prod). pitches-list-resilience deferred. Pre-deploy SQL clean (1 inbox, 0 unalerted replies, enum ok, 19 AUTO pitches scheduled for Mon). Lessons merged (6 inbox + 4 conductor), retro written, routing + project-state updated, poll bounce update gained its tenant filter.
 - 2026-10-18 15:35 UTC — Integration → main PR #19 opened and subscribed. Waiting on Pedro's "ship it". #17 round 3 continues (subscribed); merges into a batch 3 integration branch after this ships.
 - 2026-10-18 15:37 UTC — Session restarted (~7h gap). #17 round 3 (426b2f7, allow-list) pushed 08:02; worker asked about CC BY-SA 4.0 word lists → conductor: acceptable (server-side, not distributed; attribution in headers). Round-3 hub review running. PR #19 CI running; safety check-in armed +50 min.
+- 2026-10-18 16:23 UTC — Pedro: "ship it" + "18 digest emails yesterday is excessive; compile into 1 or 2 listing everything sending in the next 18h". PR #19 squash-merged → main 8db8b1c; deploy READY. Dry runs clean (health problems [], weekly text correct). 0045 applied + normalised; both cron jobs present. Branch restarted from main for the follow-up: veto digest twice a day (01:00 + 13:00 UTC = 19:00 + 07:00 CDMX) listing every approved AUTO email due in the next 24h with hold links; 12h slot gap < 18h veto window so every email is listed before it can send (property test over a week of ticks); missed slots catch up. 725 tests, build green.
+- 2026-10-18 16:24 UTC — #17 round-3 review (allow-list): fix-then-merge — (1) split on [^a-z] lets non-Latin/ß tokens vanish (金龍, Иванов, Cyrillic look-alikes); (2) drop rate 53.5% on 200 house-style pitches (pena, cotización, benchmark publishers, trade words) → feature effectively off. Reviewer design for batch 3: strict list for subject + capitalized mid-sentence + @/#/domain tokens; generous list (50k + trade words + benchmark publishers from 0037) for lowercase body words; split on \p{L}, strip \p{Cf}. PARKED to batch 3 (0 exemplars qualify in prod; kill switch off). Worker session idle, PR #17 stays open as the base for batch 3. Worker cost so far $10.87.
+- 2026-10-18 16:25 UTC — First scheduled /api/reports/health run (pg_cron 16:25): 200, problems [], sent 0 → batch 2 health check verified in prod. Old #19 check-in trigger deleted (PR merged). Pending prod verifications: next reply poll response carries alerts{sent,failed}; first weekly report Mon 13:10 UTC; first digest-link hold.
+- 2026-10-18 16:32 UTC — PR #20 (digest twice a day) review: fix-then-merge, 3 blocking, all mine: digest only in veto stage (a demotion/switch-off would hide already-approved emails the send-queue still sends); slot recorded before delivery; copy said weekdays-only (Vercel daily send-queue also runs weekends). Fixed in 7858c1c (+ overdue hold-link expiry, error checks); conductor verified the delta (no 3rd review). 726 tests, build green. Waiting on Pedro's ship it.
