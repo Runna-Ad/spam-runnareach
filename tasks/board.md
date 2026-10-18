@@ -29,11 +29,11 @@ Previous: `phase3-batch1` CLOSED (shipped a15d1d8, calendar sync live). Its rows
 | Slug | Module | Model/effort | Branch | Session | PR | Depends on | Status | Blocked on | Turns | Review findings | CI reds | Rework |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|
 | wave0-conductor | lib/notify (new), tick/poll/warmup notify, vercel.json, lib/gmail, opt-out.ts, reward.ts constant | conductor | integration | this | — | — | merged 4666626 | — | | | | |
-| learning-meeting-outcomes | lib/learning/reward.ts | opus/medium | claude/learning-meeting-outcomes | session_01427GvammP8EiJJ7CBQA5ek | | wave0 | running (06:37) | | | | | |
-| prospect-status-guard | lib/prospects/status.ts (new) + lib/replies/intent-actions.ts, lib/opportunities/actions.ts | opus/medium | claude/prospect-status-guard | session_01Ki2uVNN7712JsosdvSUJuD | | — | running (06:37) | | | | | |
+| learning-meeting-outcomes | lib/learning/reward.ts | opus/medium | claude/learning-meeting-outcomes | session_01427GvammP8EiJJ7CBQA5ek | #13 | wave0 | PR open 06:41, CI green, 609→620 tests, in review | | | | | |
+| prospect-status-guard | lib/prospects/status.ts (new) + lib/replies/intent-actions.ts, lib/opportunities/actions.ts | opus/medium | claude/prospect-status-guard | session_01Ki2uVNN7712JsosdvSUJuD | #14 | — | PR open 06:42, CI green, in review | | | | | |
 | exemplar-scrubber-gaps | lib/pitches/exemplars.ts (hub) | opus/high | claude/exemplar-scrubber-gaps | session_01AZQoKcXaSPYey6575rZq1z | | — | running (06:37) | | | | | |
-| veto-hold-link | lib/autopilot/tick.ts digest + hold.ts/hold-token.ts + app/api/autopilot/hold | opus/high | claude/veto-hold-link | session_01A9P95NW1yKUbsTcb7ZGpeH | | wave0 | running (06:37) | | | | | |
-| lead-alerts | app/api/replies/poll (alert section) + lib/opportunities/calendar-sync.ts + formatters | opus/medium | claude/lead-alerts | session_01Vs4NpsnoVRr7DtPLeULzPd | | wave0 | running (06:37) | | | | | |
+| veto-hold-link | lib/autopilot/tick.ts digest + hold.ts/hold-token.ts + app/api/autopilot/hold | opus/high | claude/veto-hold-link | session_01A9P95NW1yKUbsTcb7ZGpeH | #16 | wave0 | PR open 06:45, CI green, in review (high rigor) | | | | | |
+| lead-alerts | app/api/replies/poll (alert section) + lib/opportunities/calendar-sync.ts + formatters | opus/medium | claude/lead-alerts | session_01Vs4NpsnoVRr7DtPLeULzPd | #15 | wave0 | PR open 06:44, CI green, in review (worker flags: a reply whose post-save step throws gets no alert) | | | | | |
 | platform-reports | lib/reports (new) + app/api/reports/{weekly,health} + 0045 | opus/medium (deviation noted in brief) | claude/platform-reports | session_01EzWfTFzFKDFwMP8cHjsJti | | wave0 | running (06:37) | | | | | |
 | pitches-list-resilience | lib/pitches/queries.ts + /pitches | sonnet/medium | claude/pitches-list-resilience | | | exemplar-scrubber-gaps merged | wave 2 (brief written) | | | | | |
 | ~~research-contact-source-url~~ | lib/research/structured-research-stage.ts | — | — | — | — | — | DROPPED 06:30: that path inserted 0 contacts in 10 days (prod query); revisit if it starts inserting | | | | | |
@@ -87,3 +87,4 @@ Batch-audit pairs to check (runtime interactions): learning-meeting-outcomes × 
 - 2026-10-18 06:36 UTC — 7 briefs committed. Spawning wave 1 (6 remote sessions).
 - 2026-10-18 06:38 UTC — Wave 1 spawned (6 remote sessions, inherited mode, tag spam-phase3-batch2): ids on the task rows. Safety check-in trig_01Q1Qcv9h7TAe384fsxbf1e9 at 07:28 UTC.
 - 2026-10-18 06:45 UTC — Pedro: the lead address is nils@runna.com.mx (not nila). Default fixed in lib/notify/recipients.ts + test + lead-alerts brief. Workers never pass addresses (kind: "lead"), so no worker needs telling.
+- 2026-10-18 06:50 UTC — PRs #13 #14 #15 #16 open, CI green, subscribed late (no wake: I had not subscribed before they opened; lesson: subscribe is per-PR, so poll the PR list once ~5 min after spawning small tasks or arm the check-in earlier). 4 reviewers running in parallel. exemplar-scrubber-gaps + platform-reports still working.
