@@ -44,6 +44,24 @@ test("prospect funnel: raw is pending, suppressed is a zero, pitched and replied
   assert.deepEqual(f, { qualified: true, pitchReady: true, outcomeValue: 1, negative: false });
 });
 
+test("arm stats + funnel: a booked meeting settles inside the window as a full success", () => {
+  const early = new Date(at(3));
+  const booked: OutcomeEvent = { type: "meeting_booked", at: at(2), payload: null };
+  const stats = armStats(
+    [
+      { arms: { "writer.evidence": "benchmark" }, events: [sent, booked] },
+      { arms: { "writer.evidence": "benchmark" }, events: [sent, booked, { type: "lost", at: at(3), payload: null }] },
+      { arms: { "writer.evidence": "benchmark" }, events: [booked] },
+    ],
+    "writer.evidence",
+    early,
+  );
+  assert.deepEqual(stats.get("benchmark"), { reward: 2, trials: 2, negatives: 0 });
+  const f = funnelForProspect("booked", [{ gatePass: true, sent: true, events: [sent, booked] }], early);
+  assert.equal(f.outcomeValue, 1);
+  assert.equal(f.negative, false);
+});
+
 test("guidance: a plain instruction passes", () => {
   const r = sanitizeGuidance("- Open with the neighbourhood or city they work in, in the first line.");
   assert.equal(r.ok, true);
