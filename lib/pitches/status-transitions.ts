@@ -109,6 +109,12 @@ export async function recheckBeforeSend(
   if (block) return block;
   const dnc = await isEmailOnDncList(db, args.tenantId, args.email);
   if (dnc.blocked) return { kind: "dnc", reason: dnc.reason };
+  // The first-read DNC checks fail open (a blip must not stall the queue); this
+  // one is the last before Gmail, so an unreadable list is not a "no".
+  // Presence, not truthiness: an empty message is still a failed read.
+  if (dnc.error !== undefined) {
+    return { kind: "unreadable", reason: `Couldn't read the do-not-contact list: ${dnc.error || "no error message"}` };
+  }
   return null;
 }
 
@@ -148,8 +154,62 @@ export async function releaseClaim(
 }
 
 /** Where the send-queue releases a claim it may not send: can never send → out of the queue. */
+/** do-not-send status or DNC-listed: no later run may send it either. */
+export function canNeverSend(kind: SendBlock["kind"]): boolean {
+  return kind === "do_not_send" || kind === "dnc";
+}
+
 export function queueReleaseFor(block: SendBlock): ReleaseTo {
-  return block.kind === "do_not_send" || block.kind === "dnc"
+  return canNeverSend(block.kind)
     ? { to: "auto_rejected", reason: block.reason }
     : { to: "approved" };
+}
+
+// ── Releasing a follow-up claim ─────────────────────────────────────────────
+// A follow-up claims its step by advancing sequence_step (at most once). A
+// release puts the step back, guarded on the step it claimed, so a run that
+// moved it meanwhile is left alone.
+
+/** Narrow update shape for {@link releaseFollowupClaim}. */
+export type FollowupReleaseClient = {
+  from: (table: string) => {
+    update: (payload: Record<string, unknown>) => {
+      eq: (col: string, val: string) => {
+        eq: (col: string, val: number) => PromiseLike<{ error: unknown }>;
+      };
+    };
+  };
+};
+
+/**
+ * Undo a claimed follow-up step. `pause` also sets sequence_paused_at, so a
+ * prospect that may never be emailed again is not retried every run.
+ */
+export async function releaseFollowupClaim(
+  db: FollowupReleaseClient,
+  args: {
+    pitchId: string;
+    claimedStep: number;
+    priorStep: number;
+    priorFollowupAt: string | null;
+    pause: boolean;
+    nowIso?: string;
+  },
+): Promise<void> {
+  const { error } = await db
+    .from("pitches")
+    .update({
+      sequence_step: args.priorStep,
+      next_followup_at: args.priorFollowupAt,
+      ...(args.pause ? { sequence_paused_at: args.nowIso ?? new Date().toISOString() } : {}),
+    })
+    .eq("id", args.pitchId)
+    .eq("sequence_step", args.claimedStep);
+  // Otherwise the step stays claimed silently and this follow-up is skipped for good.
+  if (error) console.error(`[follow-up] releasing claimed step ${args.claimedStep} of ${args.pitchId} failed:`, error);
+}
+
+/** Can never send (do-not-send, DNC) → pause the sequence; else release for a later run. */
+export function followupPausesFor(block: SendBlock): boolean {
+  return canNeverSend(block.kind);
 }
