@@ -30,7 +30,6 @@ import { isUnderDailyCap } from "@/lib/anthropic/cost-tracking";
 import { evolveSearchSpace, learnFromOutcomes, weeklyReview } from "./learn";
 import { resumeDiscoveryJobWith, startDiscoveryJobWith } from "@/lib/discover/job-stage";
 import { EMPTY_JOB_STATS } from "@/lib/discover/job-types";
-import { getAccessToken, sendGmailMessage } from "@/lib/gmail/client";
 import type { Arm } from "@/lib/learning/bandit";
 import {
   aiBudgetAllowance,
@@ -44,6 +43,7 @@ import {
 import { editRatio } from "@/lib/pitches/decision";
 import { generatePitchWith, transitionPitchStatusWith } from "@/lib/pitches/pitch-stage";
 import { WRITER_FIXABLE } from "@/lib/pitches/review";
+import { sendNotification } from "@/lib/notify/send";
 import { verifyRecipient } from "@/lib/research/verify-recipient";
 import { checkDeliverabilityHealth } from "@/lib/warmup/deliverability";
 import { analyzeSpamRate } from "@/lib/warmup/intelligence";
@@ -178,32 +178,9 @@ async function insight(
   if (error) console.warn("[autopilot] insight not recorded:", error.message);
 }
 
-/** Email the notify address from any connected inbox (same path as the reply digest). */
+/** Email the ops notify list (lib/notify/recipients.ts) from the oldest connected inbox. */
 export async function notify(db: Db, tenantId: string, subject: string, body: string): Promise<void> {
-  try {
-    // Same recipient as the reply digest (app/api/replies/poll).
-    const to = process.env.AUTOPILOT_NOTIFY_EMAIL || process.env.REPLY_FUNNEL_NOTIFY_EMAIL || "petedv31@gmail.com";
-    const { data: inboxes } = await db
-      .from("sender_inboxes")
-      .select("email, gmail_refresh_token_encrypted")
-      .eq("tenant_id", tenantId)
-      .not("gmail_refresh_token_encrypted", "is", null)
-      .limit(1);
-    const inbox = (inboxes ?? [])[0] as { email: string; gmail_refresh_token_encrypted: string } | undefined;
-    if (!inbox) return;
-    const token = await getAccessToken(inbox.gmail_refresh_token_encrypted);
-    if (!token.ok) return;
-    await sendGmailMessage({
-      accessToken: token.accessToken,
-      fromEmail: inbox.email,
-      fromName: "S.P.A.M. Autopilot",
-      to,
-      subject,
-      body,
-    });
-  } catch (err) {
-    console.warn("[autopilot] notify failed:", (err as Error).message);
-  }
+  await sendNotification(db, tenantId, { kind: "ops", subject, body, fromName: "S.P.A.M. Autopilot" });
 }
 
 const appUrl = () => process.env.NEXT_PUBLIC_APP_URL || "https://spam-runnareach.vercel.app";

@@ -14,6 +14,7 @@ import { buildRfc2822, type MimeMessageInput } from "./mime.ts";
 
 const TOKEN_ENDPOINT = "https://oauth2.googleapis.com/token";
 const GMAIL_SEND_URL = "https://gmail.googleapis.com/gmail/v1/users/me/messages/send";
+const TOKEN_TIMEOUT_MS = 10_000;
 
 // ── Access token exchange ─────────────────────────────────────────────────────
 
@@ -37,16 +38,23 @@ export async function getAccessToken(
     return { ok: false, error: "Could not decrypt refresh token." };
   }
 
-  const res = await fetch(TOKEN_ENDPOINT, {
-    method: "POST",
-    headers: { "Content-Type": "application/x-www-form-urlencoded" },
-    body: new URLSearchParams({
-      client_id: clientId,
-      client_secret: clientSecret,
-      refresh_token: refreshToken,
-      grant_type: "refresh_token",
-    }),
-  });
+  let res: Response;
+  try {
+    res = await fetch(TOKEN_ENDPOINT, {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({
+        client_id: clientId,
+        client_secret: clientSecret,
+        refresh_token: refreshToken,
+        grant_type: "refresh_token",
+      }),
+      // A hung token call must not eat a cron's whole maxDuration.
+      signal: AbortSignal.timeout(TOKEN_TIMEOUT_MS),
+    });
+  } catch (err) {
+    return { ok: false, error: `Token refresh failed: ${(err as Error).name === "TimeoutError" ? `timed out after ${TOKEN_TIMEOUT_MS / 1000}s` : (err as Error).message}` };
+  }
 
   if (!res.ok) {
     const body = await res.text().catch(() => "");

@@ -1,4 +1,4 @@
-# S.P.A.M. core context for workers (refreshed 2026-10-17 after Phase 2)
+# S.P.A.M. core context for workers (refreshed 2026-10-18 for Phase 3 batch 2)
 
 This is the ONLY project history a worker loads. Do not open `tasks/lessons.md`,
 `tasks/session-log.md`, `tasks/todo.md`, `tasks/project-state.md` or
@@ -24,7 +24,7 @@ SHARED with runna-hunter: never assume a table is SPAM-only) · Anthropic SDK th
 cost-tracked, daily-capped wrapper in `lib/anthropic/` · Gmail API · Sentry · Vercel Hobby.
 
 - `npm ci` once on a fresh clone, then `npm run typecheck` · `npm run lint` · `npm test`
-  (node test runner, `tests/**/*.test.ts`, 499 tests at Phase 2 ship)
+  (node test runner, `tests/**/*.test.ts`, 609 tests at batch 2 start)
 - `npm run build` before claiming a UI change works. `npm run db:types` is conductor-only;
   `lib/supabase/types.ts` is hand-maintained and conductor-only.
 - Pre-commit (lefthook) runs tsc + eslint; CI runs all three on every PR.
@@ -76,6 +76,11 @@ cost-tracked, daily-capped wrapper in `lib/anthropic/` · Gmail API · Sentry ·
   an output invariant that fails closed, plus a property test, and show the new tests
   failing on the old code.
 - Enum values added by a migration ship with their TS union in the same commit.
+- Every notification email to the team (alerts, digests, reports, lead alerts) goes
+  through `lib/notify/send.ts` with `kind: "ops"` (everything: Pedro's two addresses) or
+  `kind: "lead"` (prospect replies and bookings: ops + the sales team). Never read a
+  `*_NOTIFY_EMAIL` variable or hard-code an address. Pedro wants a weekly report and
+  emergency-only alerts, never a routine daily email.
 - Don't widen scope. Unrelated bugs go in your lessons-inbox file; if one is the root
   cause of your own task's risk, say so at the top of your report.
 
@@ -97,7 +102,7 @@ lib/opportunities/ (5) calendar-sync (hourly), google-calendar, outcome, actions
 lib/prospects/  ( 2)  detail actions + queries (status writers live in several modules)
 lib/hunter/     ( 3)  hunter_scans → prospects (table shared with runna-hunter)
 lib/warmup/    (10)    deliverability, DMARC, IMAP, placement
-lib/{gmail,compliance,anthropic,supabase,audit,sentry,cron-auth}  shared infra  CONDUCTOR ONLY
+lib/{gmail,compliance,anthropic,supabase,audit,sentry,cron-auth,notify}  shared infra  CONDUCTOR ONLY
 supabase/migrations/0001..0044   numbered; YOUR brief reserves yours (never the next free one)
 vercel.json, CLAUDE.md, lib/supabase/types.ts, package.json         CONDUCTOR ONLY
 ```

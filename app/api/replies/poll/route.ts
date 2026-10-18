@@ -27,7 +27,8 @@
 import { type NextRequest, NextResponse } from "next/server";
 import { isSchedulerAuthorized } from "@/lib/cron-auth";
 import { createServiceRoleClient } from "@/lib/supabase/service-role";
-import { getAccessToken, sendGmailMessage } from "@/lib/gmail/client";
+import { getAccessToken } from "@/lib/gmail/client";
+import { sendNotificationWithToken } from "@/lib/notify/send";
 import { fetchThreadReplies, listRecentInboundThreadIds, type InboundReply } from "@/lib/gmail/read";
 import {
   ANTHROPIC_HAIKU_MODEL,
@@ -671,7 +672,6 @@ async function sendDraftDigest(
   inboxCache: Map<string, { email: string; display_name: string; token: string } | null>,
   digest: Map<string, DraftDigestItem[]>,
 ): Promise<void> {
-  const notifyTo = process.env.REPLY_FUNNEL_NOTIFY_EMAIL || "petedv31@gmail.com";
   // Use any connected inbox we already have a token for as the sender.
   const sender = [...inboxCache.values()].find((i): i is { email: string; display_name: string; token: string } => i !== null);
   if (!sender) return;
@@ -684,13 +684,14 @@ async function sendDraftDigest(
       `${items.length} new repl${items.length === 1 ? "y" : "ies"} drafted and waiting for your review.\n\n` +
       `${lines}\n\n` +
       `Review + approve in the inbox:\n${appUrl}/inbox`;
-    await sendGmailMessage({
-      accessToken: sender.token,
-      fromEmail: sender.email,
-      fromName: "S.P.A.M Reply Funnel",
-      to: notifyTo,
-      subject: `${items.length} reply draft${items.length === 1 ? "" : "s"} awaiting review`,
-      body,
-    });
+    await sendNotificationWithToken(
+      { accessToken: sender.token, fromEmail: sender.email },
+      {
+        kind: "lead",
+        fromName: "S.P.A.M Reply Funnel",
+        subject: `${items.length} reply draft${items.length === 1 ? "" : "s"} awaiting review`,
+        body,
+      },
+    );
   }
 }

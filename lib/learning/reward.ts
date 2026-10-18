@@ -55,6 +55,13 @@ export const POINTS = {
   unsubscribe: -5,
 } as const;
 
+/**
+ * The pitch_events types an outcome is read from. Loaders that filter events
+ * (the exemplar shortlist) select exactly these, so a new outcome type is one
+ * edit here.
+ */
+export const OUTCOME_EVENT_TYPES: readonly string[] = ["sent", "reply", "audit_scan", "bounce", "unsubscribe"];
+
 /** Days after the first send before silence counts as a settled "no". */
 export const ATTRIBUTION_WINDOW_DAYS = 14;
 

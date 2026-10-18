@@ -17,7 +17,7 @@
 import { type NextRequest, NextResponse } from "next/server";
 import { HOBBY_CHECKIN_MARGIN, withCronMonitor } from "@/lib/sentry/cron";
 import { createServiceRoleClient } from "@/lib/supabase/service-role";
-import { getAccessToken, sendGmailMessage } from "@/lib/gmail/client";
+import { sendNotification } from "@/lib/notify/send";
 import {
   getAllActiveConfigs,
   getRecentLogByConfig,
@@ -54,34 +54,14 @@ type ConfigResult = {
 // ── Notification ────────────────────────────────────────────────────────────────
 
 async function notify(config: WarmupConfig, subject: string, body: string): Promise<void> {
-  try {
-    const supabase = createServiceRoleClient();
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const { data } = await (supabase as any)
-      .from("sender_inboxes")
-      .select("email, display_name, gmail_refresh_token_encrypted")
-      .eq("tenant_id", config.tenant_id)
-      .eq("email", config.sending_email)
-      .maybeSingle();
-    if (!data?.gmail_refresh_token_encrypted) return;
-    const tok = await getAccessToken(data.gmail_refresh_token_encrypted);
-    if (!tok.ok) return;
-
-    const to =
-      process.env.WARMUP_NOTIFY_EMAIL ||
-      process.env.REPLY_FUNNEL_NOTIFY_EMAIL ||
-      "petedv31@gmail.com";
-    await sendGmailMessage({
-      accessToken: tok.accessToken,
-      fromEmail: data.email,
-      fromName: "S.P.A.M Warmup",
-      to,
-      subject,
-      body,
-    });
-  } catch (err) {
-    console.warn("[warmup/reactivation] notify failed:", err);
-  }
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  await sendNotification(createServiceRoleClient() as any, config.tenant_id, {
+    kind: "ops",
+    subject,
+    body,
+    fromName: "S.P.A.M Warmup",
+    fromEmail: config.sending_email,
+  });
 }
 
 async function writeAudit(
