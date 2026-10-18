@@ -112,6 +112,9 @@ export function PitchesPage({ pitches, counts, canEdit, inboxes, hotLeadsUnavail
   const [hotOnly, setHotOnly] = React.useState(false);
   React.useEffect(() => setChecked(new Set()), [hotOnly]);
 
+  // A filter left ticked from before the badges went unavailable must not hide every row.
+  const hotFilterOn = hotOnly && !hotLeadsUnavailable;
+
   const visible = React.useMemo(() => {
     const byStatus = (() => {
       if (filter === "ALL") return pitches;
@@ -120,8 +123,8 @@ export function PitchesPage({ pitches, counts, canEdit, inboxes, hotLeadsUnavail
       if (filter === "approved") return pitches.filter((p) => p.status === "approved" && !p.scheduled_send_at);
       return pitches.filter((p) => p.status === filter);
     })();
-    return hotOnly ? byStatus.filter((p) => p.hot_lead !== null) : byStatus;
-  }, [pitches, filter, hotOnly]);
+    return hotFilterOn ? byStatus.filter((p) => p.hot_lead !== null) : byStatus;
+  }, [pitches, filter, hotFilterOn]);
 
   const selected = React.useMemo(
     () => pitches.find((p) => p.id === selectedId) ?? null,
@@ -298,14 +301,14 @@ export function PitchesPage({ pitches, counts, canEdit, inboxes, hotLeadsUnavail
           >
             <input
               type="checkbox"
-              checked={hotOnly && !hotLeadsUnavailable}
+              checked={hotFilterOn}
               disabled={hotLeadsUnavailable}
               onChange={(e) => {
                 setHotOnly(e.target.checked);
                 // Hot leads are sent pitches; the default "Draft" view would hide them all.
                 if (e.target.checked) setFilter("ALL");
               }}
-              className="h-3.5 w-3.5 cursor-pointer accent-[var(--color-accent-300)]"
+              className="h-3.5 w-3.5 cursor-pointer accent-[var(--color-accent-300)] disabled:cursor-not-allowed"
             />
             Hot leads
           </label>

@@ -2,8 +2,8 @@ import { createClient } from "@/lib/supabase/server";
 import { pickTopUsableContact, isGuessedContact } from "@/lib/pitches/contacts";
 import { parseGateOverride, parseGateVerdict, type StoredGateVerdict } from "@/lib/pitches/gate";
 import type { CriticVerdict } from "@/lib/pitches/decision";
-import { hotLeadLevel, type HotLeadLevel } from "@/lib/pitches/hot-lead";
-import { loadHotLeadEvents } from "@/lib/pitches/hot-lead-events";
+import type { HotLeadLevel } from "@/lib/pitches/hot-lead";
+import { loadHotLeads } from "@/lib/pitches/hot-lead-events";
 
 /** The critic block of a decision record, if present and well-formed. */
 function criticFromDecision(decision: unknown): CriticVerdict | null {
@@ -125,10 +125,10 @@ export async function listPitches(
 
   // pitch_events isn't in the hand-written Database types (same cast as events.ts).
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const { eventsByPitch, unavailable } = await loadHotLeadEvents(supabase as any, (data ?? []).map((r) => r.id));
+  const { hotByPitch, hotLeadsUnavailable } = await loadHotLeads(supabase as any, (data ?? []).map((r) => r.id));
 
   const pitches = (data ?? []).map((r) => {
-    const hot = hotLeadLevel(eventsByPitch.get(r.id) ?? []);
+    const hot = hotByPitch.get(r.id);
     // Resolve the prospect's CURRENT top usable contact, not the frozen pitch FK
     // (which goes stale — see lib/pitches/contacts.ts).
     const topContact = pickTopUsableContact(r.prospects?.prospect_contacts);
@@ -159,7 +159,7 @@ export async function listPitches(
     hot_lead_at: hot?.at ?? null,
     };
   });
-  return { pitches, hotLeadsUnavailable: unavailable };
+  return { pitches, hotLeadsUnavailable };
 }
 
 export type PitchDetail = Omit<PitchListRow, "hot_lead" | "hot_lead_at"> & {

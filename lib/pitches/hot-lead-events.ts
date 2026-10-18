@@ -1,6 +1,6 @@
 // Hot-lead events for a page of pitches. Kept apart from queries.ts (which needs
 // the Next server client) so the failure path can be tested with a fake client.
-import type { HotLeadEvent } from "./hot-lead.ts";
+import { hotLeadLevel, type HotLeadEvent, type HotLeadLevel } from "./hot-lead.ts";
 
 type EventsClient = {
   from(table: string): {
@@ -43,4 +43,21 @@ export async function loadHotLeadEvents(
     else eventsByPitch.set(e.pitch_id, [e]);
   }
   return { eventsByPitch, unavailable: false };
+}
+
+export type HotLeadsResult = {
+  /** Strongest level per pitch id; pitches without events are absent. */
+  hotByPitch: Map<string, { level: HotLeadLevel; at: string }>;
+  hotLeadsUnavailable: boolean;
+};
+
+/** Hot-lead level of each pitch in `ids`, plus whether the lookup failed. */
+export async function loadHotLeads(client: EventsClient, ids: string[]): Promise<HotLeadsResult> {
+  const { eventsByPitch, unavailable } = await loadHotLeadEvents(client, ids);
+  const hotByPitch = new Map<string, { level: HotLeadLevel; at: string }>();
+  for (const [id, events] of eventsByPitch) {
+    const hot = hotLeadLevel(events);
+    if (hot) hotByPitch.set(id, hot);
+  }
+  return { hotByPitch, hotLeadsUnavailable: unavailable };
 }

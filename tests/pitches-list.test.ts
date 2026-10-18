@@ -34,3 +34,21 @@ test("loadHotLeadEvents: no pitches → no query, available", async () => {
   const r = await loadHotLeadEvents({ from: () => assert.fail("queried") } as never, []);
   assert.equal(r.unavailable, false);
 });
+
+import { loadHotLeads } from "../lib/pitches/hot-lead-events.ts";
+
+test("loadHotLeads: error → flag true, no levels; success → flag false with levels", async () => {
+  const orig = console.warn;
+  console.warn = () => {};
+  try {
+    const bad = await loadHotLeads(fake({ data: null, error: { message: "boom" } }), ["p1"]);
+    assert.equal(bad.hotLeadsUnavailable, true);
+    assert.equal(bad.hotByPitch.size, 0);
+  } finally {
+    console.warn = orig;
+  }
+  const ev = { pitch_id: "p1", event_type: "audit_scan", event_at: "2026-10-01T10:00:00Z", payload: { stage: "contact_request" } };
+  const ok = await loadHotLeads(fake({ data: [ev], error: null }), ["p1"]);
+  assert.equal(ok.hotLeadsUnavailable, false);
+  assert.equal(ok.hotByPitch.get("p1")?.level, "contact_request");
+});
