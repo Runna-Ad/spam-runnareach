@@ -28,11 +28,13 @@ import { checkPitchGate } from "@/lib/pitches/gate";
 import { recordPitchEvent } from "@/lib/pitches/events";
 import { editRatio } from "@/lib/pitches/decision";
 import { describeFailures, gateAllows } from "@/lib/pitches/send-gate";
-
-/** Same set the send-queue cron refuses (app/api/pitches/send-queue/route.ts). */
-const MANUAL_DO_NOT_SEND = new Set([
-  "suppressed", "archived_no_meeting", "no_match", "lost", "won", "booked",
-]);
+import {
+  prospectSendBlock,
+  recheckBeforeSend,
+  releaseClaim,
+  type ReleaseClient,
+  type SendCheckClient,
+} from "@/lib/pitches/status-transitions";
 
 const sendSchema = z.object({
   pitch_id: z.string().uuid(),
@@ -89,13 +91,9 @@ export async function sendPitch(input: {
   }
   // The cron checks this; the manual button didn't — a prospect suppressed,
   // opted out or booked after approval must not be emailed by a click either.
-  const prospectStatus = pitch.prospects?.status ?? null;
-  if (prospectStatus && MANUAL_DO_NOT_SEND.has(prospectStatus)) {
-    return { ok: false, error: `Prospect is ${prospectStatus} — not sending.` };
-  }
-  if (pitch.prospects?.cooldown_until && pitch.prospects.cooldown_until > new Date().toISOString()) {
-    return { ok: false, error: "Prospect is in cooldown — not sending." };
-  }
+  // A null join (prospect unreadable) does not send.
+  const prospectBlock = prospectSendBlock(pitch.prospects, null, new Date().toISOString());
+  if (prospectBlock) return { ok: false, error: `${prospectBlock.reason} — not sending.` };
 
   // Resolve the recipient from the pitch's contact FK if it's usable; otherwise
   // fall back to the prospect's CURRENT top usable contact (the FK goes stale —
@@ -229,16 +227,28 @@ export async function sendPitch(input: {
   if (lockErr) return { ok: false, error: "Could not lock pitch for sending." };
   if (!locked) return { ok: false, error: "This pitch is already being sent." };
 
+  // Every release from 'sending' is guarded on status = 'sending': a pitch a
+  // person rejected meanwhile must not be re-approved by this rollback.
+  const releaser = supabase as unknown as ReleaseClient;
+
   // ── 4. Exchange refresh token → access token ───────────────────────────────
   const tokenResult = await getAccessToken(inbox.gmail_refresh_token_encrypted);
   if (!tokenResult.ok) {
     // Rollback status so user can retry after fixing creds
-    await supabase
-      .from("pitches")
-      .update({ status: "approved" })
-      .eq("id", pitch_id)
-      .eq("tenant_id", user.tenantId);
+    await releaseClaim(releaser, { pitchId: pitch_id, tenantId: user.tenantId, to: "approved" });
     return { ok: false, error: `Gmail auth failed: ${tokenResult.error}` };
+  }
+
+  // ── 4b. Last moment: may this prospect still be emailed? ───────────────────
+  // An opt-out or DNC entry recorded while the checks above ran stops the send.
+  const lastCheck = await recheckBeforeSend(supabase as unknown as SendCheckClient, {
+    tenantId: user.tenantId,
+    prospectId: pitch.prospect_id,
+    email: toEmail,
+  });
+  if (lastCheck) {
+    await releaseClaim(releaser, { pitchId: pitch_id, tenantId: user.tenantId, to: "approved" });
+    return { ok: false, error: `${lastCheck.reason} — not sending.` };
   }
 
   // ── 5. Send via Gmail ──────────────────────────────────────────────────────
@@ -258,11 +268,7 @@ export async function sendPitch(input: {
 
   if (!sendResult.ok) {
     // Rollback so user can retry
-    await supabase
-      .from("pitches")
-      .update({ status: "approved" })
-      .eq("id", pitch_id)
-      .eq("tenant_id", user.tenantId);
+    await releaseClaim(releaser, { pitchId: pitch_id, tenantId: user.tenantId, to: "approved" });
     return { ok: false, error: `Send failed: ${sendResult.error}` };
   }
 
