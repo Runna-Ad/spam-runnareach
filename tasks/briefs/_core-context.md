@@ -92,7 +92,10 @@ lib/learning/          bandit, reward, segments, outcomes, scout, icp, hunter-we
 lib/discover/  (33)    sources, dedupe, chain filter, DNC, enrich-contacts, pipeline-stage
 lib/research/  (19)    scraper, scrape/deep-research/score stages, SnapVerify, verify-recipient
 lib/pitches/   (25)    composer, review, gate, send-gate, queries, events, stages   THE HUB
-lib/replies/   ( 8)    classify, bounce parse, draft, send-reply
+lib/replies/   ( 8)    classify, bounce parse, draft, send-reply, intent-actions
+lib/opportunities/ (5) calendar-sync (hourly), google-calendar, outcome, actions, queries
+lib/prospects/  ( 2)  detail actions + queries (status writers live in several modules)
+lib/hunter/     ( 3)  hunter_scans → prospects (table shared with runna-hunter)
 lib/warmup/    (10)    deliverability, DMARC, IMAP, placement
 lib/{gmail,compliance,anthropic,supabase,audit,sentry,cron-auth}  shared infra  CONDUCTOR ONLY
 supabase/migrations/0001..0044   numbered; YOUR brief reserves yours (never the next free one)
@@ -101,9 +104,9 @@ vercel.json, CLAUDE.md, lib/supabase/types.ts, package.json         CONDUCTOR ON
 Your brief lists the files you may edit. Anything outside it: say so in the PR body under
 "Needs conductor", do not edit.
 
-## Integrations (status, 2026-10-17)
+## Integrations (status, 2026-10-18)
 Anthropic ✅ · Google Places ✅ (primary discovery) · Yellow Pages CA ✅ · Hunter.io ✅ ·
-Anymail ✅ · Gmail OAuth ✅ (scopes: gmail.send/readonly/modify, postmaster.readonly) ·
+Anymail ✅ · Gmail OAuth ✅ (scopes: gmail.send/readonly/modify, postmaster.readonly, calendar.readonly; Calendar API enabled in GCP) ·
 Brave ⚠ quota · DENUE ❌ off (key invalid) · Yelp ❌ removed.
 
 Pipeline: discovery → scrape → deep research → SnapVerify → score → triage → draft →
