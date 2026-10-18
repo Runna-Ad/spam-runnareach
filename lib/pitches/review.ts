@@ -29,7 +29,7 @@ export const MAX_REVISIONS = 2;
 export const CRITIC_MODEL = ANTHROPIC_HAIKU_MODEL;
 
 /** Gate codes about the WRITING, which a revision can fix. */
-const WRITER_FIXABLE: ReadonlySet<GateCode> = new Set<GateCode>([
+export const WRITER_FIXABLE: ReadonlySet<GateCode> = new Set<GateCode>([
   "unsourced_metric",
   "client_name",
   "internal_name",

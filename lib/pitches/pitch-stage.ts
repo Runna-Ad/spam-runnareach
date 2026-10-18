@@ -112,6 +112,8 @@ export type PitchActionResult =
 export async function generatePitchWith(
   actor: Actor,
   prospectId: string,
+  // Only the autopilot passes this (the browser wrapper takes a prospect id).
+  opts: { retryOf?: string } = {},
 ): Promise<GeneratePitchResult> {
   const { user } = actor;
   const { supabase } = actor;
@@ -568,6 +570,7 @@ export async function generatePitchWith(
       : {}),
     // A template uses no exemplars, even when some were loaded for the AI path.
     ...decisionExemplarFields(method === "claude" ? "claude" : "template", exemplars),
+    ...(opts.retryOf ? { retry_of: opts.retryOf } : {}),
   };
   const { error: decisionErr } = await supabase
     .from("pitches")
