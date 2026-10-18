@@ -45,7 +45,7 @@ import {
 import { editRatio } from "@/lib/pitches/decision";
 import { generatePitchWith, transitionPitchStatusWith } from "@/lib/pitches/pitch-stage";
 import { WRITER_FIXABLE } from "@/lib/pitches/review";
-import { sendNotification } from "@/lib/notify/send";
+import { sendNotification, type NotificationResult } from "@/lib/notify/send";
 import { verifyRecipient } from "@/lib/research/verify-recipient";
 import { checkDeliverabilityHealth } from "@/lib/warmup/deliverability";
 import { analyzeSpamRate } from "@/lib/warmup/intelligence";
@@ -130,6 +130,17 @@ export async function runTick(actor: Actor, now: Date = new Date()): Promise<Tic
     .eq("tenant_id", tenantId)
     .maybeSingle();
   const s = state as AutonomyState | null;
+  // The digest lists approved emails, and the send-queue sends them whatever the
+  // stage, so it runs even when the autopilot is switched off or was demoted.
+  // Only the auto stage (scheduled to send now, no veto window) skips it. First,
+  // so it runs well inside the time budget.
+  if (s && s.stage !== "auto") {
+    try {
+      report.digest = await sendVetoDigest(db, tenantId, now);
+    } catch (err) {
+      report.errors.push(`digest: ${(err as Error).message}`);
+    }
+  }
   if (!s || !s.enabled || s.stage === "off") {
     report.skipped = "autopilot off for this tenant";
     return report;
@@ -153,9 +164,6 @@ export async function runTick(actor: Actor, now: Date = new Date()): Promise<Tic
   report.resolved = await step("resolve", () => resolveHeld(actor, db, deadline), report.resolved);
   if ((s.stage === "veto" || s.stage === "auto") && !sendingHalted) {
     report.scheduled = await step("schedule", () => scheduleAuto(actor, db, s.stage, now, deadline), 0);
-  }
-  if (s.stage === "veto") {
-    report.digest = await step("digest", () => sendVetoDigest(db, tenantId, now), 0);
   }
   report.stageChange = await step("stage", () => evaluateStage(db, s, now), null);
   // Learning: re-score every arm from settled outcomes (cheap), and once a
@@ -188,8 +196,8 @@ async function insight(
 }
 
 /** Email the ops notify list (lib/notify/recipients.ts) from the oldest connected inbox. */
-export async function notify(db: Db, tenantId: string, subject: string, body: string): Promise<void> {
-  await sendNotification(db, tenantId, { kind: "ops", subject, body, fromName: "S.P.A.M. Autopilot" });
+export async function notify(db: Db, tenantId: string, subject: string, body: string): Promise<NotificationResult> {
+  return sendNotification(db, tenantId, { kind: "ops", subject, body, fromName: "S.P.A.M. Autopilot" });
 }
 
 const appUrl = () => process.env.NEXT_PUBLIC_APP_URL || "https://spam-runnareach.vercel.app";
@@ -705,18 +713,19 @@ async function scheduleAuto(actor: Actor, db: Db, stage: Stage, now: Date, deadl
 /**
  * Twice a day (lib/autopilot/hold.ts DIGEST_SLOTS_UTC), one email listing every
  * approved autopilot email that will send in the next 24h, each with its hold
- * link. The slot is recorded (audit_log autopilot.digest) before sending, so a
- * failed send is not retried every 15 minutes; sendNotification reports a
- * failure to Sentry.
+ * link. The slot is recorded (audit_log autopilot.digest) only once the digest
+ * reached at least one inbox, so a failed send is retried on the next tick
+ * (sendNotification also reports it to Sentry); an empty slot is recorded as is.
  */
 async function sendVetoDigest(db: Db, tenantId: string, now: Date): Promise<number> {
-  const { data: last } = await db
+  const { data: last, error: lastErr } = await db
     .from("audit_log")
     .select("created_at")
     .eq("tenant_id", tenantId)
     .eq("action", "autopilot.digest")
     .order("created_at", { ascending: false })
     .limit(1);
+  if (lastErr) throw new Error(`digest slot lookup: ${lastErr.message}`);
   const lastAt = ((last ?? []) as Array<{ created_at: string }>)[0]?.created_at ?? null;
   if (!digestDue(now, lastAt)) return 0;
 
@@ -736,7 +745,12 @@ async function sendVetoDigest(db: Db, tenantId: string, now: Date): Promise<numb
     (p) => ({ pitchId: p.id, company: p.prospects?.company_name ?? "?", subject: p.subject, sendAt: p.scheduled_send_at }),
   );
 
-  await db.from("audit_log").insert({
+  if (items.length > 0) {
+    const digest = buildVetoDigest({ items, tenantId, appUrl: appUrl(), secret: holdSecret(), now });
+    const result = await notify(db, tenantId, digest.subject, digest.body);
+    if (result.sent === 0) throw new Error(`digest not delivered, retrying next tick: ${result.failed.join(" | ").slice(0, 300)}`);
+  }
+  const { error: insErr } = await db.from("audit_log").insert({
     tenant_id: tenantId,
     actor_id: null,
     action: "autopilot.digest",
@@ -744,10 +758,7 @@ async function sendVetoDigest(db: Db, tenantId: string, now: Date): Promise<numb
     entity_id: tenantId,
     metadata: { count: items.length, slot: lastDigestSlot(now).toISOString() },
   });
-  if (items.length === 0) return 0;
-
-  const digest = buildVetoDigest({ items, tenantId, appUrl: appUrl(), secret: holdSecret() });
-  await notify(db, tenantId, digest.subject, digest.body);
+  if (insErr) throw new Error(`digest slot not recorded: ${insErr.message}`);
   return items.length;
 }
 

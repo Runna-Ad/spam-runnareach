@@ -166,13 +166,17 @@ export function buildVetoDigest(opts: {
   tenantId: string;
   appUrl: string;
   secret: string | null;
+  now?: Date;
 }): { subject: string; body: string } {
   const { items, tenantId, secret } = opts;
+  const nowMs = (opts.now ?? new Date()).getTime();
   const appUrl = opts.appUrl.replace(/\/+$/, "");
   const lines = items.map((s) => {
     const line = `• ${s.company}: "${s.subject}" (scheduled ${when(s.sendAt)})`;
     if (!secret) return line;
-    const token = signHoldToken({ pitchId: s.pitchId, tenantId, exp: holdExpiry(s.sendAt) }, secret);
+    // An overdue email (waiting for sending hours) keeps a live link: expiry counts from now.
+    const exp = holdExpiry(new Date(Math.max(Date.parse(s.sendAt), nowMs)));
+    const token = signHoldToken({ pitchId: s.pitchId, tenantId, exp }, secret);
     return `${line}\n  Hold: ${appUrl}/api/autopilot/hold?t=${encodeURIComponent(token)}`;
   });
   const how = secret
@@ -182,7 +186,7 @@ export function buildVetoDigest(opts: {
     subject: `Autopilot: ${items.length} email${items.length === 1 ? "" : "s"} will send in the next ${DIGEST_HORIZON_HOURS}h unless held`,
     body:
       `These passed every check and are scheduled to send in the next ${DIGEST_HORIZON_HOURS} hours. ` +
-      `The send queue runs weekdays 15:00–23:00 UTC, so anything scheduled outside that goes out when it opens.\n\n` +
+      `Sending runs every 10 minutes 15:00–23:00 UTC on weekdays and once around 15:00 UTC on weekends; anything scheduled outside those hours goes out the next time sending runs.\n\n` +
       lines.join("\n") +
       `\n\n${how} Holding one counts as a veto; few vetoes over two weeks lets the autopilot send without the wait.\n\n${appUrl}/pitches`,
   };
