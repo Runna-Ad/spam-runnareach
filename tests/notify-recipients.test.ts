@@ -10,8 +10,8 @@ test("ops defaults: pedro@runnareach.com and petedv31@gmail.com", () => {
   assert.deepEqual(notifyRecipients("ops", {}), ["pedro@runnareach.com", "petedv31@gmail.com"]);
 });
 
-test("lead defaults: the ops list plus nila@runna.com.mx", () => {
-  assert.deepEqual(notifyRecipients("lead", {}), ["pedro@runnareach.com", "petedv31@gmail.com", "nila@runna.com.mx"]);
+test("lead defaults: the ops list plus nils@runna.com.mx", () => {
+  assert.deepEqual(notifyRecipients("lead", {}), ["pedro@runnareach.com", "petedv31@gmail.com", "nils@runna.com.mx"]);
 });
 
 test("NOTIFY_EMAILS replaces the ops list; LEAD_NOTIFY_EMAILS replaces the lead extras", () => {
@@ -23,12 +23,12 @@ test("NOTIFY_EMAILS replaces the ops list; LEAD_NOTIFY_EMAILS replaces the lead 
 test("a blank or invalid override never silences alerts", () => {
   assert.deepEqual(notifyRecipients("ops", { NOTIFY_EMAILS: "" }), ["pedro@runnareach.com", "petedv31@gmail.com"]);
   assert.deepEqual(notifyRecipients("ops", { NOTIFY_EMAILS: "not-an-email, ," }), ["pedro@runnareach.com", "petedv31@gmail.com"]);
-  assert.deepEqual(notifyRecipients("lead", { LEAD_NOTIFY_EMAILS: " " }).at(-1), "nila@runna.com.mx");
+  assert.deepEqual(notifyRecipients("lead", { LEAD_NOTIFY_EMAILS: " " }).at(-1), "nils@runna.com.mx");
 });
 
 test("duplicates across the lists are sent once", () => {
-  const env = { NOTIFY_EMAILS: "pedro@runnareach.com", LEAD_NOTIFY_EMAILS: "PEDRO@runnareach.com, nila@runna.com.mx" };
-  assert.deepEqual(notifyRecipients("lead", env), ["pedro@runnareach.com", "nila@runna.com.mx"]);
+  const env = { NOTIFY_EMAILS: "pedro@runnareach.com", LEAD_NOTIFY_EMAILS: "PEDRO@runnareach.com, nils@runna.com.mx" };
+  assert.deepEqual(notifyRecipients("lead", env), ["pedro@runnareach.com", "nils@runna.com.mx"]);
 });
 
 test("parseEmailList drops header-breaking input", () => {
