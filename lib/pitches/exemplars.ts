@@ -167,9 +167,9 @@ export function selectExemplars(
 // All matching runs on an accent-folded, lower-cased shadow of the text with an
 // index map back to the original, so "Wagner", "wagner", "WAGNER" and "Wágner"
 // are one word, and the original's accents survive everywhere else. After
-// scrubbing, a fail-closed check (exemplarLeaks) looks for any distinctive
-// token of the old company, contact or city; toExemplar drops the whole
-// exemplar if one is left, whatever the replacement rules missed.
+// scrubbing, a fail-closed check (exemplarLeaks, below) looks for anything of
+// the old company, contact or city with its OWN coarser matcher; toExemplar
+// drops the whole exemplar if anything is left, whatever these rules missed.
 
 /** Who the past email went to: everything that must not travel to the next one. */
 export type ExemplarProspect = {
@@ -181,8 +181,15 @@ export type ExemplarProspect = {
   city?: string | null;
 };
 
+/** Letters NFD does not split: "Łukasz" ↔ "Lukasz", "Đorđe", "Søren". */
+const STROKE_LETTERS: Record<string, string> = { ł: "l", Ł: "l", đ: "d", Đ: "d", ø: "o", Ø: "o" };
+
 function fold(s: string): string {
-  return s.normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase();
+  return s
+    .normalize("NFD")
+    .replace(/[̀-ͯ]/g, "")
+    .replace(/[łŁđĐøØ]/g, (c) => STROKE_LETTERS[c]!)
+    .toLowerCase();
 }
 
 /** Folded text plus, for each folded code unit, the index of the original char it came from. */
@@ -212,20 +219,35 @@ function phrasePattern(phrase: string): RegExp | null {
   return new RegExp(`(?<![\\p{L}\\p{N}])${ps.join("[^\\p{L}\\p{N}\\n]{0,3}")}(?![\\p{L}\\p{N}])`, "gu");
 }
 
+/** Any whole word that CONTAINS a folded piece: "the Wagners", "@wagnerlaw", "WagnerLawTO". */
+function containingPattern(piece: string): RegExp {
+  return new RegExp(`(?<![\\p{L}\\p{N}])[\\p{L}\\p{N}]*${piece}[\\p{L}\\p{N}]*(?![\\p{L}\\p{N}])`, "gu");
+}
+
+/** Letters as written, or with a dot after each: "cdmx" matches "CDMX", "C.D.M.X." and "c.d.m.x". */
+function lettersPattern(letters: string): RegExp {
+  return new RegExp(`(?<![\\p{L}\\p{N}])(?:${[...letters].join("\\.")}\\.?|${letters})(?![\\p{L}\\p{N}])`, "gu");
+}
+
 /** The blanks themselves: never matched, so a surname "Hunter" or a company word "url" cannot break them. */
 const PLACEHOLDER_RE = /\[(?:name|company|site|city|n)\]|\{hunter_url\}/g;
 
 /**
  * Which originals a match counts in: "any" case, "capital" (starts with a
- * capital: a given name that is also a word, "Will" goes, "will" stays) or
- * "upper" (all capitals: "TO" for Toronto, never the word "to").
+ * capital: a given name that is also a word, "Will" goes, "will" stays),
+ * "inline" (capital and not opening a sentence: a two-letter name like "To"
+ * goes in "Thanks, To." but "To book" stays) or "upper" (all capitals: "TO"
+ * for Toronto, never the word "to").
  */
-type CaseRule = "any" | "capital" | "upper";
+type CaseRule = "any" | "capital" | "inline" | "upper";
 
-/** Replace every whole-word match of `phrase`, ignoring case (per `rule`) and accents. */
-function replacePhrase(text: string, phrase: string, placeholder: string, rule: CaseRule = "any"): string {
-  const re = phrasePattern(phrase);
-  if (!re) return text;
+function opensSentence(text: string, start: number): boolean {
+  const before = text.slice(0, start).replace(/[ \t"“'‘(]+$/u, "");
+  return before === "" || /[\n.!?¿¡]$/u.test(before);
+}
+
+/** Replace every match of a pattern run on the folded text, keeping the original elsewhere. */
+function replaceMatches(text: string, re: RegExp, placeholder: string, rule: CaseRule = "any"): string {
   const { folded, map } = foldWithMap(text);
   const blanks = [...text.matchAll(PLACEHOLDER_RE)].map((m) => [m.index, m.index + m[0].length] as const);
   const spans: Array<[number, number]> = [];
@@ -233,13 +255,21 @@ function replacePhrase(text: string, phrase: string, placeholder: string, rule: 
     const start = map[m.index]!;
     const end = map[m.index + m[0].length]!;
     if (blanks.some(([s, e]) => start < e && end > s)) continue;
-    if (rule === "capital" && !/^\p{Lu}/u.test(text.slice(start))) continue;
+    const capital = /^\p{Lu}/u.test(text.slice(start));
+    if (rule === "capital" && !capital) continue;
+    if (rule === "inline" && (!capital || opensSentence(text, start))) continue;
     if (rule === "upper" && /\p{Ll}/u.test(text.slice(start, end))) continue;
     spans.push([start, end]);
   }
   let out = text;
   for (const [s, e] of spans.reverse()) out = out.slice(0, s) + placeholder + out.slice(e);
   return out;
+}
+
+/** Replace every whole-word match of `phrase`, ignoring case (per `rule`) and accents. */
+function replacePhrase(text: string, phrase: string, placeholder: string, rule: CaseRule = "any"): string {
+  const re = phrasePattern(phrase);
+  return re ? replaceMatches(text, re, placeholder, rule) : text;
 }
 
 function hostOf(domain: string | null, websiteUrl: string | null | undefined): string | null {
@@ -281,10 +311,11 @@ const GENERIC_WORDS = new Set([
   "spa", "art", "bar", "inn", "pub", "gym", "car", "pet", "tax", "kid", "dog", "cat", "bio", "eco", "pro", "med",
   "vet", "dds", "cpa", "llp", "plc", "sas", "cv", "sa", "de", "rl", "the", "los", "las", "les", "del", "dos", "van",
   "von", "der", "den", "mac", "san", "for", "our", "you", "new", "one", "two", "top", "all", "con", "por", "sin",
-  "una", "uno", "web", "app", "hub", "lab", "fix", "box", "inc", "ltd", "llc",
+  "una", "uno", "web", "app", "hub", "lab", "fix", "box", "inc", "ltd", "llc", "get", "fit", "now", "day", "way",
+  "big", "red", "mas", "same",
 ]);
 
-/** Name particles: never scrubbed or checked alone ("de" in "José Luis de la Peña"). */
+/** Name particles: never scrubbed or checked alone ("de" in "José Luis de la Peña"), unless one is the last name. */
 const NAME_PARTICLES = new Set([
   "de", "del", "la", "las", "los", "el", "y", "e", "al", "da", "di", "do", "dos", "du", "le", "van", "von", "der", "den",
   "st", "san", "mc", "mac", "jr", "sr", "ii", "iii", "o", "d",
@@ -311,6 +342,13 @@ function commonOnly(phrase: string): boolean {
   return ps.length > 0 && ps.every((p) => COMMON_WORD_NAMES.has(p));
 }
 
+/** How a name part made of these pieces is matched: two-letter common words never at a sentence start. */
+function nameRule(ps: readonly string[]): CaseRule {
+  const common = ps.filter((p) => COMMON_WORD_NAMES.has(p) || NAME_PARTICLES.has(p));
+  if (common.length === 0) return "any";
+  return common.every((p) => p.length <= 2) ? "inline" : "capital";
+}
+
 /** The company as it may appear in prose: full, then without the legal suffix and leading article. */
 function companyPhrases(name: string): string[] {
   const ps = pieces(name);
@@ -324,11 +362,56 @@ function companyPhrases(name: string): string[] {
 
 /**
  * Pieces worth scrubbing alone and checking for: `min`+ letters (4 for a city,
- * 3 for a company or domain: "BMO", "kpi"), not generic, not a particle.
+ * 3 for a domain label: "kpi"), not generic, not a particle.
  */
 function distinctive(s: string | null | undefined, min = 4): string[] {
   if (!s) return [];
   return pieces(s).filter((p) => p.length >= min && !GENERIC_WORDS.has(p) && !NAME_PARTICLES.has(p) && !LEGAL_PIECES.has(p) && !/^\d+$/.test(p));
+}
+
+/** A company's own words as written, without the legal suffix or leading article. */
+function companyCore(name: string): Array<{ raw: string; f: string }> {
+  const ps = name.split(/[^\p{L}\p{N}]+/u).filter(Boolean).map((raw) => ({ raw, f: fold(raw) }));
+  let end = ps.length;
+  while (end > 1 && LEGAL_PIECES.has(ps[end - 1]!.f)) end--;
+  let start = 0;
+  while (start < end - 1 && ARTICLES.has(ps[start]!.f)) start++;
+  return ps.slice(start, end);
+}
+
+/** Words that end a run of initials: "S.A. de C.V." is not "SADECV". */
+const RUN_BREAKERS = new Set(["de", "del", "la", "las", "los", "el", "le", "les", "y", "e", "o", "u", "of", "and"]);
+
+/**
+ * Runs of one- and two-letter company pieces, joined: "KP Law" → "kp",
+ * "A.B.C. Plumbing" → "abc", "J.D. Irving" → "jd". Matched in capitals only.
+ */
+function initialRuns(name: string | null | undefined): string[] {
+  if (!name?.trim()) return [];
+  const runs: string[] = [];
+  let cur = "";
+  for (const { f } of companyCore(name)) {
+    if (f.length <= 2 && !RUN_BREAKERS.has(f) && /^\p{L}+$/u.test(f)) cur += f;
+    else {
+      if (cur.length >= 2) runs.push(cur);
+      cur = "";
+    }
+  }
+  if (cur.length >= 2) runs.push(cur);
+  return runs;
+}
+
+/**
+ * A company's words worth scrubbing alone: 4+ letters, or 3 letters written in
+ * capitals ("BMO", "ABC"). An ordinary short word ("Get Fit Gym", "Same Day
+ * Dental") is left to the full name, so prose like "most clinics get calls" survives.
+ */
+function companyWords(name: string | null | undefined): string[] {
+  if (!name?.trim()) return [];
+  return companyCore(name)
+    .filter(({ raw, f }) => f.length >= 4 || (f.length === 3 && /^\p{Lu}+$/u.test(raw)))
+    .map(({ f }) => f)
+    .filter((f) => !GENERIC_WORDS.has(f) && !NAME_PARTICLES.has(f) && !LEGAL_PIECES.has(f) && !/^\d+$/.test(f));
 }
 
 /** A contact's name pieces of 2+ letters, particles aside: "Ng", "Wu", "Lee" are surnames, not noise. */
@@ -338,16 +421,16 @@ function namePieces(s: string | null | undefined): string[] {
 }
 
 /**
- * A city's short forms and nicknames. Each group is one city; whichever member
- * the prospect row carries, the others are its aliases. "TO" counts only in
- * capitals (the word "to" is everywhere).
+ * A city's short forms, nicknames and metro names. Each group is one city;
+ * the prospect's city belongs to a group when any member appears inside it
+ * ("Santiago de Querétaro" → QRO). "TO" counts only in capitals.
  */
 const CITY_ALIAS_GROUPS: ReadonlyArray<readonly string[]> = [
-  ["Ciudad de México", "Mexico City", "CDMX", "D.F."],
-  ["Guadalajara", "GDL"],
-  ["Monterrey", "MTY"],
+  ["Ciudad de México", "Mexico City", "Cd. de México", "CDMX", "D.F."],
+  ["Guadalajara", "GDL", "Zapopan"],
+  ["Monterrey", "MTY", "San Pedro Garza García"],
   ["Querétaro", "QRO"],
-  ["Toronto", "TO", "GTA", "YYZ"],
+  ["Toronto", "TO", "GTA", "YYZ", "North York"],
   ["Vancouver", "YVR"],
   ["Calgary", "YYC"],
   ["Edmonton", "YEG"],
@@ -355,41 +438,60 @@ const CITY_ALIAS_GROUPS: ReadonlyArray<readonly string[]> = [
   ["Montréal", "MTL", "YUL"],
 ];
 const UPPER_ONLY_ALIASES = new Set(["to"]);
-const cityKey = (s: string) => pieces(s.split(",")[0]!).join(" ");
-/** Folded city name → every other name the same city goes by. */
-const CITY_ALIASES = new Map<string, string[]>(
-  CITY_ALIAS_GROUPS.flatMap((g) => g.map((name) => [cityKey(name), g.filter((o) => cityKey(o) !== cityKey(name))] as const)),
-);
 
-function cityAliases(city: string | null | undefined): Array<{ alias: string; rule: CaseRule }> {
+/** The scrubber's view of a city's group: members as folded keys ("D.F." → "df", "Cd. de México" → "cd de mexico"). */
+function cityGroup(city: string | null | undefined): Array<{ key: string; rule: CaseRule }> {
   if (!city?.trim()) return [];
-  return (CITY_ALIASES.get(cityKey(city)) ?? []).map((alias) => ({
-    alias,
-    rule: UPPER_ONLY_ALIASES.has(cityKey(alias)) ? "upper" : "any",
-  }));
-}
-
-/** A multi-word field as one phrase ("north bay", "ciudad de mexico"): checked even when every word is generic. */
-function multiWord(phrase: string | null | undefined): string[] {
-  const ps = pieces(phrase ?? "");
-  return ps.length >= 2 ? [ps.join(" ")] : [];
+  const f = pieces(city).join(" ");
+  const keyOf = (m: string) => (pieces(m).every((p) => p.length === 1) ? pieces(m).join("") : pieces(m).join(" "));
+  const group = CITY_ALIAS_GROUPS.find((g) =>
+    g.some((m) => !UPPER_ONLY_ALIASES.has(keyOf(m)) && new RegExp(`(?<![a-z0-9])${keyOf(m)}(?![a-z0-9])`).test(f)),
+  );
+  return (group ?? []).map((m) => ({ key: keyOf(m), rule: UPPER_ONLY_ALIASES.has(keyOf(m)) ? "upper" : "any" }));
 }
 
 /** Greeting words that open the first line: the addressee after them is the recipient. */
 const GREETING_RE =
   /^(\s*(?:hi|hello|hey|dear|good\s+(?:morning|afternoon)|hola|buen[oa]s?\s+d[ií]as|buenas\s+tardes|buenas|estimad[oa]s?|querid[oa]s?)\s+)([^,!:;]{1,60}?)(\s*(?:[,!:;].*)?)$/iu;
 const GENERIC_ADDRESSEE = /^(team|there|all|everyone|folks|equipo|todos|todas|a\s+todos|a\s+todas)$/iu;
-/** An honorific and the capitalized name after it: "Dr. Patel", "Lic. Núñez", "Sra. Gómez Ruiz". */
-const HONORIFIC_RE =
-  /(?<![\p{L}])(Dr|Dra|Drs|Lic|Licda|Ing|Arq|Mtro|Mtra|Prof|Mr|Mrs|Ms|Mx|Sr|Sra|Srta|Don|Doña)(\.?\s+)\p{Lu}[\p{L}’'-]*(?:\s+\p{Lu}[\p{L}’'-]*){0,2}/gu;
+/** Words that may stand next to a blank in a greeting or after an honorific without being a name. */
+const FUNCTION_WORDS = new Set([
+  "a", "an", "the", "and", "or", "but", "at", "in", "on", "of", "for", "to", "from", "with", "by", "about", "after",
+  "before", "over", "into", "is", "are", "was", "were", "has", "have", "had", "will", "would", "can", "could", "may",
+  "might", "should", "does", "did", "do", "who", "which", "that", "this", "these", "those", "it", "its", "as", "so",
+  "too", "if", "then", "than", "when", "while", "also", "here", "there", "our", "your", "their", "his", "her", "we",
+  "you", "they", "he", "she", "i", "me", "us", "team", "all", "everyone", "folks",
+  "y", "o", "e", "u", "de", "del", "la", "el", "los", "las", "lo", "le", "les", "en", "con", "por", "para", "sobre",
+  "desde", "hasta", "entre", "sin", "que", "quien", "se", "su", "sus", "al", "tras", "ya", "no", "es", "son", "fue",
+  "equipo", "todos", "todas", "usted", "ustedes", "nos", "nuestro", "nuestra", "tambien", "aqui",
+]);
+const HONORIFICS = new Set([
+  "dr", "dra", "drs", "lic", "licda", "lcda", "ing", "arq", "mtro", "mtra", "prof", "sr", "sra", "srta", "cp", "don",
+  "dona", "mr", "mrs", "ms",
+]);
+const NAME_LINK = "(?:de|del|la|las|los|van|von|der|da|di|du|dos|le|y)";
 /**
- * A dotted honorific (or a run of them: "Prof. Dr.") and the next word in ANY
- * case: "dr. patel", "lic. núñez" in a lower-case subject. A blanked ordinary
- * word ("dr. [name]" for "dr. visit") is the accepted cost; a leaked name is not.
+ * An honorific and the capitalized name after it, with particles and initials:
+ * "Dr. Patel", "Dr. J. Patel", "Sra. de la Peña", "Dra. María José Gómez Ruiz", "C.P. Ramírez".
+ */
+const HONORIFIC_RE = new RegExp(
+  `(?<![\\p{L}])(Dr|Dra|Drs|Lic|Licda|Lcda|Ing|Arq|Mtro|Mtra|Prof|Mr|Mrs|Ms|Mx|Sr|Sra|Srta|Don|Doña|C\\.\\s?P)(\\.?\\s+)` +
+    `(?:(?:\\p{Lu}\\.?|${NAME_LINK})\\s+)*\\p{Lu}[\\p{L}’'-]*(?:\\s+(?:${NAME_LINK}\\s+)*\\p{Lu}[\\p{L}’'-]*){0,3}`,
+  "gu",
+);
+/**
+ * An honorific (dotted, or one of the unambiguous ones without a dot) and the
+ * next word in ANY case, past particles and initials: "dr. patel", "dr patel",
+ * "sra. de la peña", "dr. j patel", "lic. núñez" in a lower-case subject. A
+ * blanked ordinary word ("dr. [name]" for "dr. visit") is the accepted cost.
  * The word stops before a possessive "'s".
  */
-const DOTTED_HONORIFIC_RE =
-  /(?<![\p{L}\p{N}])((?:(?:dr|dra|drs|lic|licda|ing|arq|mtro|mtra|prof|mr|mrs|ms|mx|sr|sra|srta)\.[ \t]*)+)(\p{L}+(?:[’'-](?!s(?!\p{L}))\p{L}+)*)/giu;
+const LOWER_HONORIFIC_RE = new RegExp(
+  `(?<![\\p{L}\\p{N}])((?:(?:dr|dra|drs|lic|licda|lcda|ing|arq|mtro|mtra|prof|mr|mrs|ms|mx|sr|sra|srta|c\\.\\s?p)\\.[ \\t]*` +
+    `|(?:dr|dra|lic|licda|lcda|arq|mtro|mtra|sra|srta)[ \\t]+)+)` +
+    `(?:(?:${NAME_LINK}|\\p{L}\\.?)[ \\t]+)*\\p{L}+(?:[’'-](?!s(?!\\p{L}))\\p{L}+)*`,
+  "giu",
+);
 
 /**
  * Replace the past recipient's name, company, site and city, and every digit,
@@ -415,83 +517,267 @@ export function scrubExemplar(text: string, prospect: ExemplarProspect): string 
     .join("\n");
   if (host) out = replacePhrase(out, host, "[site]");
 
-  // Company: the whole name, then the name without suffix, then each distinctive
-  // word of it or of the domain's label ("The team at Wagner", "waglaw").
+  // Company: the whole name, then the name without suffix, then its initials
+  // ("KP", "A.B.C.") in capitals, then each distinctive word of it or of the
+  // domain's label ("The team at Wagner", "waglaw", "kpi"); a 5+ letter word
+  // takes the whole word it sits in ("the Wagners", "@wagnerlaw").
   if (prospect.company_name?.trim()) {
     for (const p of companyPhrases(prospect.company_name)) out = replacePhrase(out, p, "[company]");
   }
-  const words = new Set([...distinctive(prospect.company_name, 3), ...distinctive(host?.split(".")[0], 3)]);
-  for (const w of words) out = replacePhrase(out, w, "[company]");
+  for (const run of initialRuns(prospect.company_name)) out = replaceMatches(out, lettersPattern(run), "[company]", "upper");
+  const words = new Set([...companyWords(prospect.company_name), ...distinctive(host?.split(".")[0], 3)]);
+  for (const w of words) {
+    out = replaceMatches(out, w.length >= 5 ? containingPattern(w) : lettersPattern(w), "[company]");
+  }
 
-  // City: the name, its distinctive words, then its short forms ("CDMX", "YYZ").
+  // City: the name, its distinctive words, then every other name its group
+  // goes by, with or without dots ("CDMX", "C.D.M.X.", "Qro", "T.O.").
   if (prospect.city?.trim()) {
     out = replacePhrase(out, prospect.city, "[city]");
     for (const w of distinctive(prospect.city)) out = replacePhrase(out, w, "[city]");
-    for (const { alias, rule } of cityAliases(prospect.city)) out = replacePhrase(out, alias, "[city]", rule);
+    for (const { key, rule } of cityGroup(prospect.city)) {
+      out = key.includes(" ") ? replacePhrase(out, key, "[city]", rule) : replaceMatches(out, lettersPattern(key), "[city]", rule);
+    }
   }
 
   // Contact: the full name, then each space-separated part ("Núñez-Ruiz",
-  // "O’Brien"), then each piece of those.
+  // "O’Brien"), then each piece of those. A particle or two-letter word as the
+  // last name ("Minh Le", "Minh To") goes only where it cannot open a sentence.
   const fullName = prospect.recipient_name?.trim();
   if (fullName) {
-    const capital = (common: boolean): CaseRule => (common ? "capital" : "any");
-    out = replacePhrase(out, fullName, "[name]", capital(commonOnly(fullName)));
-    for (const chunk of fullName.split(/\s+/)) {
-      if (pieces(chunk).every((p) => NAME_PARTICLES.has(p))) continue;
-      out = replacePhrase(out, chunk, "[name]", capital(pieces(chunk).some((p) => COMMON_WORD_NAMES.has(p))));
-    }
-    for (const p of namePieces(fullName)) out = replacePhrase(out, p, "[name]", capital(COMMON_WORD_NAMES.has(p)));
+    out = replacePhrase(out, fullName, "[name]", commonOnly(fullName) ? nameRule(pieces(fullName)) : "any");
+    const chunks = fullName.split(/\s+/);
+    chunks.forEach((chunk, i) => {
+      const ps = pieces(chunk);
+      if (ps.every((p) => NAME_PARTICLES.has(p))) {
+        if (i === chunks.length - 1 && i > 0 && ps.join("").length >= 2) out = replacePhrase(out, chunk, "[name]", "inline");
+        return;
+      }
+      out = replacePhrase(out, chunk, "[name]", nameRule(ps));
+    });
+    for (const p of namePieces(fullName)) out = replacePhrase(out, p, "[name]", nameRule([p]));
   }
 
   // Names the contact row did not know: after an honorific (capitalized, then
-  // any case after a dotted one), and the greeting's addressee.
+  // any case), and the greeting's addressee.
   out = out.replace(HONORIFIC_RE, (_m, title: string, sep: string) => `${title}${sep}[name]`);
-  out = out.replace(DOTTED_HONORIFIC_RE, (_m, titles: string) => `${titles}${/\s$/.test(titles) ? "" : " "}[name]`);
+  out = out.replace(LOWER_HONORIFIC_RE, (_m, titles: string) => `${titles}${/\s$/.test(titles) ? "" : " "}[name]`);
   const nl = out.indexOf("\n");
   const first = nl === -1 ? out : out.slice(0, nl);
   const greeted = first.replace(GREETING_RE, (m, lead: string, who: string, rest: string) => {
     const w = who.trim();
-    if (w.includes("[") || GENERIC_ADDRESSEE.test(w)) return m;
+    if (GENERIC_ADDRESSEE.test(w)) return m;
+    // "Hola equipo de [company]" stays; "Hi [name] Patel" does not.
+    const plain = (x: string) => fold(x).replace(/[^\p{L}]/gu, "");
+    const ok = w.split(/\s+/).every((x) => /^\[\w+\]$/.test(x) || FUNCTION_WORDS.has(plain(x)) || HONORIFICS.has(plain(x)));
+    if (w.includes("[") && ok) return m;
     return `${lead}[name]${rest}`;
   });
   out = greeted + (nl === -1 ? "" : out.slice(nl));
 
   // "[name] [name]" (María José) and "[company]-[company]" (Smith-Jones) are one blank.
-  out = out.replace(/\[(name|company|city|site)\](?:[ \t\u2010-]+\[\1\])+/g, "[$1]");
+  out = out.replace(/\[(name|company|city|site)\](?:[ \t‐-]+\[\1\])+/g, "[$1]");
 
   // Every digit: a number from one email is never a fact about the next.
   return out.replace(/\d+(?:[.,:/]\d+)*/g, "[n]");
 }
 
+// ── The leak check ────────────────────────────────────────────────────────────
+//
+// A second, coarser matcher that shares NO matching code with the scrubber, so
+// it can see what the scrubber's rules miss. Its own fold (NFKD + stroke
+// letters), its own tokenizer (the dots inside initials removed, so "C.D.M.X."
+// is the token "CDMX"), letters-only substrings for long company words, and
+// span rules after honorifics and greetings. It shares only the word lists.
+
+function leakFold(s: string): string {
+  return s
+    .normalize("NFKD")
+    .replace(/\p{M}/gu, "")
+    .toLowerCase()
+    .replace(/ł/g, "l")
+    .replace(/đ/g, "d")
+    .replace(/ø/g, "o");
+}
+
+type LeakToken = { kind: "word" | "blank" | "stop"; raw: string; f: string; aposBefore: boolean; aposAfter: boolean };
+
+function leakTokens(text: string): LeakToken[] {
+  const dotless = text.replace(/(?<![\p{L}\p{N}])(\p{L})\.(?=\p{L}(?![\p{L}\p{N}]))/gu, "$1");
+  const out: LeakToken[] = [];
+  const re = /\[(?:name|company|site|city|n)\]|\{hunter_url\}|[\p{L}\p{N}]+|[\n.,;:!?¿¡()"“”\-–—]/gu;
+  for (const m of dotless.matchAll(re)) {
+    const raw = m[0];
+    const kind = raw.startsWith("[") || raw.startsWith("{") ? "blank" : /^[\p{L}\p{N}]/u.test(raw) ? "word" : "stop";
+    out.push({
+      kind,
+      raw,
+      f: leakFold(raw),
+      aposBefore: /['’]$/u.test(dotless.slice(0, m.index)),
+      aposAfter: /^['’]/u.test(dotless.slice(m.index + raw.length)),
+    });
+  }
+  return out;
+}
+
+type LeakRule = "any" | "capital" | "upper";
+
+/** Raw parts of a field, folded: "A.B.C. Plumbing" → a, b, c, plumbing (as written and folded). */
+function leakParts(s: string | null | undefined): Array<{ raw: string; f: string }> {
+  return (s ?? "").split(/[^\p{L}\p{N}]+/u).filter(Boolean).map((raw) => ({ raw, f: leakFold(raw) }));
+}
+
+const leakGeneric = (f: string) =>
+  GENERIC_WORDS.has(f) || NAME_PARTICLES.has(f) || LEGAL_PIECES.has(f) || ARTICLES.has(f) || /^\d+$/.test(f);
+
 /**
- * Fail closed: what is still in the text of the old prospect (case- and
- * accent-insensitive, whole words). Anything here means the scrubber missed,
- * and the exemplar is dropped. Checked: the distinctive words of the company
- * and domain (3+ letters) and city (4+), a multi-word company or city as a
- * phrase, the city's short forms, every name piece of 2+ letters, and any word
- * still standing after a dotted honorific. A contact's common-word name piece
- * ("Will", "To") and the alias "TO" count only capitalized / in capitals.
+ * Fail closed: what is still in the text of the old prospect. Anything here
+ * means the scrubber missed, and the exemplar is dropped. Checked, with its
+ * own matcher (see above):
+ * - company: every distinctive word of 5+ letters as a SUBSTRING of each
+ *   letters-only chunk ("the Wagners", "@wagnerlaw", "facebook.com/WagnerLawTO");
+ *   4-letter words and 3-letter words written in capitals as words; runs of
+ *   initials in capitals ("KP", "A.B.C.", "J.D."); a multi-word name as a phrase.
+ *   The domain label's words likewise (3+ letters).
+ * - city: distinctive words, the full name as a phrase, and every name of its
+ *   alias group, found by any member inside the city field ("Santiago de
+ *   Querétaro" → QRO), dotted or not ("Qro.", "T.O.", "C.D.M.X.").
+ * - contact: every name piece of 2+ letters; the LAST piece always, in
+ *   capitals only when it is a particle or a common word ("Minh Le").
+ * - after any honorific, and after the first line's greeting: the name span
+ *   must be blanks, particles, initials or function words.
  */
 export function exemplarLeaks(text: string, prospect: ExemplarProspect): string[] {
-  const host = hostOf(prospect.domain, prospect.website_url);
-  const company = prospect.company_name?.trim() ? companyPhrases(prospect.company_name) : [];
-  const anyCase = new Set([
-    ...distinctive(prospect.company_name, 3),
-    ...distinctive(host?.split(".")[0], 3),
-    ...distinctive(prospect.city),
-    ...company.flatMap(multiWord),
-    ...multiWord(prospect.city),
-  ]);
-  const tokens = new Map<string, CaseRule>();
-  for (const t of namePieces(prospect.recipient_name)) tokens.set(t, COMMON_WORD_NAMES.has(t) ? "capital" : "any");
-  for (const { alias, rule } of cityAliases(prospect.city)) tokens.set(rule === "upper" ? alias : cityKey(alias), rule);
-  for (const t of anyCase) tokens.set(t, "any");
-  const leaks: string[] = [];
-  for (const [t, rule] of tokens) {
-    if (replacePhrase(text, t, "\u0000", rule) !== text) leaks.push(t);
+  const toks = leakTokens(text);
+  const seq = toks.filter((t) => t.kind !== "stop");
+  const chunks = text
+    .replace(PLACEHOLDER_RE, " ")
+    .split(/\s+/)
+    .map((c) => leakFold(c).replace(/[^\p{L}\p{N}]/gu, ""));
+  const leaks = new Set<string>();
+
+  const hasSeq = (fs: readonly string[], rule: LeakRule) =>
+    seq.some((_, i) =>
+      fs.every((f, k) => {
+        const t = seq[i + k];
+        if (!t || t.kind !== "word" || t.f !== f) return false;
+        if (rule === "upper") return /\p{Lu}/u.test(t.raw) && !/\p{Ll}/u.test(t.raw);
+        return rule === "capital" && k === 0 ? /^\p{Lu}/u.test(t.raw) : true;
+      }),
+    );
+  const word = (f: string, rule: LeakRule = "any", label = f) => {
+    if (hasSeq([f], rule)) leaks.add(label);
+  };
+  const phrase = (fs: readonly string[], rule: LeakRule = "any") => {
+    if (fs.length > 0 && hasSeq(fs, rule)) leaks.add(rule === "upper" ? fs.join(" ").toUpperCase() : fs.join(" "));
+  };
+  const substring = (f: string) => {
+    if (chunks.some((c) => c.includes(f))) leaks.add(f);
+  };
+
+  // Company.
+  const parts = leakParts(prospect.company_name);
+  let end = parts.length;
+  while (end > 1 && LEGAL_PIECES.has(parts[end - 1]!.f)) end--;
+  let start = 0;
+  while (start < end - 1 && ARTICLES.has(parts[start]!.f)) start++;
+  const core = parts.slice(start, end);
+  let run = "";
+  for (const { raw, f } of [...core, { raw: " ", f: " " }]) {
+    if (f.length <= 2 && f !== " " && !RUN_BREAKERS.has(f) && /^\p{L}+$/u.test(f)) {
+      run += f;
+      continue;
+    }
+    if (run.length >= 2) word(run, "upper");
+    run = "";
+    if (f === " " || leakGeneric(f)) continue;
+    if (f.length >= 5) substring(f);
+    else if (f.length === 4 || (f.length === 3 && /^\p{Lu}+$/u.test(raw))) word(f);
   }
-  for (const m of text.matchAll(DOTTED_HONORIFIC_RE)) leaks.push(m[0].trim());
-  return leaks;
+  if (core.length >= 2) phrase(core.map((p) => p.f));
+  const host = hostOf(prospect.domain, prospect.website_url);
+  const label = leakParts(host?.split(".")[0]);
+  for (const { f } of label) {
+    if (leakGeneric(f)) continue;
+    if (f.length >= 5) substring(f);
+    else if (f.length >= 3) word(f);
+  }
+  const joinedLabel = label.map((p) => p.f).join("");
+  if (label.length > 1 && joinedLabel.length >= 5) substring(joinedLabel);
+
+  // City and its group.
+  const cityParts = leakParts(prospect.city).map((p) => p.f);
+  for (const f of cityParts) if (f.length >= 4 && !leakGeneric(f)) word(f);
+  if (cityParts.length >= 2) phrase(cityParts);
+  const memberParts = (m: string) => {
+    const ps = leakParts(m).map((p) => p.f);
+    return ps.every((p) => p.length === 1) ? [ps.join("")] : ps;
+  };
+  const inCity = (ms: string[]) => cityParts.some((_, i) => ms.every((m, k) => cityParts[i + k] === m));
+  const group = CITY_ALIAS_GROUPS.find((g) =>
+    g.some((m) => {
+      const ms = memberParts(m);
+      return !(ms.length === 1 && UPPER_ONLY_ALIASES.has(ms[0]!)) && inCity(ms);
+    }),
+  );
+  for (const m of group ?? []) {
+    const ms = memberParts(m);
+    phrase(ms, ms.length === 1 && UPPER_ONLY_ALIASES.has(ms[0]!) ? "upper" : "any");
+  }
+
+  // Contact.
+  const name = leakParts(prospect.recipient_name).map((p) => p.f);
+  name.forEach((f, i) => {
+    if (f.length < 2 || /^\d+$/.test(f)) return;
+    const last = i === name.length - 1;
+    if (NAME_PARTICLES.has(f) && !last) return;
+    word(f, COMMON_WORD_NAMES.has(f) || NAME_PARTICLES.has(f) ? "capital" : "any");
+  });
+
+  // The name span after an honorific, and after the first line's greeting.
+  const span = (from: number, lowerStyle: boolean, label: string) => {
+    let seen = false;
+    let count = 0;
+    for (let j = from; j < toks.length && count < 4; j++) {
+      const u = toks[j]!;
+      if (u.kind === "stop") {
+        const prev = toks[j - 1];
+        // The dot of an honorific or an initial ("Dr. J. Patel") does not end the span.
+        if (u.raw === "." && prev?.kind === "word" && (HONORIFICS.has(prev.f) || prev.f.length === 1)) continue;
+        return;
+      }
+      if (u.kind === "blank") {
+        seen = true;
+        count++;
+        continue;
+      }
+      if (u.aposBefore && u.f === "s") return; // "[name]'s"
+      if (HONORIFICS.has(u.f)) continue;
+      if (NAME_PARTICLES.has(u.f) || (u.f.length === 1 && /\p{L}/u.test(u.f))) {
+        count++;
+        continue;
+      }
+      if (FUNCTION_WORDS.has(u.f)) return;
+      if (!seen || /^\p{Lu}/u.test(u.raw) || lowerStyle) leaks.add(`${label} ${u.f}`);
+      return;
+    }
+  };
+  toks.forEach((t, i) => {
+    if (t.kind !== "word" || !HONORIFICS.has(t.f) || t.aposAfter || t.aposBefore) return;
+    if (i > 0 && toks[i - 1]!.kind === "word" && HONORIFICS.has(toks[i - 1]!.f)) return; // inside a chain
+    span(i + 1, !/\p{Lu}/u.test(t.raw), t.f);
+  });
+  const firstLine = toks.slice(0, Math.max(0, toks.findIndex((t) => t.raw === "\n")) || toks.length);
+  const lead = firstLine.findIndex((t) => t.kind !== "stop");
+  const greet = [["good", "morning"], ["good", "afternoon"], ["good", "evening"], ["buenos", "dias"], ["buenas", "tardes"],
+    ["buenas", "noches"], ["buen", "dia"], ["hi"], ["hello"], ["hey"], ["dear"], ["hola"], ["buenas"], ["estimado"],
+    ["estimada"], ["estimados"], ["estimadas"], ["querido"], ["querida"]].find((g) => g.every((w, k) => firstLine[lead + k]?.f === w));
+  if (lead >= 0 && greet) {
+    const next = toks[lead + greet.length];
+    const generic = next?.kind === "word" && GENERIC_ADDRESSEE.test(next.f);
+    if (!generic) span(lead + greet.length, false, "greeting");
+  }
+  return [...leaks];
 }
 
 /**

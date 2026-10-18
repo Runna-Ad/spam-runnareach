@@ -493,13 +493,13 @@ test("gap: a lower-case name after a dotted honorific goes, whoever the contact 
   assert.equal(scrubExemplar("SRA. HERNÁNDEZ books them; ing.ruiz too.", other), "SRA. [name] books them; ing. [name] too.");
   // The words "marketing." or "dr" without a dot are not honorifics.
   assert.equal(scrubExemplar("Better marketing. Patients call.", other), "Better marketing. Patients call.");
-  assert.deepEqual(exemplarLeaks("dr. patel after hours", other), ["dr. patel"]);
+  assert.deepEqual(exemplarLeaks("dr. patel after hours", other), ["dr patel"]);
   assert.equal(toExemplar({ pitch_id: "x", score: 1 }, { subject: "dr. patel after hours", body: "Hi there,\n\nBody.", ...other })?.subject, "dr. [name] after hours");
 });
 
 test("gap: a city's short forms and nicknames are scrubbed and leak-checked", () => {
   const city = (c: string) => ({ company_name: null, domain: null, recipient_name: null, city: c });
-  assert.equal(scrubExemplar("clínicas en cdmx, en el D.F. y en la CDMX y el df", city("Ciudad de México")), "clínicas en [city], en el [city]. y en la [city] y el [city]");
+  assert.equal(scrubExemplar("clínicas en cdmx, en el D.F. y en la CDMX y el df", city("Ciudad de México")), "clínicas en [city], en el [city] y en la [city] y el [city]");
   assert.deepEqual(exemplarLeaks("clínicas en cdmx", city("Ciudad de México")), ["cdmx"]);
   assert.deepEqual(exemplarLeaks("clínicas en la ciudad de méxico", city("Ciudad de México")), ["ciudad de mexico"]);
   assert.equal(scrubExemplar("dentists in the gta and TO, open to all", city("Toronto")), "dentists in the [city] and [city], open to all");
@@ -539,4 +539,126 @@ test("a bounced root is never an exemplar, even when the prospect later booked a
   const deliveredAndBooked = cand({ events: [sent(30), booked] });
   assert.deepEqual(pick([bouncedThenBooked]), []);
   assert.deepEqual(pick([deliveredAndBooked]), [deliveredAndBooked.pitch_id]);
+});
+
+// ── Review round 2: the leak check is a second, independent matcher ───────────
+//
+// Each input below either (a) passed the old leak check after the old scrubber
+// missed it, or (b) was over-dropped. For each leak: the raw text is flagged by
+// exemplarLeaks on its own (the net sees it without the scrubber), and the kept
+// exemplar, if any, carries none of the listed words.
+
+function safe(subject: string, body: string, p: Parameters<typeof toExemplar>[1] extends infer T ? Omit<T & object, "subject" | "body"> : never, words: string[]) {
+  const e = toExemplar({ pitch_id: "x", score: 1 }, { subject, body, ...p });
+  if (e) assert.deepEqual(present(`${e.subject}\n${e.body}`, words), [], `${e.subject}\n${e.body}`);
+  return e;
+}
+
+test("I1: names after an honorific, in any form, are flagged raw and never kept", () => {
+  const other = { company_name: null, domain: null, recipient_name: "John Sipos" };
+  const cases: Array<[string, string[]]> = [
+    ["para la sra. gómez ruiz", ["gomez", "ruiz"]],
+    ["sra. de la peña", ["pena"]],
+    ["dr. j patel", ["patel"]],
+    ["dr patel", ["patel"]],
+    ["lcda. pérez", ["perez"]],
+    ["c.p. ramírez", ["ramirez"]],
+    ["Dra. María José Gómez Ruiz", ["maria", "jose", "gomez", "ruiz"]],
+    ["Dr. J. Patel", ["patel"]],
+    ["Sra. de la Peña", ["pena"]],
+    ["C.P. Ramírez", ["ramirez"]],
+  ];
+  for (const [t, words] of cases) {
+    assert.notDeepEqual(exemplarLeaks(t, other), [], `raw not flagged: ${t}`);
+    safe(t, "Hi there,\n\nBody.", other, words);
+    safe("after hours", `Hi there,\n\nA note for ${t} about intake.`, other, words);
+  }
+  // What the old scrubber left behind is flagged by the net alone.
+  for (const t of ["para la sra. [name] ruiz", "sra. [name] la peña", "dr. [name] patel", "Dra. [name] Ruiz", "Sra. [name] la Peña"]) {
+    assert.notDeepEqual(exemplarLeaks(t, other), [], t);
+  }
+  // The greeting's addressee: "Hi Raj Patel," with recipient "Raj".
+  const raj = { company_name: null, domain: null, recipient_name: "Raj" };
+  assert.notDeepEqual(exemplarLeaks("Hi [name] Patel,\n\nBody.", raj), []);
+  const e = safe("after hours", "Hi Raj Patel,\n\nBody.", raj, ["raj", "patel"]);
+  assert.equal(e?.body, "Hi [name],\n\nBody.");
+  // A chain of titles before a blank is not a leak (it was over-dropped).
+  const prof = toExemplar({ pitch_id: "x", score: 1 }, { subject: "prof. dr. gómez after hours", body: "Hi there,\n\nBody.", ...other });
+  assert.equal(prof?.subject, "prof. dr. [name] after hours");
+  // Ordinary text next to a blank is not a leak.
+  assert.deepEqual(exemplarLeaks("Hi team,\n\nDr. [name] and Dra. [name] see patients; Sra. [name] books them. Mr. and Mrs. [name] too.", other), []);
+  assert.deepEqual(exemplarLeaks("Hola equipo de [company],\n\nLic. [name] lo sabe; dr. [name]'s desk after hours.", other), []);
+});
+
+test("I2: a city's group is found from any member inside the city field, and aliases match with dots", () => {
+  const city = (c: string) => ({ company_name: null, domain: null, recipient_name: null, city: c });
+  const cases: Array<[string, string, string[]]> = [
+    ["Santiago de Querétaro", "clínicas en Qro. y en QRO", ["qro", "queretaro", "santiago"]],
+    ["Querétaro", "clínicas en Q.R.O. de noche", ["qro"]],
+    ["Toronto", "clinics in T.O. and T.O at night", ["toronto"]],
+    ["Ciudad de México", "clínicas en la C.D.M.X. y en Cd. de México", ["cdmx", "cd"]],
+    ["Zapopan", "clínicas en GDL y Guadalajara", ["gdl", "guadalajara", "zapopan"]],
+    ["North York", "clinics in the GTA and Toronto", ["gta", "toronto", "york"]],
+  ];
+  for (const [c, t, words] of cases) {
+    assert.notDeepEqual(exemplarLeaks(t, city(c)), [], `raw not flagged: ${c} / ${t}`);
+    const e = safe(t, "Hi there,\n\nBody.", city(c), words);
+    assert.ok(e, `${c}: should scrub, not drop`);
+    assert.doesNotMatch(e.subject, /T\.O|C\.D|Q\.R/, e.subject);
+  }
+  assert.equal(scrubExemplar("clinics in T.O. and T.O at night", city("Toronto")), "clinics in [city] and [city] at night");
+});
+
+test("I3: the contact's last name piece is always checked, capitals-only when it is a particle or a word", () => {
+  for (const last of ["Le", "Du", "Da"]) {
+    const p = { company_name: null, domain: null, recipient_name: `Minh ${last}` };
+    assert.notDeepEqual(exemplarLeaks(`Thanks, ${last}.`, p), [], last);
+    assert.deepEqual(exemplarLeaks(`la clínica le llama; ${last.toLowerCase()} soir`, p), [], last);
+    const e = safe("after hours", `Hi there,\n\nThanks, ${last}.`, p, []);
+    assert.equal(e?.body, "Hi there,\n\nThanks, [name].");
+  }
+  // A two-letter capitals-only name at a sentence start is not scrubbed ("[name] book" must not happen)...
+  const to = { company_name: null, domain: null, recipient_name: "Minh To" };
+  assert.equal(scrubExemplar("To book a call, reply to this.", to), "To book a call, reply to this.");
+  assert.equal(scrubExemplar("Thanks, To.", to), "Thanks, [name].");
+  // ...and the net still drops a capitalized "To" it cannot tell from the name.
+  assert.notDeepEqual(exemplarLeaks("Thanks, To.", to), []);
+});
+
+test("I4: company identity on a letters-only fold: initials in capitals, long words as substrings", () => {
+  const kp = { company_name: "KP Law", domain: null, recipient_name: null };
+  assert.notDeepEqual(exemplarLeaks("the KP team answers", kp), []);
+  assert.deepEqual(exemplarLeaks("kp is not a word we scrub", kp), []);
+  assert.equal(scrubExemplar("the KP team answers", kp), "the [company] team answers");
+  const abc = { company_name: "A.B.C. Plumbing", domain: null, recipient_name: null };
+  assert.notDeepEqual(exemplarLeaks("A.B.C. answers by phone", abc), []);
+  assert.equal(scrubExemplar("A.B.C. answers by phone", abc), "[company] answers by phone");
+  const jd = { company_name: "J.D. Irving Dental", domain: null, recipient_name: null };
+  assert.notDeepEqual(exemplarLeaks("the J.D. team answers", jd), []);
+  assert.equal(scrubExemplar("the J.D. team answers", jd), "the [company] team answers");
+  const wag = { company_name: "Wagner Law Group", domain: null, recipient_name: null };
+  for (const t of ["follow @wagnerlaw", "see facebook.com/WagnerLawTO", "the Wagners answer"]) {
+    assert.deepEqual(exemplarLeaks(t, wag), ["wagner"], t);
+    const e = safe("after hours", `Hi there,\n\n${t}.`, wag, ["wagner"]);
+    assert.ok(e, t);
+  }
+  assert.equal(scrubExemplar("the Wagners answer, @wagnerlaw", wag), "the [company] answer, @[company]");
+});
+
+test("quality: an ordinary three-letter company word is left to the full name", () => {
+  const prose = "Most clinics get calls now, fix it the same day, and más salud is the goal.";
+  for (const company of ["Get Fit Gym", "Fix It Now", "Más Salud", "Same Day Dental"]) {
+    const p = { company_name: company, domain: null, recipient_name: null };
+    assert.equal(scrubExemplar(prose.replace("más salud", "a healthy team"), p), prose.replace("más salud", "a healthy team"), company);
+    assert.equal(scrubExemplar(`Thanks for reading about ${company}.`, p), "Thanks for reading about [company].", company);
+  }
+  // A three-letter word written in capitals is the company's own.
+  const bmo = { company_name: "BMO Dental", domain: null, recipient_name: null };
+  assert.equal(scrubExemplar("bmo answers, BMO too", bmo), "[company] answers, [company] too");
+});
+
+test("fold: ł, đ and ø match their plain letters", () => {
+  const p = { company_name: "Søren Đorđević Studio", domain: null, recipient_name: "Łukasz Nowak" };
+  assert.deepEqual(exemplarLeaks("Hi Lukasz, soren and dordevic", p).sort(), ["dordevic", "greeting lukasz", "lukasz", "soren"]);
+  assert.equal(scrubExemplar("Hi Lukasz,\n\nSoren and ĐORĐEVIĆ answer.", p), "Hi [name],\n\n[company] and [company] answer.");
 });

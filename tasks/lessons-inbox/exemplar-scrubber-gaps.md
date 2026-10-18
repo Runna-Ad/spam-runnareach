@@ -11,3 +11,8 @@ TAGS: pitches, exemplars, scrubber
 ## Out of scope, noticed
 - lib/pitches/exemplars.ts: a company ending in "Inc."/"Ltd." leaves the trailing dot after `[company]` ("[company]. answers"); cosmetic, pre-existing.
 - One placeholder regex for send-gate, composer and exemplars is still separate (brief's out-of-scope item; `PLACEHOLDER_RE` in exemplars.ts is a third copy).
+
+[2026-10-18] A fail-closed net that reuses the scrubber's matchers is not a second check
+WHAT HAPPENED: Round 1 of exemplar-scrubber-gaps widened `exemplarLeaks` (lib/pitches/exemplars.ts) but kept it on the scrubber's own `replacePhrase`, honorific regex and exact city key, and the property test's `has()` used the same whole-word matcher. So every form the scrubber's matchers could not see ("sra. [name] ruiz", "Qro.", "the Wagners", "Thanks, Le.") the net and the test could not see either. Review round 2 rewrote the leak check with its own fold, tokenizer (dots inside initials removed), letters-only chunk substrings and honorific/greeting span rules, and the property test got a third, independent matcher.
+RULE: The invariant behind a scrubber, and the property test behind both, must each use matching code the scrubber does not share: different tokenizer, coarser rules (substring over whole-word, spans over single tokens). Sharing word lists is fine; sharing matchers means one blind spot, three times.
+TAGS: pitches, exemplars, scrubber, property-test, review
