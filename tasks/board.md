@@ -48,8 +48,8 @@ Open prod checks:
 | send-path-safety | send-action.ts, send-queue + follow-up + nudge routes, transitionPitchStatusWith (+ new pure status-transitions.ts) | opus/high | claude/send-path-safety | session_01GQrLz2TkuQdQRLfXA2Hco4 | #21 | wave0 | merged 0128b6b (790 tests) | | ~30 | 0 (8 optional) | 0 | 0 | | | | | |
 | booking-alert-durability | lib/opportunities/calendar-sync.ts + booking-alert.ts + route | opus/high (deviation: alerts lane is medium; same durability class reworked twice in b2) | claude/booking-alert-durability | session_01V52B5CStFDH8bHRXbbggve | | wave0 (0047 file) | running (spawned 18:35) | | | | | |
 | exemplar-allow-list | lib/pitches/exemplars.ts + wordlists (hub), PR #17 round 4 | opus/high | claude/exemplar-scrubber-gaps (existing) | session_01UKwyaiiw7nmqT9GEFR6ixb | #17 (base retargeted to integration, subscribed) | — | running (spawned 18:35; parallel track, Pedro-sanctioned; files disjoint from send-path-safety) | | | b2: r1 5, r2 6, r3 2 | | 3 (b2) |
-| send-path-safety-2 | follow-up route last-moment recheck, DNC error → fail closed at recheck, stronger source-order test, one message | opus/high | claude/send-path-safety-2 | session_01GQrLz2TkuQdQRLfXA2Hco4 (same worker, warm context) | | send-path-safety merged | wave 2 | | | | | |
-| pitches-list-resilience | lib/pitches/queries.ts (listPitches) + /pitches | sonnet/medium | claude/pitches-list-resilience | | | send-path-safety merged | wave 2 | | | | | |
+| send-path-safety-2 | follow-up route last-moment recheck, DNC error → fail closed at recheck, stronger source-order test, one message | opus/high | claude/send-path-safety-2 | session_01GQrLz2TkuQdQRLfXA2Hco4 (same worker, warm context) | | send-path-safety merged | running (sent 18:54) | | | | | |
+| pitches-list-resilience | lib/pitches/queries.ts (listPitches) + /pitches | sonnet/medium | claude/pitches-list-resilience | session_019XtZMnCmBLJ2hxdMSgtJAe | | send-path-safety merged | running (spawned 18:54) | | | | | |
 
 Column meanings: Turns = assistant turns in the worker session (proxy for tokens).
 Review findings = blocking findings the reviewer raised. CI reds = failed CI runs on the
