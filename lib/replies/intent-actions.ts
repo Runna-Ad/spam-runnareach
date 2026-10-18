@@ -5,6 +5,7 @@ import { writeAuditLog } from "@/lib/audit/log";
 import { requireUser } from "@/lib/auth";
 import { createServiceRoleClient } from "@/lib/supabase/service-role";
 import { recordOptOut } from "@/lib/compliance/opt-out";
+import { protectedStatusFilter } from "@/lib/prospects/status";
 
 type ReplyIntent =
   | "wants_meeting"
@@ -66,11 +67,15 @@ export async function handleReplyIntent(
 
   switch (intent) {
     case "wants_meeting": {
-      await supabase
+      // A won/lost client asking for a meeting keeps its outcome.
+      let bookQuery = supabase
         .from("prospects")
         .update({ status: "booked" })
         .eq("id", prospectId)
         .eq("tenant_id", user.tenantId);
+      const bookGuard = protectedStatusFilter("booked", "person");
+      if (bookGuard) bookQuery = bookQuery.not("status", "in", bookGuard);
+      await bookQuery;
 
       await pauseSequence();
       await markReplyHandled();
@@ -212,7 +217,9 @@ export async function handleReplyIntent(
         Date.now() + 365 * 24 * 60 * 60 * 1000,
       ).toISOString();
 
-      await supabase
+      // A bounce on a booked/won/lost client's address keeps the outcome visible;
+      // the paused sequence below still stops sending.
+      let suppressQuery = supabase
         .from("prospects")
         .update({
           status: "suppressed",
@@ -222,6 +229,9 @@ export async function handleReplyIntent(
         })
         .eq("id", prospectId)
         .eq("tenant_id", user.tenantId);
+      const suppressGuard = protectedStatusFilter("suppressed", "person");
+      if (suppressGuard) suppressQuery = suppressQuery.not("status", "in", suppressGuard);
+      await suppressQuery;
 
       await pauseSequence();
       await markReplyHandled();
