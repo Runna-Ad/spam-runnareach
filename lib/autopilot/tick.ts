@@ -28,6 +28,8 @@ import "server-only";
 import type { Actor } from "@/lib/actor";
 import { isUnderDailyCap } from "@/lib/anthropic/cost-tracking";
 import { evolveSearchSpace, learnFromOutcomes, weeklyReview } from "./learn";
+import { buildVetoDigest, type DigestItem } from "./hold";
+import { holdSecret } from "./hold-token";
 import { resumeDiscoveryJobWith, startDiscoveryJobWith } from "@/lib/discover/job-stage";
 import { EMPTY_JOB_STATS } from "@/lib/discover/job-types";
 import type { Arm } from "@/lib/learning/bandit";
@@ -49,7 +51,9 @@ import { checkDeliverabilityHealth } from "@/lib/warmup/deliverability";
 import { analyzeSpamRate } from "@/lib/warmup/intelligence";
 import type { WarmupLogEntry } from "@/lib/warmup/types";
 import {
+  countVetoes,
   evaluateBreakers,
+  HELD_BY_PERSON,
   heldAction,
   laneFor,
   nextStage,
@@ -658,13 +662,13 @@ async function scheduleAuto(actor: Actor, db: Db, stage: Stage, now: Date, deadl
   if (held.size) {
     await db
       .from("pitches")
-      .update({ autopilot_lane: "review", autopilot_reasons: ["held by a person after the autopilot scheduled it"] })
+      .update({ autopilot_lane: "review", autopilot_reasons: [`${HELD_BY_PERSON} after the autopilot scheduled it`] })
       .in("id", [...held])
       .eq("tenant_id", tenantId);
   }
 
   const sendAt = new Date(now.getTime() + (stage === "veto" ? VETO_WINDOW_HOURS * 3_600_000 : 0)).toISOString();
-  const scheduled: Array<{ company: string; subject: string }> = [];
+  const scheduled: DigestItem[] = [];
   let i = 0;
   for (const p of candidates) {
     if (held.has(p.id)) continue;
@@ -686,18 +690,20 @@ async function scheduleAuto(actor: Actor, db: Db, stage: Stage, now: Date, deadl
       .eq("id", p.id)
       .eq("tenant_id", tenantId)
       .eq("status", "approved");
-    scheduled.push({ company: p.prospects?.company_name ?? "?", subject: p.subject });
+    scheduled.push({ pitchId: p.id, company: p.prospects?.company_name ?? "?", subject: p.subject });
   }
 
   if (scheduled.length > 0 && stage === "veto") {
-    await notify(
-      db,
+    // Each line carries its own hold link (lib/autopilot/hold.ts); no key → no links.
+    const digest = buildVetoDigest({
+      items: scheduled,
       tenantId,
-      `Autopilot scheduled ${scheduled.length} email${scheduled.length === 1 ? "" : "s"} (sends in ${VETO_WINDOW_HOURS}h unless held)`,
-      `These passed every check and will send in about ${VETO_WINDOW_HOURS} hours:\n\n` +
-        scheduled.map((s) => `• ${s.company}: "${s.subject}"`).join("\n") +
-        `\n\nTo hold one, move it back to draft on /pitches before then. Holding one counts as a veto; few vetoes over two weeks lets the autopilot send without the wait.\n\n${appUrl()}/pitches`,
-    );
+      sendAt,
+      windowHours: VETO_WINDOW_HOURS,
+      appUrl: appUrl(),
+      secret: holdSecret(),
+    });
+    await notify(db, tenantId, digest.subject, digest.body);
   }
   return scheduled.length;
 }
@@ -729,7 +735,19 @@ async function evaluateStage(db: Db, s: AutonomyState, now: Date): Promise<TickR
     (r) => r.status !== "reviewer_rejected" && editRatio(r.body_original ?? "", r.body_edited ?? r.body_original ?? "") < 0.05,
   );
   const rejected = rows.filter((r) => r.status === "reviewer_rejected").length;
-  const vetoed = rows.filter((r) => autopilotApproved.has(r.id) && ["draft", "reviewer_rejected"].includes(r.status)).length;
+  // Vetoes by approval event, whatever the lane: a held pitch is moved to the
+  // review lane (§5, the digest hold), so `rows` (lane auto) never holds it.
+  const approvedIds = [...autopilotApproved];
+  const current: Array<{ id: string; status: string }> = [];
+  for (let k = 0; k < approvedIds.length; k += 200) {
+    const { data: chunk } = await db
+      .from("pitches")
+      .select("id, status")
+      .eq("tenant_id", tenantId)
+      .in("id", approvedIds.slice(k, k + 200));
+    current.push(...((chunk ?? []) as Array<{ id: string; status: string }>));
+  }
+  const vetoed = countVetoes(autopilotApproved, current);
   const sentAuto = rows.filter((r) => autopilotApproved.has(r.id) && r.sent_at).map((r) => r.id);
   let bounces = 0;
   if (sentAuto.length) {

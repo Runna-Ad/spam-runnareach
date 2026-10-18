@@ -40,6 +40,10 @@
       "schedule": "0 17 * * *"
     },
     {
+      "path": "/api/reports/health",
+      "schedule": "40 12 * * *"
+    },
+    {
       "path": "/api/discover/janitor",
       "schedule": "0 7 * * *"
     },

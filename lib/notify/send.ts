@@ -7,11 +7,14 @@
  * throws: a notification is evidence, not a dependency of the job that sends it.
  */
 
+import * as Sentry from "@sentry/nextjs";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { getAccessToken, sendGmailMessage } from "@/lib/gmail/client";
 import { notifyRecipients, type NotifyKind } from "./recipients.ts";
 
 export type NotificationResult = { sent: number; failed: string[] };
+
+const NOTIFY_SEND_TIMEOUT_MS = 15_000;
 
 export type NotificationMessage = {
   kind: NotifyKind;
@@ -35,6 +38,8 @@ export async function sendNotificationWithToken(
         to,
         subject: message.subject,
         body: message.body,
+        // Alerts often run at the end of a route near its maxDuration.
+        timeoutMs: NOTIFY_SEND_TIMEOUT_MS,
       });
       if (res.ok) result.sent++;
       else result.failed.push(`${to}: ${res.error}`);
@@ -47,8 +52,11 @@ export async function sendNotificationWithToken(
 }
 
 /**
- * Finds the sender: `fromEmail` when given and connected, else the tenant's oldest
- * connected inbox (the same one the calendar sync reads).
+ * Finds the sender: `fromEmail` when given and connected, else the tenant's
+ * connected inboxes oldest first (the oldest is the one the calendar sync
+ * reads), moving to the next when one's token fails. When no inbox can send,
+ * the alert goes to Sentry instead: an emergency about a disconnected Google
+ * account must not be lost because it would be sent through that account.
  */
 export async function sendNotification(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -56,6 +64,7 @@ export async function sendNotification(
   tenantId: string,
   message: NotificationMessage & { fromEmail?: string },
 ): Promise<NotificationResult> {
+  const failed: string[] = [];
   try {
     let q = db
       .from("sender_inboxes")
@@ -63,14 +72,26 @@ export async function sendNotification(
       .eq("tenant_id", tenantId)
       .not("gmail_refresh_token_encrypted", "is", null);
     if (message.fromEmail) q = q.eq("email", message.fromEmail);
-    const { data } = await q.order("created_at", { ascending: true }).limit(1);
-    const inbox = (data ?? [])[0] as { email: string; gmail_refresh_token_encrypted: string } | undefined;
-    if (!inbox) return { sent: 0, failed: ["no connected inbox"] };
-    const token = await getAccessToken(inbox.gmail_refresh_token_encrypted);
-    if (!token.ok) return { sent: 0, failed: [`token: ${token.error}`] };
-    return await sendNotificationWithToken({ accessToken: token.accessToken, fromEmail: inbox.email }, message);
+    const { data } = await q.order("created_at", { ascending: true }).limit(5);
+    const inboxes = (data ?? []) as Array<{ email: string; gmail_refresh_token_encrypted: string }>;
+    if (inboxes.length === 0) failed.push("no connected inbox");
+    for (const inbox of inboxes) {
+      const token = await getAccessToken(inbox.gmail_refresh_token_encrypted);
+      if (!token.ok) {
+        failed.push(`${inbox.email} token: ${token.error}`);
+        continue;
+      }
+      const result = await sendNotificationWithToken({ accessToken: token.accessToken, fromEmail: inbox.email }, message);
+      if (result.sent > 0) return { sent: result.sent, failed: [...failed, ...result.failed] };
+      failed.push(...result.failed);
+    }
   } catch (err) {
-    console.warn("[notify] failed:", (err as Error).message);
-    return { sent: 0, failed: [(err as Error).message] };
+    failed.push((err as Error).message);
   }
+  console.warn("[notify] not sent:", message.subject, failed.join(" | "));
+  Sentry.captureMessage(`Notification not sent: ${message.subject}`, {
+    level: "error",
+    extra: { kind: message.kind, body: message.body.slice(0, 2000), failed },
+  });
+  return { sent: 0, failed };
 }

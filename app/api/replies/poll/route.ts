@@ -19,7 +19,11 @@
 //        - anything a human wrote → sequence paused, prospect 'replied'
 //   4. Draft a response (Claude → heuristic) for engageable intents →
 //      draft_status='pending'. The reply cap is enforced when a human sends.
-//   5. Email Pedro a digest of drafts awaiting review (in-app + email alert).
+//   0/5. Email the lead list ONE alert listing every human reply not yet
+//      alerted (bounces and out-of-office excluded), hot ones first, with
+//      their text. Driven by replies.hot_alert_sent_at (lib/replies/lead-alert.ts):
+//      swept at the START of the run (leftovers get the full budget) and at
+//      the END for this run's replies, only with >= 60s left.
 //
 // Auth: Authorization: Bearer <CRON_SECRET>.
 // ─────────────────────────────────────────────────────────────────────────────
@@ -28,7 +32,7 @@ import { type NextRequest, NextResponse } from "next/server";
 import { isSchedulerAuthorized } from "@/lib/cron-auth";
 import { createServiceRoleClient } from "@/lib/supabase/service-role";
 import { getAccessToken } from "@/lib/gmail/client";
-import { sendNotificationWithToken } from "@/lib/notify/send";
+import { sendNotification } from "@/lib/notify/send";
 import { fetchThreadReplies, listRecentInboundThreadIds, type InboundReply } from "@/lib/gmail/read";
 import {
   ANTHROPIC_HAIKU_MODEL,
@@ -55,10 +59,16 @@ import { addEmailToDnc, type DncInsertClient } from "@/lib/discover/dnc-check";
 import { extractBouncedRecipient } from "@/lib/replies/bounce-parse";
 import { recordPitchEvent } from "@/lib/pitches/events";
 import { isTestAddress } from "@/lib/compliance/test-addresses";
+import { protectedStatusFilter } from "@/lib/prospects/status";
+import { sendPendingLeadAlerts, supabaseLeadAlertStore } from "@/lib/replies/lead-alert";
 
 /** An out-of-office pushes the next follow-up at least this far out. */
 const OOO_POSTPONE_DAYS = 7;
-/** Stop starting threads after this long (maxDuration is 120s; leaves room for the digest). */
+/** vercel.json maxDuration for this route. */
+const MAX_DURATION_MS = 120_000;
+/** The end-of-run alert claims only with at least this long left. */
+const ALERT_RESERVE_MS = 60_000;
+/** Stop starting threads after this long (maxDuration is 120s). */
 const POLL_BUDGET_MS = 100_000;
 /**
  * A normal run reads only threads with inbound mail this recent (one list call
@@ -94,8 +104,6 @@ type ThreadRow = {
   first_sent_at: string | null;
 };
 
-type DraftDigestItem = { prospect: string; intent: ReplyIntent };
-
 export async function GET(req: NextRequest) {
   if (!(await isAuthorized(req))) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
@@ -107,6 +115,14 @@ export async function GET(req: NextRequest) {
   // the half-hourly pg_cron run reads only threads with recent inbound mail.
   const fullSweep =
     req.nextUrl.searchParams.get("full") === "1" || (req.headers.get("user-agent") ?? "").startsWith("vercel-cron");
+
+  const alertStore = supabaseLeadAlertStore(supabase, isTestAddress);
+  const sendLeadAlert = (tenantId: string, message: Parameters<typeof sendNotification>[2]) =>
+    sendNotification(supabase, tenantId, message);
+  // ── 0. Leftover lead alerts first, while the whole budget is ahead ──────
+  const startAlerts = await sendPendingLeadAlerts(alertStore, sendLeadAlert);
+  // Replies inserted by this run, alerted at the end without the settle wait.
+  const ownReplyIds = new Set<string>();
 
   // ── 1. Find candidate threads ────────────────────────────────────────────
   const { data: pitchRows, error: pitchErr } = await supabase
@@ -154,9 +170,6 @@ export async function GET(req: NextRequest) {
   // (then every thread of that inbox is read, as in a full sweep).
   const recentThreads = new Map<string, Set<string> | null>();
   let threadsRead = 0;
-  // Per-tenant digest of drafts created this run, for the email alert.
-  const digest = new Map<string, DraftDigestItem[]>();
-
   let imported = 0;
   let drafted = 0;
   const errors: string[] = [];
@@ -287,6 +300,7 @@ export async function GET(req: NextRequest) {
 
         if (!insertedReply) continue;
         imported += 1;
+        ownReplyIds.add(insertedReply.id);
 
         await supabase.from("audit_log").insert({
           tenant_id: thread.tenant_id,
@@ -342,7 +356,9 @@ export async function GET(req: NextRequest) {
               `Auto-added ${new Date().toISOString().slice(0, 10)}: hard bounce (undeliverable).`,
             );
           }
-          await supabase
+          // A real outcome (booked/won/lost) keeps its status (lib/prospects/status.ts);
+          // the sequence is paused either way.
+          const { data: suppressedRows } = await supabase
             .from("prospects")
             .update({
               status: "suppressed",
@@ -350,16 +366,20 @@ export async function GET(req: NextRequest) {
               suppressed_reason: "Email bounced (undeliverable) — auto-suppressed",
               cooldown_until: new Date(Date.now() + 365 * 24 * 60 * 60 * 1000).toISOString(),
             })
-            .eq("id", thread.prospect_id);
+            .eq("id", thread.prospect_id)
+            .not("status", "in", protectedStatusFilter("suppressed", "automation")!)
+            .select("id");
           await pauseSequence(supabase, thread.tenant_id, thread.prospect_id);
-          await supabase.from("audit_log").insert({
-            tenant_id: thread.tenant_id,
-            actor_id: null,
-            action: "prospect.suppressed",
-            entity_type: "prospect",
-            entity_id: thread.prospect_id,
-            metadata: { reply_id: insertedReply.id, reason: "bounced_auto", source: "gmail_poll" },
-          });
+          if ((suppressedRows ?? []).length > 0) {
+            await supabase.from("audit_log").insert({
+              tenant_id: thread.tenant_id,
+              actor_id: null,
+              action: "prospect.suppressed",
+              entity_type: "prospect",
+              entity_id: thread.prospect_id,
+              metadata: { reply_id: insertedReply.id, reason: "bounced_auto", source: "gmail_poll" },
+            });
+          }
           // Without this the end-of-thread block re-marked the prospect
           // "replied" from its stale status, undoing the suppression.
           terminal = true;
@@ -422,9 +442,6 @@ export async function GET(req: NextRequest) {
               })
               .eq("id", insertedReply.id);
             drafted += 1;
-            const list = digest.get(thread.tenant_id) ?? [];
-            list.push({ prospect: prospect.company_name, intent: classification.intent });
-            digest.set(thread.tenant_id, list);
             await supabase.from("audit_log").insert({
               tenant_id: thread.tenant_id,
               actor_id: null,
@@ -446,7 +463,7 @@ export async function GET(req: NextRequest) {
             .from("prospects")
             .update({ status: "replied" })
             .eq("id", thread.prospect_id)
-            .not("status", "in", "(archived_no_meeting,suppressed,booked,won,lost)");
+            .not("status", "in", protectedStatusFilter("replied", "automation")!);
         }
       }
     } catch (err) {
@@ -455,12 +472,17 @@ export async function GET(req: NextRequest) {
     }
   }
 
-  // ── 5. Email Pedro a digest of new drafts awaiting review ─────────────────
-  if (drafted > 0) {
-    await sendDraftDigest(supabase, inboxCache, digest).catch((e) =>
-      console.error("[replies/poll] digest email failed:", e),
-    );
-  }
+  // ── 5. Lead alert for this run's replies, only with time to send it ──────
+  // The inserted reply row is the durable record. With < 60s left nothing is
+  // claimed; the next run's step 0 sends it. Never throws.
+  // Self-loop: the alert is sent without a threadId, so it starts a NEW Gmail
+  // thread in every mailbox; step 1 only reads threads whose id is a sent
+  // pitch's gmail_thread_id, so an alert is never read as a prospect reply.
+  const endAlerts = await sendPendingLeadAlerts(alertStore, sendLeadAlert, {
+    ownIds: ownReplyIds,
+    deadline: startTime + MAX_DURATION_MS - ALERT_RESERVE_MS,
+  });
+  const alerts = { sent: startAlerts.sent + endAlerts.sent, failed: [...startAlerts.failed, ...endAlerts.failed] };
 
   return NextResponse.json({
     ok: true,
@@ -471,6 +493,7 @@ export async function GET(req: NextRequest) {
     deferred,
     imported,
     drafted,
+    alerts,
     errors,
   });
 }
@@ -665,33 +688,4 @@ async function pauseSequence(supabase: AnySupabase, tenantId: string, prospectId
     .eq("tenant_id", tenantId)
     .eq("status", "sent")
     .is("sequence_paused_at", null);
-}
-
-async function sendDraftDigest(
-  supabase: AnySupabase,
-  inboxCache: Map<string, { email: string; display_name: string; token: string } | null>,
-  digest: Map<string, DraftDigestItem[]>,
-): Promise<void> {
-  // Use any connected inbox we already have a token for as the sender.
-  const sender = [...inboxCache.values()].find((i): i is { email: string; display_name: string; token: string } => i !== null);
-  if (!sender) return;
-
-  for (const items of digest.values()) {
-    if (items.length === 0) continue;
-    const lines = items.map((i) => `• ${i.prospect} — ${i.intent.replace(/_/g, " ")}`).join("\n");
-    const appUrl = process.env.NEXT_PUBLIC_APP_URL || "https://spam-runnareach.vercel.app";
-    const body =
-      `${items.length} new repl${items.length === 1 ? "y" : "ies"} drafted and waiting for your review.\n\n` +
-      `${lines}\n\n` +
-      `Review + approve in the inbox:\n${appUrl}/inbox`;
-    await sendNotificationWithToken(
-      { accessToken: sender.token, fromEmail: sender.email },
-      {
-        kind: "lead",
-        fromName: "S.P.A.M Reply Funnel",
-        subject: `${items.length} reply draft${items.length === 1 ? "" : "s"} awaiting review`,
-        body,
-      },
-    );
-  }
 }
