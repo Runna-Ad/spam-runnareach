@@ -76,6 +76,17 @@ cost-tracked, daily-capped wrapper in `lib/anthropic/` · Gmail API · Sentry ·
   an output invariant that fails closed, plus a property test, and show the new tests
   failing on the old code.
 - Enum values added by a migration ship with their TS union in the same commit.
+- A fail-closed check must not reuse the code it guards: give it its own, coarser
+  matching (letters-only fold, substring), and give the property test a third.
+- A route's last step runs after its time budget. Anything there must be safe to be
+  killed at maxDuration: claim/mark only when there is time to finish, and sweep
+  leftovers at the START of the next run.
+- An alert or emergency rule is "due activity did not happen in a closed window", never
+  "something is waiting"; every state the system enters by design must stay silent.
+- A value you write that another module reads (reason strings, statuses): grep the
+  reader and match its check exactly; share the constant (e.g. `HELD_BY_PERSON`).
+- Prospect status writes go through `lib/prospects/status.ts` (`protectedStatusFilter`);
+  a real outcome (booked/won/lost) is never overwritten by an automated writer.
 - Every notification email to the team (alerts, digests, reports, lead alerts) goes
   through `lib/notify/send.ts` with `kind: "ops"` (everything: Pedro's two addresses) or
   `kind: "lead"` (prospect replies and bookings: ops + the sales team). Never read a
