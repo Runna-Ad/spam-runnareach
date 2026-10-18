@@ -65,13 +65,6 @@ export type HeldAction = { action: "leave"; why: string } | { action: "rewrite" 
 const UNFIXABLE_REASON = /^(verifier unsure about the address|address source |segment on probation)/;
 
 /**
- * Nothing waits on a person. A REVIEW draft gets one rewrite when everything
- * that held it is something a rewrite can fix (the reviewer, a template, a
- * writing rule, an address not checked yet), and is dropped otherwise or when
- * the rewrite is held again. A DROP draft is closed at once. Drafts a person
- * edited or pulled back stay theirs.
- */
-/**
  * Prefix of every autopilot_reasons entry that means "a person held this after
  * the autopilot scheduled it" (a /pitches veto, a digest hold link). heldAction
  * leaves such a draft alone; every writer of a person-hold reason uses this.
@@ -95,6 +88,13 @@ export function countVetoes(
   return seen.size;
 }
 
+/**
+ * Nothing waits on a person. A REVIEW draft gets one rewrite when everything
+ * that held it is something a rewrite can fix (the reviewer, a template, a
+ * writing rule, an address not checked yet), and is dropped otherwise or when
+ * the rewrite is held again. A DROP draft is closed at once. Drafts a person
+ * edited or pulled back stay theirs.
+ */
 export function heldAction(
   d: { lane: Lane; reasons: string[]; isRewrite: boolean; editedByPerson: boolean },
   writerFixable: ReadonlySet<string>,
