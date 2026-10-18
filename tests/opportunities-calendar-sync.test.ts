@@ -53,7 +53,7 @@ function booking(id: string, attendees: Array<string | CalendarAttendee>, over: 
 type Opp = {
   id: string; eventId: string | null; source: "manual" | "calendar"; stage: string; prospectId: string; lossReason: string | null;
   contactId?: string | null; meetingStart?: string | null; meetingTimeZone?: string | null;
-  bookedAlertSentAt?: string | null; cancelledAlertSentAt?: string | null; createdAt?: string; updatedAt?: string;
+  bookedAlertSentAt?: string | null; cancelledAlertSentAt?: string | null; cancelledAt?: string | null; createdAt?: string;
 };
 
 function alertRow(o: Opp): AlertRow {
@@ -62,7 +62,7 @@ function alertRow(o: Opp): AlertRow {
     id: o.id, source: o.source, prospectId: o.prospectId, contactId: o.contactId ?? null, stage: o.stage,
     lossReason: o.lossReason, meetingStart: o.meetingStart ?? null, meetingTimeZone: o.meetingTimeZone ?? null,
     bookedAlertSentAt: o.bookedAlertSentAt ?? null, cancelledAlertSentAt: o.cancelledAlertSentAt ?? null,
-    createdAt: o.createdAt ?? now, updatedAt: o.updatedAt ?? now,
+    cancelledAt: o.cancelledAt ?? null, createdAt: o.createdAt ?? now,
   };
 }
 
@@ -101,6 +101,7 @@ function memoryStore(
       if (!o) return false;
       o.stage = "lost";
       o.lossReason = CANCELLED_LOSS_REASON;
+      o.cancelledAt = new Date().toISOString();
       return true;
     },
     async contactEmails(ids) {
@@ -123,10 +124,10 @@ function memoryStore(
       o.bookedAlertSentAt ??= nowIso;
       return true;
     },
-    async releaseAlert(id, kind) {
+    async releaseAlert(id, kind, claimedIso) {
       const o = opps.find((x) => x.id === id);
-      if (o && kind === "booked") o.bookedAlertSentAt = null;
-      if (o && kind === "cancelled") o.cancelledAlertSentAt = null;
+      if (o && kind === "booked" && o.bookedAlertSentAt === claimedIso) o.bookedAlertSentAt = null;
+      if (o && kind === "cancelled" && o.cancelledAlertSentAt === claimedIso) o.cancelledAlertSentAt = null;
     },
     async rootSentPitchId(prospectId) {
       return rootPitch[prospectId] ?? null;
@@ -729,7 +730,7 @@ test("sendDueBookingAlerts: one lead email per due row, company + market and con
     { id: "o1", eventId: "e1", source: "calendar", stage: "meeting_booked", prospectId: "p-ana", lossReason: null,
       contactId: "c-ana", meetingStart: "2026-10-20T15:00:00Z", meetingTimeZone: null },
     { id: "o2", eventId: "e2", source: "calendar", stage: "lost", prospectId: "p-ana", lossReason: CANCELLED_LOSS_REASON,
-      contactId: null, bookedAlertSentAt: "2026-10-17T00:00:00Z" },
+      contactId: null, bookedAlertSentAt: "2026-10-17T00:00:00Z", cancelledAt: new Date().toISOString() },
   );
   const store: SyncStore = { ...m.store, prospectSummaries: async (ids) => (lookups++, m.store.prospectSummaries(ids)) };
   const sent: NotificationMessage[] = [];

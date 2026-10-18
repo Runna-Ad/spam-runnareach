@@ -23,11 +23,15 @@
  *   D1 Due: a source 'calendar' row is due a booking alert while
  *      booked_alert_sent_at is null and it was created in the last 48h; due a
  *      cancellation alert while it is lost / "booking cancelled",
- *      cancelled_alert_sent_at is null and it was updated in the last 48h
- *      (alertDue). Manual opportunities never.
+ *      cancelled_alert_sent_at is null and the SYNC cancelled it (cancelled_at,
+ *      set by markCancelled) in the last 48h (alertDue). Never keyed on
+ *      updated_at: the 0001 trigger bumps it on every claim and release. So a
+ *      person closing a row as lost with that reason, or a cancellation the
+ *      pre-0047 code applied, never alerts. Manual opportunities never.
  *   D2 Claim before send: the marker is set only where it is still null and
  *      only the rows this run won are sent. A send that reached nobody
- *      (sent 0, or a throw) releases the claim; partial delivery keeps it.
+ *      (sent 0, or a throw) releases the claim (only while the marker still
+ *      holds this run's timestamp); partial delivery keeps it.
  *      Overlapping runs can never both send one alert.
  *   D3 Newest state wins: a cancelled row is never due a booking alert; its
  *      cancellation claim also sets booked_alert_sent_at, so a booked-then-
@@ -35,10 +39,10 @@
  *   D4 The alert is rebuilt from the database: the row's meeting_start /
  *      meeting_time_zone (written by createOpportunity, kept on cancel), the
  *      prospect's company + market and the contact's email via contact_id.
- *   D5 Kill safety (maxDuration 120s, ~50s per alert: token + 3 Gmail sends
- *      of 15s): due rows are swept at the START of every run, right after the
+ *   D5 Kill safety (maxDuration 120s; one alert = 10s token + 15s per lead
+ *      recipient + 5s slack, 60s for the default 3): due rows are swept at the START of every run, right after the
  *      token check and before listing events, and again at the END for this
- *      run's changes. A row is claimed only while at least 60s remain before
+ *      run's changes. A row is claimed only while that much (60s) remains before
  *      maxDuration (counted from the route's start); otherwise it is left for
  *      the next run's start sweep (hourly). The start sweep stops 40s earlier
  *      still, so the sync's own writes keep their time.
@@ -65,6 +69,7 @@ import type { Actor } from "../actor.ts";
 import type { AuditPayload } from "../audit/log.ts";
 import type { AccessTokenResult } from "../gmail/client.ts";
 import type { NotificationMessage, NotificationResult } from "../notify/send.ts";
+import { notifyRecipients } from "../notify/recipients.ts";
 import { isTestAddress, normalizeMailbox } from "../compliance/test-addresses.ts";
 import { recordPitchEvent, type PitchEventType } from "../pitches/events.ts";
 import { latestRootSentPitchId } from "../pitches/root-pitch.ts";
@@ -162,7 +167,7 @@ export type SyncStore = {
     meetingStart: string | null;
     meetingTimeZone: string | null;
   }): Promise<{ id: string } | null>;
-  /** Only flips a calendar opportunity still at meeting_booked. */
+  /** Only flips a calendar opportunity still at meeting_booked; sets cancelled_at (D1). */
   markCancelled(opportunityId: string): Promise<boolean>;
   /** The prospect's ROOT sent pitch (lib/pitches/root-pitch.ts). */
   rootSentPitchId(prospectId: string): Promise<string | null>;
@@ -179,8 +184,8 @@ export type SyncStore = {
    * unset booked marker, D3). True when this caller won the row.
    */
   claimAlert(row: AlertRow, kind: AlertKind, nowIso: string): Promise<boolean>;
-  /** Clears the kind's marker so the next run retries. */
-  releaseAlert(opportunityId: string, kind: AlertKind): Promise<void>;
+  /** Clears the kind's marker so the next run retries, only while it still holds this claim's `claimedIso`. */
+  releaseAlert(opportunityId: string, kind: AlertKind, claimedIso: string): Promise<void>;
 };
 
 export type ProspectSummary = { company: string | null; market: string | null };
@@ -199,16 +204,23 @@ export type AlertRow = {
   meetingTimeZone: string | null;
   bookedAlertSentAt: string | null;
   cancelledAlertSentAt: string | null;
+  /** When the sync applied the cancellation (0047); null on rows cancelled any other way. */
+  cancelledAt: string | null;
   createdAt: string;
-  updatedAt: string;
 };
 
 /** Rows older than this are never alerted (same window as reply alerts). */
 export const BOOKING_ALERT_WINDOW_HOURS = 48;
 /** vercel.json maxDuration for app/api/opportunities/calendar-sync/route.ts. */
 export const CALENDAR_SYNC_MAX_DURATION_MS = 120_000;
-/** Nothing is claimed with less than this left before maxDuration (one alert ~50s). */
-export const BOOKING_ALERT_RESERVE_MS = 60_000;
+/**
+ * Worst case for one lead alert (lib/notify/send.ts): 10s token exchange +
+ * one 15s-capped Gmail send per recipient + 5s slack. Nothing is claimed with
+ * less than this left before maxDuration. 60s for the default 3 recipients.
+ */
+export function bookingAlertReserveMs(recipients: number = notifyRecipients("lead").length): number {
+  return 10_000 + 15_000 * recipients + 5_000;
+}
 /**
  * The start sweep also leaves this much for the sync itself (event list 10s
  * timeout + the batch's writes), so leftovers can't push the meeting_booked
@@ -226,7 +238,8 @@ export function alertDue(row: AlertRow, nowMs: number): AlertKind | null {
   if (row.source !== "calendar") return null;
   const since = nowMs - BOOKING_ALERT_WINDOW_HOURS * 3_600_000;
   if (isCancelledBooking(row)) {
-    return row.cancelledAlertSentAt === null && Date.parse(row.updatedAt) >= since ? "cancelled" : null;
+    const at = row.cancelledAt === null ? Number.NaN : Date.parse(row.cancelledAt);
+    return row.cancelledAlertSentAt === null && at >= since ? "cancelled" : null;
   }
   return row.bookedAlertSentAt === null && Date.parse(row.createdAt) >= since ? "booked" : null;
 }
@@ -242,20 +255,20 @@ type AlertRowDb = {
   meeting_time_zone: string | null;
   booked_alert_sent_at: string | null;
   cancelled_alert_sent_at: string | null;
+  cancelled_at: string | null;
   created_at: string;
-  updated_at: string;
 };
 
 const ALERT_ROW_COLUMNS =
   "id, source, prospect_id, contact_id, stage, loss_reason, meeting_start, meeting_time_zone, " +
-  "booked_alert_sent_at, cancelled_alert_sent_at, created_at, updated_at";
+  "booked_alert_sent_at, cancelled_alert_sent_at, cancelled_at, created_at";
 
 function alertRowFromDb(r: AlertRowDb): AlertRow {
   return {
     id: r.id, source: r.source, prospectId: r.prospect_id, contactId: r.contact_id, stage: r.stage,
     lossReason: r.loss_reason, meetingStart: r.meeting_start, meetingTimeZone: r.meeting_time_zone,
     bookedAlertSentAt: r.booked_alert_sent_at, cancelledAlertSentAt: r.cancelled_alert_sent_at,
-    createdAt: r.created_at, updatedAt: r.updated_at,
+    cancelledAt: r.cancelled_at, createdAt: r.created_at,
   };
 }
 
@@ -322,7 +335,7 @@ export function supabaseSyncStore(supabase: AnySupabase, tenantId: string): Sync
     async markCancelled(opportunityId) {
       const { data, error } = await supabase
         .from("opportunities")
-        .update({ stage: "lost", loss_reason: CANCELLED_LOSS_REASON, updated_at: new Date().toISOString() })
+        .update({ stage: "lost", loss_reason: CANCELLED_LOSS_REASON, cancelled_at: new Date().toISOString() })
         .eq("id", opportunityId)
         .eq("tenant_id", tenantId)
         .eq("source", "calendar")
@@ -378,8 +391,8 @@ export function supabaseSyncStore(supabase: AnySupabase, tenantId: string): Sync
           .eq("stage", "lost")
           .eq("loss_reason", CANCELLED_LOSS_REASON)
           .is("cancelled_alert_sent_at", null)
-          .gte("updated_at", sinceIso)
-          .order("updated_at", { ascending: true })
+          .gte("cancelled_at", sinceIso)
+          .order("cancelled_at", { ascending: true })
           .limit(ALERT_BATCH),
       ]);
       const error = booked.error ?? cancelled.error;
@@ -414,14 +427,16 @@ export function supabaseSyncStore(supabase: AnySupabase, tenantId: string): Sync
       if (error) throw new Error(`booking alert claim failed: ${error.message}`);
       return Array.isArray(data) && data.length > 0;
     },
-    async releaseAlert(opportunityId, kind) {
-      // A released cancellation keeps the booked marker it set (D3).
+    async releaseAlert(opportunityId, kind, claimedIso) {
+      // A released cancellation keeps the booked marker it set (D3). The
+      // timestamp guard keeps a late or repeated release off another run's claim.
       const column = kind === "booked" ? "booked_alert_sent_at" : "cancelled_alert_sent_at";
       const { error } = await supabase
         .from("opportunities")
         .update({ [column]: null })
         .eq("id", opportunityId)
-        .eq("tenant_id", tenantId);
+        .eq("tenant_id", tenantId)
+        .eq(column, claimedIso);
       if (error) throw new Error(`booking alert release failed: ${error.message}`);
     },
   };
@@ -598,8 +613,9 @@ export async function sendDueBookingAlerts(
     // Never claim what this run may not have time to send.
     if (clock() > opts.deadline) break;
     let claimed = false;
+    const claimedIso = new Date(clock()).toISOString();
     try {
-      claimed = await store.claimAlert(row, kind, new Date(clock()).toISOString());
+      claimed = await store.claimAlert(row, kind, claimedIso);
       if (!claimed) continue;
       const s = summaries.get(row.prospectId);
       const alert = formatBookingAlert({
@@ -613,10 +629,10 @@ export async function sendDueBookingAlerts(
       const res = await notify({ kind: "lead", fromName: "S.P.A.M Bookings", ...alert });
       alerts.sent += res.sent;
       alerts.failed.push(...res.failed);
-      if (res.sent === 0) await store.releaseAlert(row.id, kind);
+      if (res.sent === 0) await store.releaseAlert(row.id, kind, claimedIso);
     } catch (err) {
       alerts.failed.push(`opportunity ${row.id}: ${(err as Error).message}`);
-      if (claimed) await store.releaseAlert(row.id, kind).catch(() => {});
+      if (claimed) await store.releaseAlert(row.id, kind, claimedIso).catch(() => {});
     }
   }
   return { alerts, summaries };
@@ -698,7 +714,7 @@ export async function syncCalendarWith(actor: Actor, deps: SyncDeps): Promise<Ca
 
   const store = deps.store ?? supabaseSyncStore(supabase, tenantId);
   const clock = deps.clock ?? Date.now;
-  const deadline = (deps.startedAt ?? clock()) + CALENDAR_SYNC_MAX_DURATION_MS - BOOKING_ALERT_RESERVE_MS;
+  const deadline = (deps.startedAt ?? clock()) + CALENDAR_SYNC_MAX_DURATION_MS - bookingAlertReserveMs();
   const summaries = new Map<string, ProspectSummary>();
   const notify = deps.notify;
   const fromEmail = inbox.email;

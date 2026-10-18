@@ -5,11 +5,14 @@
  */
 
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import test from "node:test";
 import type { Actor } from "../lib/actor.ts";
 import {
   CANCELLED_LOSS_REASON,
+  CALENDAR_SYNC_MAX_DURATION_MS,
   alertDue,
+  bookingAlertReserveMs,
   sendDueBookingAlerts,
   supabaseSyncStore,
   syncCalendarWith,
@@ -21,6 +24,7 @@ import {
 } from "../lib/opportunities/calendar-sync.ts";
 import type { CalendarEvent } from "../lib/opportunities/google-calendar.ts";
 import type { NotificationMessage, NotificationResult } from "../lib/notify/send.ts";
+import { notifyRecipients } from "../lib/notify/recipients.ts";
 
 const INBOX = "henry@runna.ca";
 const T0 = Date.parse("2026-10-18T12:05:00Z");
@@ -41,7 +45,8 @@ function booking(id: string, over: Partial<CalendarEvent> = {}): CalendarEvent {
   };
 }
 
-type Row = AlertRow & { eventId: string | null };
+/** updatedAt mimics the 0001 trigger; nothing may key a window on it. */
+type Row = AlertRow & { eventId: string | null; updatedAt?: string };
 
 /** opportunities as Postgres keeps them: created_at on insert, updated_at bumped on every update (0001 trigger). */
 function memoryDb(now: () => number) {
@@ -66,7 +71,7 @@ function memoryDb(now: () => number) {
       rows.push({
         id, eventId, source: "calendar", prospectId: match.prospectId, contactId: match.contactId,
         stage: "meeting_booked", lossReason: null, meetingStart, meetingTimeZone,
-        bookedAlertSentAt: null, cancelledAlertSentAt: null, createdAt: iso(), updatedAt: iso(),
+        bookedAlertSentAt: null, cancelledAlertSentAt: null, cancelledAt: null, createdAt: iso(), updatedAt: iso(),
       });
       return { id };
     },
@@ -75,6 +80,7 @@ function memoryDb(now: () => number) {
       if (!r) return false;
       r.stage = "lost";
       r.lossReason = CANCELLED_LOSS_REASON;
+      r.cancelledAt = iso();
       touch(r);
       return true;
     },
@@ -91,9 +97,11 @@ function memoryDb(now: () => number) {
     },
     async dueAlerts() {
       dueReads++;
-      // Yield like a real query, so overlapping runs interleave here.
+      // The query's snapshot is taken first, then it yields like a real round
+      // trip: overlapping runs both read the row as due and race to the claim.
+      const snap = rows.map((r) => ({ ...r }));
       await new Promise((r) => setTimeout(r, 1));
-      return rows.map((r) => ({ ...r }));
+      return snap;
     },
     async claimAlert(row, kind, nowIso) {
       // Check-and-set with no await in between: one UPDATE … WHERE marker IS NULL.
@@ -110,11 +118,11 @@ function memoryDb(now: () => number) {
       touch(r);
       return true;
     },
-    async releaseAlert(id, kind) {
+    async releaseAlert(id, kind, claimedIso) {
       const r = rows.find((x) => x.id === id);
       if (!r) return;
-      if (kind === "booked") r.bookedAlertSentAt = null;
-      else r.cancelledAlertSentAt = null;
+      if (kind === "booked" && r.bookedAlertSentAt === claimedIso) r.bookedAlertSentAt = null;
+      if (kind === "cancelled" && r.cancelledAlertSentAt === claimedIso) r.cancelledAlertSentAt = null;
       touch(r);
     },
   };
@@ -188,22 +196,25 @@ function row(over: Partial<AlertRow> = {}): AlertRow {
   return {
     id: "o1", source: "calendar", prospectId: "p-ana", contactId: "c-ana", stage: "meeting_booked", lossReason: null,
     meetingStart: null, meetingTimeZone: null, bookedAlertSentAt: null, cancelledAlertSentAt: null,
-    createdAt: new Date(T0 - HOUR).toISOString(), updatedAt: new Date(T0 - HOUR).toISOString(), ...over,
+    cancelledAt: null, createdAt: new Date(T0 - HOUR).toISOString(), ...over,
   };
 }
 
-test("D1 alertDue: booked while unmarked + created in 48h; cancelled while unmarked + updated in 48h; manual never", () => {
+test("D1 alertDue: booked while unmarked + created in 48h; cancelled while unmarked + sync-cancelled (cancelled_at) in 48h; manual never", () => {
   assert.equal(alertDue(row(), T0), "booked");
   assert.equal(alertDue(row({ bookedAlertSentAt: "x" }), T0), null);
   assert.equal(alertDue(row({ createdAt: new Date(T0 - 49 * HOUR).toISOString() }), T0), null);
-  const cancelled = row({ stage: "lost", lossReason: CANCELLED_LOSS_REASON, bookedAlertSentAt: "x" });
+  const cancelled = row({ stage: "lost", lossReason: CANCELLED_LOSS_REASON, bookedAlertSentAt: "x", cancelledAt: new Date(T0 - HOUR).toISOString() });
   assert.equal(alertDue(cancelled, T0), "cancelled");
   assert.equal(alertDue({ ...cancelled, cancelledAlertSentAt: "y" }, T0), null);
-  assert.equal(alertDue({ ...cancelled, updatedAt: new Date(T0 - 49 * HOUR).toISOString() }, T0), null);
+  assert.equal(alertDue({ ...cancelled, cancelledAt: new Date(T0 - 49 * HOUR).toISOString() }, T0), null);
+  // Not cancelled by the sync (a person's "booking cancelled", or pre-0047 code): never, and no booking alert either.
+  assert.equal(alertDue({ ...cancelled, cancelledAt: null }, T0), null);
+  assert.equal(alertDue({ ...cancelled, cancelledAt: null, bookedAlertSentAt: null }, T0), null);
   // Lost for another reason is not a cancellation; the booking alert still stands on its own marker.
   assert.equal(alertDue(row({ stage: "lost", lossReason: "price", bookedAlertSentAt: "x" }), T0), null);
   assert.equal(alertDue(row({ source: "manual" }), T0), null);
-  assert.equal(alertDue(row({ source: "manual", stage: "lost", lossReason: CANCELLED_LOSS_REASON }), T0), null);
+  assert.equal(alertDue(row({ source: "manual", stage: "lost", lossReason: CANCELLED_LOSS_REASON, cancelledAt: new Date(T0).toISOString() }), T0), null);
 });
 
 test("D1: rows marked alerted by 0047 and manual rows never alert", async () => {
@@ -348,7 +359,7 @@ test("(d') the claim decides: two concurrent sweeps of one row send once", async
 
 test("(e) booked then cancelled before any alert → one cancellation alert, both markers set", async () => {
   const w = world();
-  w.db.rows.push({ ...row({ stage: "lost", lossReason: CANCELLED_LOSS_REASON, meetingStart: "2026-10-20T15:00:00-06:00",
+  w.db.rows.push({ ...row({ stage: "lost", lossReason: CANCELLED_LOSS_REASON, cancelledAt: new Date(T0 - HOUR).toISOString(), meetingStart: "2026-10-20T15:00:00-06:00",
     meetingTimeZone: "America/Mexico_City" }), eventId: "e1" });
   const msgs: NotificationMessage[] = [];
   await sendDueBookingAlerts(w.db.store, async (m) => (msgs.push(m), { sent: 3, failed: [] }), { deadline: T0 + 60_000, clock: w.clock });
@@ -383,7 +394,7 @@ test("(e) through the sync: Gmail down for the booking, cancellation seen later 
 
 test("a released cancellation keeps the booked marker: the retry is the cancellation, never the booking", async () => {
   const w = world();
-  w.db.rows.push({ ...row({ stage: "lost", lossReason: CANCELLED_LOSS_REASON }), eventId: "e1" });
+  w.db.rows.push({ ...row({ stage: "lost", lossReason: CANCELLED_LOSS_REASON, cancelledAt: new Date(T0 - HOUR).toISOString() }), eventId: "e1" });
   const opts = { deadline: T0 + 60_000, clock: w.clock };
   await sendDueBookingAlerts(w.db.store, async () => DOWN, opts);
   assert.ok(w.db.rows[0]?.bookedAlertSentAt);
@@ -408,9 +419,11 @@ test("a booking alerted, then cancelled → one booking alert and one cancellati
 test("(f) a row older than 48h with a null marker → not sent", async () => {
   const w = world();
   w.db.rows.push(
-    { ...row({ id: "old", createdAt: new Date(T0 - 49 * HOUR).toISOString(), updatedAt: new Date(T0 - 49 * HOUR).toISOString() }), eventId: "e-old" },
+    { ...row({ id: "old", createdAt: new Date(T0 - 49 * HOUR).toISOString() }), eventId: "e-old" },
+    // updated_at is recent (a claim/release bumped it), cancelled_at is not: still closed.
     { ...row({ id: "oldc", stage: "lost", lossReason: CANCELLED_LOSS_REASON, bookedAlertSentAt: "x",
-      createdAt: new Date(T0 - 60 * HOUR).toISOString(), updatedAt: new Date(T0 - 49 * HOUR).toISOString() }), eventId: "e-oldc" },
+      createdAt: new Date(T0 - 60 * HOUR).toISOString(), cancelledAt: new Date(T0 - 49 * HOUR).toISOString() }),
+      eventId: "e-oldc", updatedAt: new Date(T0 - HOUR).toISOString() },
   );
   await w.run();
   assert.equal(w.sent.length, 0);
@@ -538,18 +551,20 @@ test("store.claimAlert(cancelled): still cancelled, marker null, also sets an un
 test("store.claimAlert / releaseAlert throw on a DB error; release clears only its own marker", async () => {
   const bad = recordingClient(() => ({ data: null, error: { message: "timeout" } }));
   await assert.rejects(supabaseSyncStore(bad.client, "t1").claimAlert(row(), "booked", "x"), /booking alert claim failed: timeout/);
-  await assert.rejects(supabaseSyncStore(bad.client, "t1").releaseAlert("o1", "booked"), /booking alert release failed/);
+  await assert.rejects(supabaseSyncStore(bad.client, "t1").releaseAlert("o1", "booked", "x"), /booking alert release failed/);
   const ok = recordingClient(() => ({ data: null, error: null }));
-  await supabaseSyncStore(ok.client, "t1").releaseAlert("o1", "cancelled");
+  await supabaseSyncStore(ok.client, "t1").releaseAlert("o1", "cancelled", "2026-10-18T12:05:00.000Z");
   assert.ok(has(ok.calls[0]!, "update", { cancelled_alert_sent_at: null }));
   assert.ok(has(ok.calls[0]!, "eq", "tenant_id", "t1"));
+  // Only this claim's own marker: a newer claim by another run is left alone.
+  assert.ok(has(ok.calls[0]!, "eq", "cancelled_alert_sent_at", "2026-10-18T12:05:00.000Z"));
 });
 
-test("store.dueAlerts: two calendar-scoped queries (booked by created_at, cancelled by updated_at), merged by id", async () => {
+test("store.dueAlerts: two calendar-scoped queries (booked by created_at, cancelled by cancelled_at), merged by id", async () => {
   const dbRow = {
     id: "o1", source: "calendar", prospect_id: "p", contact_id: "c", stage: "lost", loss_reason: CANCELLED_LOSS_REASON,
     meeting_start: "2026-10-20", meeting_time_zone: null, booked_alert_sent_at: null, cancelled_alert_sent_at: null,
-    created_at: "a", updated_at: "b",
+    cancelled_at: "b", created_at: "a",
   };
   const fake = recordingClient(() => ({ data: [dbRow], error: null }));
   const rows = await supabaseSyncStore(fake.client, "t1").dueAlerts("since");
@@ -565,7 +580,9 @@ test("store.dueAlerts: two calendar-scoped queries (booked by created_at, cancel
   assert.ok(has(booked!, "gte", "created_at", "since"));
   assert.ok(has(cancelled!, "is", "cancelled_alert_sent_at", null));
   assert.ok(has(cancelled!, "eq", "loss_reason", CANCELLED_LOSS_REASON));
-  assert.ok(has(cancelled!, "gte", "updated_at", "since"));
+  assert.ok(has(cancelled!, "gte", "cancelled_at", "since"));
+  assert.ok(!cancelled!.ops.some(([, a]) => (a as unknown[])[0] === "updated_at"), "never keyed on updated_at");
+  assert.equal(rows[0]?.cancelledAt, "b");
 });
 
 test("store.createOpportunity stores meeting_start and meeting_time_zone", async () => {
@@ -577,4 +594,63 @@ test("store.createOpportunity stores meeting_start and meeting_time_zone", async
   assert.equal(insert.meeting_start, "2026-10-20T15:00:00-06:00");
   assert.equal(insert.meeting_time_zone, "America/Mexico_City");
   assert.equal(insert.source, "calendar");
+});
+
+// ── Review round 1: cancelled_at, release guard, reserve, maxDuration ───────
+
+test("a person closing a calendar row as Lost with free-text \"booking cancelled\" never emails the lead list", async () => {
+  const w = world();
+  // closeOpportunity (lib/opportunities/actions.ts) writes stage + loss_reason, not cancelled_at.
+  w.db.rows.push({ ...row({ stage: "lost", lossReason: CANCELLED_LOSS_REASON, bookedAlertSentAt: new Date(T0 - HOUR).toISOString() }),
+    eventId: "e1", updatedAt: new Date(T0).toISOString() });
+  await w.run();
+  assert.equal(w.sent.length, 0);
+});
+
+test("a cancellation applied by the old code (cancelled_at null, alert markers null) is never alerted by the new code", async () => {
+  const w = world();
+  w.db.rows.push({ ...row({ stage: "lost", lossReason: CANCELLED_LOSS_REASON }), eventId: "e1", updatedAt: new Date(T0).toISOString() });
+  await w.run();
+  assert.equal(w.sent.length, 0);
+  assert.equal(w.db.rows[0]?.cancelledAlertSentAt, null);
+});
+
+test("markCancelled sets cancelled_at (the cancellation window), the store writes it", async () => {
+  const fake = recordingClient(() => ({ data: [{ id: "o1" }], error: null }));
+  assert.equal(await supabaseSyncStore(fake.client, "t1").markCancelled("o1"), true);
+  const update = fake.calls[0]!.ops.find(([o]) => o === "update")?.[1][0] as Record<string, unknown>;
+  assert.equal(update.stage, "lost");
+  assert.equal(update.loss_reason, CANCELLED_LOSS_REASON);
+  assert.ok(typeof update.cancelled_at === "string" && !Number.isNaN(Date.parse(update.cancelled_at)));
+  assert.equal("updated_at" in update, false);
+});
+
+test("a release only clears this claim's own timestamp: a repeated late release can't wipe a newer claim", async () => {
+  const w = world();
+  w.db.rows.push({ ...row(), eventId: "e1" });
+  const r = w.db.rows[0]!;
+  assert.equal(await w.db.store.claimAlert(r, "booked", "claim-A"), true);
+  await w.db.store.releaseAlert(r.id, "booked", "claim-A");
+  assert.equal(await w.db.store.claimAlert(r, "booked", "claim-B"), true);
+  await w.db.store.releaseAlert(r.id, "booked", "claim-A"); // A's duplicate release
+  assert.equal(r.bookedAlertSentAt, "claim-B");
+});
+
+test("bookingAlertReserveMs: 10s token + 15s per lead recipient + 5s; 60s for the default three", () => {
+  assert.equal(bookingAlertReserveMs(3), 60_000);
+  assert.equal(bookingAlertReserveMs(4), 75_000);
+  assert.equal(bookingAlertReserveMs(), 10_000 + 15_000 * notifyRecipients("lead").length + 5_000);
+});
+
+test("CALENDAR_SYNC_MAX_DURATION_MS matches vercel.json's maxDuration for the calendar-sync route", () => {
+  const cfg = JSON.parse(readFileSync(new URL("../vercel.json", import.meta.url), "utf8")) as {
+    functions: Record<string, { maxDuration?: number }>;
+  };
+  // Vercel uses the FIRST matching pattern.
+  const route = "app/api/opportunities/calendar-sync/route.ts";
+  const first = Object.entries(cfg.functions).find(([pattern]) => pattern === route || new RegExp(
+    "^" + pattern.replace(/[.+^${}()|[\]\\]/g, "\\$&").replace(/\*\*/g, "§").replace(/\*/g, "[^/]*").replace(/§/g, ".*") + "$",
+  ).test(route));
+  assert.equal(first?.[0], route);
+  assert.equal((first?.[1].maxDuration ?? 0) * 1000, CALENDAR_SYNC_MAX_DURATION_MS);
 });
