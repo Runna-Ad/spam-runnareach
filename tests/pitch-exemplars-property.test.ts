@@ -53,6 +53,8 @@ function found(text: string, forbidden: readonly Forbidden[]): string[] {
   const runs = runsOf(text);
   const chunks = unblank(text).split(/\s+/).map(lettersOnly);
   const whole = lettersOnly(unblank(text));
+  // A hashtag or handle hides a short word inside a longer one: "#YYCbiz".
+  const tags = unblank(text).split(/\s+/).filter((c) => /^[#@]/.test(c)).map(lettersOnly);
   const hits: string[] = [];
   for (const { word, how } of forbidden) {
     const words = word.split(/\s+/);
@@ -68,7 +70,7 @@ function found(text: string, forbidden: readonly Forbidden[]): string[] {
       if (runs.some((r) => tfold(r) === w && /^\p{Lu}/u.test(r))) hits.push(word);
     } else if (w.length >= 5) {
       if (chunks.some((c) => c.includes(w))) hits.push(word);
-    } else if (runs.some((r) => tfold(r) === w)) hits.push(word);
+    } else if (runs.some((r) => tfold(r) === w) || tags.some((c) => c.includes(w))) hits.push(word);
   }
   return hits;
 }
@@ -76,16 +78,18 @@ function found(text: string, forbidden: readonly Forbidden[]): string[] {
 // ── The generator ─────────────────────────────────────────────────────────────
 
 const CITIES: Array<{ city: string; aliases: string[] }> = [
-  { city: "Ciudad de México", aliases: ["CDMX", "C.D.M.X.", "DF", "D.F.", "Cd. de México"] },
-  { city: "Guadalajara", aliases: ["GDL"] },
+  { city: "Ciudad de México", aliases: ["CDMX", "C.D.M.X.", "DF", "D.F.", "Cd. de México", "chilangos"] },
+  { city: "México, D.F.", aliases: ["CDMX", "DF", "Ciudad de México"] },
+  { city: "D.F.", aliases: ["CDMX", "C.D.M.X."] },
+  { city: "Guadalajara", aliases: ["GDL", "tapatíos"] },
   { city: "Zapopan", aliases: ["GDL", "Guadalajara"] },
   { city: "Monterrey", aliases: ["MTY"] },
   { city: "Querétaro", aliases: ["QRO", "Qro.", "Q.R.O."] },
   { city: "Santiago de Querétaro", aliases: ["QRO", "Qro."] },
-  { city: "Toronto", aliases: ["TO", "T.O.", "T.O", "GTA", "YYZ"] },
+  { city: "Toronto", aliases: ["TO", "T.O.", "T.O", "GTA", "YYZ", "Torontonians"] },
   { city: "North York", aliases: ["Toronto", "GTA"] },
   { city: "Vancouver", aliases: ["YVR"] },
-  { city: "Calgary", aliases: ["YYC"] },
+  { city: "Calgary", aliases: ["YYC", "Calgarians"] },
   { city: "Edmonton", aliases: ["YEG"] },
   { city: "Ottawa", aliases: ["YOW"] },
   { city: "Montréal", aliases: ["MTL", "YUL"] },
@@ -101,7 +105,7 @@ const SURNAMES = ["Ng", "Wu", "Li", "Xu", "Lu", "Yi", "Le", "Du"];
 const PARTICLE_SURNAMES = new Set(["Le", "Du"]);
 /** Someone the contact row does not name, seen only after an honorific. */
 const STRANGERS = ["Patel", "Núñez", "Okafor", "Tremblay", "Gómez Ruiz", "Pérez"];
-const HONORIFIC_FORMS = ["dr. ", "dr ", "Dr. J. ", "dr. j ", "lcda. ", "c.p. ", "Sra. de la ", "sra. de la ", "Lic. ", "DRA. "];
+const HONORIFIC_FORMS = ["dr. ", "dr ", "Dr. J. ", "dr. j ", "lcda. ", "c.p. ", "Sra. de la ", "sra. de la ", "Lic. ", "DRA. ", "Dr.\n", "Drs. Okafor and ", "Sres. Kowalski y "];
 
 type Case = {
   prospect: { company_name: string; domain: string; recipient_name: string; city: string };
@@ -144,12 +148,26 @@ function genCase(rnd: () => number): Case {
   for (const w of given.split(" ")) forbidden.push({ word: w, how: "any" });
   forbidden.push({ word: surname, how: PARTICLE_SURNAMES.has(surname) ? "capital" : "any" });
   for (const w of stranger.split(" ")) forbidden.push({ word: w, how: "any" });
+  if (honorific.includes("Okafor")) forbidden.push({ word: "Okafor", how: "any" });
+  if (honorific.includes("Kowalski")) forbidden.push({ word: "Kowalski", how: "any" });
+  // City words ≥ 5 letters inside hashtags and handles: "#TorontoDental".
+  const cityTag = city.split(/[\s,.]+/).find((w) => w.length >= 5 && !ALLOW.has(tfold(w)));
 
   const stemInserts = own.includes(stem) ? [`@${label}`, `${stem}s`, `facebook.com/${stem}LawTO`] : [];
+  const aliasTag = aliases.find((a) => /^[A-Z]{3,4}$/.test(a));
+  const tagInserts = [
+    ...(cityTag ? [`#${cityTag}Dental`] : []),
+    ...(aliasTag ? [`#${aliasTag}biz`] : []),
+    // Surname plurals and handles: "the Ngs", "@nglaw".
+    `the ${surname}s`,
+    `@${tfold(surname)}law`,
+    // A name broken over a line.
+    `${given}\n${surname}`,
+  ];
   return {
     prospect: { company_name: company, domain, recipient_name: `${given} ${surname}`, city },
     forbidden,
-    inserts: [company, words.join(" "), ...own, domain, label, ...stemInserts, city, ...aliases, given, surname, `${given} ${surname}`, `Ms. ${surname}`, `${honorific}${stranger}`],
+    inserts: [company, words.join(" "), ...own, domain, label, ...stemInserts, ...tagInserts, city, ...aliases, given, surname, `${given} ${surname}`, `Ms. ${surname}`, `${honorific}${stranger}`],
   };
 }
 
@@ -162,8 +180,9 @@ function adversarial(c: Case, rnd: () => number): { subject: string; body: strin
   const lines: string[] = [];
   for (const s of all) (rnd() < 0.3 ? subjectBits : lines).push(s);
   const subject = `quick question: ${subjectBits.join(" and ") || "after hours"}`;
+  const greeting = rnd() < 0.5 ? `Hi ${c.prospect.recipient_name.split(" ")[0]},` : `\nHola ${c.prospect.recipient_name.split(" ")[0]} ${STRANGERS[0]},`;
   const body = [
-    `Hi ${c.prospect.recipient_name.split(" ")[0]},`,
+    greeting,
     "",
     ...lines.map((s, i) => (i % 3 === 0 ? `The team at ${s} and the desk answer calls.` : i % 3 === 1 ? `Clinics like ${s}'s lose evening calls.` : `(${s}) has a form.`)),
     "",

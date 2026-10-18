@@ -21,9 +21,12 @@
 
 import { ATTRIBUTION_WINDOW_DAYS, addressOutcome, scoreOutcome, type OutcomeEvent } from "../learning/reward.ts";
 import { segmentOf, type Segment } from "../learning/segments.ts";
+import { EN_WORDS } from "./wordlists/en.ts";
+import { ES_WORDS } from "./wordlists/es.ts";
+import { COMMON_NAMES, OWN_VOCABULARY } from "./wordlists/vocab.ts";
 
 /** Recorded in the decision record when exemplars were shown. */
-export const EXEMPLAR_PROMPT_VERSION = "exemplar-v2-2026-10-18";
+export const EXEMPLAR_PROMPT_VERSION = "exemplar-v3-2026-10-18";
 export const MAX_EXEMPLARS = 2;
 export const MIN_EXEMPLAR_SCORE = 0.5;
 /**
@@ -224,10 +227,58 @@ function containingPattern(piece: string): RegExp {
   return new RegExp(`(?<![\\p{L}\\p{N}])[\\p{L}\\p{N}]*${piece}[\\p{L}\\p{N}]*(?![\\p{L}\\p{N}])`, "gu");
 }
 
+/** A word and its plural: "nguyen" matches "Nguyens", "smith" "Smiths". */
+function pluralPattern(piece: string): RegExp {
+  return new RegExp(`(?<![\\p{L}\\p{N}])${piece}(?:e?s)?(?![\\p{L}\\p{N}])`, "gu");
+}
+
 /** Letters as written, or with a dot after each: "cdmx" matches "CDMX", "C.D.M.X." and "c.d.m.x". */
 function lettersPattern(letters: string): RegExp {
   return new RegExp(`(?<![\\p{L}\\p{N}])(?:${[...letters].join("\\.")}\\.?|${letters})(?![\\p{L}\\p{N}])`, "gu");
 }
+
+/**
+ * The allow-list: the 20,000 most frequent EN and ES words plus our own
+ * vocabulary, minus common names. Loaded once.
+ */
+const NAMES = new Set(COMMON_NAMES);
+const KNOWN_WORDS = new Set([...EN_WORDS.split("\n"), ...ES_WORDS.split("\n"), ...OWN_VOCABULARY].filter((w) => w && !NAMES.has(w)));
+/** The 3,000 most frequent of each: words common enough to follow a name ("Dr. [name] told us"). */
+const TOP_WORDS = new Set([...EN_WORDS.split("\n").slice(1, 3001), ...ES_WORDS.split("\n").slice(1, 3001)]);
+/**
+ * Endings and prefixes stripped to find a listed base form, up to two steps:
+ * clinics → clinic, agendan → agendar, medibles → medir, quedándote → quedar,
+ * inconsistente → consistente. Generous on purpose: a name that slips through
+ * here is still caught by the field check above it.
+ */
+const ENDINGS: ReadonlyArray<readonly [string, readonly string[]]> = [
+  ["s", [""]], ["es", [""]], ["ed", ["", "e"]], ["d", [""]], ["ing", ["", "e"]], ["ly", [""]], ["ies", ["y"]],
+  ["ied", ["y"]], ["er", ["", "e"]], ["ers", ["", "e"]], ["mente", [""]], ["ciones", ["cion"]],
+  ["a", ["o", "ar"]], ["as", ["os", "ar"]], ["e", ["ar", "er", "o"]], ["o", ["ar"]],
+  ["an", ["ar", "er"]], ["en", ["er", "ir"]], ["amos", ["ar"]], ["emos", ["er"]], ["imos", ["ir"]],
+  ["ando", ["ar"]], ["iendo", ["er", "ir"]], ["ado", ["ar"]], ["ada", ["ar"]], ["ados", ["ar"]], ["adas", ["ar"]],
+  ["ido", ["er", "ir"]], ["ida", ["er", "ir"]], ["idos", ["er", "ir"]], ["idas", ["er", "ir"]],
+  ["able", ["ar"]], ["ables", ["ar"]], ["ible", ["er", "ir"]], ["ibles", ["er", "ir"]],
+  ["le", [""]], ["les", [""]], ["lo", [""]], ["la", [""]], ["los", [""]], ["las", [""]], ["nos", [""]], ["me", [""]],
+  ["te", [""]], ["se", [""]],
+];
+const PREFIXES = ["in", "im", "un", "re", "des", "dis", "pre"];
+
+function bases(w: string): string[] {
+  const out: string[] = [];
+  for (const [end, adds] of ENDINGS) {
+    if (w.endsWith(end) && w.length > end.length + 2) for (const a of adds) out.push(w.slice(0, -end.length) + a);
+  }
+  for (const pre of PREFIXES) if (w.startsWith(pre) && w.length > pre.length + 3) out.push(w.slice(pre.length));
+  return out;
+}
+
+function inWords(words: ReadonlySet<string>, w: string): boolean {
+  if (w.length <= 1 || words.has(w) || HONORIFICS.has(w)) return true;
+  if (NAMES.has(w)) return false;
+  return bases(w).some((b) => words.has(b) || bases(b).some((c) => words.has(c)));
+}
+const isKnownWord = (w: string) => inWords(KNOWN_WORDS, w);
 
 /** The blanks themselves: never matched, so a surname "Hunter" or a company word "url" cannot break them. */
 const PLACEHOLDER_RE = /\[(?:name|company|site|city|n)\]|\{hunter_url\}/g;
@@ -426,23 +477,41 @@ function namePieces(s: string | null | undefined): string[] {
  * ("Santiago de Querétaro" → QRO). "TO" counts only in capitals.
  */
 const CITY_ALIAS_GROUPS: ReadonlyArray<readonly string[]> = [
-  ["Ciudad de México", "Mexico City", "Cd. de México", "CDMX", "D.F."],
-  ["Guadalajara", "GDL", "Zapopan"],
-  ["Monterrey", "MTY", "San Pedro Garza García"],
-  ["Querétaro", "QRO"],
-  ["Toronto", "TO", "GTA", "YYZ", "North York"],
-  ["Vancouver", "YVR"],
-  ["Calgary", "YYC"],
-  ["Edmonton", "YEG"],
-  ["Ottawa", "YOW"],
-  ["Montréal", "MTL", "YUL"],
+  ["Ciudad de México", "Mexico City", "Cd. de México", "CDMX", "D.F.", "chilango", "chilangos", "chilanga", "chilangas",
+    "defeño", "defeños", "capitalino", "capitalinos"],
+  ["Guadalajara", "GDL", "Zapopan", "tapatío", "tapatíos", "tapatía", "tapatías"],
+  ["Monterrey", "MTY", "San Pedro Garza García", "regiomontano", "regiomontanos", "regiomontana", "regiomontanas", "regio", "regios"],
+  ["Querétaro", "QRO", "queretano", "queretanos", "queretana", "queretanas"],
+  ["Toronto", "TO", "GTA", "YYZ", "North York", "Torontonian", "Torontonians"],
+  ["Vancouver", "YVR", "Vancouverite", "Vancouverites"],
+  ["Calgary", "YYC", "Calgarian", "Calgarians"],
+  ["Edmonton", "YEG", "Edmontonian", "Edmontonians"],
+  ["Ottawa", "YOW", "Ottawan", "Ottawans"],
+  ["Montréal", "MTL", "YUL", "Montrealer", "Montrealers", "Montréalais", "Montréalaise"],
 ];
 const UPPER_ONLY_ALIASES = new Set(["to"]);
+
+/** Runs of single letters as one word: ["mexico", "d", "f"] → ["mexico", "df"] (a "México, D.F." city field). */
+function collapseInitials(ps: readonly string[]): string[] {
+  const out: string[] = [];
+  let run = "";
+  for (const p of ps) {
+    if (p.length === 1) {
+      run += p;
+      continue;
+    }
+    if (run) out.push(run);
+    run = "";
+    out.push(p);
+  }
+  if (run) out.push(run);
+  return out;
+}
 
 /** The scrubber's view of a city's group: members as folded keys ("D.F." → "df", "Cd. de México" → "cd de mexico"). */
 function cityGroup(city: string | null | undefined): Array<{ key: string; rule: CaseRule }> {
   if (!city?.trim()) return [];
-  const f = pieces(city).join(" ");
+  const f = collapseInitials(pieces(city)).join(" ");
   const keyOf = (m: string) => (pieces(m).every((p) => p.length === 1) ? pieces(m).join("") : pieces(m).join(" "));
   const group = CITY_ALIAS_GROUPS.find((g) =>
     g.some((m) => !UPPER_ONLY_ALIASES.has(keyOf(m)) && new RegExp(`(?<![a-z0-9])${keyOf(m)}(?![a-z0-9])`).test(f)),
@@ -468,6 +537,8 @@ const FUNCTION_WORDS = new Set([
 const HONORIFICS = new Set([
   "dr", "dra", "drs", "lic", "licda", "lcda", "ing", "arq", "mtro", "mtra", "prof", "sr", "sra", "srta", "cp", "don",
   "dona", "mr", "mrs", "ms",
+  // Plurals: "Drs. Patel and Wong", "Sres. Gómez".
+  "dres", "dras", "sres", "sras", "srs", "lics", "ings", "arqs", "profs", "messrs", "mmes", "mme", "mlle",
 ]);
 const NAME_LINK = "(?:de|del|la|las|los|van|von|der|da|di|du|dos|le|y)";
 /**
@@ -475,7 +546,7 @@ const NAME_LINK = "(?:de|del|la|las|los|van|von|der|da|di|du|dos|le|y)";
  * "Dr. Patel", "Dr. J. Patel", "Sra. de la Peña", "Dra. María José Gómez Ruiz", "C.P. Ramírez".
  */
 const HONORIFIC_RE = new RegExp(
-  `(?<![\\p{L}])(Dr|Dra|Drs|Lic|Licda|Lcda|Ing|Arq|Mtro|Mtra|Prof|Mr|Mrs|Ms|Mx|Sr|Sra|Srta|Don|Doña|C\\.\\s?P)(\\.?\\s+)` +
+  `(?<![\\p{L}])(Dr|Dra|Drs|Dres|Dras|Lic|Lics|Licda|Lcda|Ing|Ings|Arq|Arqs|Mtro|Mtra|Prof|Profs|Mr|Mrs|Ms|Mx|Messrs|Mmes?|Mlle|Sr|Sra|Srs|Sres|Sras|Srta|Don|Doña|C\\.\\s?P)(\\.?\\s+)` +
     `(?:(?:\\p{Lu}\\.?|${NAME_LINK})\\s+)*\\p{Lu}[\\p{L}’'-]*(?:\\s+(?:${NAME_LINK}\\s+)*\\p{Lu}[\\p{L}’'-]*){0,3}`,
   "gu",
 );
@@ -487,11 +558,28 @@ const HONORIFIC_RE = new RegExp(
  * The word stops before a possessive "'s".
  */
 const LOWER_HONORIFIC_RE = new RegExp(
-  `(?<![\\p{L}\\p{N}])((?:(?:dr|dra|drs|lic|licda|lcda|ing|arq|mtro|mtra|prof|mr|mrs|ms|mx|sr|sra|srta|c\\.\\s?p)\\.[ \\t]*` +
-    `|(?:dr|dra|lic|licda|lcda|arq|mtro|mtra|sra|srta)[ \\t]+)+)` +
+  `(?<![\\p{L}\\p{N}])((?:(?:dr|dra|drs|dres|dras|lic|lics|licda|lcda|ing|ings|arq|arqs|mtro|mtra|prof|profs|mr|mrs|ms|mx|messrs|mmes?|mlle|sr|sra|srs|sres|sras|srta|c\\.\\s?p)\\.[ \\t]*\\n?[ \\t]*` +
+    `|(?:dr|dra|dres|lic|licda|lcda|arq|mtro|mtra|sra|sres|sras|srta)[ \\t]*\\n?[ \\t]+)+)` +
     `(?:(?:${NAME_LINK}|\\p{L}\\.?)[ \\t]+)*\\p{L}+(?:[’'-](?!s(?!\\p{L}))\\p{L}+)*`,
   "giu",
 );
+
+/**
+ * Spelled-out numbers, EN and ES, 0–100 plus hundred/thousand/million and
+ * dozen. Left out on purpose: "one", "uno", "un", "una" (pronoun and article)
+ * and "once" (English "once"; Spanish 11 is rare in prose).
+ */
+const NUMBER_WORDS = [
+  "zero", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten", "eleven", "twelve", "thirteen",
+  "fourteen", "fifteen", "sixteen", "seventeen", "eighteen", "nineteen", "twenty", "thirty", "forty", "fifty", "sixty",
+  "seventy", "eighty", "ninety", "hundred", "hundreds", "thousand", "thousands", "million", "millions", "dozen", "dozens",
+  "cero", "dos", "tres", "cuatro", "cinco", "seis", "siete", "ocho", "nueve", "diez", "doce", "trece", "catorce",
+  "quince", "dieciseis", "diecisiete", "dieciocho", "diecinueve", "veinte", "veintiuno", "veintiun", "veintidos",
+  "veintitres", "veinticuatro", "veinticinco", "veintiseis", "veintisiete", "veintiocho", "veintinueve", "treinta",
+  "cuarenta", "cincuenta", "sesenta", "setenta", "ochenta", "noventa", "cien", "ciento", "cientos", "mil", "millon",
+  "millones", "docena", "docenas",
+];
+const NUMBER_WORDS_RE = new RegExp(`(?<![\\p{L}\\p{N}])(?:${NUMBER_WORDS.join("|")})(?![\\p{L}\\p{N}])`, "gu");
 
 /**
  * Replace the past recipient's name, company, site and city, and every digit,
@@ -524,7 +612,10 @@ export function scrubExemplar(text: string, prospect: ExemplarProspect): string 
   if (prospect.company_name?.trim()) {
     for (const p of companyPhrases(prospect.company_name)) out = replacePhrase(out, p, "[company]");
   }
-  for (const run of initialRuns(prospect.company_name)) out = replaceMatches(out, lettersPattern(run), "[company]", "upper");
+  // Initials that are no word ("kp", "rx") go in any case: a subject is lower case by house rule.
+  for (const run of initialRuns(prospect.company_name)) {
+    out = replaceMatches(out, lettersPattern(run), "[company]", isKnownWord(run) ? "upper" : "any");
+  }
   const words = new Set([...companyWords(prospect.company_name), ...distinctive(host?.split(".")[0], 3)]);
   for (const w of words) {
     out = replaceMatches(out, w.length >= 5 ? containingPattern(w) : lettersPattern(w), "[company]");
@@ -554,16 +645,39 @@ export function scrubExemplar(text: string, prospect: ExemplarProspect): string 
         return;
       }
       out = replacePhrase(out, chunk, "[name]", nameRule(ps));
+      // "O’Brien" is also "obrien" inside a handle ("@obrienlaw").
+      const joined = ps.join("");
+      if (ps.length > 1 && joined.length >= 5 && !isKnownWord(joined)) out = replaceMatches(out, containingPattern(joined), "[name]");
     });
-    for (const p of namePieces(fullName)) out = replacePhrase(out, p, "[name]", nameRule([p]));
+    for (const p of namePieces(fullName)) {
+      const rule = nameRule([p]);
+      // "The Nguyens", "the Smiths"; a rare 5+ letter surname inside a handle ("@obrienlaw").
+      if (rule === "any") out = replaceMatches(out, pluralPattern(p), "[name]");
+      if (rule === "any" && p.length >= 5 && !isKnownWord(p)) out = replaceMatches(out, containingPattern(p), "[name]");
+      out = replacePhrase(out, p, "[name]", rule);
+    }
   }
+
+  // Hashtags and handles hide a field inside a longer word: "#TorontoDental",
+  // "#YYCbiz", "@nglaw". A tag that contains the city, one of its short forms
+  // or a name piece of 2+ letters is blanked whole.
+  const cityKeys = [...distinctive(prospect.city), ...cityGroup(prospect.city).filter((g) => g.rule === "any").map((g) => g.key.replace(/ /g, ""))]
+    .filter((k) => k.length >= 3);
+  const nameKeys = fullName ? namePieces(fullName).filter((p) => !COMMON_WORD_NAMES.has(p)) : [];
+  out = out.replace(/(?<![\p{L}\p{N}])([#@])([\p{L}\p{N}_]+)/gu, (m, sigil: string, tag: string) => {
+    const f = fold(tag);
+    if (cityKeys.some((k) => f.includes(k))) return `${sigil}[city]`;
+    if (nameKeys.some((k) => f.includes(k))) return `${sigil}[name]`;
+    return m;
+  });
 
   // Names the contact row did not know: after an honorific (capitalized, then
   // any case), and the greeting's addressee.
   out = out.replace(HONORIFIC_RE, (_m, title: string, sep: string) => `${title}${sep}[name]`);
   out = out.replace(LOWER_HONORIFIC_RE, (_m, titles: string) => `${titles}${/\s$/.test(titles) ? "" : " "}[name]`);
-  const nl = out.indexOf("\n");
-  const first = nl === -1 ? out : out.slice(0, nl);
+  const lead = out.match(/^\s*/)![0].length;
+  const nl = out.indexOf("\n", lead);
+  const first = nl === -1 ? out.slice(lead) : out.slice(lead, nl);
   const greeted = first.replace(GREETING_RE, (m, lead: string, who: string, rest: string) => {
     const w = who.trim();
     if (GENERIC_ADDRESSEE.test(w)) return m;
@@ -573,13 +687,15 @@ export function scrubExemplar(text: string, prospect: ExemplarProspect): string 
     if (w.includes("[") && ok) return m;
     return `${lead}[name]${rest}`;
   });
-  out = greeted + (nl === -1 ? "" : out.slice(nl));
+  out = out.slice(0, lead) + greeted + (nl === -1 ? "" : out.slice(nl));
 
   // "[name] [name]" (María José) and "[company]-[company]" (Smith-Jones) are one blank.
   out = out.replace(/\[(name|company|city|site)\](?:[ \t‐-]+\[\1\])+/g, "[$1]");
 
-  // Every digit: a number from one email is never a fact about the next.
-  return out.replace(/\d+(?:[.,:/]\d+)*/g, "[n]");
+  // Every number, in digits or spelled out: a number from one email is never a fact about the next.
+  out = out.replace(/\d+(?:[.,:/]\d+)*/g, "[n]");
+  out = replaceMatches(out, NUMBER_WORDS_RE, "[n]");
+  return out.replace(/\[n\](?:(?:[ \t-]+|[ \t]+(?:and|y)[ \t]+)\[n\])+/g, "[n]");
 }
 
 // ── The leak check ────────────────────────────────────────────────────────────
@@ -688,7 +804,7 @@ export function exemplarLeaks(text: string, prospect: ExemplarProspect): string[
       run += f;
       continue;
     }
-    if (run.length >= 2) word(run, "upper");
+    if (run.length >= 2) word(run, KNOWN_WORDS.has(run) ? "upper" : "any");
     run = "";
     if (f === " " || leakGeneric(f)) continue;
     if (f.length >= 5) substring(f);
@@ -706,7 +822,14 @@ export function exemplarLeaks(text: string, prospect: ExemplarProspect): string[
   if (label.length > 1 && joinedLabel.length >= 5) substring(joinedLabel);
 
   // City and its group.
-  const cityParts = leakParts(prospect.city).map((p) => p.f);
+  // Single letters run together, so a "México, D.F." field has the part "df".
+  const cityParts = leakParts(prospect.city)
+    .map((p) => p.f)
+    .reduce<string[]>((acc, f, i, all) => {
+      if (f.length === 1 && i > 0 && all[i - 1]!.length === 1) acc[acc.length - 1] += f;
+      else acc.push(f);
+      return acc;
+    }, []);
   for (const f of cityParts) if (f.length >= 4 && !leakGeneric(f)) word(f);
   if (cityParts.length >= 2) phrase(cityParts);
   const memberParts = (m: string) => {
@@ -731,7 +854,13 @@ export function exemplarLeaks(text: string, prospect: ExemplarProspect): string[
     if (f.length < 2 || /^\d+$/.test(f)) return;
     const last = i === name.length - 1;
     if (NAME_PARTICLES.has(f) && !last) return;
-    word(f, COMMON_WORD_NAMES.has(f) || NAME_PARTICLES.has(f) ? "capital" : "any");
+    const common = COMMON_WORD_NAMES.has(f) || NAME_PARTICLES.has(f);
+    word(f, common ? "capital" : "any");
+    // "The Nguyens", "the Smiths".
+    if (!common) {
+      word(`${f}s`, "any", f);
+      word(`${f}es`, "any", f);
+    }
   });
 
   // The name span after an honorific, and after the first line's greeting.
@@ -742,8 +871,10 @@ export function exemplarLeaks(text: string, prospect: ExemplarProspect): string[
       const u = toks[j]!;
       if (u.kind === "stop") {
         const prev = toks[j - 1];
-        // The dot of an honorific or an initial ("Dr. J. Patel") does not end the span.
+        // The dot of an honorific or an initial ("Dr. J. Patel") does not end the span,
+        // nor does one line break ("Dr.\nPatel", "María\nGómez"); a blank line does.
         if (u.raw === "." && prev?.kind === "word" && (HONORIFICS.has(prev.f) || prev.f.length === 1)) continue;
+        if (u.raw === "\n" && toks[j + 1]?.raw !== "\n" && prev?.raw !== "\n") continue;
         return;
       }
       if (u.kind === "blank") {
@@ -757,8 +888,15 @@ export function exemplarLeaks(text: string, prospect: ExemplarProspect): string[
         count++;
         continue;
       }
+      // "Drs. [name] and Patel": a second name joined by "and" / "y" / "e".
+      if (seen && (u.f === "and" || u.f === "y" || u.f === "e")) {
+        seen = false;
+        continue;
+      }
       if (FUNCTION_WORDS.has(u.f)) return;
-      if (!seen || /^\p{Lu}/u.test(u.raw) || lowerStyle) leaks.add(`${label} ${u.f}`);
+      // After the blank, a capitalized word is a name; so is any lower-case word
+      // after a lower-case title, or one too rare to follow a name ("Dr. [name] patel").
+      if (!seen || /^\p{Lu}/u.test(u.raw) || lowerStyle || !inWords(TOP_WORDS, u.f)) leaks.add(`${label} ${u.f}`);
       return;
     }
   };
@@ -767,15 +905,26 @@ export function exemplarLeaks(text: string, prospect: ExemplarProspect): string[
     if (i > 0 && toks[i - 1]!.kind === "word" && HONORIFICS.has(toks[i - 1]!.f)) return; // inside a chain
     span(i + 1, !/\p{Lu}/u.test(t.raw), t.f);
   });
-  const firstLine = toks.slice(0, Math.max(0, toks.findIndex((t) => t.raw === "\n")) || toks.length);
-  const lead = firstLine.findIndex((t) => t.kind !== "stop");
-  const greet = [["good", "morning"], ["good", "afternoon"], ["good", "evening"], ["buenos", "dias"], ["buenas", "tardes"],
+  // Every line that opens with a greeting, not only the first: a body's "Hi Raj Patel,".
+  const GREETINGS = [["good", "morning"], ["good", "afternoon"], ["good", "evening"], ["buenos", "dias"], ["buenas", "tardes"],
     ["buenas", "noches"], ["buen", "dia"], ["hi"], ["hello"], ["hey"], ["dear"], ["hola"], ["buenas"], ["estimado"],
-    ["estimada"], ["estimados"], ["estimadas"], ["querido"], ["querida"]].find((g) => g.every((w, k) => firstLine[lead + k]?.f === w));
-  if (lead >= 0 && greet) {
+    ["estimada"], ["estimados"], ["estimadas"], ["querido"], ["querida"]];
+  toks.forEach((_, i) => {
+    if (i > 0 && toks[i - 1]!.raw !== "\n") return;
+    let lead = i;
+    while (toks[lead]?.kind === "stop" && toks[lead]!.raw !== "\n") lead++;
+    const greet = GREETINGS.find((g) => g.every((w, k) => toks[lead + k]?.kind === "word" && toks[lead + k]!.f === w));
+    if (!greet) return;
     const next = toks[lead + greet.length];
-    const generic = next?.kind === "word" && GENERIC_ADDRESSEE.test(next.f);
-    if (!generic) span(lead + greet.length, false, "greeting");
+    if (next?.kind === "word" && GENERIC_ADDRESSEE.test(next.f)) return;
+    span(lead + greet.length, false, "greeting");
+  });
+
+  // The allow-list: every word must be a common EN or ES word, our own
+  // vocabulary, or a blank. Whatever else is left is a word of the old
+  // prospect's world the rules above did not know to look for.
+  for (const w of leakFold(text.replace(PLACEHOLDER_RE, " ")).split(/[^a-z]+/)) {
+    if (w && !isKnownWord(w)) leaks.add(w);
   }
   return [...leaks];
 }
@@ -790,7 +939,8 @@ export function toExemplar(
 ): Exemplar | null {
   const subject = scrubExemplar(pitch.subject, pitch);
   const body = scrubExemplar(pitch.body, pitch);
-  if (exemplarLeaks(`${subject}\n${body}`, pitch).length > 0) return null;
+  // Subject and body are checked apart: the body's first line is its own greeting line.
+  if (exemplarLeaks(subject, pitch).length > 0 || exemplarLeaks(body, pitch).length > 0) return null;
   return { pitch_id: picked.pitch_id, score: picked.score, subject, body };
 }
 
