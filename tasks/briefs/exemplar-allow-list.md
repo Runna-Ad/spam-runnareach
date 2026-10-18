@@ -121,3 +121,69 @@ Q: CC BY-SA word lists in the repo?  A: Acceptable (server-side, not distributed
 attribution in the file headers). Conductor, batch 2.
 Q: Capitalized sentence openers: strict or generous?  A: Generous (I3). The field checks
 and span rules still cover the current prospect; mid-sentence capitals are strict.
+
+## Round 5 (conductor, 2026-10-18 after the round-4 review + a real-data re-measure)
+Two measurements disagree with round 4's numbers, and both point at the tiers, not at
+missing cases. Fix the STRUCTURE; do not tune to either sample.
+1. **Real drop rate.** The conductor ran `toExemplar` (6adf251) on 30 real prod pitches
+   (the 19 AUTO pitches due Monday + the 11 latest drafts): **24/30 dropped (80%)**.
+   Your generator measured 0.8% because it was built from the same vocabulary.
+   - Dropping on ordinary words (must pass after round 5): corresponda, asesoria,
+     trabas, traba, availability, spec, monitoreo, compiten, agendaron, armariamos,
+     asesorando, calificarlas, califica, resolviste, confiaron, desktop, usable, multi,
+     storefront, outage, enthusiasts, rigging, fabrication, skus, mro, jobsite, handrail,
+     woodworking, bandsaw, tutorials, oftalmologia. Most are in the 50k lists; the rest
+     are Spanish verb forms (-aron, -aríamos, -ando + enclitics) and trade words.
+   - Dropping on real leaks (must STILL drop): a business name not in the company
+     field ("Zona Benessere" → benessere), third-party brands and places (MEC,
+     Fjällräven, Bulkley Valley), a company acronym (IRT), a city written mid-sentence
+     when the city field is null (Monterrey).
+2. **Name leaks the strict tier lets through** (round-4 review, blocking):
+   - B1 Dots after an initial or a short title, and colons, end a "sentence", so the
+     name after them is judged generous: "M. Peña" (regression vs round 3), "C.D.
+     Torres", "J. Torres", "A.J. Cruz", "M.V.Z. Flores", "Front desk: Grant".
+   - B2 WORD_NAMES entries that are not frequency-list words reach the generous tier:
+     guadalupe, amparo, jazmin, ernest → COMMON_NAMES (or filter WORD_NAMES by the lists).
+   - B3 The strict tier is not a name net: 58/98 common Mexican and 67/99 Canadian
+     given names and many surnames (Graham, Kennedy, Sinclair, Chan, Huang, Sharma,
+     Méndez, Bautista, Escobar…) pass capitalized mid-sentence; O’Brien / O’Connor pass
+     everywhere (lists split on apostrophes). And when `recipient_name` is null, the
+     composer greets from the email local part (`firstNameGuess`, claude-composer.ts
+     ~475–501) but `recipient_email` is never used by the scrubber or the leak check, so
+     "Si quieres, Monica, lo vemos" survives.
+
+Structure to build:
+- S1 Positions. Sentence opener = first letter-token after the start, a newline, or
+  `. ! ? ¿ ¡ …` that is not an abbreviation dot (one letter, a capitalized run ≤ 4
+  letters, or an honorific). A colon never opens a sentence. All-caps tokens of ≥ 2
+  letters are strict everywhere. (The reviewer's prototype of the dot rule + apostrophe
+  join is in the conductor's message; take it.)
+- S2 Tiers. Lowercase non-subject tokens: GENEROUS = 50k EN + 50k ES (folded, same
+  source and licence, generator script) ∪ strict ∪ WORD_NAMES that are list words.
+  Capitalized tokens anywhere, subject tokens, address chunks: STRICT = 20k lists −
+  NAMES + OWN_VOCABULARY, where NAMES = COMMON_NAMES ∪ a GENERATED public-domain names
+  list (US SSA given names and US Census 2010 surnames are public domain; add the
+  Mexican/Canadian names you can source the same way) built by the generator script.
+  Sentence openers may use strict ∪ WORD_NAMES-that-are-list-words (keeps "Mark the
+  date", "Rosa mexicano") — state the residual ("Grant Hill…" at a sentence start) in
+  the header. Spanish morphology: add -aron/-ieron, conditional -aríamos/-eríamos/
+  -iríamos, gerund + enclitic stacks (calificarlas, asesorándote).
+- S3 Join a letter + apostrophe + capital into one token (O’Brien → obrien).
+- S4 recipient_email: when recipient_name is null and the local part reads as a given
+  name, treat it as a name field in BOTH the scrubber and the leak check, each with its
+  own matcher (independence rule).
+- S5 Letters with no NFKD form inside letter-like symbols (enclosed alphanumerics
+  U+2460–24FF and U+1F100–1F1FF, regional indicators) and visible in-word separators
+  (· ŀ ‧ ᠆ U+2800) make the token leak.
+
+Acceptance (round 5):
+1. The reviewer's probes all drop or scrub clean (they are in the conductor's message).
+2. A held-out names test: 200+ given names and surnames (EN, ES, Chinese/South Asian
+   Canadian) from a source NOT used to build NAMES, each inserted capitalized
+   mid-sentence into a clean pitch → dropped or scrubbed, ≥ 98%. Report the misses.
+3. Your own drop-rate generator stays reported, but the number that decides is the
+   conductor's re-run on the 30 real pitches: target ≤ 30%, every remaining drop a
+   real leak of the kinds listed under (1).
+4. Existing exemplar tests unchanged and green; typecheck, lint, test green.
+If the targets conflict (a name net that drops most real pitches), stop and report the
+numbers: the conductor decides, and #17 stays out of this ship either way.
