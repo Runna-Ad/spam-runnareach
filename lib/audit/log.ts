@@ -35,13 +35,17 @@ export type AuditAction =
   // Opportunity outcomes (Phase 3): a calendar booking, a won deal, a lost deal.
   | "opportunity.booked"
   | "opportunity.won"
-  | "opportunity.lost";
+  | "opportunity.lost"
+  // A person held an autopilot-scheduled pitch from the veto digest link.
+  | "pitch.held"
+  // The hourly health check emailed an emergency (lib/reports; 24h dedupe per kind).
+  | "health.alert";
 
 export type AuditPayload = {
   tenantId: string;
   actorId: string | null;
   action: AuditAction;
-  entityType: "prospect" | "research" | "icp" | "case_study" | "pitch" | "reply" | "opportunity";
+  entityType: "prospect" | "research" | "icp" | "case_study" | "pitch" | "reply" | "opportunity" | "tenant";
   entityId: string;
   metadata?: Record<string, unknown>;
 };
