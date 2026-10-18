@@ -69,6 +69,7 @@ interface PitchesPageProps {
   counts: { total: number; draft: number; queued: number; approved: number; queuedForSend: number; sent: number };
   canEdit: boolean;
   inboxes: SenderInbox[];
+  hotLeadsUnavailable?: boolean;
 }
 
 // "queued_for_send" is a DERIVED view (status 'approved' + scheduled_send_at set),
@@ -86,7 +87,7 @@ function pitchMeta(p: PitchListRow): { label: string; tone: "neutral" | "info" |
   return STATUS_META[p.status];
 }
 
-export function PitchesPage({ pitches, counts, canEdit, inboxes }: PitchesPageProps) {
+export function PitchesPage({ pitches, counts, canEdit, inboxes, hotLeadsUnavailable = false }: PitchesPageProps) {
   const router = useRouter();
   const [filter, setFilter] = React.useState<FilterValue>("draft");
   const [selectedId, setSelectedId] = React.useState<string | null>(
@@ -292,10 +293,13 @@ export function PitchesPage({ pitches, counts, canEdit, inboxes }: PitchesPagePr
               Queue {counts.approved} for send
             </Button>
           ) : null}
-          <label className="flex cursor-pointer items-center gap-1.5 text-xs text-[var(--color-fg-300)]">
+          <label
+            className={`flex items-center gap-1.5 text-xs text-[var(--color-fg-300)] ${hotLeadsUnavailable ? "cursor-not-allowed opacity-50" : "cursor-pointer"}`}
+          >
             <input
               type="checkbox"
-              checked={hotOnly}
+              checked={hotOnly && !hotLeadsUnavailable}
+              disabled={hotLeadsUnavailable}
               onChange={(e) => {
                 setHotOnly(e.target.checked);
                 // Hot leads are sent pitches; the default "Draft" view would hide them all.
@@ -321,6 +325,14 @@ export function PitchesPage({ pitches, counts, canEdit, inboxes }: PitchesPagePr
           </Select>
         </div>
       </header>
+      {hotLeadsUnavailable ? (
+        <div
+          role="status"
+          className="shrink-0 border-b border-[var(--color-border-subtle)] bg-[var(--color-warning-300)]/10 px-4 py-1.5 text-xs text-[var(--color-warning-300)]"
+        >
+          Hot-lead badges couldn&apos;t be loaded. The list is complete; the &quot;Hot leads&quot; filter is unavailable.
+        </div>
+      ) : null}
 
       <div className="flex flex-1 overflow-hidden">
         {/* List pane */}

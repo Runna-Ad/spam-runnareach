@@ -2,7 +2,8 @@ import { createClient } from "@/lib/supabase/server";
 import { pickTopUsableContact, isGuessedContact } from "@/lib/pitches/contacts";
 import { parseGateOverride, parseGateVerdict, type StoredGateVerdict } from "@/lib/pitches/gate";
 import type { CriticVerdict } from "@/lib/pitches/decision";
-import { hotLeadLevel, type HotLeadEvent, type HotLeadLevel } from "@/lib/pitches/hot-lead";
+import { hotLeadLevel, type HotLeadLevel } from "@/lib/pitches/hot-lead";
+import { loadHotLeadEvents } from "@/lib/pitches/hot-lead-events";
 
 /** The critic block of a decision record, if present and well-formed. */
 function criticFromDecision(decision: unknown): CriticVerdict | null {
@@ -74,7 +75,9 @@ export type PitchListRow = {
  * Newest-first list of pitches for the tenant. Caps at 200 — beyond that
  * we'll add filters/pagination (Phase 4 sending throughput question).
  */
-export async function listPitches(tenantId: string): Promise<PitchListRow[]> {
+export async function listPitches(
+  tenantId: string,
+): Promise<{ pitches: PitchListRow[]; hotLeadsUnavailable: boolean }> {
   const supabase = await createClient();
 
   type Row = {
@@ -120,26 +123,11 @@ export async function listPitches(tenantId: string): Promise<PitchListRow[]> {
 
   if (error) throw new Error(`Failed to load pitches: ${error.message}`);
 
-  // One query for every audit_scan event of the returned pitches (no N+1).
-  const ids = (data ?? []).map((r) => r.id);
-  const eventsByPitch = new Map<string, HotLeadEvent[]>();
-  if (ids.length > 0) {
-    // pitch_events isn't in the hand-written Database types (same cast as events.ts).
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const { data: events, error: evError } = await (supabase as any)
-      .from("pitch_events")
-      .select("pitch_id, event_type, payload, event_at")
-      .eq("event_type", "audit_scan")
-      .in("pitch_id", ids);
-    if (evError) throw new Error(`Failed to load pitch events: ${evError.message}`);
-    for (const e of (events ?? []) as (HotLeadEvent & { pitch_id: string })[]) {
-      const list = eventsByPitch.get(e.pitch_id);
-      if (list) list.push(e);
-      else eventsByPitch.set(e.pitch_id, [e]);
-    }
-  }
+  // pitch_events isn't in the hand-written Database types (same cast as events.ts).
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const { eventsByPitch, unavailable } = await loadHotLeadEvents(supabase as any, (data ?? []).map((r) => r.id));
 
-  return (data ?? []).map((r) => {
+  const pitches = (data ?? []).map((r) => {
     const hot = hotLeadLevel(eventsByPitch.get(r.id) ?? []);
     // Resolve the prospect's CURRENT top usable contact, not the frozen pitch FK
     // (which goes stale — see lib/pitches/contacts.ts).
@@ -171,6 +159,7 @@ export async function listPitches(tenantId: string): Promise<PitchListRow[]> {
     hot_lead_at: hot?.at ?? null,
     };
   });
+  return { pitches, hotLeadsUnavailable: unavailable };
 }
 
 export type PitchDetail = Omit<PitchListRow, "hot_lead" | "hot_lead_at"> & {
