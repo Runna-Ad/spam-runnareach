@@ -19,7 +19,8 @@
 //        - anything a human wrote → sequence paused, prospect 'replied'
 //   4. Draft a response (Claude → heuristic) for engageable intents →
 //      draft_status='pending'. The reply cap is enforced when a human sends.
-//   5. Email Pedro a digest of drafts awaiting review (in-app + email alert).
+//   5. Email the lead list ONE alert listing every new reply a human wrote
+//      (bounces and out-of-office excluded), hot ones first, with their text.
 //
 // Auth: Authorization: Bearer <CRON_SECRET>.
 // ─────────────────────────────────────────────────────────────────────────────
@@ -55,6 +56,7 @@ import { addEmailToDnc, type DncInsertClient } from "@/lib/discover/dnc-check";
 import { extractBouncedRecipient } from "@/lib/replies/bounce-parse";
 import { recordPitchEvent } from "@/lib/pitches/events";
 import { isTestAddress } from "@/lib/compliance/test-addresses";
+import { LeadAlertCollector, type LeadSender } from "@/lib/replies/lead-alert";
 
 /** An out-of-office pushes the next follow-up at least this far out. */
 const OOO_POSTPONE_DAYS = 7;
@@ -93,8 +95,6 @@ type ThreadRow = {
   /** Earliest send in the thread — replies are matched against this, not the latest follow-up. */
   first_sent_at: string | null;
 };
-
-type DraftDigestItem = { prospect: string; intent: ReplyIntent };
 
 export async function GET(req: NextRequest) {
   if (!(await isAuthorized(req))) {
@@ -154,8 +154,8 @@ export async function GET(req: NextRequest) {
   // (then every thread of that inbox is read, as in a full sweep).
   const recentThreads = new Map<string, Set<string> | null>();
   let threadsRead = 0;
-  // Per-tenant digest of drafts created this run, for the email alert.
-  const digest = new Map<string, DraftDigestItem[]>();
+  // Every new reply a human wrote this run, one alert per tenant at the end.
+  const leads = new LeadAlertCollector();
 
   let imported = 0;
   let drafted = 0;
@@ -287,6 +287,18 @@ export async function GET(req: NextRequest) {
 
         if (!insertedReply) continue;
         imported += 1;
+        const leadSender: LeadSender = (m) =>
+          sendNotificationWithToken({ accessToken: inbox.token, fromEmail: inbox.email }, m);
+        const leadItem = (draftWaiting: boolean, optOutFailed = false) => ({
+          company: prospect.company_name,
+          fromEmail: inbound.fromEmail,
+          intent: classification.intent,
+          language: prospect.language ?? null,
+          text: stripQuotedReply(inbound.bodyText) || inbound.bodyText,
+          draftWaiting,
+          isTest: isTestAddress(inbound.fromEmail),
+          optOutFailed,
+        });
 
         await supabase.from("audit_log").insert({
           tenant_id: thread.tenant_id,
@@ -383,6 +395,7 @@ export async function GET(req: NextRequest) {
             errors.push(`opt-out for ${inbound.fromEmail} failed: ${optOut.error}`);
             engaged = true; // at least pause the sequence below
           }
+          leads.add(thread.tenant_id, leadSender, leadItem(false, !optOut.ok));
           continue;
         }
 
@@ -395,6 +408,7 @@ export async function GET(req: NextRequest) {
         }
 
         engaged = true;
+        let draftWaiting = false;
 
         // A warm reply at the reply cap used to be archived silently, with no
         // draft and no alert ("sure, send pricing" disappeared). It now drafts
@@ -422,9 +436,7 @@ export async function GET(req: NextRequest) {
               })
               .eq("id", insertedReply.id);
             drafted += 1;
-            const list = digest.get(thread.tenant_id) ?? [];
-            list.push({ prospect: prospect.company_name, intent: classification.intent });
-            digest.set(thread.tenant_id, list);
+            draftWaiting = true;
             await supabase.from("audit_log").insert({
               tenant_id: thread.tenant_id,
               actor_id: null,
@@ -435,6 +447,7 @@ export async function GET(req: NextRequest) {
             });
           }
         }
+        leads.add(thread.tenant_id, leadSender, leadItem(draftWaiting));
       }
 
       // Pause the follow-up sequence + mark prospect 'replied' — only when a
@@ -455,12 +468,11 @@ export async function GET(req: NextRequest) {
     }
   }
 
-  // ── 5. Email Pedro a digest of new drafts awaiting review ─────────────────
-  if (drafted > 0) {
-    await sendDraftDigest(supabase, inboxCache, digest).catch((e) =>
-      console.error("[replies/poll] digest email failed:", e),
-    );
-  }
+  // ── 5. One lead alert per tenant for the replies stored this run ──────────
+  // Never throws. Self-loop: the alert is a NEW Gmail thread (no threadId), so
+  // it is never a pitch's gmail_thread_id and step 1 never reads it; it is also
+  // From the inbox itself, which fetchThreadReplies skips as our own send.
+  const alerts = leads.size > 0 ? await leads.send() : { sent: 0, failed: [] as string[] };
 
   return NextResponse.json({
     ok: true,
@@ -471,6 +483,7 @@ export async function GET(req: NextRequest) {
     deferred,
     imported,
     drafted,
+    alerts,
     errors,
   });
 }
@@ -665,33 +678,4 @@ async function pauseSequence(supabase: AnySupabase, tenantId: string, prospectId
     .eq("tenant_id", tenantId)
     .eq("status", "sent")
     .is("sequence_paused_at", null);
-}
-
-async function sendDraftDigest(
-  supabase: AnySupabase,
-  inboxCache: Map<string, { email: string; display_name: string; token: string } | null>,
-  digest: Map<string, DraftDigestItem[]>,
-): Promise<void> {
-  // Use any connected inbox we already have a token for as the sender.
-  const sender = [...inboxCache.values()].find((i): i is { email: string; display_name: string; token: string } => i !== null);
-  if (!sender) return;
-
-  for (const items of digest.values()) {
-    if (items.length === 0) continue;
-    const lines = items.map((i) => `• ${i.prospect} — ${i.intent.replace(/_/g, " ")}`).join("\n");
-    const appUrl = process.env.NEXT_PUBLIC_APP_URL || "https://spam-runnareach.vercel.app";
-    const body =
-      `${items.length} new repl${items.length === 1 ? "y" : "ies"} drafted and waiting for your review.\n\n` +
-      `${lines}\n\n` +
-      `Review + approve in the inbox:\n${appUrl}/inbox`;
-    await sendNotificationWithToken(
-      { accessToken: sender.token, fromEmail: sender.email },
-      {
-        kind: "lead",
-        fromName: "S.P.A.M Reply Funnel",
-        subject: `${items.length} reply draft${items.length === 1 ? "" : "s"} awaiting review`,
-        body,
-      },
-    );
-  }
 }
