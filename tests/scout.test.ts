@@ -5,6 +5,8 @@ import test from "node:test";
 import { seededRng } from "../lib/learning/bandit.ts";
 import { funnelForProspect } from "../lib/learning/outcomes.ts";
 import {
+  affordableProspects,
+  aiBudgetAllowance,
   candidateCells,
   cellArm,
   cellKey,
@@ -133,4 +135,34 @@ test("the daily budget is spent across jobs, and empty crawls are capped too", (
   assert.equal(dailyAllowance({ budget: 200, researchedToday: 230, jobsToday: 3 }).prospects, 0);
   // Six jobs that found nothing still stop the seventh.
   assert.equal(dailyAllowance({ budget: 200, researchedToday: 0, jobsToday: 6 }).prospects, 0);
+});
+
+test("the AI budget left pays for prospects at $0.03 each", () => {
+  assert.equal(affordableProspects({ spentUsd: 0, capUsd: 3 }), 100);
+  assert.equal(affordableProspects({ spentUsd: 2.1, capUsd: 3 }), 30); // not 29.999…
+  assert.equal(affordableProspects({ spentUsd: 2.95, capUsd: 3 }), 1);
+  assert.equal(affordableProspects({ spentUsd: 3.06, capUsd: 3 }), 0);
+});
+
+test("no job the AI budget can't cover: smaller when it covers part, none near the cap", () => {
+  const left = (prospects: number) => ({ prospects, reason: `${prospects} of today's 100 prospects left` });
+  // Covered in full: today's allowance passes through unchanged.
+  assert.deepEqual(aiBudgetAllowance(left(100), { spentUsd: 0, capUsd: 3 }), left(100));
+  assert.deepEqual(aiBudgetAllowance(left(40), { spentUsd: 1.5, capUsd: 3 }), left(40));
+  // Covered in part: the job shrinks to what's left.
+  const half = aiBudgetAllowance(left(100), { spentUsd: 1.5, capUsd: 3 });
+  assert.equal(half.prospects, 50);
+  assert.equal(half.reason, "AI budget covers 50 of 100 prospects ($1.50 of $3.00 spent)");
+  // $0.75 left is the floor: 25 prospects still start, a cent less starts none.
+  assert.equal(aiBudgetAllowance(left(100), { spentUsd: 2.25, capUsd: 3 }).prospects, 25);
+  const near = aiBudgetAllowance(left(100), { spentUsd: 2.26, capUsd: 3 });
+  assert.equal(near.prospects, 0);
+  assert.equal(near.reason, "AI budget for the next 24h is nearly spent ($2.26 of $3.00)");
+  // Even a job small enough to fit doesn't start under the floor.
+  assert.equal(aiBudgetAllowance(left(10), { spentUsd: 2.5, capUsd: 3 }).prospects, 0);
+  // Past the cap (day one spent $3.06).
+  assert.equal(aiBudgetAllowance(left(100), { spentUsd: 3.06, capUsd: 3 }).reason, "AI budget for the next 24h is nearly spent ($3.06 of $3.00)");
+  // A spent daily allowance keeps its own reason.
+  const spent = { prospects: 0, reason: "today's budget of 100 prospects is spent" };
+  assert.deepEqual(aiBudgetAllowance(spent, { spentUsd: 3, capUsd: 3 }), spent);
 });

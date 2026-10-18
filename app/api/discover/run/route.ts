@@ -35,6 +35,8 @@ import {
   type ProspectOutcome,
 } from "@/lib/discover/pipeline-stage";
 import { triggerNextSlice, type SliceAuth } from "@/lib/discover/job-trigger";
+import { isUnderDailyCap } from "@/lib/anthropic/cost-tracking";
+import { affordableProspects } from "@/lib/learning/scout";
 import { generatePitchWith } from "@/lib/pitches/pitch-stage";
 import { EMPTY_JOB_STATS, type DiscoveryJobStats } from "@/lib/discover/job-types";
 
@@ -107,6 +109,26 @@ async function bumpHeartbeat(supabase: AnySupabase, jobId: string) {
     .from("discovery_jobs")
     .update({ heartbeat_at: new Date().toISOString() })
     .eq("id", jobId);
+}
+
+// Forward-progress guard: prospects a pipeline batch attempted that are still
+// 'raw' (errored or timed out) become 'suppressed', so the next refill's raw
+// query can't re-select them forever. Suppressed rows are NOT deleted: they're
+// kept as dedup tombstones so future discovery doesn't re-surface known-bad
+// companies and waste research spend.
+async function suppressUnfinished(supabase: AnySupabase, tenantId: string, ids: string[]) {
+  if (ids.length === 0) return;
+  await supabase
+    .from("prospects")
+    .update({
+      status: "suppressed",
+      suppressed_reason: "Auto: pipeline did not complete (error/timeout)",
+      suppressed_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    })
+    .in("id", ids)
+    .eq("tenant_id", tenantId)
+    .eq("status", "raw");
 }
 
 /** The logged-in user from the forwarded session cookie, or null. */
@@ -282,6 +304,8 @@ export async function POST(req: NextRequest) {
       const ids = job.prospect_ids ?? [];
       const startedAt = Date.now();
       let cursor = job.cursor;
+      // Set when an autopilot job stops at the AI cap (see below).
+      let aiCap: { spent_today_usd: number; cap_usd: number } | null = null;
 
       // Process prospects in concurrency-bounded BATCHES until we run low on
       // budget. The cursor is advanced + persisted BEFORE the slow work (optimistic
@@ -295,6 +319,16 @@ export async function POST(req: NextRequest) {
         if (remaining < MIN_START_REMAINING_MS) break;
 
         const batch = ids.slice(cursor, cursor + PIPELINE_CONCURRENCY);
+        // An autopilot job doesn't start a batch the AI budget can't pay for:
+        // past the cap it would be scored by rules and pitched from templates,
+        // which never go AUTO. The rest stay raw for a later job.
+        if (stats.started_by === "autopilot") {
+          const cap = await isUnderDailyCap(user.tenantId);
+          if (affordableProspects({ spentUsd: cap.spent_today_usd, capUsd: cap.cap_usd }) < batch.length) {
+            aiCap = cap;
+            break;
+          }
+        }
         cursor += batch.length;
         // Commit the advance + bump the heartbeat up front.
         await patchJob(supabase, job.id, { cursor, stats });
@@ -346,6 +380,23 @@ export async function POST(req: NextRequest) {
         await patchJob(supabase, job.id, { stats });
       }
 
+      if (aiCap) {
+        // Finish now, without the prune (it deletes the ICP's raw prospects) or
+        // the pitching catch-up (templates). Only the prospects already attempted
+        // get the forward-progress guard; the untouched rest stay raw.
+        await suppressUnfinished(supabase, user.tenantId, ids.slice(0, cursor));
+        stats.stopped_reason =
+          `AI budget spent ($${aiCap.spent_today_usd.toFixed(2)} of $${aiCap.cap_usd.toFixed(2)} in 24h): ` +
+          `${ids.length - cursor} prospects left raw for a later job`;
+        await patchJob(supabase, job.id, {
+          cursor,
+          stats,
+          status: "done",
+          completed_at: new Date().toISOString(),
+        });
+        return NextResponse.json({ ok: true, done: true, stopped: stats.stopped_reason });
+      }
+
       // Still more of THIS batch to chew through — keep the same prospect_ids set,
       // just advance to the next slice.
       if (cursor < ids.length) {
@@ -364,22 +415,9 @@ export async function POST(req: NextRequest) {
       }
 
       // ── Target-seeking discovery loop ──────────────────────────────────────
-      // Forward-progress guard: any prospect in this batch still 'raw' (errored or
-      // timed out) is reclassified to 'suppressed' so the next refill's raw query
-      // can't re-select it forever. We do NOT delete suppressed rows here — they're
-      // kept as dedup tombstones so future discovery doesn't re-surface known-bad
-      // companies and waste research spend. b_list / pitched / researched survive.
-      await supabase
-        .from("prospects")
-        .update({
-          status: "suppressed",
-          suppressed_reason: "Auto: pipeline did not complete (error/timeout)",
-          suppressed_at: new Date().toISOString(),
-          updated_at: new Date().toISOString(),
-        })
-        .in("id", ids)
-        .eq("tenant_id", user.tenantId)
-        .eq("status", "raw");
+      // Forward-progress guard over the whole batch. b_list / pitched /
+      // researched survive.
+      await suppressUnfinished(supabase, user.tenantId, ids);
 
       // Count the ICP's pitched leads (real + website pitches both carry status
       // 'pitched') — the cumulative pool the target measures against.

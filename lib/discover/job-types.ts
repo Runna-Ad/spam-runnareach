@@ -62,6 +62,8 @@ export type DiscoveryJobStats = {
   started_by?: string;
   /** Research cap for this run: what's left of the autopilot's daily budget. */
   max_processed?: number;
+  /** Why an autopilot job finished before its cap, e.g. the AI budget ran out. */
+  stopped_reason?: string;
 };
 
 export type DiscoveryJob = {
