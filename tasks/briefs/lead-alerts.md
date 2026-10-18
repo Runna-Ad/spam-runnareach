@@ -7,13 +7,13 @@
 | Branch | `claude/lead-alerts` from `claude/conductor-skill-board-tasks-cu74t5` |
 | PR target | `claude/conductor-skill-board-tasks-cu74t5` |
 | Reserved migration | none |
-| Depends on | wave 0 (landed): `lib/notify/send.ts` with `kind: "lead"` = pedro@runnareach.com, petedv31@gmail.com, nila@runna.com.mx |
+| Depends on | wave 0 (landed): `lib/notify/send.ts` with `kind: "lead"` = pedro@runnareach.com, petedv31@gmail.com, nils@runna.com.mx |
 | Conductor session | `session_018Qvu38cNFVCuWNq41wYfxJ` (send_message ONLY if blocked) |
 | Size | M |
 
 ## Goal
 Pedro, 2026-10-18: every reply from a prospect and every calendar booking must reach
-him, petedv31@gmail.com and nila@runna.com.mx. Today only replies that got an AI draft
+him, petedv31@gmail.com and nils@runna.com.mx. Today only replies that got an AI draft
 produce an email ("N reply drafts awaiting review"), and bookings produce nothing. After
 this task: each poll run that stored new prospect replies sends ONE lead alert listing
 them (hot ones first, with what they actually wrote), and each new booking or

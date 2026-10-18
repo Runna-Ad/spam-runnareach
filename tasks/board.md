@@ -57,7 +57,7 @@ Batch-audit pairs to check (runtime interactions): learning-meeting-outcomes × 
 | 6 | prospect-status-guard | A real outcome (booked/won/lost) wins over a later opt-out or bounce on the prospect's status; sending stays blocked by DNC + paused sequences either way | yes (opt-out already works this way) || default: yes ("go" 06:25) |
 | 7 | learning-meeting-outcomes | A meeting that ends "lost" still counts as a success for the email that booked it | yes (the email's job was the meeting) || default: yes ("go" 06:25) |
 | b1-2 | b1 contact-source-url | structured-research-stage contact inserts get source_url | yes → this batch | dropped: path unused (0 inserts in 10 days) |
-| 8 | Pedro 06:25 | Notify routing | — | everything → pedro@runnareach.com + petedv31@gmail.com; replies + bookings also → nila@runna.com.mx (as written; ES sender is "Nils", spelling flagged to Pedro). Wave 0 + lead-alerts |
+| 8 | Pedro 06:25 | Notify routing | — | everything → pedro@runnareach.com + petedv31@gmail.com; replies + bookings also → nils@runna.com.mx (Pedro corrected "nila" → "nils" 06:45). Wave 0 + lead-alerts |
 | 9 | Pedro 06:31 | Reports | — | no daily report; weekly + emergency-only → platform-reports |
 
 ## Worktrees to clean up (in-session workers only)
@@ -86,3 +86,4 @@ Batch-audit pairs to check (runtime interactions): learning-meeting-outcomes × 
 - 2026-10-18 06:33 UTC — Wave 0 merged on integration 4666626: lib/notify (ops/lead lists), tick/poll/warmup notify through it, calendar-sync maxDuration 120, getAccessToken 10s timeout, opt-out → latestRootSentPitchId, OUTCOME_EVENT_TYPES. 609 tests, typecheck, lint, build green. Dropped research-contact-source-url (0 engine inserts in 10 days). Added lead-alerts + platform-reports (0045 reserved). Noted for later: transitionPitchStatusWith updates status unconditionally (a /pitches "back to draft" can hit a row the send-queue claimed) → veto-hold-link avoids it; candidate for next batch.
 - 2026-10-18 06:36 UTC — 7 briefs committed. Spawning wave 1 (6 remote sessions).
 - 2026-10-18 06:38 UTC — Wave 1 spawned (6 remote sessions, inherited mode, tag spam-phase3-batch2): ids on the task rows. Safety check-in trig_01Q1Qcv9h7TAe384fsxbf1e9 at 07:28 UTC.
+- 2026-10-18 06:45 UTC — Pedro: the lead address is nils@runna.com.mx (not nila). Default fixed in lib/notify/recipients.ts + test + lead-alerts brief. Workers never pass addresses (kind: "lead"), so no worker needs telling.

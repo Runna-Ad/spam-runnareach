@@ -2,13 +2,13 @@
  * Who hears from the platform. ONE list, used by every notification email.
  *
  *   ops   everything: breaker trips, stage changes, the veto digest, warmup
- *         alerts, the daily and weekly reports.
+ *         alerts, the weekly report, emergency alerts (no daily report: Pedro).
  *   lead  the leads themselves (prospect replies, calendar bookings): the ops
  *         list plus the people who follow up with prospects.
  *
  * Pedro, 2026-10-18: "not just send to pedro@runnareach.com but also send a copy
  * of everything to petedv31@gmail.com ... the replies from prospects or calendar
- * bookings send those to nila@runna.com.mx as well".
+ * bookings send those to nils@runna.com.mx as well".
  *
  * Code defaults, env overrides (comma-separated): NOTIFY_EMAILS replaces the ops
  * list, LEAD_NOTIFY_EMAILS replaces the lead extras. An override with no valid
@@ -20,7 +20,7 @@
 export type NotifyKind = "ops" | "lead";
 
 export const DEFAULT_OPS_RECIPIENTS: readonly string[] = ["pedro@runnareach.com", "petedv31@gmail.com"];
-export const DEFAULT_LEAD_EXTRA_RECIPIENTS: readonly string[] = ["nila@runna.com.mx"];
+export const DEFAULT_LEAD_EXTRA_RECIPIENTS: readonly string[] = ["nils@runna.com.mx"];
 
 const EMAIL_RE = /^[^\s@<>,;"]+@[^\s@<>,;"]+\.[a-z]{2,}$/i;
 
