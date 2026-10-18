@@ -68,7 +68,7 @@ Batch-audit pairs to check (runtime interactions): send-path-safety × autopilot
 | Path | Branch | Remove after |
 |---|---|---|
 
-## Optional findings carried (from batch 1 reviews; ✔ = taken into batch 2)
+## Optional findings carried (✔ = taken into a batch)
 - ✔ meeting_booked/won/lost do not feed scoreOutcome or the exemplar shortlist → learning-meeting-outcomes.
 - ✔ three prospects.status writers with three overwrite rules → prospect-status-guard (also: markProspectBooked overwrites suppressed; prospects update should skip 'suppressed').
 - ✔ calendar-sync route has no maxDuration; getAccessToken has no timeout; opt-out.ts own root-pitch query → wave 0.
@@ -78,6 +78,8 @@ Batch-audit pairs to check (runtime interactions): send-path-safety × autopilot
 - From PR #14 review: intent-actions toast + audit say "booked"/"suppressed" even when the guard blocked the write (show what was observed); bounced path skips cooldown_until when guarded (write it unguarded); other status writers outside the rule: discover/pipeline-stage.ts:641 reactivation (suppressed/no_match → researched, breaks I5), deep-research-stage.ts:378, hunter/actions.ts:202; pin DO_NOT_SEND_STATUSES to send-action/send-queue/follow-up copies with a test. Decision: replied guard now also protects no_match (I5 wins over the brief's 'exact string'; nudge would otherwise reach a no_match prospect).
 - From PR #15 review: no unique index on replies(tenant_id, gmail_message_id) (0 dups in prod today) → overlapping pg_cron + Vercel poll runs could store one message twice → next-batch migration; booking alerts not durable (Google notifies the organizer anyway); sendGmailMessage had no timeout → conductor added opt-in timeoutMs, notifications only (7941c5b).
 - Open: placeholder regex duplicated in send-gate and composer (export one); needsReconnect persists silently (Sentry warning); warn when CALENDAR_BOOKING_INBOX matches no inbox; root-pitch.ts drops its query error; prospect activity feed does not render opportunity.won/lost; reward.ts and hot-lead.ts decide audit_scan stage with different rules (share levelOf); 200-row /pitches window hides old hot leads; "Asked to talk" chip tone; /learning: trials=100 boundary test, honest "arms not loaded" error state, order + truncation notice at 2000, icp learner never writes arms, UI <20 vs bandit 15/30 thresholds; dedupe opportunities per prospect on rebook.
+
+- From batch 3 reviews (carried, not done): reply poll — a run killed between the reply insert and its opt-out leaves the opt-out to the lead alert's optOutFailed flag (0046 makes the next run skip the row); calendar-sync — kill between createOpportunity and recordEvent/audit loses those writes (pre-existing); booking alert "Who" reads "unknown attendee" when the contact row is gone; one shared deadline across tenants in the calendar sync; follow-up DNC/suppression pauses write no audit row; follow-up release restores next_followup_at and can undo a concurrent OOO postponement (inherited); the recheck's two GETs run on a client with no fetch timeout (service-role, conductor-only); poll DEAD_STATUSES lacks no_match; nudge route accepts only CRON_SECRET; first-read DNC checks fail open by design; 200-row /pitches window; share levelOf with reward.ts.
 
 ## Shared-file changes pending (conductor does these)
 | Requested by | File | Change | Done |

@@ -87,6 +87,23 @@ cost-tracked, daily-capped wrapper in `lib/anthropic/` · Gmail API · Sentry ·
   reader and match its check exactly; share the constant (e.g. `HELD_BY_PERSON`).
 - Prospect status writes go through `lib/prospects/status.ts` (`protectedStatusFilter`);
   a real outcome (booked/won/lost) is never overwritten by an automated writer.
+- A send-time permission check (prospect status, cooldown, DNC) runs AFTER the claim and
+  immediately before the external call (no `await` in between), reads fresh, and fails
+  closed on "no row" as well as on an error (`if (row && bad(row))` is fail-open). Every
+  release of a claim carries the claimed state in its WHERE; a status transition puts its
+  allowed from-states in the UPDATE's WHERE (`lib/pitches/status-transitions.ts`).
+- Test an error field for presence, not truthiness: postgrest-js reports an empty-body
+  502/503/504 as `{ message: "" }`, and `if (error.message)` then reads as success.
+- Never key a "recent" window on `updated_at`: the 0001 trigger bumps it on every write,
+  your own claim/release included. Use a column only the event writes (`cancelled_at`).
+- A migration is applied before the deploy, so the OLD code runs against the new schema
+  for a while: say what happens to rows it writes in that gap (null new columns, side
+  effects the new code will repeat) and add the cleanup step to the brief.
+- An overlap/race test proves itself: delete the guard, see the test fail, restore. A fake
+  read snapshots its rows BEFORE it yields, or two "concurrent" runs never overlap.
+- Client state (`useState`) survives `router.refresh()`: when a server prop disables a
+  control, derive the effective state from both (`hotOnly && !unavailable`), never from
+  the raw state alone.
 - Every notification email to the team (alerts, digests, reports, lead alerts) goes
   through `lib/notify/send.ts` with `kind: "ops"` (everything: Pedro's two addresses) or
   `kind: "lead"` (prospect replies and bookings: ops + the sales team). Never read a
