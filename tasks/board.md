@@ -26,7 +26,7 @@ Open prod checks:
 ## Approvals and checks
 | Item | State |
 |---|---|
-| Prod = main head READY before cutting integration | e10a326 READY per batch 2 log 16:53 (re-check at ship) |
+| Prod = main head READY before cutting integration | e10a326 READY (dpl_8udavQRnDUycKVocmcXakCav9pEm, verified 19:45) |
 | Batch plan sent to Pedro | scope approved in advance ("all seem good", 2026-10-18); Pedro "Go" 17:07 UTC |
 | Integration → main PR | — |
 | Questions sent | — |
