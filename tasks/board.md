@@ -14,9 +14,10 @@ Previous: `phase3-batch1` CLOSED (shipped a15d1d8, calendar sync live). Its rows
 |---|---|
 | Prod = main head READY before cutting integration | yes: af3c4b0 READY (dpl_FK9wsisyQ9D7A8EaYFmqG2gexazX) |
 | Batch plan sent to Pedro | 2026-10-18 06:20 UTC (in chat) |
+| Integration → main PR | #19 opened, waiting on "ship it" |
 | Batch plan approved | yes, 2026-10-18 ~06:25 UTC ("go with all the rest" = every default) + two new asks: notify routing (copies to petedv31 + nila) and NO daily report, weekly + emergency-only |
 | Questions sent | with the plan (table below) |
-| `npm run build` green on integration | yes, 4666626 (wave 0, 609 tests) |
+| `npm run build` green on integration | yes, 09b7425 (721 tests) |
 | Origin in sync (`git status -sb`) | pushed with this commit |
 
 ## Reserved migration numbers
@@ -105,3 +106,4 @@ Batch-audit pairs to check (runtime interactions): learning-meeting-outcomes × 
 - 2026-10-18 07:34 UTC — Prod exposure check for the exemplar leaks: 0 of 11 pitches since the batch-1 ship were shown exemplars; 0 pitches have a qualifying positive event (pitch_events began 10-17). Nothing leaked; no kill switch needed. Fix lands before any exemplar qualifies (the first will be a booked meeting or a positive reply).
 - 2026-10-18 07:38 UTC — PR #18 round 2 (50209e8) verified by the conductor: E3 judges only the last closed send window (≤24h after close), only sendable inboxes (token ok, unpaused, cap>0) that sent nothing in it, prospects not in cooldown; 'sending' only if it predates the window; 429 transient; observed-wording E2; silent-state matrix + reviewer repro as tests. CI green. Merged 9da266f, 721 tests. Added the Vercel daily backstop cron (40 12 * * *), build green. Session archived. Wave 1: 5/6 merged; exemplar-scrubber-gaps in round 2.
 - 2026-10-18 15:34 UTC — Batch audit (Fable, ~189k tokens): ship-after-fixes, 1 blocking (lead-alert optOutFailed used its own 'status !== suppressed' predicate → false 'removal NOT confirmed' for booked/won/lost opt-outs under the status rule). Fixed with DO_NOT_SEND_STATUSES + test (82e1123). #17 round 2 review: 6 more leak classes → round 3 = allow-list invariant; batch ships WITHOUT #17 behind an exemplar kill switch (EXEMPLARS_ENABLED unset = off; 0 exemplars ever shown in prod). pitches-list-resilience deferred. Pre-deploy SQL clean (1 inbox, 0 unalerted replies, enum ok, 19 AUTO pitches scheduled for Mon). Lessons merged (6 inbox + 4 conductor), retro written, routing + project-state updated, poll bounce update gained its tenant filter.
+- 2026-10-18 15:35 UTC — Integration → main PR #19 opened and subscribed. Waiting on Pedro's "ship it". #17 round 3 continues (subscribed); merges into a batch 3 integration branch after this ships.
