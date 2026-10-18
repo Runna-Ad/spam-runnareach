@@ -178,6 +178,10 @@ export async function POST(req: NextRequest) {
       await patchJob(supabase, job.id, { stats });
 
       let prospectIds: string[] = [];
+      // What this job's own crawl inserted. The fallbacks below and every
+      // refill research the ICP's oldest raw prospects, which can come from
+      // other crawls, so a scout job records its own finds for its cell.
+      let foundIds: string[] = [];
       let partial = false;
       let discoverErrors: string[] = [];
       let newCount = 0;
@@ -215,7 +219,8 @@ export async function POST(req: NextRequest) {
         discoverErrors = result.errors;
         if (result.candidatesNew > 0) {
           const ids = await getProspectIdsForRunsWith(actor, result.runIds);
-          prospectIds = ids.ok ? ids.ids : [];
+          foundIds = ids.ok ? ids.ids : [];
+          prospectIds = foundIds;
           if (prospectIds.length === 0) {
             const raw = await getRawProspectIdsWith(actor, job.icp_id);
             prospectIds = raw.ok ? raw.ids : [];
@@ -247,6 +252,8 @@ export async function POST(req: NextRequest) {
         dup: dupCount,
         errors: discoverErrors,
         partial,
+        // Manual runs search every keyword, so they credit no cell.
+        ...(stats.focus ? { found_ids: foundIds } : {}),
       };
 
       if (prospectIds.length === 0) {
@@ -334,6 +341,7 @@ export async function POST(req: NextRequest) {
           }
         }
         stats.processed = (stats.processed ?? 0) + batch.length;
+        stats.processed_ids = [...(stats.processed_ids ?? []), ...batch];
 
         await patchJob(supabase, job.id, { stats });
       }
