@@ -28,6 +28,8 @@ import "server-only";
 import type { Actor } from "@/lib/actor";
 import { isUnderDailyCap } from "@/lib/anthropic/cost-tracking";
 import { evolveSearchSpace, learnFromOutcomes, weeklyReview } from "./learn";
+import { buildVetoDigest, type DigestItem } from "./hold";
+import { holdSecret } from "./hold-token";
 import { resumeDiscoveryJobWith, startDiscoveryJobWith } from "@/lib/discover/job-stage";
 import { EMPTY_JOB_STATS } from "@/lib/discover/job-types";
 import type { Arm } from "@/lib/learning/bandit";
@@ -664,7 +666,7 @@ async function scheduleAuto(actor: Actor, db: Db, stage: Stage, now: Date, deadl
   }
 
   const sendAt = new Date(now.getTime() + (stage === "veto" ? VETO_WINDOW_HOURS * 3_600_000 : 0)).toISOString();
-  const scheduled: Array<{ company: string; subject: string }> = [];
+  const scheduled: DigestItem[] = [];
   let i = 0;
   for (const p of candidates) {
     if (held.has(p.id)) continue;
@@ -686,18 +688,20 @@ async function scheduleAuto(actor: Actor, db: Db, stage: Stage, now: Date, deadl
       .eq("id", p.id)
       .eq("tenant_id", tenantId)
       .eq("status", "approved");
-    scheduled.push({ company: p.prospects?.company_name ?? "?", subject: p.subject });
+    scheduled.push({ pitchId: p.id, company: p.prospects?.company_name ?? "?", subject: p.subject });
   }
 
   if (scheduled.length > 0 && stage === "veto") {
-    await notify(
-      db,
+    // Each line carries its own hold link (lib/autopilot/hold.ts); no key → no links.
+    const digest = buildVetoDigest({
+      items: scheduled,
       tenantId,
-      `Autopilot scheduled ${scheduled.length} email${scheduled.length === 1 ? "" : "s"} (sends in ${VETO_WINDOW_HOURS}h unless held)`,
-      `These passed every check and will send in about ${VETO_WINDOW_HOURS} hours:\n\n` +
-        scheduled.map((s) => `• ${s.company}: "${s.subject}"`).join("\n") +
-        `\n\nTo hold one, move it back to draft on /pitches before then. Holding one counts as a veto; few vetoes over two weeks lets the autopilot send without the wait.\n\n${appUrl()}/pitches`,
-    );
+      sendAt,
+      windowHours: VETO_WINDOW_HOURS,
+      appUrl: appUrl(),
+      secret: holdSecret(),
+    });
+    await notify(db, tenantId, digest.subject, digest.body);
   }
   return scheduled.length;
 }
