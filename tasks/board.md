@@ -5,7 +5,21 @@ file alone. Update it on every spawn, every status change, every merge. Keep clo
 for the current phase; move older ones to the retro.
 
 ## Current phase
-`phase3-batch2` CLOSED 2026-10-18 (main e10a326: batch 2 + twice-daily digest; health check, lead alerts and digest verified in prod). **Next: `phase3-batch3`, not started; no conductor owns it.** Candidates: #17 exemplar allow-list (strict/generous design), /pitches resilience, unique index on replies, DO_NOT_SEND_STATUSES in send paths, transitionPitchStatusWith status guard, pipeline-stage reactivation vs the status rule. **Owner: session_018Qvu38cNFVCuWNq41wYfxJ** (batch 2 conductor, Opus 5.5), took over 2026-10-18 06:10 UTC per batch 1's hand-off.
+`phase3-batch2` CLOSED 2026-10-18 (main e10a326: batch 2 + twice-daily digest; health check, lead alerts and digest verified in prod). **Next: `phase3-batch3`, not started. Owner: none** (session_018Qvu38cNFVCuWNq41wYfxJ released the lock 2026-10-18). Proposed scope, in order (Pedro read this list on 2026-10-18 and replied "all seem good"):
+1. Send-path safety: DO_NOT_SEND_STATUSES in `lib/pitches/send-action.ts` and the send-queue route, plus a status guard on `transitionPitchStatusWith`. Do this first: 19 AUTO pitches start sending Mon 15:00 UTC.
+2. Unique index on replies(tenant_id, gmail_message_id). Needs a reserved migration number.
+3. Booking-alert durability in `lib/opportunities/calendar-sync.ts`, using the same claim/sweep pattern as the reply alerts.
+4. /pitches resilience. Brief ready: `tasks/briefs/pitches-list-resilience.md`, sonnet/medium.
+5. #17 exemplar allow-list, built to the reviewer's strict/generous design (log 16:24). Opus/high, parallel track; flip EXEMPLARS_ENABLED once merged.
+
+Not code: pipeline-stage reactivation vs the status rule is a product question for Pedro.
+
+Open prod checks:
+- The 01:00 and 13:00 UTC digests list the 19 AUTO pitches.
+- First weekly report, Mon 13:10 UTC.
+- First AUTO sends, Mon 15:00 UTC.
+- First real lead alert shows alerts{sent:3,failed:[]}.
+- First use of a hold link.
 Integration branch: `claude/conductor-skill-board-tasks-cu74t5` (this session's designated branch, cut from main af3c4b0; same pattern as batch 1's gallant-gauss). Workers PR into it.
 Previous: `phase3-batch1` CLOSED (shipped a15d1d8, calendar sync live). Its rows, log and hand-off are in `tasks/retros/2026-10-17-phase3-batch1.md` (appendix).
 
@@ -113,3 +127,4 @@ Batch-audit pairs to check (runtime interactions): learning-meeting-outcomes × 
 - 2026-10-18 16:25 UTC — First scheduled /api/reports/health run (pg_cron 16:25): 200, problems [], sent 0 → batch 2 health check verified in prod. Old #19 check-in trigger deleted (PR merged). Pending prod verifications: next reply poll response carries alerts{sent,failed}; first weekly report Mon 13:10 UTC; first digest-link hold.
 - 2026-10-18 16:32 UTC — PR #20 (digest twice a day) review: fix-then-merge, 3 blocking, all mine: digest only in veto stage (a demotion/switch-off would hide already-approved emails the send-queue still sends); slot recorded before delivery; copy said weekdays-only (Vercel daily send-queue also runs weekends). Fixed in 7858c1c (+ overdue hold-link expiry, error checks); conductor verified the delta (no 3rd review). 726 tests, build green. Waiting on Pedro's ship it.
 - 2026-10-18 16:53 UTC — #20 shipped (main e10a326, deploy READY). First twice-daily digest sent 16:45:05 UTC (slot 13:00, 19 emails, recorded after delivery). Reply poll 16:30 response carries alerts{sent:0,failed:[]} (lead alerts live). Pedro asked to close idle sessions: archived batch-1 conductor (stuck on a SQL permission prompt for its PR #8 check; answered by the weekly dry run: 19 AUTO scheduled, 26 auto-rejected), Phase 2 conductor, AI-budget, scout-credit and exemplar worker (#17 stays open, parked for batch 3). Left untouched: 'Image resizing' (greenlight repo, not S.P.A.M.). All check-ins cancelled; nothing scheduled. Batch 2 CLOSED; next conductor resumes from this board for batch 3.
+- 2026-10-18 17:06 UTC — Pedro reviewed the batch 3 list (line 8) and asked to wrap this session. Lock released; batch 3 starts in a fresh conductor session (this one is past the hand-off size).
