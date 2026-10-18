@@ -23,7 +23,7 @@ import { ATTRIBUTION_WINDOW_DAYS, addressOutcome, scoreOutcome, type OutcomeEven
 import { segmentOf, type Segment } from "../learning/segments.ts";
 import { EN_WORDS } from "./wordlists/en.ts";
 import { ES_WORDS } from "./wordlists/es.ts";
-import { COMMON_NAMES, OWN_VOCABULARY } from "./wordlists/vocab.ts";
+import { COMMON_NAMES, OWN_VOCABULARY, WORD_NAMES } from "./wordlists/vocab.ts";
 
 /** Recorded in the decision record when exemplars were shown. */
 export const EXEMPLAR_PROMPT_VERSION = "exemplar-v3-2026-10-18";
@@ -189,7 +189,9 @@ const STROKE_LETTERS: Record<string, string> = { ł: "l", Ł: "l", đ: "d", Đ: 
 
 function fold(s: string): string {
   return s
-    .normalize("NFD")
+    // NFKD, not NFD: full-width "Ｐａｔｅｌ" is "patel". Format characters go: "Pa\u200btel" is too.
+    .replace(/\p{Cf}/gu, "")
+    .normalize("NFKD")
     .replace(/[̀-ͯ]/g, "")
     .replace(/[łŁđĐøØ]/g, (c) => STROKE_LETTERS[c]!)
     .toLowerCase();
@@ -238,11 +240,17 @@ function lettersPattern(letters: string): RegExp {
 }
 
 /**
- * The allow-list: the 20,000 most frequent EN and ES words plus our own
- * vocabulary, minus common names. Loaded once.
+ * The allow-list, in two tiers (see the leak check's header for where each
+ * applies). Strict: the frequency lists minus common names and minus the names
+ * that are also words, plus our own vocabulary. Generous (KNOWN_WORDS): strict
+ * plus the names that are also words ("vale la pena", "rosa"). A common name
+ * that is no word (garcia, patel) is in neither. Loaded once.
  */
 const NAMES = new Set(COMMON_NAMES);
-const KNOWN_WORDS = new Set([...EN_WORDS.split("\n"), ...ES_WORDS.split("\n"), ...OWN_VOCABULARY].filter((w) => w && !NAMES.has(w)));
+const STRICT_DENY = new Set([...COMMON_NAMES, ...WORD_NAMES]);
+const FREQUENT = [...EN_WORDS.split("\n"), ...ES_WORDS.split("\n")].filter(Boolean);
+const STRICT_WORDS = new Set([...FREQUENT.filter((w) => !STRICT_DENY.has(w)), ...OWN_VOCABULARY]);
+const KNOWN_WORDS = new Set([...STRICT_WORDS, ...WORD_NAMES]);
 /** The 3,000 most frequent of each: words common enough to follow a name ("Dr. [name] told us"). */
 const TOP_WORDS = new Set([...EN_WORDS.split("\n").slice(1, 3001), ...ES_WORDS.split("\n").slice(1, 3001)]);
 /**
@@ -273,9 +281,9 @@ function bases(w: string): string[] {
   return out;
 }
 
-function inWords(words: ReadonlySet<string>, w: string): boolean {
+function inWords(words: ReadonlySet<string>, w: string, deny: ReadonlySet<string> = NAMES): boolean {
   if (w.length <= 1 || words.has(w) || HONORIFICS.has(w)) return true;
-  if (NAMES.has(w)) return false;
+  if (deny.has(w)) return false;
   return bases(w).some((b) => words.has(b) || bases(b).some((c) => words.has(c)));
 }
 const isKnownWord = (w: string) => inWords(KNOWN_WORDS, w);
@@ -589,7 +597,8 @@ const NUMBER_WORDS_RE = new RegExp(`(?<![\\p{L}\\p{N}])(?:${NUMBER_WORDS.join("|
  * misses, exemplarLeaks catches.
  */
 export function scrubExemplar(text: string, prospect: ExemplarProspect): string {
-  let out = text;
+  // Format characters (zero-width space, soft hyphen, bidi marks) first: "Pa\u200btel" is "Patel".
+  let out = text.replace(/\p{Cf}/gu, "");
   const host = hostOf(prospect.domain, prospect.website_url);
 
   // Addresses and links first: they carry the domain, the name and digits.
@@ -705,6 +714,23 @@ export function scrubExemplar(text: string, prospect: ExemplarProspect): string 
 // letters), its own tokenizer (the dots inside initials removed, so "C.D.M.X."
 // is the token "CDMX"), letters-only substrings for long company words, and
 // span rules after honorifics and greetings. It shares only the word lists.
+//
+// The invariant a kept exemplar satisfies (allowListLeaks):
+// I1 Tokens. Format characters (\p{Cf}: zero-width, soft hyphen, bidi marks)
+//    are removed, the text is NFKD-folded, and a token is a maximal run of
+//    letters (\p{L}); digits and punctuation separate tokens. A token with any
+//    letter outside a-z after folding (金龍, Иванов, "Pаtel" with a Cyrillic а,
+//    Weiß) is never allowed.
+// I2 Strict tier: the frequency lists minus COMMON_NAMES and WORD_NAMES, plus
+//    OWN_VOCABULARY. Every token of the subject; every token that starts with a
+//    capital and does not open a sentence; every token in a whitespace chunk
+//    holding "@", "#", "://", "www" or a dot between letters (handles, emails,
+//    URLs, domains).
+// I3 Generous tier: strict plus WORD_NAMES ("vale la pena", "rosa"). Every
+//    other token: lower case, or a capital opening a sentence.
+// I4 The field checks and the honorific and greeting spans (exemplarLeaks)
+//    run as well: they catch the current prospect's name even when it is an
+//    allowed word.
 
 function leakFold(s: string): string {
   return s
@@ -763,7 +789,8 @@ const leakGeneric = (f: string) =>
  * - after any honorific, and after the first line's greeting: the name span
  *   must be blanks, particles, initials or function words.
  */
-export function exemplarLeaks(text: string, prospect: ExemplarProspect): string[] {
+export function exemplarLeaks(rawText: string, prospect: ExemplarProspect, opts: { subject?: boolean } = {}): string[] {
+  const text = rawText.replace(/\p{Cf}/gu, "");
   const toks = leakTokens(text);
   const seq = toks.filter((t) => t.kind !== "stop");
   const chunks = text
@@ -920,13 +947,51 @@ export function exemplarLeaks(text: string, prospect: ExemplarProspect): string[
     span(lead + greet.length, false, "greeting");
   });
 
-  // The allow-list: every word must be a common EN or ES word, our own
-  // vocabulary, or a blank. Whatever else is left is a word of the old
-  // prospect's world the rules above did not know to look for.
-  for (const w of leakFold(text.replace(PLACEHOLDER_RE, " ")).split(/[^a-z]+/)) {
-    if (w && !isKnownWord(w)) leaks.add(w);
-  }
+  for (const w of allowListLeaks(text, opts.subject === true)) leaks.add(w);
   return [...leaks];
+}
+
+/** Where a blank stood: not a letter (it ends a token), and not a sentence end. */
+const LEAK_BLANK = "\uE000";
+/** What may stand between a sentence end and its first word: spaces, quotes, brackets, bullets, dashes, emoji. */
+const OPENER_SKIP = /[^\S\n]|["“”'‘’«»([*•·\p{Pd}\p{So}\p{Sk}]/u;
+const SENTENCE_END = /[\n.!?¿¡:…]/u;
+/** A chunk that is a handle, hashtag, email, URL or domain: every token in it is strict. */
+const ADDRESS_CHUNK = /[@#]|:\/\/|www|\p{L}\.\p{L}/iu;
+
+function leakOpensSentence(norm: string, at: number): boolean {
+  let i = at - 1;
+  while (i >= 0 && OPENER_SKIP.test(norm[i]!)) i--;
+  return i < 0 || SENTENCE_END.test(norm[i]!);
+}
+
+/**
+ * The allow-list (I1 to I3 above): every token must be a common EN or ES word,
+ * our own vocabulary, or a blank, in the tier its place calls for. Whatever
+ * else is left is a word of the old prospect's world the field checks did not
+ * know to look for.
+ */
+function allowListLeaks(text: string, subject: boolean): string[] {
+  const norm = text
+    .replace(/\p{Cf}/gu, "")
+    .replace(PLACEHOLDER_RE, LEAK_BLANK)
+    .normalize("NFKD")
+    .replace(/\p{M}/gu, "");
+  const out: string[] = [];
+  for (const chunk of norm.matchAll(/\S+/gu)) {
+    const address = ADDRESS_CHUNK.test(chunk[0]);
+    for (const m of chunk[0].matchAll(/\p{L}+/gu)) {
+      const raw = m[0];
+      const f = leakFold(raw);
+      if (!/^[a-z]+$/.test(f)) {
+        out.push(f);
+        continue;
+      }
+      const strict = subject || address || (/^\p{Lu}/u.test(raw) && !leakOpensSentence(norm, chunk.index + m.index));
+      if (!(strict ? inWords(STRICT_WORDS, f, STRICT_DENY) : isKnownWord(f))) out.push(f);
+    }
+  }
+  return out;
 }
 
 /**
@@ -940,7 +1005,7 @@ export function toExemplar(
   const subject = scrubExemplar(pitch.subject, pitch);
   const body = scrubExemplar(pitch.body, pitch);
   // Subject and body are checked apart: the body's first line is its own greeting line.
-  if (exemplarLeaks(subject, pitch).length > 0 || exemplarLeaks(body, pitch).length > 0) return null;
+  if (exemplarLeaks(subject, pitch, { subject: true }).length > 0 || exemplarLeaks(body, pitch).length > 0) return null;
   return { pitch_id: picked.pitch_id, score: picked.score, subject, body };
 }
 

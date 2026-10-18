@@ -8,8 +8,8 @@
  * (https://github.com/hermitdave/FrequencyWords), built from OpenSubtitles 2018.
  * Licence of the word data: CC BY-SA 4.0 (the repository's code: MIT).
  * Attribution: Hermit Dave. Derived here by folding accents, splitting on
- * non-letters and keeping the first 20,000 distinct words in frequency order.
- * Regenerate, do not hand-edit.
+ * non-letters and keeping the distinct a-z words in frequency order.
+ * Regenerate with scripts/gen-exemplar-wordlists.mjs, do not hand-edit.
  */
 export const ES_WORDS = `
 de
