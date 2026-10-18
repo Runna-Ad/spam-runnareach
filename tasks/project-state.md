@@ -93,16 +93,23 @@ SHIPPED on Pedro's "ship it": migrations 0040 + 0041 applied, main = `4b22ad1`+,
   claimed before send, released on a send that reached nobody, swept at the start of every hourly run; only cancellations
   the sync applied alert (cancelled_at).
 - **/pitches survives** a failing hot-lead lookup: full list, a notice, the Hot leads filter disabled.
-Deploy order (conductor runs each step and verifies by query):
-1. Apply **0046** then **0047** BEFORE the deploy (additive; check prod first: 0 duplicate reply pairs, migration rows by NAME).
-2. Merge → deploy READY.
-3. Right after READY and before the next :05 calendar sync: `update opportunities set booked_alert_sent_at = created_at
-   where source = 'calendar' and booked_alert_sent_at is null and meeting_start is null` (rows the old code created and
-   alerted from memory in the gap; 0 calendar rows exist today).
-4. First runs: reply poll (:00/:30) 200 with no insert errors; calendar-sync (:05) 200 with alerts.failed []; Monday
-   15:00 UTC send-queue: sent > 0, no "couldn't read" skips, AUTO pitches → sent.
+Deploy order (conductor runs each step and verifies by query; Fable batch audit: ship, 0 blocking):
+1. Right before 0046: re-run the duplicate query from its header (0 pairs at 20:07 UTC); delete the later row of any pair.
+2. Apply **0046** then **0047** BEFORE the deploy, outside minutes :00/:05/:30 (poll + calendar sync). Check by NAME
+   in supabase_migrations.schema_migrations; normalise connector timestamps to `0046` / `0047`.
+3. Merge → deploy READY; record the READY timestamp.
+4. Before the next :05 calendar sync: `update opportunities set booked_alert_sent_at = created_at where source =
+   'calendar' and booked_alert_sent_at is null and meeting_start is null and created_at < '<READY ts>'` (rows the old
+   code alerted from memory in the gap; 0 calendar rows today). Confirm in cron.job_run_details that no
+   spam-calendar-sync run started between READY and the update.
+5. First runs: reply poll (:00/:30) 200 with no insert errors; calendar-sync (:05) 200, alerts.failed [] and
+   `select count(*) from opportunities where source='calendar' and booked_alert_sent_at is null and created_at <
+   now() - interval '2 hours'` = 0; Monday 15:00 UTC send-queue: sent > 0, no "Couldn't read" skips, AUTO pitches →
+   sent (expect up to 12 at 15:00: the Vercel daily and pg_cron runs overlap, pre-existing; compare sends_today with
+   today's sent count).
+6. Never call the integration preview's /api/opportunities/calendar-sync before 0047 (shares the prod DB).
 NOT in this ship: PR #17 (exemplar allow-list, round 5 in progress; `EXEMPLARS_ENABLED` stays unset = off).
-Open / next: #17 (then flip EXEMPLARS_ENABLED); pipeline-stage reactivation vs the status rule (Pedro's call); poll
+Open / next: #17 (then flip EXEMPLARS_ENABLED); atomic sends_today increment (Vercel + pg_cron send-queue runs overlap and under-count the cap); tick should skip a candidate whose approve was a no-op; pipeline-stage reactivation vs the status rule (Pedro's call); poll
 `DEAD_STATUSES` lacks no_match (drafting gate); nudge route accepts only CRON_SECRET (a pg_cron schedule would 401);
 calendar-sync: a kill between createOpportunity and its pitch event/audit loses those writes (pre-existing).
 
