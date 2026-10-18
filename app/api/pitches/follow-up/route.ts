@@ -39,6 +39,7 @@ import { ANTHROPIC_DEFAULT_MODEL, claudeIsAvailable } from "@/lib/anthropic/clie
 import { isUnderDailyCap, recordClaudeCall } from "@/lib/anthropic/cost-tracking";
 import { hasUsableEmail } from "@/lib/research/email-utils";
 import { isEmailOnDncList, type DncClient } from "@/lib/discover/dnc-check";
+import { DO_NOT_SEND_STATUSES } from "@/lib/prospects/status";
 
 // ── Auth guard ─────────────────────────────────────────────────────────────────
 
@@ -81,12 +82,10 @@ type ProspectRow = {
 const MAX_PER_RUN = 30;
 const TIME_BUDGET_MS = 90_000;
 
-// Prospect states that must never receive an automated follow-up. Manual/bulk
-// suppression doesn't touch pitches.sequence_paused_at, so the cron re-checks
-// the prospect itself — the last line of defense.
-const DO_NOT_SEND_STATUSES = new Set([
-  "suppressed", "archived_no_meeting", "no_match", "lost", "won", "booked",
-]);
+// Prospect states that must never receive an automated follow-up
+// (DO_NOT_SEND_STATUSES). Manual/bulk suppression doesn't touch
+// pitches.sequence_paused_at, so the cron re-checks the prospect itself — the
+// last line of defense.
 
 type ContactRow = {
   id: string;
@@ -134,12 +133,16 @@ async function processFollowup(pitch: DuePitchRow): Promise<FollowupResult> {
   const nextStep = pitch.sequence_step + 1; // 2 or 3
 
   // ── 1. Load prospect ──────────────────────────────────────────────────────
-  const { data: prospect } = await supabase
+  const { data: prospect, error: prospectErr } = await supabase
     .from("prospects")
     .select("id, company_name, market, industry, city, language, status, cooldown_until")
     .eq("id", pitch.prospect_id)
     .maybeSingle<ProspectRow>();
 
+  // Fails closed: an unreadable prospect is skipped; the step stays due.
+  if (prospectErr) {
+    return { pitch_id: pitch.id, prospect: "unknown", step: nextStep, status: "skipped", reason: `Couldn't read the prospect: ${prospectErr.message}` };
+  }
   if (!prospect) {
     return { pitch_id: pitch.id, prospect: "unknown", step: nextStep, status: "skipped", reason: "Prospect not found" };
   }
