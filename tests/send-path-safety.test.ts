@@ -14,6 +14,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
 import {
+  canNeverSend,
   followupPausesFor,
   prospectSendBlock,
   queueReleaseFor,
@@ -40,7 +41,8 @@ function memoryClient(db: Db, failReads: Record<string, string> = {}) {
     let payload: Row = {};
     let lim = Infinity;
     const run = () => {
-      if (mode === "select" && failReads[table]) return { data: null, error: { message: failReads[table] } };
+      // `in`, not truthiness: postgrest-js reports an empty-body 502/503/504 as { message: "" }.
+      if (mode === "select" && table in failReads) return { data: null, error: { message: failReads[table] } };
       const rows = (db[table] ?? []).filter((r) => filters.every((f) => f(r)));
       if (mode === "update") {
         for (const r of rows) Object.assign(r, payload);
@@ -325,6 +327,49 @@ test("recheck: DNC lookup that throws → unreadable, never send", async () => {
   assert.match(block!.reason, /socket hang up/);
 });
 
+test("recheck: DNC error with an EMPTY message (empty-body 5xx) → unreadable, never send", async () => {
+  const block = await check(world("pitched"), { do_not_contact_list: "" });
+  assert.equal(block?.kind, "unreadable");
+  assert.ok(block!.reason.length > "Couldn't read the do-not-contact list: ".length, block!.reason);
+});
+
+test("recheck: DNC lookup throwing new Error() (no message) → unreadable, never send", async () => {
+  const { client } = memoryClient(world("pitched"));
+  const throwing = {
+    from: (t: string) => (t === "do_not_contact_list" ? (() => { throw new Error(); })() : client.from(t)),
+  };
+  const block = await recheckBeforeSend(throwing as unknown as SendCheckClient, {
+    tenantId: T, prospectId: "p1", email: EMAIL, nowIso: NOW,
+  });
+  assert.equal(block?.kind, "unreadable");
+});
+
+test("isEmailOnDncList never reports an empty error string", async () => {
+  const empty = await isEmailOnDncList(
+    memoryClient(world("pitched"), { do_not_contact_list: "" }).client as unknown as DncClient, T, EMAIL,
+  );
+  assert.equal(empty.blocked, false);
+  assert.ok(!empty.blocked && typeof empty.error === "string" && empty.error.length > 0, JSON.stringify(empty));
+  const thrown = await isEmailOnDncList(
+    { from: () => { throw new Error(); } } as unknown as DncClient, T, EMAIL,
+  );
+  assert.ok(!thrown.blocked && typeof thrown.error === "string" && thrown.error.length > 0, JSON.stringify(thrown));
+  const nullErr = await isEmailOnDncList(
+    { from: () => ({ select: () => ({ eq: () => ({ or: () => ({ limit: () => Promise.resolve({ data: null, error: {} }) }) }) }) }) } as unknown as DncClient,
+    T, EMAIL,
+  );
+  assert.ok(!nullErr.blocked && typeof nullErr.error === "string" && nullErr.error.length > 0, JSON.stringify(nullErr));
+});
+
+test("follow-up route: the blocked branch pauses per followupPausesFor (not a constant)", () => {
+  const s = src(SEND_PATHS.followUp);
+  const ifAt = s.indexOf("if (lastCheck) {");
+  assert.ok(ifAt > 0);
+  const branch = s.slice(ifAt, blockEnd(s, ifAt + "if (lastCheck) ".length));
+  assert.match(branch, /const pause = followupPausesFor\(lastCheck\);/);
+  assert.match(branch, /await release\(pause\);/);
+});
+
 test("isEmailOnDncList: a query error still fails open for first-read callers, with the error visible", async () => {
   const { client } = memoryClient(world("pitched", { dnc: true }), { do_not_contact_list: "statement timeout" });
   const hit = await isEmailOnDncList(client as unknown as DncClient, T, EMAIL);
@@ -471,4 +516,28 @@ test("send-action exports only async functions (it is a \"use server\" file)", (
   assert.ok(s.startsWith(`"use server";`));
   const exports = s.match(/^export\s+(?!type\b)(\w+(\s+\w+)?)/gm) ?? [];
   for (const e of exports) assert.match(e, /^export\s+async\s+function/, e);
+});
+
+test("canNeverSend: one predicate for queue drop and follow-up pause", () => {
+  for (const kind of ["do_not_send", "dnc", "cooldown", "unreadable"] as const) {
+    const never = kind === "do_not_send" || kind === "dnc";
+    assert.equal(canNeverSend(kind), never, kind);
+    assert.equal(followupPausesFor({ kind, reason: "r" }), never, kind);
+    assert.equal(queueReleaseFor({ kind, reason: "r" }).to, never ? "auto_rejected" : "approved", kind);
+  }
+});
+
+test("releaseFollowupClaim logs a failed release instead of dropping it", async () => {
+  const logged: unknown[] = [];
+  const orig = console.error;
+  console.error = (...a: unknown[]) => { logged.push(a); };
+  try {
+    const failing = { from: () => ({ update: () => ({ eq: () => ({ eq: () => Promise.resolve({ error: { message: "boom" } }) }) }) }) };
+    await releaseFollowupClaim(failing as unknown as FollowupReleaseClient, {
+      pitchId: "pitch-1", claimedStep: 2, priorStep: 1, priorFollowupAt: null, pause: false,
+    });
+  } finally {
+    console.error = orig;
+  }
+  assert.equal(logged.length, 1);
 });

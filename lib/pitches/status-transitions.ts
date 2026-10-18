@@ -111,7 +111,10 @@ export async function recheckBeforeSend(
   if (dnc.blocked) return { kind: "dnc", reason: dnc.reason };
   // The first-read DNC checks fail open (a blip must not stall the queue); this
   // one is the last before Gmail, so an unreadable list is not a "no".
-  if (dnc.error) return { kind: "unreadable", reason: `Couldn't read the do-not-contact list: ${dnc.error}` };
+  // Presence, not truthiness: an empty message is still a failed read.
+  if (dnc.error !== undefined) {
+    return { kind: "unreadable", reason: `Couldn't read the do-not-contact list: ${dnc.error || "no error message"}` };
+  }
   return null;
 }
 
@@ -151,8 +154,13 @@ export async function releaseClaim(
 }
 
 /** Where the send-queue releases a claim it may not send: can never send → out of the queue. */
+/** do-not-send status or DNC-listed: no later run may send it either. */
+export function canNeverSend(kind: SendBlock["kind"]): boolean {
+  return kind === "do_not_send" || kind === "dnc";
+}
+
 export function queueReleaseFor(block: SendBlock): ReleaseTo {
-  return block.kind === "do_not_send" || block.kind === "dnc"
+  return canNeverSend(block.kind)
     ? { to: "auto_rejected", reason: block.reason }
     : { to: "approved" };
 }
@@ -188,7 +196,7 @@ export async function releaseFollowupClaim(
     nowIso?: string;
   },
 ): Promise<void> {
-  await db
+  const { error } = await db
     .from("pitches")
     .update({
       sequence_step: args.priorStep,
@@ -197,9 +205,11 @@ export async function releaseFollowupClaim(
     })
     .eq("id", args.pitchId)
     .eq("sequence_step", args.claimedStep);
+  // Otherwise the step stays claimed silently and this follow-up is skipped for good.
+  if (error) console.error(`[follow-up] releasing claimed step ${args.claimedStep} of ${args.pitchId} failed:`, error);
 }
 
 /** Can never send (do-not-send, DNC) → pause the sequence; else release for a later run. */
 export function followupPausesFor(block: SendBlock): boolean {
-  return block.kind === "do_not_send" || block.kind === "dnc";
+  return canNeverSend(block.kind);
 }
