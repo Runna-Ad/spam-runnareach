@@ -79,6 +79,39 @@ SHIPPED on Pedro's "ship it": migrations 0040 + 0041 applied, main = `4b22ad1`+,
 - **Scheduler** (migration 0041): pg_cron + pg_net; token generated inside Postgres, kept in Vault, checked via `scheduler_token_valid` (service role only); tick every 15 min, reply poll every 30 min, send-queue every 10 min and follow-ups hourly Mon–Fri 15–22 UTC. Vercel daily crons stay as backstop.
 - Session note: the Auto-mode safety check refused the service-role pipeline and creating an account; Pedro switched the session to "Accept edits" and approved. Permission rules were not edited.
 
+## Phase 3 — batch 2 (READY 2026-10-18, integration `claude/conductor-skill-board-tasks-cu74t5`, waiting on "ship it")
+Retro: `tasks/retros/2026-10-18-phase3-batch2.md`. 721 tests, build green, Fable batch audit: ship after one
+fix (done). Ships:
+- **One notify list** (`lib/notify/`): every alert, digest and report → pedro@runnareach.com + petedv31@gmail.com
+  (until now every alert went ONLY to petedv31@gmail.com: no *_NOTIFY_EMAIL var was ever set in Vercel); prospect
+  replies + calendar bookings also → nils@runna.com.mx. Overrides: env `NOTIFY_EMAILS`, `LEAD_NOTIFY_EMAILS`. Sends
+  fall back to the next connected inbox, then to Sentry (an alert about a dead Google login can't go through it).
+- **Lead alerts**: one email per poll run listing every new human reply (hot first, their own text, draft waiting?),
+  durable via `replies.hot_alert_sent_at` (claim only with ≥60s left; leftovers sent at the start of the next run);
+  one email per calendar booking / cancellation.
+- **Weekly report** Mondays 13:10 UTC + **emergency-only hourly health check** (Google disconnected, autopilot not
+  ticking for 2h, emails stuck through a whole closed send window). Silent in every designed state; 24h dedupe per
+  problem (audit_log `health.alert`). No daily email (Pedro). Vercel daily backstop 12:40 UTC.
+- **Veto digest hold links**: each scheduled email has its own link → confirm page → one tap holds (GET never acts).
+  Holds now COUNT as vetoes (they never did, incl. /pitches holds: the count filtered on a lane the hold changes).
+- **Learning**: meeting_booked / won / lost score as full successes (value 1, settled) for every learner.
+- **One prospect-status rule** (`lib/prospects/status.ts`): a real outcome (booked/won/lost) is never overwritten by
+  an opt-out, bounce or reply; a ruled-out prospect stays out of the nudge. Adopted in opt-out, poll, calendar sync,
+  inbox intent actions.
+- Infra: calendar-sync maxDuration 120; Google token fetch 10s timeout; notification sends 15s timeout (opt-in, never
+  on prospect sends).
+- **Exemplar kill switch**: `fetchExemplars` returns nothing unless env `EXEMPLARS_ENABLED=1`. The deny-list scrubber
+  still leaks some name/city spellings; PR #17 (allow-list leak check) is in progress and NOT in this ship. 0 exemplars
+  have ever qualified in prod, so nothing changes today.
+Deploy order: merge → deploy READY → dry-run `/api/reports/health?dry=1` + `weekly?dry=1` (expect `problems: []`) →
+apply **0045** (cron schedules only; code-first is safe) → normalise its version row → first :25 health run `sent: 0`.
+Pre-deploy state checked 08:05 UTC: 1 sender inbox (pedro@, connected, unpaused); 0 unalerted human replies ≤48h (no
+catch-up burst); pitch_event_type has meeting_booked/won/lost; 19 AUTO pitches approved, scheduled 2026-10-19 00:30–04:00
+UTC, sending from Monday 15:00 UTC (holdable on /pitches until then).
+Open / next batch: PR #17 (allow-list scrubber, then flip EXEMPLARS_ENABLED), /pitches resilience, unique index on
+replies(tenant_id, gmail_message_id), DO_NOT_SEND_STATUSES in send-action + send-queue, transitionPitchStatusWith
+status guard, pipeline-stage reactivation vs the status rule, booking-alert durability.
+
 ## Phase 3 — batch 1 (SHIPPED 2026-10-17 on Pedro's "ship it": main = `a15d1d8`, PR #7)
 First batch run through the conductor/worker workflow (`.claude/skills/conductor/SKILL.md`,
 retro in `tasks/retros/2026-10-17-phase3-batch1.md`). 593 tests, build green, 6 PRs reviewed

@@ -367,6 +367,7 @@ export async function GET(req: NextRequest) {
               cooldown_until: new Date(Date.now() + 365 * 24 * 60 * 60 * 1000).toISOString(),
             })
             .eq("id", thread.prospect_id)
+            .eq("tenant_id", thread.tenant_id)
             .not("status", "in", protectedStatusFilter("suppressed", "automation")!)
             .select("id");
           await pauseSequence(supabase, thread.tenant_id, thread.prospect_id);

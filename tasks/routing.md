@@ -14,16 +14,20 @@ only for a retro-level audit, never for routine tasks (tokens).
 |---|---|---|---|---|---|
 | Conductor: decompose, brief, review, merge, retro | opus-5.5 | high | n/a | — | 2026-10-17 |
 | Conductor: phase audit, hard merge conflicts | fable-5.1 | high | n/a | — | 2026-10-17 |
-| `lib/pitches/` (hub), `lib/compliance/`, send paths | opus-5.5 | high | NO, serialize | phase3 b1: PR #6 needed 2 review rounds (scrubber leaks); reviewer at hub rigor caught them | 2026-10-17 |
+| `lib/pitches/` (hub), `lib/compliance/`, send paths | opus-5.5 | high | NO, serialize | phase3 b1: PR #6 needed 2 review rounds (scrubber leaks); b2: PR #17 3+ rounds (deny-list never complete) → privacy scrubber briefs require an allow-list invariant | 2026-10-18 |
 | Migrations, `pg_cron`, service-role threading, circuit breakers | opus-5.5 | high | NO | — | 2026-10-17 |
 | `lib/discover/` | opus-5.5 | medium | yes, if research API frozen | — | 2026-10-17 |
 | `lib/research/` (leaf) | opus-5.5 | medium | yes | — | 2026-10-17 |
-| `lib/replies/` | opus-5.5 | medium (high for classifier rules) | yes, after any pitches task lands | sim 2026-10-17: classifier task took 3 review rounds; brief lacked the negative set | 2026-10-17 |
+| `lib/replies/` | opus-5.5 | medium (high for classifier rules and for poll-route changes) | yes, after any pitches task lands | sim 2026-10-17: classifier 3 rounds (no negative set); b2 lead-alerts: 3 rounds on the poll route's 120s kill (brief lacked the time budget) | 2026-10-18 |
 | `lib/warmup/` (isolated) | opus-5.5 | medium | yes | — | 2026-10-17 |
 | Admin CRUD (`icp`, `benchmarks`, `case-studies`, `notable-clients`, `settings`, `opportunities` UI) | sonnet-5.5 | medium | yes | phase3 b1: PR #1 one blocking caused by a conductor gap, fix round clean → promoted | 2026-10-17 |
 | Dashboard pages + components (no data-model change) | sonnet-5.5 | medium | yes | phase3 b1: 2 clean (PR #2, #3: 0 blocking each, ~12 turns, ~4 min) → promoted | 2026-10-17 |
 | Tests for existing pure logic, docs, scripts, lint/type fixes, bug fix with existing tests | sonnet-5.5 | medium | yes | sim 2026-10-17: 1 clean (0 blocking, cheapest task) | 2026-10-17 |
-| Reviewer (reads diff + brief, no edits) | opus-5.5 | high | yes | phase3 b1: 6 reviews, 3 real regressions caught, each verified by reverting the fix | 2026-10-17 |
+| `lib/learning/` (pure learners) | opus-5.5 | medium | yes | b2: 1 clean (learning-meeting-outcomes, $1.08) | 2026-10-18 |
+| Reports / alerts (`lib/reports`, consumers of `lib/notify`) | opus-5.5 | medium | yes | b2: platform-reports 1 rework (an emergency rule fired on designed states) | 2026-10-18 |
+| `lib/prospects/` status rule and its writers | opus-5.5 | medium | yes (conductor adopts in shared files) | b2: 1 clean (prospect-status-guard, $1.06) | 2026-10-18 |
+| `lib/autopilot/` (briefed tasks) | opus-5.5 | high | NO, one at a time | b2: veto-hold-link 1 rework, both causes conductor brief defects | 2026-10-18 |
+| Reviewer (reads diff + brief, no edits) | opus-5.5 | high | yes | b1: 6 reviews, 3 real regressions; b2: 9 reviews, every blocking finding reproduced, 0 misses found by the Fable audit | 2026-10-18 |
 | Log triage, lessons-inbox summarization, fixture generation | haiku-5.5 | low | yes | — | 2026-10-17 |
 
 "→ sonnet candidate" means: run the next task on this lane with Sonnet, record the result
