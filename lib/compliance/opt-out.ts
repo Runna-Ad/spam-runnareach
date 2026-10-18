@@ -20,6 +20,7 @@ type AnySupabase = any;
 
 import { recordPitchEvent } from "../pitches/events.ts";
 import { latestRootSentPitchId } from "../pitches/root-pitch.ts";
+import { protectedStatusFilter } from "../prospects/status.ts";
 
 export type OptOutSource = "unsubscribe_link" | "one_click" | "reply";
 
@@ -49,7 +50,8 @@ export async function recordOptOut(
   }
 
   if (args.prospectId) {
-    // 2. Suppress — but keep a real outcome (won/booked/lost) visible.
+    // 2. Suppress — but keep a real outcome (won/booked/lost) visible
+    //    (lib/prospects/status.ts, the one overwrite rule).
     await supabase
       .from("prospects")
       .update({
@@ -60,7 +62,7 @@ export async function recordOptOut(
       })
       .eq("id", args.prospectId)
       .eq("tenant_id", args.tenantId)
-      .not("status", "in", "(won,booked,lost)");
+      .not("status", "in", protectedStatusFilter("suppressed", "automation")!);
 
     // 3. Stop every sequence for this prospect.
     await supabase
