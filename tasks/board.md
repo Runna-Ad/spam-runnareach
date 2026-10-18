@@ -29,7 +29,7 @@ Previous: `phase3-batch1` CLOSED (shipped a15d1d8, calendar sync live). Its rows
 | Slug | Module | Model/effort | Branch | Session | PR | Depends on | Status | Blocked on | Turns | Review findings | CI reds | Rework |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|
 | wave0-conductor | lib/notify (new), tick/poll/warmup notify, vercel.json, lib/gmail, opt-out.ts, reward.ts constant | conductor | integration | this | — | — | merged 4666626 | — | | | | |
-| learning-meeting-outcomes | lib/learning/reward.ts | opus/medium | claude/learning-meeting-outcomes | session_01427GvammP8EiJJ7CBQA5ek | #13 | wave0 | PR open 06:41, CI green, 609→620 tests, in review | | | | | |
+| learning-meeting-outcomes | lib/learning/reward.ts | opus/medium | claude/learning-meeting-outcomes | archived | #13 | wave0 | merged b7c1b02 (620 tests) | | ~4 min / $1.08 | 0 (5 optional) | 0 | 0 |
 | prospect-status-guard | lib/prospects/status.ts (new) + lib/replies/intent-actions.ts, lib/opportunities/actions.ts | opus/medium | claude/prospect-status-guard | session_01Ki2uVNN7712JsosdvSUJuD | #14 | — | PR open 06:42, CI green, in review | | | | | |
 | exemplar-scrubber-gaps | lib/pitches/exemplars.ts (hub) | opus/high | claude/exemplar-scrubber-gaps | session_01AZQoKcXaSPYey6575rZq1z | | — | running (06:37) | | | | | |
 | veto-hold-link | lib/autopilot/tick.ts digest + hold.ts/hold-token.ts + app/api/autopilot/hold | opus/high | claude/veto-hold-link | session_01A9P95NW1yKUbsTcb7ZGpeH | #16 | wave0 | PR open 06:45, CI green, in review (high rigor) | | | | | |
@@ -70,6 +70,7 @@ Batch-audit pairs to check (runtime interactions): learning-meeting-outcomes × 
 - ✔ calendar-sync route has no maxDuration; getAccessToken has no timeout; opt-out.ts own root-pitch query → wave 0.
 - ✔ listPitches throws on a pitch_events error → pitches-list-resilience (wave 2).
 - ✔ exemplars: 3-letter brands, lowercase honorific names, city abbreviations (CDMX) → exemplar-scrubber-gaps.
+- From PR #13 review (batch audit): points sum per event ([sent,booked,booked] = 40; nothing reads .points yet); hunter-signals route also calls scoreOutcome, so bookings now raise runna-hunter findingWeights (intended, note in audit); [sent, hard_no, booked] → value 1 + negative (cautious, fine). Bounced-root-as-exemplar → sent to exemplar-scrubber-gaps worker 06:57.
 - Open: placeholder regex duplicated in send-gate and composer (export one); needsReconnect persists silently (Sentry warning); warn when CALENDAR_BOOKING_INBOX matches no inbox; root-pitch.ts drops its query error; prospect activity feed does not render opportunity.won/lost; reward.ts and hot-lead.ts decide audit_scan stage with different rules (share levelOf); 200-row /pitches window hides old hot leads; "Asked to talk" chip tone; /learning: trials=100 boundary test, honest "arms not loaded" error state, order + truncation notice at 2000, icp learner never writes arms, UI <20 vs bandit 15/30 thresholds; dedupe opportunities per prospect on rebook.
 
 ## Shared-file changes pending (conductor does these)
@@ -88,3 +89,4 @@ Batch-audit pairs to check (runtime interactions): learning-meeting-outcomes × 
 - 2026-10-18 06:38 UTC — Wave 1 spawned (6 remote sessions, inherited mode, tag spam-phase3-batch2): ids on the task rows. Safety check-in trig_01Q1Qcv9h7TAe384fsxbf1e9 at 07:28 UTC.
 - 2026-10-18 06:45 UTC — Pedro: the lead address is nils@runna.com.mx (not nila). Default fixed in lib/notify/recipients.ts + test + lead-alerts brief. Workers never pass addresses (kind: "lead"), so no worker needs telling.
 - 2026-10-18 06:50 UTC — PRs #13 #14 #15 #16 open, CI green, subscribed late (no wake: I had not subscribed before they opened; lesson: subscribe is per-PR, so poll the PR list once ~5 min after spawning small tasks or arm the check-in earlier). 4 reviewers running in parallel. exemplar-scrubber-gaps + platform-reports still working.
+- 2026-10-18 06:57 UTC — PR #13 reviewed: merge, 0 blocking, 5 optional (200k random timelines identical on old types; 9 new tests fail on base). Merged into integration b7c1b02, 620 tests green, pushed, session archived. Optional #1 (a bounced root email that later booked could become an exemplar) sent to the exemplar-scrubber-gaps worker as a brief addition (same file, hub).
