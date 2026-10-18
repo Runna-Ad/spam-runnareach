@@ -57,6 +57,38 @@ export function laneFor(i: LaneInput): { lane: Lane; reasons: string[] } {
   return review.length ? { lane: "review", reasons: review } : { lane: "auto", reasons: [] };
 }
 
+// ── Held drafts ───────────────────────────────────────────────────────────────
+
+export type HeldAction = { action: "leave"; why: string } | { action: "rewrite" } | { action: "drop"; why: string };
+
+// Reasons a rewrite cannot change: the recipient, or a segment on probation.
+const UNFIXABLE_REASON = /^(verifier unsure about the address|address source |segment on probation)/;
+
+/**
+ * Nothing waits on a person. A REVIEW draft gets one rewrite when everything
+ * that held it is something a rewrite can fix (the reviewer, a template, a
+ * writing rule, an address not checked yet), and is dropped otherwise or when
+ * the rewrite is held again. A DROP draft is closed at once. Drafts a person
+ * edited or pulled back stay theirs.
+ */
+export function heldAction(
+  d: { lane: Lane; reasons: string[]; isRewrite: boolean; editedByPerson: boolean },
+  writerFixable: ReadonlySet<string>,
+): HeldAction {
+  if (d.editedByPerson) return { action: "leave", why: "a person edited it" };
+  if (d.reasons.some((r) => r.startsWith("held by a person"))) return { action: "leave", why: "a person held it" };
+  const why = d.reasons.join("; ") || "held";
+  if (d.lane === "drop") return { action: "drop", why };
+  if (d.isRewrite) return { action: "drop", why: `still held after one rewrite: ${why}` };
+  const unfixable = d.reasons.filter((r) => {
+    if (UNFIXABLE_REASON.test(r)) return true;
+    const code = r.match(/^gate: (\S+)/)?.[1];
+    return code !== undefined && !writerFixable.has(code);
+  });
+  if (unfixable.length) return { action: "drop", why: `a rewrite can't fix: ${unfixable.join("; ")}` };
+  return { action: "rewrite" };
+}
+
 // ── Circuit breakers ──────────────────────────────────────────────────────────
 
 export type BreakerMetrics = {

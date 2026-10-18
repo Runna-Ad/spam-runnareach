@@ -69,6 +69,11 @@ export type DecisionRecord = {
   exemplars_used?: Array<{ pitch_id: string; score: number }>;
   /** EXEMPLAR_PROMPT_VERSION when exemplars were shown, else null. */
   exemplar_prompt_version?: string | null;
+  /**
+   * Set when the autopilot rewrote a draft it had held for review: the held
+   * draft's id. A rewrite gets no second one (lib/autopilot/governor.ts).
+   */
+  retry_of?: string;
 };
 
 export type SizeBand = "smb" | "mid_market" | "enterprise" | "unknown";

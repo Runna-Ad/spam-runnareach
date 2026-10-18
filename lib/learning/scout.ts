@@ -11,6 +11,7 @@
  *
  * so a cell that only yields chains and dead websites sinks within days,
  * long before replies could say so, while replies dominate once they exist.
+ * A cell is credited with the prospects its own crawl found (scoutCredits).
  * Cells that keep producing nothing new (exhausted) are skipped.
  *
  * New cells come from active ICPs' keywords × regions; later the ICP learner
@@ -82,6 +83,45 @@ export function cellArm(c: CellStats): Arm {
     if (f.negative) negatives += 1;
   }
   return { key: c.key, status: c.status, reward, trials, negatives };
+}
+
+/** What one scout discovery job left behind (a discovery_jobs row). */
+export type ScoutJob = {
+  /** stats.focus.cell_key */
+  cellKey: string;
+  /** stats.found_ids: what its own crawl inserted. Absent on jobs from before 2026-10-18. */
+  foundIds?: readonly string[] | null;
+  /** The row's prospect_ids, read only when foundIds is absent. */
+  prospectIds?: readonly string[] | null;
+};
+
+/**
+ * The prospects each cell is credited with: what its own crawl found,
+ * whichever job ended up researching them. Pass jobs oldest first.
+ *
+ * A job researches in batches and refills from the oldest raw prospects of
+ * the whole ICP, so it can research another crawl's leftovers, and a later job
+ * can research its own. Credit follows the crawl, not the researcher: the
+ * reward judges the search, and the order the worker happened to work in says
+ * nothing about it. Crediting nobody would throw that evidence away. A find
+ * nobody researched is raw or pruned, which funnelForProspect counts as
+ * pending, so it costs the cell nothing.
+ *
+ * Jobs from before found_ids fall back to prospect_ids (their last batch, or
+ * the pitching phase's list), never claiming a prospect another job's crawl
+ * found. Each prospect is credited once, to the earliest job.
+ */
+export function scoutCredits(jobs: readonly ScoutJob[]): Map<string, string[]> {
+  const owner = new Map<string, string>();
+  const claim = (ids: readonly string[] | null | undefined, cellKey: string) => {
+    for (const id of ids ?? []) if (!owner.has(id)) owner.set(id, cellKey);
+  };
+  for (const j of jobs) claim(j.foundIds, j.cellKey);
+  for (const j of jobs) if (!j.foundIds) claim(j.prospectIds, j.cellKey);
+
+  const out = new Map<string, string[]>(jobs.map((j) => [j.cellKey, []]));
+  for (const [id, cellKey] of owner) out.get(cellKey)?.push(id);
+  return out;
 }
 
 export const EXHAUSTED_AFTER_EMPTY_RUNS = 3;
@@ -189,4 +229,46 @@ export function dailyAllowance(i: {
   const prospects = Math.max(0, i.budget - i.researchedToday);
   if (prospects === 0) return { prospects, reason: `today's budget of ${i.budget} prospects is spent` };
   return { prospects, reason: `${prospects} of today's ${i.budget} prospects left` };
+}
+
+/**
+ * Claude spend per prospect the autopilot researches, all in: research,
+ * scoring and the pitches they yield. Day one (2026-10-17) cost $3.06 for 115
+ * prospects and 25 pitches, $0.027 each; rounded up for margin.
+ */
+export const AI_USD_PER_PROSPECT = 0.03;
+
+/**
+ * Don't start a job with less than this left under the rolling-24h AI cap.
+ * Past the cap a job still runs, on the fallbacks: rule-based scores, no deep
+ * research, template pitches (never AUTO), and the scout learns from those.
+ * The per-prospect cost is an average and replies and follow-ups share the
+ * cap, so with less than this left even a small job would likely end there.
+ */
+export const MIN_AI_USD_FOR_JOB = 0.75;
+
+/** How many prospects the AI budget left in the rolling 24h pays for. */
+export function affordableProspects(i: { spentUsd: number; capUsd: number; usdPerProspect?: number }): number {
+  const left = Math.max(0, i.capUsd - i.spentUsd);
+  // The epsilon keeps $0.90 ÷ $0.03 at 30, not 29.999…
+  return Math.floor((left + 1e-9) / (i.usdPerProspect ?? AI_USD_PER_PROSPECT));
+}
+
+/**
+ * Today's allowance cut to what the AI budget still covers: no job when less
+ * than MIN_AI_USD_FOR_JOB is left, a smaller one when the budget covers only
+ * part of it, the allowance unchanged when it covers all of it.
+ */
+export function aiBudgetAllowance(
+  allowance: { prospects: number; reason: string },
+  ai: { spentUsd: number; capUsd: number; usdPerProspect?: number; minUsd?: number },
+): { prospects: number; reason: string } {
+  if (allowance.prospects === 0) return allowance;
+  const spent = `$${ai.spentUsd.toFixed(2)} of $${ai.capUsd.toFixed(2)}`;
+  if (ai.capUsd - ai.spentUsd < (ai.minUsd ?? MIN_AI_USD_FOR_JOB)) {
+    return { prospects: 0, reason: `AI budget for the next 24h is nearly spent (${spent})` };
+  }
+  const affordable = affordableProspects(ai);
+  if (affordable >= allowance.prospects) return allowance;
+  return { prospects: affordable, reason: `AI budget covers ${affordable} of ${allowance.prospects} prospects (${spent} spent)` };
 }
