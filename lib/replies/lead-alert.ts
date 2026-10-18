@@ -7,13 +7,19 @@
  * out-of-office replies are left to the weekly report. Hot replies first,
  * with what the prospect actually wrote (quoted thread stripped, clipped).
  *
- * The poll inserts each reply row once (duplicates never reach the collector),
- * so a reply is alerted at most once.
+ * Durable: the alert is driven by the replies table, not by memory. Each poll
+ * run sends every human reply received in the last 48 hours whose
+ * replies.hot_alert_sent_at is null, after claiming the rows (set the column,
+ * only where still null). A send that reaches nobody releases the claim, so the
+ * next run retries; a run killed mid-way leaves rows unclaimed for the next
+ * run. replies.hot_alert_sent_at now means "lead alert sent" for every human
+ * reply, not only hot ones (the column predates this and was never set).
  *
- * Pure apart from the injected sender: tested in tests/lead-alert.test.ts.
+ * Formatters are pure; the store is swappable: tested in tests/lead-alert.test.ts.
  */
 
 import type { NotificationMessage, NotificationResult } from "../notify/send.ts";
+import { stripQuotedReply } from "./classify.ts";
 import type { ReplyIntent } from "./queries.ts";
 
 /** How much of the prospect's own text goes in the alert. */
@@ -28,7 +34,7 @@ export type LeadAlertItem = {
   text: string;
   draftWaiting: boolean;
   isTest: boolean;
-  /** hard_no only: recording the opt-out failed, so nobody removed them. */
+  /** hard_no only: the prospect is not suppressed, so the opt-out did not land. */
   optOutFailed?: boolean;
 };
 
@@ -48,7 +54,7 @@ export function intentLabel(intent: ReplyIntent, optOutFailed = false): string {
     case "wrong_person":
       return "wrong person";
     case "hard_no":
-      return optOutFailed ? "opted out: automatic removal FAILED, remove by hand" : "opted out: removed automatically";
+      return optOutFailed ? "opted out: removal NOT confirmed, check by hand" : "opted out: removed automatically";
     case "bounced":
       return "bounced";
     case "auto_reply":
@@ -83,7 +89,7 @@ function itemBlock(item: LeadAlertItem, n: number | null): string {
   const head = `${n === null ? "" : `${n}. `}${item.company}: ${intentLabel(item.intent, item.optOutFailed)}${item.isTest ? " [test]" : ""}`;
   const meta = [
     `From: ${item.fromEmail}`,
-    `Language: ${(item.language ?? "unknown").toUpperCase()}`,
+    `Prospect language: ${(item.language ?? "unknown").toUpperCase()}`,
     item.draftWaiting ? "Draft reply waiting for review" : "No draft",
   ].join(" · ");
   const text = clipText(item.text);
@@ -105,51 +111,130 @@ export function formatLeadAlert(items: LeadAlertItem[]): { subject: string; body
     };
   }
 
-  const meetings = sorted.filter((i) => i.intent === "wants_meeting").length;
+  // Test replies never count as real interest (core rule 7).
+  const meetings = sorted.filter((i) => i.intent === "wants_meeting" && !i.isTest).length;
+  const allTest = sorted.every((i) => i.isTest);
   return {
-    subject: `${sorted.length} new replies (${meetings} want${meetings === 1 ? "s" : ""} a meeting)`,
+    subject: `${allTest ? "[test] " : ""}${sorted.length} new replies (${meetings} want${meetings === 1 ? "s" : ""} a meeting)`,
     body: `${sorted.map((item, i) => itemBlock(item, i + 1)).join("\n\n")}\n\nOpen the inbox: ${link}`,
   };
 }
 
-// ── Collect during a poll run, send once at the end ──────────────────────────
+// ── Durable send: claim unalerted reply rows, send, release on total failure ──
 
-export type LeadSender = (message: NotificationMessage) => Promise<NotificationResult>;
+/** Replies older than this are never alerted (keeps history out of the inbox). */
+export const LEAD_ALERT_WINDOW_HOURS = 48;
+const LEAD_ALERT_BATCH = 100;
+
+export type PendingLeadReply = { id: string; tenantId: string; item: LeadAlertItem };
+
+export type LeadAlertStore = {
+  /** Human replies (not bounced / auto_reply) received since `sinceIso`, hot_alert_sent_at null. */
+  pending(sinceIso: string): Promise<PendingLeadReply[]>;
+  /** Sets hot_alert_sent_at where still null; returns the ids this caller won. */
+  claim(ids: string[]): Promise<string[]>;
+  /** Clears hot_alert_sent_at so the next run retries. */
+  release(ids: string[]): Promise<void>;
+};
+
+export type LeadReplyRow = {
+  id: string;
+  tenant_id: string;
+  from_email: string;
+  intent: ReplyIntent;
+  body_text: string | null;
+  draft_status: string | null;
+  prospects: { company_name: string | null; language: string | null; status: string | null } | null;
+};
+
+/** One alert line from a stored reply row. */
+export function leadItemFromRow(row: LeadReplyRow, isTest: (email: string) => boolean): LeadAlertItem {
+  const p = row.prospects;
+  return {
+    company: p?.company_name ?? row.from_email,
+    fromEmail: row.from_email,
+    intent: row.intent,
+    language: p?.language ?? null,
+    text: stripQuotedReply(row.body_text) || (row.body_text ?? ""),
+    draftWaiting: row.draft_status === "pending",
+    isTest: isTest(row.from_email),
+    optOutFailed: row.intent === "hard_no" && p?.status !== "suppressed",
+  };
+}
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export function supabaseLeadAlertStore(db: any, isTest: (email: string) => boolean): LeadAlertStore {
+  return {
+    async pending(sinceIso) {
+      const { data, error } = await db
+        .from("replies")
+        .select("id, tenant_id, from_email, intent, body_text, draft_status, prospects(company_name, language, status)")
+        .is("hot_alert_sent_at", null)
+        .not("intent", "in", "(bounced,auto_reply)")
+        .gte("received_at", sinceIso)
+        .order("received_at", { ascending: true })
+        .limit(LEAD_ALERT_BATCH);
+      if (error) throw new Error(`lead alert lookup failed: ${error.message}`);
+      return ((data ?? []) as LeadReplyRow[]).map((r) => ({ id: r.id, tenantId: r.tenant_id, item: leadItemFromRow(r, isTest) }));
+    },
+    async claim(ids) {
+      if (ids.length === 0) return [];
+      const { data, error } = await db
+        .from("replies")
+        .update({ hot_alert_sent_at: new Date().toISOString() })
+        .in("id", ids)
+        .is("hot_alert_sent_at", null)
+        .select("id");
+      if (error) throw new Error(`lead alert claim failed: ${error.message}`);
+      return ((data ?? []) as Array<{ id: string }>).map((r) => r.id);
+    },
+    async release(ids) {
+      if (ids.length === 0) return;
+      const { error } = await db.from("replies").update({ hot_alert_sent_at: null }).in("id", ids);
+      if (error) throw new Error(`lead alert release failed: ${error.message}`);
+    },
+  };
+}
+
+export type TenantLeadSender = (tenantId: string, message: NotificationMessage) => Promise<NotificationResult>;
 
 /**
- * Per tenant: the replies stored this run and a sender for that tenant (the
- * inbox that read the thread). `send` mails each tenant's alert once and never
- * throws: an alert failure must not break the poll.
+ * One lead alert per tenant for every unalerted human reply in the window.
+ * Partial delivery keeps the claim (no duplicate to those who got it); zero
+ * delivery releases it for the next run. Never throws.
  */
-export class LeadAlertCollector {
-  private readonly groups = new Map<string, { send: LeadSender; items: LeadAlertItem[] }>();
-
-  add(tenantId: string, send: LeadSender, item: LeadAlertItem): void {
-    if (!isAlertableIntent(item.intent)) return;
-    const group = this.groups.get(tenantId) ?? { send, items: [] };
-    group.items.push(item);
-    this.groups.set(tenantId, group);
-  }
-
-  get size(): number {
-    let n = 0;
-    for (const g of this.groups.values()) n += g.items.length;
-    return n;
-  }
-
-  async send(): Promise<NotificationResult> {
-    const total: NotificationResult = { sent: 0, failed: [] };
-    for (const [tenantId, group] of this.groups) {
-      const alert = formatLeadAlert(group.items);
-      if (!alert) continue;
-      try {
-        const res = await group.send({ kind: "lead", fromName: "S.P.A.M Leads", ...alert });
-        total.sent += res.sent;
-        total.failed.push(...res.failed);
-      } catch (err) {
-        total.failed.push(`tenant ${tenantId}: ${(err as Error).message}`);
-      }
-    }
+export async function sendPendingLeadAlerts(
+  store: LeadAlertStore,
+  send: TenantLeadSender,
+  now: Date = new Date(),
+): Promise<NotificationResult> {
+  const total: NotificationResult = { sent: 0, failed: [] };
+  let pending: PendingLeadReply[];
+  try {
+    pending = await store.pending(new Date(now.getTime() - LEAD_ALERT_WINDOW_HOURS * 3_600_000).toISOString());
+  } catch (err) {
+    total.failed.push((err as Error).message);
     return total;
   }
+
+  const byTenant = new Map<string, PendingLeadReply[]>();
+  for (const p of pending) byTenant.set(p.tenantId, [...(byTenant.get(p.tenantId) ?? []), p]);
+
+  for (const [tenantId, rows] of byTenant) {
+    let claimed: string[] = [];
+    try {
+      claimed = await store.claim(rows.map((r) => r.id));
+      const won = new Set(claimed);
+      const alert = formatLeadAlert(rows.filter((r) => won.has(r.id)).map((r) => r.item));
+      if (!alert) continue;
+      const res = await send(tenantId, { kind: "lead", fromName: "S.P.A.M Leads", ...alert });
+      total.sent += res.sent;
+      total.failed.push(...res.failed);
+      if (res.sent === 0) await store.release(claimed);
+    } catch (err) {
+      total.failed.push(`tenant ${tenantId}: ${(err as Error).message}`);
+      if (claimed.length > 0) await store.release(claimed).catch(() => {});
+    }
+  }
+  return total;
 }

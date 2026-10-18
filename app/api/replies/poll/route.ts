@@ -19,8 +19,9 @@
 //        - anything a human wrote → sequence paused, prospect 'replied'
 //   4. Draft a response (Claude → heuristic) for engageable intents →
 //      draft_status='pending'. The reply cap is enforced when a human sends.
-//   5. Email the lead list ONE alert listing every new reply a human wrote
+//   5. Email the lead list ONE alert listing every human reply not yet alerted
 //      (bounces and out-of-office excluded), hot ones first, with their text.
+//      Driven by replies.hot_alert_sent_at, so a failed or killed run retries.
 //
 // Auth: Authorization: Bearer <CRON_SECRET>.
 // ─────────────────────────────────────────────────────────────────────────────
@@ -29,7 +30,7 @@ import { type NextRequest, NextResponse } from "next/server";
 import { isSchedulerAuthorized } from "@/lib/cron-auth";
 import { createServiceRoleClient } from "@/lib/supabase/service-role";
 import { getAccessToken } from "@/lib/gmail/client";
-import { sendNotificationWithToken } from "@/lib/notify/send";
+import { sendNotification } from "@/lib/notify/send";
 import { fetchThreadReplies, listRecentInboundThreadIds, type InboundReply } from "@/lib/gmail/read";
 import {
   ANTHROPIC_HAIKU_MODEL,
@@ -56,7 +57,7 @@ import { addEmailToDnc, type DncInsertClient } from "@/lib/discover/dnc-check";
 import { extractBouncedRecipient } from "@/lib/replies/bounce-parse";
 import { recordPitchEvent } from "@/lib/pitches/events";
 import { isTestAddress } from "@/lib/compliance/test-addresses";
-import { LeadAlertCollector, type LeadSender } from "@/lib/replies/lead-alert";
+import { sendPendingLeadAlerts, supabaseLeadAlertStore } from "@/lib/replies/lead-alert";
 
 /** An out-of-office pushes the next follow-up at least this far out. */
 const OOO_POSTPONE_DAYS = 7;
@@ -154,9 +155,6 @@ export async function GET(req: NextRequest) {
   // (then every thread of that inbox is read, as in a full sweep).
   const recentThreads = new Map<string, Set<string> | null>();
   let threadsRead = 0;
-  // Every new reply a human wrote this run, one alert per tenant at the end.
-  const leads = new LeadAlertCollector();
-
   let imported = 0;
   let drafted = 0;
   const errors: string[] = [];
@@ -287,18 +285,6 @@ export async function GET(req: NextRequest) {
 
         if (!insertedReply) continue;
         imported += 1;
-        const leadSender: LeadSender = (m) =>
-          sendNotificationWithToken({ accessToken: inbox.token, fromEmail: inbox.email }, m);
-        const leadItem = (draftWaiting: boolean, optOutFailed = false) => ({
-          company: prospect.company_name,
-          fromEmail: inbound.fromEmail,
-          intent: classification.intent,
-          language: prospect.language ?? null,
-          text: stripQuotedReply(inbound.bodyText) || inbound.bodyText,
-          draftWaiting,
-          isTest: isTestAddress(inbound.fromEmail),
-          optOutFailed,
-        });
 
         await supabase.from("audit_log").insert({
           tenant_id: thread.tenant_id,
@@ -395,7 +381,6 @@ export async function GET(req: NextRequest) {
             errors.push(`opt-out for ${inbound.fromEmail} failed: ${optOut.error}`);
             engaged = true; // at least pause the sequence below
           }
-          leads.add(thread.tenant_id, leadSender, leadItem(false, !optOut.ok));
           continue;
         }
 
@@ -408,7 +393,6 @@ export async function GET(req: NextRequest) {
         }
 
         engaged = true;
-        let draftWaiting = false;
 
         // A warm reply at the reply cap used to be archived silently, with no
         // draft and no alert ("sure, send pricing" disappeared). It now drafts
@@ -436,7 +420,6 @@ export async function GET(req: NextRequest) {
               })
               .eq("id", insertedReply.id);
             drafted += 1;
-            draftWaiting = true;
             await supabase.from("audit_log").insert({
               tenant_id: thread.tenant_id,
               actor_id: null,
@@ -447,7 +430,6 @@ export async function GET(req: NextRequest) {
             });
           }
         }
-        leads.add(thread.tenant_id, leadSender, leadItem(draftWaiting));
       }
 
       // Pause the follow-up sequence + mark prospect 'replied' — only when a
@@ -468,11 +450,16 @@ export async function GET(req: NextRequest) {
     }
   }
 
-  // ── 5. One lead alert per tenant for the replies stored this run ──────────
-  // Never throws. Self-loop: the alert is a NEW Gmail thread (no threadId), so
-  // it is never a pitch's gmail_thread_id and step 1 never reads it; it is also
-  // From the inbox itself, which fetchThreadReplies skips as our own send.
-  const alerts = leads.size > 0 ? await leads.send() : { sent: 0, failed: [] as string[] };
+  // ── 5. One lead alert per tenant for every human reply not yet alerted ────
+  // The inserted reply row is the durable record; this claims and sends the
+  // unalerted ones (this run's and any a failed run left). Never throws.
+  // Self-loop: the alert is a NEW Gmail thread (no threadId), so it is never a
+  // pitch's gmail_thread_id and step 1 never reads it; it is also From the
+  // inbox itself, which fetchThreadReplies skips as our own send.
+  const alerts = await sendPendingLeadAlerts(
+    supabaseLeadAlertStore(supabase, isTestAddress),
+    (tenantId, message) => sendNotification(supabase, tenantId, message),
+  );
 
   return NextResponse.json({
     ok: true,
