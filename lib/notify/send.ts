@@ -13,6 +13,8 @@ import { notifyRecipients, type NotifyKind } from "./recipients.ts";
 
 export type NotificationResult = { sent: number; failed: string[] };
 
+const NOTIFY_SEND_TIMEOUT_MS = 15_000;
+
 export type NotificationMessage = {
   kind: NotifyKind;
   subject: string;
@@ -35,6 +37,8 @@ export async function sendNotificationWithToken(
         to,
         subject: message.subject,
         body: message.body,
+        // Alerts often run at the end of a route near its maxDuration.
+        timeoutMs: NOTIFY_SEND_TIMEOUT_MS,
       });
       if (res.ok) result.sent++;
       else result.failed.push(`${to}: ${res.error}`);

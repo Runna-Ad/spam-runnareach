@@ -16,16 +16,20 @@ import {
   handleCalendarSync,
   organizedByInbox,
   planEvent,
+  sendBookingAlerts,
   supabaseSyncStore,
   syncCalendarWith,
   type BookedAudit,
   type CalendarOpportunity,
   type CalendarSyncReport,
   type ContactMatch,
+  type ProspectSummary,
   type SyncStore,
 } from "../lib/opportunities/calendar-sync.ts";
 import { listRecentEvents, type CalendarAttendee, type CalendarEvent } from "../lib/opportunities/google-calendar.ts";
 import type { PitchEventType } from "../lib/pitches/events.ts";
+import type { NotificationMessage } from "../lib/notify/send.ts";
+import { formatBookingAlert, formatStart } from "../lib/opportunities/booking-alert.ts";
 
 const INBOX = "henry@runna.ca";
 
@@ -52,6 +56,7 @@ function memoryStore(
   contacts: Record<string, ContactMatch>,
   rootPitch: Record<string, string> = {},
   prospectStatus: Record<string, string> = {},
+  summaries: Record<string, ProspectSummary> = {},
 ) {
   const opps: Opp[] = [];
   const pitchEvents: Array<{ pitchId: string; type: PitchEventType; payload: Record<string, unknown> }> = [];
@@ -85,6 +90,9 @@ function memoryStore(
     },
     async recordEvent(pitchId, type, payload) {
       pitchEvents.push({ pitchId, type, payload });
+    },
+    async prospectSummaries(ids) {
+      return new Map(ids.filter((id) => summaries[id]).map((id) => [id, summaries[id] as ProspectSummary]));
     },
   };
   return { store, opps, pitchEvents, prospectStatus };
@@ -318,7 +326,7 @@ function recordingSupabase(result: (call: Call) => { data: unknown; error: { mes
       const call: Call = { table, ops: [] };
       calls.push(call);
       const builder: Record<string, unknown> = {};
-      for (const m of ["select", "eq", "ilike", "not", "is", "order", "limit", "insert", "update"]) {
+      for (const m of ["select", "eq", "in", "ilike", "not", "is", "order", "limit", "insert", "update"]) {
         builder[m] = (...args: unknown[]) => {
           call.ops.push([m, args]);
           return builder;
@@ -359,7 +367,10 @@ test("store.markProspectBooked never overwrites won / lost", async () => {
   const call = fake.calls[0]!;
   assert.equal(call.table, "prospects");
   assert.ok(has(call, "update", { status: "booked" }));
-  assert.ok(has(call, "not", "status", "in", "(won,lost)"));
+  // The filter comes from lib/prospects/status.ts; compare as a set (order is the enum's).
+  const not = call.ops.find(([o, a]) => o === "not" && (a as unknown[])[0] === "status");
+  const list = String((not?.[1] as unknown[] | undefined)?.[2] ?? "");
+  assert.deepEqual(new Set(list.replace(/[()]/g, "").split(",")), new Set(["won", "lost"]));
   assert.ok(has(call, "eq", "tenant_id", "t1"));
 });
 
@@ -552,6 +563,8 @@ function routeDeps(report: Partial<CalendarSyncReport> = {}) {
       truncated: false,
       counts: null,
       errors: [],
+      bookings: [],
+      alerts: { sent: 0, failed: [] },
       ...report,
     }),
   };
@@ -621,4 +634,127 @@ test("connect route appends calendar.readonly after the existing scopes", () => 
     "https://www.googleapis.com/auth/postmaster.readonly",
     "https://www.googleapis.com/auth/calendar.readonly",
   ]);
+});
+
+// ── Booking alerts ───────────────────────────────────────────────────────────
+
+test("applyCalendarEvents reports each booking and cancellation in `bookings`; duplicates add none", async () => {
+  const m = memoryStore({ "ana@bakery.ca": ANA });
+  const first = await apply([booking("e1", ["ana@bakery.ca"], { start: { dateTime: "2026-10-20T15:00:00-06:00", timeZone: "America/Mexico_City" } as CalendarEvent["start"] })], m.store);
+  assert.deepEqual(first.bookings, [
+    { kind: "booked", eventId: "e1", prospectId: "p-ana", attendee: "ana@bakery.ca", start: "2026-10-20T15:00:00-06:00", timeZone: "America/Mexico_City" },
+  ]);
+  const again = await apply([booking("e1", ["ana@bakery.ca"])], m.store);
+  assert.deepEqual(again.bookings, []);
+  assert.equal(again.counts.duplicate, 1);
+  const cancel = await apply([booking("e1", ["ana@bakery.ca"], { status: "cancelled" })], m.store);
+  assert.deepEqual(cancel.bookings, [
+    { kind: "cancelled", eventId: "e1", prospectId: "p-ana", attendee: "ana@bakery.ca", start: "2026-10-20T15:00:00-06:00", timeZone: null },
+  ]);
+  const cancelAgain = await apply([booking("e1", ["ana@bakery.ca"], { status: "cancelled" })], m.store);
+  assert.deepEqual(cancelAgain.bookings, []);
+});
+
+test("formatStart: event time zone when given, else UTC, always named; all-day dates", () => {
+  assert.equal(formatStart("2026-10-20T15:00:00-06:00", "America/Mexico_City"), "Tue, Oct 20, 2026, 3:00 PM (America/Mexico_City)");
+  assert.equal(formatStart("2026-10-20T15:00:00-06:00", null), "Tue, Oct 20, 2026, 9:00 PM (UTC)");
+  assert.equal(formatStart("2026-10-20T15:00:00-06:00", "Not/AZone"), "Tue, Oct 20, 2026, 9:00 PM (UTC)");
+  assert.equal(formatStart("2026-10-20", null), "2026-10-20 (all day)");
+  assert.equal(formatStart(null, null), null);
+});
+
+test("formatBookingAlert: booked and cancelled subjects + body", () => {
+  const booked = formatBookingAlert({
+    kind: "booked", company: "Bakery Co", attendee: "ana@bakery.ca",
+    start: "2026-10-20T15:00:00-06:00", timeZone: "America/Toronto", market: "CA",
+  });
+  assert.equal(booked.subject, "Meeting booked: Bakery Co (Tue, Oct 20, 2026, 5:00 PM (America/Toronto))");
+  assert.match(booked.body, /Who: ana@bakery\.ca/);
+  assert.match(booked.body, /Market: CA/);
+  assert.match(booked.body, /\/opportunities$/);
+  const cancelled = formatBookingAlert({ kind: "cancelled", company: null, attendee: "ana@bakery.ca", start: null, timeZone: null, market: null });
+  assert.equal(cancelled.subject, "Booking cancelled: ana@bakery.ca");
+  assert.match(cancelled.body, /marked lost/);
+});
+
+test("sendBookingAlerts: one lead email per change, company + market from one batch lookup", async () => {
+  let lookups = 0;
+  const m = memoryStore({}, {}, {}, { "p-ana": { company: "Bakery Co", market: "CA" } });
+  const store: SyncStore = { ...m.store, prospectSummaries: async (ids) => (lookups++, m.store.prospectSummaries(ids)) };
+  const sent: NotificationMessage[] = [];
+  const res = await sendBookingAlerts(
+    [
+      { kind: "booked", eventId: "e1", prospectId: "p-ana", attendee: "ana@bakery.ca", start: "2026-10-20T15:00:00Z", timeZone: null },
+      { kind: "cancelled", eventId: "e2", prospectId: "p-ana", attendee: null, start: null, timeZone: null },
+    ],
+    store,
+    async (msg) => (sent.push(msg), { sent: 3, failed: [] }),
+  );
+  assert.equal(lookups, 1);
+  assert.deepEqual(sent.map((s) => [s.kind, s.subject]), [
+    ["lead", "Meeting booked: Bakery Co (Tue, Oct 20, 2026, 3:00 PM (UTC))"],
+    ["lead", "Booking cancelled: Bakery Co"],
+  ]);
+  assert.deepEqual(res, { sent: 6, failed: [] });
+});
+
+test("sendBookingAlerts: lookup or send failures are reported, never thrown", async () => {
+  const m = memoryStore({});
+  const store: SyncStore = { ...m.store, prospectSummaries: async () => { throw new Error("prospect lookup failed: x"); } };
+  const sent: NotificationMessage[] = [];
+  const res = await sendBookingAlerts(
+    [
+      { kind: "booked", eventId: "e1", prospectId: "p1", attendee: "a@x.ca", start: null, timeZone: null },
+      { kind: "booked", eventId: "e2", prospectId: "p2", attendee: "b@x.ca", start: null, timeZone: null },
+    ],
+    store,
+    async (msg) => {
+      if (msg.subject.includes("b@x.ca")) throw new Error("gmail down");
+      sent.push(msg);
+      return { sent: 3, failed: [] };
+    },
+  );
+  assert.equal(sent.length, 1);
+  assert.equal(sent[0]?.subject, "Meeting booked: a@x.ca (unknown time)");
+  assert.deepEqual(res, { sent: 3, failed: ["prospect lookup failed: x", "event e2: gmail down"] });
+});
+
+test("syncCalendarWith: a booking sends one alert from the booking inbox; report carries bookings + alerts", async () => {
+  const m = memoryStore({ "ana@bakery.ca": ANA }, {}, {}, { "p-ana": { company: "Bakery Co", market: "MX" } });
+  const sent: Array<NotificationMessage & { fromEmail: string }> = [];
+  const { deps } = okDeps({
+    listEvents: async () => ({ ok: true, events: [booking("e1", ["ana@bakery.ca"])], truncated: false }),
+    store: m.store,
+    notify: async (msg) => (sent.push(msg), { sent: 3, failed: [] }),
+  });
+  const report = await syncCalendarWith(fakeActor(inboxSupabase(INBOXES).client), deps);
+  assert.equal(sent.length, 1);
+  assert.equal(sent[0]?.fromEmail, INBOX);
+  assert.equal(sent[0]?.kind, "lead");
+  assert.match(sent[0]?.body ?? "", /Market: MX/);
+  assert.deepEqual(report.alerts, { sent: 3, failed: [] });
+  assert.equal(report.bookings[0]?.company, "Bakery Co");
+  assert.deepEqual(report.errors, []);
+
+  // Next run: same event is a duplicate → no alert.
+  const again = await syncCalendarWith(fakeActor(inboxSupabase(INBOXES).client), deps);
+  assert.equal(sent.length, 1);
+  assert.deepEqual(again.alerts, { sent: 0, failed: [] });
+});
+
+test("route: alerts are summed across tenants", async () => {
+  const res = await handleCalendarSync(authed(), routeDeps({ alerts: { sent: 3, failed: ["x: nope"] } }));
+  const body = (await res.json()) as { alerts: { sent: number; failed: string[] } };
+  assert.deepEqual(body.alerts, { sent: 3, failed: ["x: nope"] });
+});
+
+test("store.prospectSummaries: one tenant-scoped query, empty input skips the query", async () => {
+  const fake = recordingSupabase(() => ({ data: [{ id: "p1", company_name: "Bakery Co", market: "CA" }], error: null }));
+  const store = supabaseSyncStore(fake.client, "t1");
+  assert.equal((await store.prospectSummaries([])).size, 0);
+  assert.equal(fake.calls.length, 0);
+  const out = await store.prospectSummaries(["p1"]);
+  assert.deepEqual(out.get("p1"), { company: "Bakery Co", market: "CA" });
+  assert.equal(fake.calls.length, 1);
+  assert.ok(has(fake.calls[0]!, "eq", "tenant_id", "t1"));
 });

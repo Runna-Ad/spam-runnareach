@@ -19,6 +19,7 @@ import { writeAuditLog } from "@/lib/audit/log";
 import { getAccessToken } from "@/lib/gmail/client";
 import { handleCalendarSync, syncCalendarWith } from "@/lib/opportunities/calendar-sync";
 import { listRecentEvents } from "@/lib/opportunities/google-calendar";
+import { sendNotification } from "@/lib/notify/send";
 import { createServiceRoleClient } from "@/lib/supabase/service-role";
 
 export const dynamic = "force-dynamic";
@@ -42,6 +43,7 @@ async function handle(req: NextRequest) {
         getAccessToken,
         listEvents: (token) => listRecentEvents(token),
         writeAuditLog,
+        notify: (message) => sendNotification(actor.supabase, actor.user.tenantId, message),
       }),
   });
 }
