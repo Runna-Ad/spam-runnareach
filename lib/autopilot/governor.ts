@@ -71,12 +71,36 @@ const UNFIXABLE_REASON = /^(verifier unsure about the address|address source |se
  * the rewrite is held again. A DROP draft is closed at once. Drafts a person
  * edited or pulled back stay theirs.
  */
+/**
+ * Prefix of every autopilot_reasons entry that means "a person held this after
+ * the autopilot scheduled it" (a /pitches veto, a digest hold link). heldAction
+ * leaves such a draft alone; every writer of a person-hold reason uses this.
+ */
+export const HELD_BY_PERSON = "held by a person";
+
+/**
+ * Vetoes in the current stage: autopilot-approved pitches a person sent back
+ * (current status draft or reviewer_rejected). Counted by the approval event,
+ * not the lane: a held pitch is moved to the review lane, so a lane filter
+ * would never see it.
+ */
+export function countVetoes(
+  autopilotApproved: ReadonlySet<string>,
+  current: ReadonlyArray<{ id: string; status: string }>,
+): number {
+  const seen = new Set<string>();
+  for (const r of current) {
+    if (autopilotApproved.has(r.id) && (r.status === "draft" || r.status === "reviewer_rejected")) seen.add(r.id);
+  }
+  return seen.size;
+}
+
 export function heldAction(
   d: { lane: Lane; reasons: string[]; isRewrite: boolean; editedByPerson: boolean },
   writerFixable: ReadonlySet<string>,
 ): HeldAction {
   if (d.editedByPerson) return { action: "leave", why: "a person edited it" };
-  if (d.reasons.some((r) => r.startsWith("held by a person"))) return { action: "leave", why: "a person held it" };
+  if (d.reasons.some((r) => r.startsWith(HELD_BY_PERSON))) return { action: "leave", why: "a person held it" };
   const why = d.reasons.join("; ") || "held";
   if (d.lane === "drop") return { action: "drop", why };
   if (d.isRewrite) return { action: "drop", why: `still held after one rewrite: ${why}` };
