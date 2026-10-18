@@ -28,10 +28,10 @@ Open prod checks:
 |---|---|
 | Prod = main head READY before cutting integration | e10a326 READY (dpl_8udavQRnDUycKVocmcXakCav9pEm, verified 19:45) |
 | Batch plan sent to Pedro | scope approved in advance ("all seem good", 2026-10-18); Pedro "Go" 17:07 UTC |
-| Integration → main PR | — |
-| Questions sent | — |
+| Integration → main PR | #25 opened 20:10 UTC, subscribed; waiting for Pedro's "ship it" |
+| Questions sent | with PR #25 (2: pipeline reactivation vs status rule; weekend Vercel send-queue) |
 | `npm run build` green on integration | yes after #24 (845 tests) |
-| Origin in sync (`git status -sb`) | — |
+| Origin in sync (`git status -sb`) | yes |
 
 ## Reserved migration numbers
 | Number | Reserved for | Status (reserved → used → applied) |
@@ -63,6 +63,8 @@ Batch-audit pairs to check (runtime interactions): send-path-safety × autopilot
 ## Questions for Pedro (batched, asked once per batch)
 | # | From task | Question | Default if unanswered | Answer |
 |---|---|---|---|---|
+| 1 | b2 status rule | pipeline-stage reactivation moves suppressed/no_match back to researched (breaks I5): keep or skip do-not-send prospects? | skip them (status rule wins) | |
+| 2 | b3 audit | Vercel daily send-queue backstop also sends on weekends (pg_cron is Mon–Fri): keep? | keep until the atomic sends_today fix | |
 
 ## Worktrees to clean up (in-session workers only)
 | Path | Branch | Remove after |
@@ -106,3 +108,4 @@ Batch-audit pairs to check (runtime interactions): send-path-safety × autopilot
 - 2026-10-18 19:33 UTC — PR #23 fix (11c971a) verified by the conductor: hotFilterOn = hotOnly && !unavailable drives the memo + checkbox; combine step moved into hot-lead-events.ts with an end-to-end flag test; mapping unchanged (absent → null as before). CI green. Merged: 824 tests, typecheck, lint green. Session archived.
 - 2026-10-18 19:36 UTC — PR #24 fix (ed96d1d) verified by the conductor: presence check + dnc-check never returns an empty error; empty-message and thrown-Error tests pass (42/42 in the send-path file); canNeverSend shared; failed follow-up release logged. CI green. Merged; conductor moved one stacked doc comment back above queueReleaseFor. Integration: 845 tests, typecheck, lint, build green. Send-path worker archived. All 5 non-#17 tasks merged → batch audit (Fable) next; #17 round 5 still running (off the critical path).
 - 2026-10-18 20:07 UTC — Batch audit (Fable, f5176a5): SHIP, 0 blocking; 5 optional carried (no-op approve skips the autopilot event in a race; Vercel 15:00 + pg_cron send-queue overlap under-counts sends_today — pre-existing, Monday bounded 19 < cap 30; send-queue loop has no time budget; follow-up first-read skip doesn't pause; person-Lost row before its booking alert). Auditor deploy steps folded into project-state. Pre-ship prod: inbox pedro@ cap 30, unpaused; 19 AUTO approved; replies 32, 0 duplicate pairs. (Container restarted ~19:50; nothing lost, branch in sync.) Opening the integration → main PR.
+- 2026-10-18 20:08 UTC — Integration → main PR #25 opened and subscribed. Pinging Pedro for "ship it". #17 round 5 continues off the critical path.
