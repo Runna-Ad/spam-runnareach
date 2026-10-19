@@ -1660,3 +1660,13 @@ ROOT CAUSE: Applying migration 0038 through the Supabase MCP, every call contain
 RULE: If a Supabase MCP call times out, first check whether anything landed (columns, pg_proc, pg_trigger, schema_migrations), then look for a destructive keyword. Prefer non-destructive forms in migrations run through the MCP: `create or replace trigger` (PG14+) instead of drop + create, `add column if not exists`, `on conflict do nothing`. Split a migration into idempotent steps so a timeout tells you which step it was.
 TAGS: #supabase #mcp #migrations #timeouts
 
+
+[2026-10-19] LESSON: the first AUTO drip went out as one burst, so the bounce breaker could only act after every send was done
+ROOT CAUSE: 28 AUTO pitches were scheduled overnight (01:00-03:45 UTC). The send queue held them until the 15:00 UTC window, then sent all 19 that were due in one run. Two addresses did not exist (Gmail "NoSuchUser" at 15:00:31 and 15:00:36). The reply poll recorded the bounces at 15:30 and the breaker paused the only inbox (pedro@runnareach.com) on the next tick: correct, but by then nothing was left to protect. The two bounces were 1 of 9 Anymail addresses (11%) and 1 of 39 scraped ones (a dentist whose site publishes a dead contacto@).
+RULE: A breaker only protects sends that come after it can see a bounce. Space automatic sends (a few per tick, not everything due at window open), and keep the bounce poll faster than the send spacing. Judge an address source by its bounce rate on our own sends, not by its label: verify-recipient.ts treats Anymail as "medium" provenance (auto-send), and 1 in 9 bounced.
+TAGS: #autopilot #deliverability #bounces #breakers #anymail
+
+[2026-10-19] LESSON: demoting the autopilot does not pull back the AUTO pitches it already approved
+ROOT CAUSE: After the bounce breaker, the stage dropped veto -> shadow (shadow = a person approves everything). 9 AUTO pitches approved before the demotion stayed status=approved with a scheduled_send_at, 6 of them Anymail addresses. The send queue checks only the inbox's paused flag, never the stage, so resuming the inbox would send them unreviewed.
+RULE: A stage change is a promise about what sends without a person. When the autopilot steps down, return its not-yet-sent approvals to review (the digest hold path) in the same step, and test it: demote, then assert nothing autopilot-approved is still due.
+TAGS: #autopilot #stages #send-queue #safety
