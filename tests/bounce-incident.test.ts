@@ -4,6 +4,9 @@
  *   1. a resume sticks: the breaker counts bounces only after the latest resume
  *   2. the send-queue stops a drip on a fresh bounce (same rule as the tick)
  *   4. a demotion to shadow/off pulls back the automatic approvals still waiting
+ *   5. (autopilot-trust-split) delivery trips pause but never move the stage;
+ *      the breakers and the pull-back run with the autopilot off; a resume is
+ *      audited before the unpause and needs a form that showed "paused"
  *
  * (3, finder addresses, lives in tests/verify-recipient.test.ts.)
  *
@@ -30,6 +33,7 @@ import {
   HELD_BY_PERSON,
   nextStage,
   type BreakerMetrics,
+  type BreakerTrip,
   type StageMetrics,
 } from "../lib/autopilot/governor.ts";
 import {
@@ -39,6 +43,8 @@ import {
   HOLD_REASON,
   pullbackSentence,
   pullsBackApprovals,
+  relabelFinderDrafts,
+  stageQualityTrips,
 } from "../lib/autopilot/hold.ts";
 import { holdExpiry } from "../lib/autopilot/hold-token.ts";
 import { INBOX_RESUMED_ACTION, saveSenderInbox, type SenderInboxPatch } from "../lib/autopilot/inbox-resume.ts";
@@ -264,7 +270,7 @@ function incident(): { db: Db; sends: string[] } {
 
 async function resume(db: Db, when: string) {
   db.clock = when;
-  return saveSenderInbox(db, { tenantId: TENANT, inboxId: INBOX, actorId: ADMIN, patch: PATCH });
+  return saveSenderInbox(db, { tenantId: TENANT, inboxId: INBOX, actorId: ADMIN, patch: PATCH, loadedPaused: true });
 }
 
 // ── 1. A resume sticks, and is audited ───────────────────────────────────────
@@ -411,6 +417,7 @@ test("resume: any other save writes no audit row", async () => {
       tenantId: TENANT,
       inboxId: INBOX,
       actorId: ADMIN,
+      loadedPaused: wasPaused,
       patch: { ...PATCH, paused: nowPaused, paused_reason: nowPaused ? "by hand" : null },
     });
     assert.deepEqual(result, { ok: true, resumed: false }, `${wasPaused} → ${nowPaused}`);
@@ -421,7 +428,7 @@ test("resume: any other save writes no audit row", async () => {
 
 test("resume: if the audit row can't be written the inbox goes back to paused and the person is told", async () => {
   const db = fakeDb({ sender_inboxes: [pausedInbox()], audit_log: [] }, { fail: { "audit_log.insert": "" } });
-  const result = await saveSenderInbox(db, { tenantId: TENANT, inboxId: INBOX, actorId: ADMIN, patch: { ...PATCH, daily_cap: 25 } });
+  const result = await saveSenderInbox(db, { tenantId: TENANT, inboxId: INBOX, actorId: ADMIN, patch: { ...PATCH, daily_cap: 25 }, loadedPaused: true });
   assert.equal(result.ok, false);
   assert.match(result.ok ? "" : result.error, /could not be recorded \(no detail\), so the inbox stays paused/);
   const inbox = db.tables.sender_inboxes![0]!;
@@ -432,13 +439,13 @@ test("resume: if the audit row can't be written the inbox goes back to paused an
 
 test("resume: another tenant's inbox, or an unreadable one, is never written", async () => {
   const other = fakeDb({ sender_inboxes: [{ ...pausedInbox(), tenant_id: OTHER_TENANT }], audit_log: [] });
-  assert.deepEqual(await saveSenderInbox(other, { tenantId: TENANT, inboxId: INBOX, actorId: ADMIN, patch: PATCH }), {
+  assert.deepEqual(await saveSenderInbox(other, { tenantId: TENANT, inboxId: INBOX, actorId: ADMIN, patch: PATCH, loadedPaused: true }), {
     ok: false,
     error: "Sender inbox not found.",
   });
   assert.equal(other.tables.sender_inboxes![0]!.paused, true);
   const unreadable = fakeDb({ sender_inboxes: [pausedInbox()] }, { fail: { "sender_inboxes.select": "" }, forbidWrites: ["sender_inboxes", "audit_log"] });
-  const r = await saveSenderInbox(unreadable, { tenantId: TENANT, inboxId: INBOX, actorId: ADMIN, patch: PATCH });
+  const r = await saveSenderInbox(unreadable, { tenantId: TENANT, inboxId: INBOX, actorId: ADMIN, patch: PATCH, loadedPaused: true });
   assert.equal(r.ok, false);
 });
 
@@ -654,14 +661,14 @@ test("a pulled-back pitch is left for a person by the resolve step, and is not a
   }
 });
 
-test("only shadow and off pull back; the stage rules still demote veto → shadow on a breaker trip", () => {
+test("only shadow and off pull back; the stage rules still demote veto → shadow on a quality breaker trip", () => {
   assert.equal(pullsBackApprovals("shadow"), true);
   assert.equal(pullsBackApprovals("off"), true);
   assert.equal(pullsBackApprovals("veto"), false);
   assert.equal(pullsBackApprovals("auto"), false);
   const m0: StageMetrics = {
     daysInStage: 1, autoDecided: 0, autoApprovedUnedited: 0, autoFactualErrors: 0,
-    autoScheduled: 19, autoVetoed: 0, autoBounceRate: 0.1, autoBreakerTrips: 1,
+    autoScheduled: 19, autoVetoed: 0, autoBounceRate: 0.1, autoQualityTrips: 1,
   };
   assert.equal(nextStage("veto", m0).stage, "shadow");
   assert.equal(pullsBackApprovals(nextStage("veto", m0).stage), true);
@@ -696,4 +703,241 @@ test("holdPitch (the digest link) behaves as before: person's reason, digest_lin
   assert.equal(r.state, "held");
   assert.deepEqual(row.autopilot_reasons, [HOLD_REASON]);
   assert.deepEqual((db.tables.audit_log![0] as Row).metadata, { source: "digest_link" });
+});
+
+// ── 5. Trust split: only pitch quality moves the stage ───────────────────────
+
+const STAGE_SINCE = "2026-10-19T19:57:00.000Z";
+const quietStage: StageMetrics = {
+  daysInStage: 0.5, autoDecided: 0, autoApprovedUnedited: 0, autoFactualErrors: 0,
+  autoScheduled: 19, autoVetoed: 0, autoBounceRate: 0, autoQualityTrips: 0,
+};
+
+/** The insight runBreakers writes for an applied trip (tick.ts §1). */
+function breakerInsight(db: Db, trip: BreakerTrip, createdAt: string, tenant = TENANT) {
+  (db.tables.learning_insights ??= []).push({
+    id: `ins-${db.tables.learning_insights!.length}`,
+    tenant_id: tenant,
+    learner: "governor",
+    kind: "breaker",
+    title: `Paused sending: ${trip.reason}`,
+    evidence: trip,
+    created_at: createdAt,
+  });
+}
+
+/** What the stage step computes: quality trips since the stage began, into nextStage. */
+async function stageAfter(db: Db, m: Partial<StageMetrics> = {}) {
+  const codes = await stageQualityTrips(db, TENANT, STAGE_SINCE);
+  return nextStage("veto", { ...quietStage, ...m, autoQualityTrips: codes.length, autoQualityTripCodes: codes });
+}
+
+test("veto + inbox_bounces trip: the inbox pauses, the stage stays veto", async () => {
+  // The 2026-10-19 evening: two dead mailboxes bounce on a fresh inbox in veto.
+  const db = fakeDb({ sender_inboxes: [{ ...pausedInbox(), paused: false, paused_reason: null }], audit_log: [], pitch_events: [], pitches: [] });
+  const sends = addSends(db, 24, { last: at("21:00") });
+  addBounce(db, sends[0]!, pg("21:30"));
+  addBounce(db, sends[1]!, pg("21:30"));
+  const trips = evaluateBreakers(await metrics(db, new Date(at("21:45"))));
+  assert.deepEqual(trips.map((t) => [t.code, t.scope, t.inboxId]), [["inbox_bounces", "inbox", INBOX]], "the breaker still trips (pauses the inbox)");
+  breakerInsight(db, trips[0]!, pg("21:45"));
+  // Also a bounces_today and a placement trip in the same stage: delivery, all of them.
+  breakerInsight(db, { scope: "all", code: "bounces_today", reason: "3 hard bounces today" }, pg("21:50"));
+  breakerInsight(db, { scope: "all", code: "placement", reason: "warmup inbox placement 70% (< 80%)" }, pg("21:55"));
+  assert.deepEqual(await stageQualityTrips(db, TENANT, STAGE_SINCE), []);
+  assert.deepEqual(await stageAfter(db), { stage: "veto", reason: "collecting veto data" });
+});
+
+test("veto + opt_out_spike trip: the stage drops to shadow", async () => {
+  const db = fakeDb({ learning_insights: [] });
+  const trip = evaluateBreakers({ ...(await metrics(fakeDb({}), new Date(at("21:45")), [])), optOutsThisWeek: 4, optOutWeeklyBaseline: 1 });
+  assert.deepEqual(trip.map((t) => t.code), ["opt_out_spike"]);
+  breakerInsight(db, trip[0]!, pg("21:45"));
+  breakerInsight(db, { scope: "inbox", inboxId: INBOX, code: "inbox_bounces", reason: "2 hard bounces in the last 24 sends" }, pg("21:46"));
+  assert.deepEqual(await stageQualityTrips(db, TENANT, STAGE_SINCE), ["opt_out_spike"]);
+  assert.deepEqual(await stageAfter(db), { stage: "shadow", reason: "a quality breaker tripped: opt_out_spike" });
+});
+
+test("veto + a factual error on an automatic pitch: the stage drops to shadow, with no breaker at all", async () => {
+  const db = fakeDb({ learning_insights: [] });
+  assert.deepEqual(await stageAfter(db, { autoFactualErrors: 1 }), {
+    stage: "shadow",
+    reason: "an automatic pitch had a factual or recipient error",
+  });
+});
+
+test("stageQualityTrips counts this tenant's breaker insights since the stage began, by code", async () => {
+  const db = fakeDb({ learning_insights: [] });
+  const spike: BreakerTrip = { scope: "all", code: "opt_out_spike", reason: "4 opt-outs this week vs ~1.0 normally" };
+  breakerInsight(db, spike, "2026-10-19T19:56:59.000000+00:00"); // before the stage began
+  breakerInsight(db, spike, pg("21:00"), OTHER_TENANT);
+  db.tables.learning_insights!.push({ id: "x", tenant_id: TENANT, kind: "stage", evidence: { code: "opt_out_spike" }, created_at: pg("21:00") });
+  assert.deepEqual(await stageQualityTrips(db, TENANT, STAGE_SINCE), []);
+  breakerInsight(db, spike, pg("21:00"));
+  // An insight whose code this version doesn't know counts (fails toward a person).
+  db.tables.learning_insights!.push({ id: "y", tenant_id: TENANT, kind: "breaker", evidence: {}, created_at: pg("21:05") });
+  assert.deepEqual(await stageQualityTrips(db, TENANT, STAGE_SINCE), ["opt_out_spike", "unknown"]);
+  const unreadable = fakeDb({ learning_insights: [] }, { fail: { "learning_insights.select": "" } });
+  await assert.rejects(stageQualityTrips(unreadable, TENANT, STAGE_SINCE), /breaker insights: no detail/);
+});
+
+test("the tick's stage step reads quality trips through stageQualityTrips, not a count of every breaker", () => {
+  const s = readFileSync(new URL("../lib/autopilot/tick.ts", import.meta.url), "utf8");
+  const body = s.slice(s.indexOf("async function evaluateStage"));
+  assert.match(body, /const qualityTrips = s\.stage === "shadow" \? \[\] : await stageQualityTrips\(db, tenantId, since\);/);
+  assert.match(body, /autoQualityTrips: qualityTrips\.length,\s*autoQualityTripCodes: qualityTrips,/);
+  assert.ok(!body.includes('.from("learning_insights")'), "no private count of breaker insights");
+  // The veto count reads reasons, so a pull-back is not a veto (governor vetoedByPerson).
+  assert.match(body, /\.select\("id, status, autopilot_reasons"\)/);
+  assert.match(body, /const vetoed = countVetoes\(autopilotApproved, current\);/);
+});
+
+// With the autopilot off: breakers and the pull-back still run.
+
+// The route → runTick path with the autopilot off runs for real in tests/autopilot-trust-split.test.ts.
+
+test("enabled=false: 2 fresh bounces still trip the inbox breaker (what the off tick now applies)", async () => {
+  const db = fakeDb({ sender_inboxes: [{ ...pausedInbox(), paused: false }], audit_log: [], pitch_events: [], pitches: [] });
+  const sends = addSends(db, 30, { last: at("21:00") });
+  addBounce(db, sends[0]!, pg("21:30"));
+  addBounce(db, sends[1]!, pg("21:31"));
+  assert.deepEqual(codes(await metrics(db, new Date(at("21:45")))), ["inbox_bounces"]);
+});
+
+test("kill switch: pending automatic approvals are held (reason: stage dropped to off), a person's are not", async () => {
+  const { db, parts } = demotionFixture();
+  const result = await holdAutoApprovals(db, TENANT, "off");
+  assert.deepEqual(result, { held: 2, error: null });
+  assert.deepEqual(parts.auto1.pitch.autopilot_reasons, ["held by the autopilot: stage dropped to off"]);
+  assert.equal(parts.auto2.pitch.status, "draft");
+  assert.equal(parts.byPerson.pitch.status, "approved");
+  assert.equal(parts.reapproved.pitch.status, "approved");
+  assert.deepEqual(db.tables.audit_log!.map((r) => (r.metadata as Row).stage), ["off", "off"]);
+});
+
+// The resume: audit row first, and only from a form that showed "paused".
+
+test("resume order: the resumed audit row exists before the unpause is written", async () => {
+  const { db: base } = incident();
+  let auditAtUnpause = -1;
+  const db = fakeDb(base.tables, {
+    beforeUpdate: (table) => {
+      if (table === "sender_inboxes") auditAtUnpause = base.tables.audit_log!.filter((r) => r.action === INBOX_RESUMED_ACTION).length;
+    },
+  });
+  const result = await saveSenderInbox(db, { tenantId: TENANT, inboxId: INBOX, actorId: ADMIN, patch: PATCH, loadedPaused: true });
+  assert.deepEqual(result, { ok: true, resumed: true });
+  assert.equal(auditAtUnpause, 1, "the row was written before the unpause");
+  assert.equal(db.tables.sender_inboxes![0]!.paused, false);
+});
+
+test("resume order: a tick between the audit row and the unpause applies nothing and counts no old bounce", async () => {
+  // In the window a tick sees the inbox still paused (runBreakers pauses only
+  // unpaused inboxes) and, from then on, counts bounces after the new row only.
+  const { db: base } = incident();
+  const seen: Array<{ paused: unknown; resumeRows: number }> = [];
+  const db = fakeDb(base.tables, {
+    beforeUpdate: (table) => {
+      if (table !== "sender_inboxes") return;
+      seen.push({
+        paused: base.tables.sender_inboxes![0]!.paused,
+        resumeRows: base.tables.audit_log!.filter((r) => r.action === INBOX_RESUMED_ACTION).length,
+      });
+    },
+  });
+  db.clock = pg("15:50");
+  assert.deepEqual(await saveSenderInbox(db, { tenantId: TENANT, inboxId: INBOX, actorId: ADMIN, patch: PATCH, loadedPaused: true }), { ok: true, resumed: true });
+  assert.deepEqual(seen, [{ paused: true, resumeRows: 1 }]);
+  assert.deepEqual(codes(await metrics(db, new Date(at("15:51")))), [], "the old bounces predate the resume row");
+});
+
+test("resume: if the unpause fails after the audit row, the inbox stays paused and the person is told", async () => {
+  const { db: base } = incident();
+  const db = fakeDb(base.tables, { fail: { "sender_inboxes.update": "timeout" } });
+  const result = await saveSenderInbox(db, { tenantId: TENANT, inboxId: INBOX, actorId: ADMIN, patch: PATCH, loadedPaused: true });
+  assert.deepEqual(result, { ok: false, error: "Could not save sender inbox (it stays paused): timeout" });
+  assert.equal(db.tables.sender_inboxes![0]!.paused, true);
+  assert.equal(db.tables.audit_log!.length, 1, "a stray resume row on a paused inbox is harmless");
+});
+
+test("stale form: a page loaded before the breaker paused the inbox keeps the pause and asks for a reload", async () => {
+  const { db } = incident();
+  const result = await saveSenderInbox(db, {
+    tenantId: TENANT, inboxId: INBOX, actorId: ADMIN, loadedPaused: false,
+    patch: { ...PATCH, daily_cap: 40 },
+  });
+  assert.equal(result.ok, false);
+  assert.match(result.ok ? "" : result.error, /paused after this page was loaded, so it stays paused\. Your other changes are saved\. Reload/);
+  const inbox = db.tables.sender_inboxes![0]!;
+  assert.equal(inbox.paused, true);
+  assert.equal(inbox.paused_reason, pausedInbox().paused_reason);
+  assert.equal(inbox.daily_cap, 40, "the other edits are kept");
+  assert.equal(db.tables.audit_log!.length, 0, "no resume recorded");
+});
+
+test("stale form: a breaker pause landing between the read and an unpaused save is not overwritten", async () => {
+  const inbox = { ...pausedInbox(), paused: false, paused_reason: null };
+  const db = fakeDb({ sender_inboxes: [inbox], audit_log: [] }, {
+    beforeUpdate: (table) => {
+      if (table === "sender_inboxes" && !inbox.paused) Object.assign(inbox, { paused: true, paused_reason: "Autopilot breaker (inbox_bounces): 2 hard bounces" });
+    },
+  });
+  const result = await saveSenderInbox(db, { tenantId: TENANT, inboxId: INBOX, actorId: ADMIN, loadedPaused: false, patch: { ...PATCH, daily_cap: 40 } });
+  assert.equal(result.ok, false);
+  assert.match(result.ok ? "" : result.error, /paused while you were saving/);
+  assert.equal(inbox.paused, true);
+  assert.equal(inbox.paused_reason, "Autopilot breaker (inbox_bounces): 2 hard bounces");
+  assert.equal(db.tables.audit_log!.length, 0);
+});
+
+test("the drawer sends the paused value it loaded, and the action passes it on", () => {
+  const drawer = readFileSync(new URL("../components/settings/sender-inbox-drawer.tsx", import.meta.url), "utf8");
+  assert.match(drawer, /loaded_paused: mode\.inbox\.paused,/);
+  const action = readFileSync(new URL("../lib/settings/sending-actions.ts", import.meta.url), "utf8");
+  assert.match(action, /loaded_paused: z\.boolean\(\),/);
+  assert.match(action, /loadedPaused: parsed\.data\.loaded_paused,/);
+});
+
+// The relabel loop (§5 scheduleAuto), against the fake.
+
+test("relabel: a finder-address draft labelled AUTO before 2026-10-19 is relabelled, never approved", async () => {
+  const draft = (id: string, contact: string | null, over: Row = {}): Row => ({
+    id, tenant_id: TENANT, status: "draft", autopilot_lane: "auto", autopilot_reasons: [], contact_id: contact, ...over,
+  });
+  const pitches = [
+    draft("p-anymail", "c-anymail"),
+    draft("p-hunter", "c-hunter"),
+    draft("p-scraper", "c-scraper"),
+    draft("p-none", null),
+    draft("p-claimed", "c-hunter2", { status: "approved" }), // approved meanwhile: the update is draft-only
+  ];
+  const db = fakeDb({
+    pitches,
+    prospect_contacts: [
+      { id: "c-anymail", tenant_id: TENANT, selected_by: "anymail" },
+      { id: "c-hunter", tenant_id: TENANT, selected_by: " Hunter " },
+      { id: "c-scraper", tenant_id: TENANT, selected_by: "scraper" },
+      { id: "c-hunter2", tenant_id: TENANT, selected_by: "hunter" },
+    ],
+  });
+  const relabel = await relabelFinderDrafts(db, TENANT, pitches.map((p) => ({ id: p.id as string, contact_id: p.contact_id as string | null })));
+  assert.deepEqual([...relabel].sort(), ["p-anymail", "p-claimed", "p-hunter"], "the caller skips all three this tick");
+  const byId = Object.fromEntries(pitches.map((p) => [p.id, p]));
+  for (const id of ["p-anymail", "p-hunter"]) {
+    assert.equal(byId[id]!.autopilot_lane, null, id);
+    assert.equal(byId[id]!.autopilot_reasons, null, id);
+    assert.equal(byId[id]!.status, "draft", `${id} is never approved`);
+  }
+  assert.equal(byId["p-scraper"]!.autopilot_lane, "auto");
+  assert.equal(byId["p-none"]!.autopilot_lane, "auto");
+  assert.equal(byId["p-claimed"]!.autopilot_lane, "auto", "a non-draft row keeps its label");
+  // Another tenant's contact with the same id never decides.
+  const other = fakeDb({ pitches: [draft("q", "c-x")], prospect_contacts: [{ id: "c-x", tenant_id: OTHER_TENANT, selected_by: "anymail" }] });
+  assert.equal((await relabelFinderDrafts(other, TENANT, [{ id: "q", contact_id: "c-x" }])).size, 0);
+});
+
+test("relabel: unreadable recipient sources throw (approve nothing this tick)", async () => {
+  const db = fakeDb({ pitches: [] }, { fail: { "prospect_contacts.select": "" }, forbidWrites: ["pitches"] });
+  await assert.rejects(relabelFinderDrafts(db, TENANT, [{ id: "p", contact_id: "c" }]), /recipient sources: no detail/);
+  assert.equal((await relabelFinderDrafts(fakeDb({}, { forbidWrites: ["pitches"] }), TENANT, [{ id: "p", contact_id: null }])).size, 0);
 });

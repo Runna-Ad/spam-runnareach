@@ -16,9 +16,17 @@
  * holdAutoApprovals is the autopilot's own version, run by the tick's stage
  * step when the stage drops to shadow or off: the same fields, the same guard,
  * its own reason (HELD_BY_AUTOPILOT). Tested in tests/bounce-incident.test.ts.
+ *
+ * Two more db steps of the tick live here so they run against the test fake
+ * (tick.ts itself can't be imported by the node test runner):
+ * stageQualityTrips, the stage step's breaker count (only QUALITY trips,
+ * governor BREAKER_KIND, count against the stage), and relabelFinderDrafts,
+ * §5's guard against approving on a pre-2026-10-19 AUTO label. Tested in
+ * tests/bounce-incident.test.ts.
  */
 
-import { HELD_BY_AUTOPILOT, HELD_BY_PERSON, type Stage } from "./governor.ts";
+import { isFinderSource } from "../research/verify-recipient.ts";
+import { HELD_BY_AUTOPILOT, HELD_BY_PERSON, isQualityBreaker, type Stage } from "./governor.ts";
 import { holdExpiry, signHoldToken, type HoldPayload } from "./hold-token.ts";
 
 // Untyped like tick.ts: the autopilot columns aren't in every generated type.
@@ -146,6 +154,9 @@ export function demotionHoldReason(stage: Stage): string {
   return `${HELD_BY_AUTOPILOT}: stage dropped to ${stage}`;
 }
 
+/** The reason a pitch pulled back by the kill switch carries (same prefix: a person's call next). */
+export const KILL_SWITCH_HOLD_REASON = `${HELD_BY_AUTOPILOT}: autopilot switched off`;
+
 export type PullbackResult = { held: number; error: string | null };
 
 const PULLBACK_CHUNK = 100;
@@ -166,7 +177,12 @@ function isAutopilotApproval(payload: unknown): boolean {
  * pitch.held audit row per pitch (source 'demotion'). Idempotent: a second run
  * finds nothing to hold.
  */
-export async function holdAutoApprovals(db: Db, tenantId: string, stage: Stage): Promise<PullbackResult> {
+export async function holdAutoApprovals(
+  db: Db,
+  tenantId: string,
+  stage: Stage,
+  reason: string = demotionHoldReason(stage),
+): Promise<PullbackResult> {
   const { data: rows, error } = await db
     .from("pitches")
     .select("id")
@@ -198,7 +214,7 @@ export async function holdAutoApprovals(db: Db, tenantId: string, stage: Stage):
 
     const { data: updated, error: updateError } = await db
       .from("pitches")
-      .update(heldFields(demotionHoldReason(stage)))
+      .update(heldFields(reason))
       .eq("tenant_id", tenantId)
       .in("id", automatic)
       .eq("status", "approved")
@@ -223,6 +239,66 @@ export async function holdAutoApprovals(db: Db, tenantId: string, stage: Stage):
     if (auditError) console.warn("[autopilot-hold] demotion audit not recorded:", detail(auditError));
   }
   return { held, error: null };
+}
+
+/**
+ * QUALITY breaker trips recorded since `sinceIso` (the stage's start): the
+ * codes of the breaker insights (kind 'breaker', evidence = the BreakerTrip)
+ * that governor.isQualityBreaker counts, oldest first ("unknown" for evidence
+ * without a code). Delivery trips (bounces, Gmail, DNS, placement) pause
+ * sending but never count here. Throws when the insights can't be read, so the
+ * stage step skips the tick instead of reading 0.
+ */
+export async function stageQualityTrips(db: Db, tenantId: string, sinceIso: string): Promise<string[]> {
+  const { data, error } = await db
+    .from("learning_insights")
+    .select("evidence, created_at")
+    .eq("tenant_id", tenantId)
+    .eq("kind", "breaker")
+    .gte("created_at", sinceIso)
+    .order("created_at", { ascending: true })
+    .limit(1000);
+  if (error) throw new Error(`breaker insights: ${detail(error)}`);
+  return ((data ?? []) as Array<{ evidence: { code?: unknown } | null }>)
+    .filter((r) => isQualityBreaker(r.evidence?.code))
+    .map((r) => (typeof r.evidence?.code === "string" ? r.evidence.code : "unknown"));
+}
+
+/**
+ * §5 scheduleAuto, before approving: a draft labelled AUTO before finder
+ * addresses needed a person (2026-10-19) still carries that label, so never
+ * approve on it. Its label is cleared (draft rows only) so §4 labels it again
+ * on today's rules, which re-verify (verify-recipient.ts). Returns the ids the
+ * caller must not approve this tick; throws when the recipient sources can't
+ * be read (approve nothing).
+ */
+export async function relabelFinderDrafts(
+  db: Db,
+  tenantId: string,
+  candidates: ReadonlyArray<{ id: string; contact_id: string | null }>,
+): Promise<Set<string>> {
+  const relabel = new Set<string>();
+  const contactIds = [...new Set(candidates.map((c) => c.contact_id).filter((id): id is string => !!id))];
+  if (contactIds.length === 0) return relabel;
+  const { data: contacts, error } = await db
+    .from("prospect_contacts")
+    .select("id, selected_by")
+    .eq("tenant_id", tenantId)
+    .in("id", contactIds);
+  if (error) throw new Error(`recipient sources: ${detail(error)}`);
+  const finder = new Set(
+    ((contacts ?? []) as Array<{ id: string; selected_by: string | null }>).filter((c) => isFinderSource(c.selected_by)).map((c) => c.id),
+  );
+  for (const c of candidates) if (c.contact_id && finder.has(c.contact_id)) relabel.add(c.id);
+  if (relabel.size) {
+    await db
+      .from("pitches")
+      .update({ autopilot_lane: null, autopilot_reasons: null })
+      .in("id", [...relabel])
+      .eq("tenant_id", tenantId)
+      .eq("status", "draft");
+  }
+  return relabel;
 }
 
 /** The line the stage-change email carries about the pull-back. */

@@ -6,12 +6,17 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  BREAKER_KIND,
+  countVetoes,
   evaluateBreakers,
   heldAction,
   HELD_BY_AUTOPILOT,
   inboxBouncesTrip,
+  isQualityBreaker,
   laneFor,
   nextStage,
+  safetyOnly,
+  vetoedByPerson,
   type BreakerMetrics,
   type LaneInput,
   type StageMetrics,
@@ -118,7 +123,7 @@ test("breakers: global trips pause everything", () => {
 
 const m0: StageMetrics = {
   daysInStage: 0, autoDecided: 0, autoApprovedUnedited: 0, autoFactualErrors: 0,
-  autoScheduled: 0, autoVetoed: 0, autoBounceRate: 0, autoBreakerTrips: 0,
+  autoScheduled: 0, autoVetoed: 0, autoBounceRate: 0, autoQualityTrips: 0,
 };
 
 test("stages: shadow promotes to veto only with enough time, volume and agreement", () => {
@@ -135,7 +140,7 @@ test("stages: veto promotes to auto on a low veto and bounce rate", () => {
 });
 
 test("stages: trouble from automatic sends demotes a stage at once", () => {
-  assert.equal(nextStage("auto", { ...m0, autoBreakerTrips: 1 }).stage, "veto");
+  assert.equal(nextStage("auto", { ...m0, autoQualityTrips: 1 }).stage, "veto");
   assert.equal(nextStage("veto", { ...m0, autoFactualErrors: 1 }).stage, "shadow");
   assert.equal(nextStage("auto", { ...m0 }).stage, "auto");
 });
@@ -186,4 +191,67 @@ test("held draft: one the autopilot pulled back on a demotion is left for a pers
   }
   // A look-alike that doesn't start with the prefix gets no such pass.
   assert.equal(held(["verifier unsure about the address", `not ${HELD_BY_AUTOPILOT}`]).action, "drop");
+});
+
+// ── Trust split (tasks/briefs/autopilot-trust-split.md) ───────────────────────
+
+test("breaker kinds: only opt_out_spike is quality; every code evaluateBreakers emits is classified", () => {
+  const all: BreakerMetrics = {
+    inboxes: [{ id: "i", recentSends: 50, recentHardBounces: 10, apiErrorsToday: 5 }],
+    hardBouncesToday: 9, optOutsThisWeek: 30, optOutWeeklyBaseline: 1,
+    dmarcPassRate: 0.5, blocklisted: true, warmupInboxRate: 0.1,
+  };
+  const emitted = evaluateBreakers(all).map((t) => t.code).sort();
+  assert.deepEqual(emitted, Object.keys(BREAKER_KIND).sort(), "every breaker trips here and each one is in the map");
+  assert.deepEqual(emitted.filter(isQualityBreaker), ["opt_out_spike"]);
+  for (const code of ["inbox_bounces", "gmail_api", "bounces_today", "dmarc", "blocklist", "placement"]) {
+    assert.equal(isQualityBreaker(code), false, code);
+  }
+  // Stored evidence this version doesn't recognise fails toward a person.
+  for (const code of ["something_new", undefined, null, 3, "toString", "__proto__"]) assert.equal(isQualityBreaker(code), true, String(code));
+});
+
+test("stages: a delivery trip never moves the stage; a quality trip or a factual error demotes", () => {
+  // The tick hands nextStage quality trips only (hold.ts stageQualityTrips), so
+  // veto with two dead-mailbox trips arrives as autoQualityTrips 0.
+  assert.deepEqual(nextStage("veto", { ...m0, daysInStage: 1, autoScheduled: 19 }), { stage: "veto", reason: "collecting veto data" });
+  assert.equal(nextStage("auto", { ...m0 }).stage, "auto");
+  assert.deepEqual(nextStage("veto", { ...m0, autoQualityTrips: 2, autoQualityTripCodes: ["opt_out_spike", "opt_out_spike"] }), {
+    stage: "shadow",
+    reason: "a quality breaker tripped: opt_out_spike",
+  });
+  assert.equal(nextStage("veto", { ...m0, autoQualityTrips: 1 }).reason, "a quality breaker tripped");
+  assert.equal(nextStage("auto", { ...m0, autoQualityTrips: 1 }).stage, "veto");
+  assert.deepEqual(nextStage("veto", { ...m0, autoFactualErrors: 1 }), {
+    stage: "shadow",
+    reason: "an automatic pitch had a factual or recipient error",
+  });
+  assert.equal(nextStage("auto", { ...m0, autoFactualErrors: 1 }).stage, "veto");
+  // Shadow and off never demote further.
+  assert.equal(nextStage("shadow", { ...m0, autoQualityTrips: 3, autoFactualErrors: 2 }).stage, "shadow");
+});
+
+test("safetyOnly: kill switch, stage off or no state row run only the safety steps", () => {
+  assert.equal(safetyOnly(null), true);
+  assert.equal(safetyOnly({ enabled: false, stage: "veto" }), true);
+  assert.equal(safetyOnly({ enabled: false, stage: "auto" }), true);
+  assert.equal(safetyOnly({ enabled: true, stage: "off" }), true);
+  assert.equal(safetyOnly({ enabled: true, stage: "shadow" }), false);
+  assert.equal(safetyOnly({ enabled: true, stage: "veto" }), false);
+  assert.equal(safetyOnly({ enabled: true, stage: "auto" }), false);
+});
+
+test("vetoedByPerson / countVetoes: a pull-back by the autopilot (stage drop, kill switch) is not a person's veto", () => {
+  assert.equal(vetoedByPerson({ status: "draft", autopilot_reasons: ["held by a person from the digest link"] }), true);
+  assert.equal(vetoedByPerson({ status: "reviewer_rejected", autopilot_reasons: null }), true);
+  assert.equal(vetoedByPerson({ status: "draft" }), true, "no reasons read as a person's");
+  assert.equal(vetoedByPerson({ status: "draft", autopilot_reasons: [`${HELD_BY_AUTOPILOT}: stage dropped to shadow`] }), false);
+  assert.equal(vetoedByPerson({ status: "draft", autopilot_reasons: [`${HELD_BY_AUTOPILOT}: autopilot switched off`] }), false);
+  assert.equal(vetoedByPerson({ status: "approved", autopilot_reasons: [] }), false);
+  const approved = new Set(["a", "b", "c"]);
+  assert.equal(countVetoes(approved, [
+    { id: "a", status: "draft", autopilot_reasons: ["held by a person from the digest link"] },
+    { id: "b", status: "draft", autopilot_reasons: [`${HELD_BY_AUTOPILOT}: autopilot switched off`] },
+    { id: "c", status: "sent", autopilot_reasons: [] },
+  ]), 1);
 });

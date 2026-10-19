@@ -69,6 +69,16 @@ Checklist (grown by retros; add a line when a retro records a miss):
   re-send)? Missing ship step → BLOCKING.
 - UI: a control disabled by a server prop while its client state stays on (useState
   survives router.refresh): does the stale state still filter or act?
+- A rule that tightens a verdict, label or lane: grep every place that STORES or caches that
+  verdict or a decision derived from it (labels, lanes, approvals, a reused stored value) and
+  say what happens to rows decided under the old rule. Unhandled → BLOCKING (hotfix: a cached
+  `send` would have auto-sent finder addresses for 7 days).
+- A test fake for a table the diff queries: does it reject unknown columns / honour the
+  select list? If not, check every column the new query uses against the migration's
+  `create table` yourself (batch 4: a wrong column passed every test).
+- An automatic pause or block a person can lift: does it count evidence only after the latest
+  lift, and is the lift a row only the lift writes (never `updated_at`)? (hotfix: a resume was
+  re-paused by the same 2 bounces every 15 min.)
 
 Trace a real path from an input to the failure before calling something blocking. If you
 cannot, it is optional. A finding you are unsure of is optional with "unsure" in front.

@@ -64,3 +64,20 @@ export function protectedStatusFilter(next: string, by: StatusWriter): string | 
   const blocked = PROSPECT_STATUSES.filter((s) => !mayOverwriteStatus(s, next, by));
   return blocked.length ? `(${blocked.join(",")})` : null;
 }
+
+/**
+ * Statuses where the company has been contacted or decided: a pitch exists or went
+ * out, a reply or bounce came back, or it is parked (every do-not-send status). The
+ * automated pipeline only moves a company forward, so it never re-processes one of
+ * these (Pedro 2026-10-19: a person can still open it and act by hand). b_list is
+ * NOT here: it is a scoring outcome before any email and may be re-run.
+ */
+const PAST_PIPELINE: ReadonlySet<string> = new Set([
+  "pitched", "queued", "approved", "sent", "bounced", "replied", "ghosted",
+  ...DO_NOT_SEND_STATUSES,
+]);
+
+/** True when the pipeline must not re-process a company in this status. */
+export function isPastPipeline(status: string | null | undefined): boolean {
+  return status != null && PAST_PIPELINE.has(status);
+}

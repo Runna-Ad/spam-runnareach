@@ -8,9 +8,18 @@
  * bounces, still among the inbox's last 50 sends. (Never sender_inboxes.updated_at:
  * every save bumps it.)
  *
- * Without the row the breaker would count the old bounces and pause the inbox
- * again, so a resume whose row can't be written is put back to paused and the
- * person is told: what Settings shows stays what is true.
+ * The resume row is written BEFORE the unpause: a tick between the two writes
+ * then sees a paused inbox (nothing to do) and, on the next tick, counts only
+ * bounces after the row. The other order left a window where the tick saw an
+ * unpaused inbox, counted the old bounces and paused it again. A row whose
+ * unpause then fails is harmless: the inbox is still paused, and the next real
+ * resume writes a newer row. Without a row there is no resume: the inbox stays
+ * paused, the other edits are saved, and the person is told.
+ *
+ * A resume needs the person to have SEEN "paused": the form sends the paused
+ * value it loaded. A form that loaded "not paused" (a page opened before a
+ * breaker paused the inbox) saving "not paused" keeps the pause and asks the
+ * person to reload, so a stale page can't undo a pause nobody looked at.
  *
  * The db is injected so this is tested with a fake (tests/bounce-incident.test.ts);
  * lib/settings/sending-actions.ts passes the signed-in admin's client.
@@ -36,9 +45,19 @@ export type SaveSenderInboxResult = { ok: true; resumed: boolean } | { ok: false
 
 const detail = (e: { message?: string } | null | undefined) => e?.message || "no detail";
 
+const STALE_FORM =
+  "This inbox was paused after this page was loaded, so it stays paused. Your other changes are saved. Reload the page to see why it was paused, then resume it if you still want to.";
+
 export async function saveSenderInbox(
   db: Db,
-  args: { tenantId: string; inboxId: string; actorId: string; patch: SenderInboxPatch },
+  args: {
+    tenantId: string;
+    inboxId: string;
+    actorId: string;
+    patch: SenderInboxPatch;
+    /** The paused value the form loaded (what the person saw before saving). */
+    loadedPaused: boolean;
+  },
 ): Promise<SaveSenderInboxResult> {
   const { data: before, error: readError } = await db
     .from("sender_inboxes")
@@ -49,16 +68,35 @@ export async function saveSenderInbox(
   if (readError) return { ok: false, error: `Could not read the sender inbox: ${detail(readError)}` };
   if (!before) return { ok: false, error: "Sender inbox not found." };
   const previous = before as { paused: boolean | null; paused_reason: string | null };
-  const resuming = previous.paused === true && args.patch.paused === false;
+  const unpausing = previous.paused === true && args.patch.paused === false;
 
-  const { error } = await db
-    .from("sender_inboxes")
-    .update(args.patch)
-    .eq("id", args.inboxId)
-    .eq("tenant_id", args.tenantId);
-  if (error) return { ok: false, error: `Could not save sender inbox: ${detail(error)}` };
-  if (!resuming) return { ok: true, resumed: false };
+  /** Save the other edits, the pause and its reason as they are in the db. */
+  const keepPause = async (message: string): Promise<SaveSenderInboxResult> => {
+    const { error } = await db
+      .from("sender_inboxes")
+      .update({ ...args.patch, paused: true, paused_reason: previous.paused_reason })
+      .eq("id", args.inboxId)
+      .eq("tenant_id", args.tenantId);
+    if (error) return { ok: false, error: `Could not save sender inbox: ${detail(error)}` };
+    return { ok: false, error: message };
+  };
 
+  if (unpausing && !args.loadedPaused) return keepPause(STALE_FORM);
+
+  if (!unpausing) {
+    // An unpaused save is guarded on the row still being unpaused, so a breaker
+    // pause landing between our read and this write is never overwritten.
+    let q = db.from("sender_inboxes").update(args.patch).eq("id", args.inboxId).eq("tenant_id", args.tenantId);
+    if (!args.patch.paused) q = q.eq("paused", false);
+    const { data: saved, error } = await q.select("id");
+    if (error) return { ok: false, error: `Could not save sender inbox: ${detail(error)}` };
+    if (!args.patch.paused && (!Array.isArray(saved) || saved.length === 0)) {
+      return { ok: false, error: "This inbox was paused while you were saving, so nothing was saved. Reload the page to see why." };
+    }
+    return { ok: true, resumed: false };
+  }
+
+  // The resume: its audit row first, then the unpause.
   const { error: auditError } = await db.from("audit_log").insert({
     tenant_id: args.tenantId,
     actor_id: args.actorId,
@@ -67,20 +105,15 @@ export async function saveSenderInbox(
     entity_id: args.inboxId,
     metadata: { previous_reason: previous.paused_reason },
   });
-  if (!auditError) return { ok: true, resumed: true };
+  if (auditError) {
+    return keepPause(`The resume could not be recorded (${detail(auditError)}), so the inbox stays paused. Your other changes are saved. Try resuming again.`);
+  }
 
-  // No resume row: the breaker still counts the old bounces. Put the pause back
-  // (only if nothing else changed it meanwhile) and say so.
-  const { error: undoError } = await db
+  const { error } = await db
     .from("sender_inboxes")
-    .update({ paused: true, paused_reason: previous.paused_reason })
+    .update(args.patch)
     .eq("id", args.inboxId)
-    .eq("tenant_id", args.tenantId)
-    .eq("paused", false);
-  return {
-    ok: false,
-    error: undoError
-      ? `Saved, but the resume could not be recorded (${detail(auditError)}): the bounce breaker still counts the bounces from before it and may pause this inbox again. Try resuming again.`
-      : `The resume could not be recorded (${detail(auditError)}), so the inbox stays paused. Your other changes are saved. Try resuming again.`,
-  };
+    .eq("tenant_id", args.tenantId);
+  if (error) return { ok: false, error: `Could not save sender inbox (it stays paused): ${detail(error)}` };
+  return { ok: true, resumed: true };
 }

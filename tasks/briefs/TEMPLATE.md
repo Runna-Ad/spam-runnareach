@@ -19,7 +19,9 @@ What outcome this task produces and why it matters to the product. Written so th
 can tell a good solution from a merely passing one.
 
 ## Context the worker needs
-Only what the worker cannot infer from the code. Decisions already made, the public API
+Only what the worker cannot infer from the code. A change to a verdict,
+label or lane quotes its consumer (e.g. `governor.heldAction`) and states the outcome. Incident
+facts are quoted from a query run for this brief. Decisions already made, the public API
 that must stay stable, the data shape in prod, the lesson that applies. Link a section of
 `tasks/audit-2026-10-16.md` only if it is required reading.
 
@@ -28,6 +30,10 @@ From `tasks/tools/brain-recall-for.sh "<goal>"`: one line per article that appli
 file name and its rule. "none matched" is an answer.
 
 ## Files
+<!-- Derive this list, don't guess it (batch 4: 3 of 5 blocking findings were files missing
+     here): grep for every CALLER that gates the code path (a route that filters before the
+     call), every PRODUCER of data the change reads, and every WRITER of a field the change
+     protects. Each goes below or the brief says why not. -->
 Allowed to edit:
 - `lib/<module>/<file>.ts`
 - `tests/<module>-<thing>.test.ts` (new tests always allowed)

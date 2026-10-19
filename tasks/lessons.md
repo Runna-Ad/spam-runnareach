@@ -1692,3 +1692,71 @@ TAGS: autopilot, verify, caching
 WHAT HAPPENED: holdAutoApprovals selects approved pitches, then updates them with .eq("status","approved"). The mutation check (remove the guard) passed all tests, because the read already filtered on status. Adding a beforeUpdate hook to the fake (the send-queue claims a row between our read and our write) made the mutation fail.
 RULE: For every WHERE guard on an update that repeats the read's filter, write the test where another writer changes the row between the read and the update; run the mutation (delete the guard) to prove it.
 TAGS: testing, autopilot, races
+
+[2026-10-19] PEDRO_OVERRIDE: a bounce is an address problem, not a pitch-quality problem; it must not demote the autopilot
+WHAT HAPPENED: Two hard bounces on the first AUTO drip tripped the inbox_bounces breaker, which paused the inbox (right) AND dropped the autopilot veto -> shadow (nextStage demotes on ANY breaker trip in the stage, autoBreakerTrips). Pedro: "that had nothing to do with the quality of the pitches." Shadow then needs 7 days + 100 decisions to climb back, which stalls a system meant to run fully automatic, for a cause the stage system does not measure.
+RULE: Keep the two kinds of trust separate. Deliverability trips (bounces, Gmail API errors, DMARC, blocklist, placement) PAUSE SENDING and never move the stage; only pitch-quality signals (factual or recipient errors, veto/edit rate, possibly an opt-out spike) demote. Until batch 4 changes nextStage, a deliverability demotion is undone by hand once its cause is fixed (done 2026-10-19: back to veto after the bounce hotfix).
+TAGS: autopilot, stages, breakers, pedro-override
+
+## Merged from lessons-inbox, address-trust (2026-10-19, batch 4)
+
+[2026-10-19] "Trusted source" and "verdict send" were two different questions that looked like one
+WHAT HAPPENED: The governor's TRUSTED_SOURCES and the gate's VERIFIED_PROVENANCE both listed "anymail" and "hunter" as trusted, while verify-recipient.ts held those same sources for a person (FINDER_SOURCES). The finder hold only worked because laneFor also requires verify === "send". address-trust merged the two copied lists into isTrustedForAutoSend (lib/research/verify-recipient.ts) and kept "anymail"/"hunter" in it so no existing value changed behaviour; a table test (tests/address-trust.test.ts) pins every selected_by value across provenance, finder flag, lane trust, gate trust and end-to-end lane.
+RULE: When a source's trust is decided in more than one place, a table test over every known value, asserting each layer AND the end-to-end result, is what makes "one predicate" stick. A value that one layer trusts and another holds is a smell: name which layer is authoritative in the comment on both.
+TAGS: research, autopilot, send-gate, provenance
+
+[2026-10-19] A vendor's best-guess field must never be the fallback for its verified field
+WHAT HAPPENED: lib/research/anymail-finder.ts took `valid_email ?? email` and only rejected not_found/blacklisted, so Anymail's unverified guess (status risky, valid_email null) was stored like a verified address. Now verifiedEmailOf() requires email_status "valid" AND valid_email; the result is stored as selected_by "anymail_verified". Anymail's docs were unreachable from the sandbox (egress proxy refused anymailfinder.com), so the shape is coded from the existing client's field names, not re-checked against v5.1 docs.
+RULE: For any third-party lookup, keep only the field the vendor marks as verified, test the "guess present, verified null" fixture, and store the verification status (as a source value or column) so a later bounce can be traced to it.
+TAGS: research, anymail, enrichment
+
+## Merged from lessons-inbox, autopilot-trust-split (2026-10-19, batch 4)
+
+[2026-10-19] A step that "runs when the feature is off" needs every caller to reach it, not just the function
+WHAT HAPPENED: The brief said runTick returned before runBreakers with the kill switch off, so the fix was to move the off gate below the breakers (lib/autopilot/tick.ts). But app/api/autopilot/tick/route.ts only calls runTick for autonomy_state rows with enabled = true, so with the kill switch off runTick never runs at all. The tick's own digest comment ("runs even when the autopilot is switched off") had the same blind spot.
+RULE: Before claiming "X now runs when the feature is off", trace the caller chain up to the scheduler (cron → route → per-tenant filter → function) and check each filter. A gate can sit in the route's query as well as in the function. Pin the whole path with one test or source check, not just the function body.
+TAGS: autopilot, tick, kill-switch, cron
+
+[2026-10-19] Logic in a file the test runner can't import gets pinned by regex; move the db step into an importable, db-injected module instead
+WHAT HAPPENED: tick.ts imports "server-only" and "@/" aliases, so node --test can't load it, and the finder relabel loop was pinned only by a source regex (deleting the loop passed every test). Moving it to lib/autopilot/hold.ts relabelFinderDrafts(db, …) let it run against the fake db; the tick keeps a one-line call pinned by regex, and the behaviour is tested for real (mutation table in the PR).
+RULE: When a guard lives in an unimportable orchestrator, extract the db step into a db-injected function in an importable module (relative .ts imports, no server-only) and test it with the fake. Keep only the call site pinned by a source check.
+TAGS: testing, autopilot, fake-db
+
+[2026-10-19] A fake db that ignores the select list can't catch a column missing from the select
+WHAT HAPPENED: The follow-up added autopilot_reasons to the weekly producer's select (lib/reports/snapshot.ts). Removing it again passed every test, because the fake returned whole rows whatever was selected. Once the fake projected the selected columns, embeds included (tests/autopilot-trust-split.test.ts parseSelect/project), the mutation failed as it should.
+RULE: When a test proves "the producer now reads column X", the fake must return only the selected columns, embeds included, the way PostgREST does. Otherwise run the mutation (drop X from the select) and watch it fail before calling the column covered.
+TAGS: testing, fake-db, reports
+
+## Merged from lessons-inbox, pipeline-guards (2026-10-19, batch 4)
+
+[2026-10-19] A status rule that allows a move is not a funnel order
+WHAT HAPPENED: `mayOverwriteStatus` allows `sent → pitched` (both sendable), so a "Run pipeline" on an emailed company re-researched it and could move it back to pitched or b_list. The rule answers "may this writer overwrite X", never "is this a step forward". Fixed with one predicate, `isPastPipeline` in lib/prospects/status.ts, checked by `processSingleProspectWith` before any paid step and by the run route's pitching phase.
+RULE: A guard that only forbids the forbidden still lets a pipeline go backwards. When an automated stage can be re-entered (a re-run button, a refill), check "has this row already passed me" at its entry, before any spend, with a predicate shared by every entry point.
+TAGS: discover, prospects, status, pipeline
+
+[2026-10-19] Spend checks belong right before the paid call, not at the start of the function
+WHAT HAPPENED: generatePitchWith (lib/pitches/pitch-stage.ts) did seconds of awaits (contacts, case studies, notable clients, benchmarks, exemplars) before Claude; the pipeline's guarded status write then refused the pitch for a company suppressed meanwhile, after Claude was paid and a draft was left. A fresh, fail-closed status re-read now sits immediately before the Claude call.
+RULE: A "may we spend on this row" check runs after the last await before the paid call, reads fresh, and refuses on an error or a missing row, the same shape as the send-time check.
+TAGS: pitches, cost, anthropic
+
+[2026-10-19] Loader-hook tests: unref the route's race timers
+WHAT HAPPENED: driving app/api/discover/run/route.ts in a test held the process ~95s because `Promise.race` against a `setTimeout` never clears its timer. Unref'ing timers in the test brought the file to 0.4s.
+RULE: When a test drives a route that races work against timers, wrap `setTimeout` to `unref()` in the test; a slow suite is a hidden leaked timer more often than slow code.
+TAGS: tests, discover
+
+## Merged from lessons-inbox, send-path-hardening (2026-10-19, batch 4)
+
+[2026-10-19] A counter guarded by a cap is one SQL statement: check and write in the same UPDATE
+WHAT HAPPENED: sends_today was bumped by read → add one in TypeScript → write back in three send paths (send-queue, lib/pitches/send-action.ts, follow-up). Two send-queue runs overlap at 15:00 UTC and their write-backs clobbered each other. Migration 0049 replaces all three with spam_reserve_send_slot (UPDATE … WHERE effective < daily_cap RETURNING) taken before Gmail, and spam_release_send_slot when Gmail refuses. 20 parallel psql sessions against cap 5 on a local Postgres: 5 taken, 15 refused, counter 5.
+RULE: When a value both limits work and counts it, reserve before the external call with one conditional UPDATE and release on a definite refusal. Never release on an ambiguous failure (a throw from the send call): the over-count is the safe side. A security definer RPC that authenticated users can call needs its own tenant guard in the WHERE (`auth.uid() is null or tenant_id = current_tenant_id()`), since it bypasses RLS.
+TAGS: send-path, migrations, concurrency
+
+[2026-10-19] Keep the existing source-shape guards passing instead of rewriting them
+WHAT HAPPENED: A `giveBack()` helper that released both the slot and the claim broke four tests in tests/send-path-safety.test.ts, which look for `releaseClaim(` with `to: "approved"` / `queueReleaseFor(` inside the blocked branch. Inlining the two calls kept those guards untouched; the new test then checks that each claim release after the reservation sits next to a slot release.
+RULE: When a refactor trips a source-shape guard, change the code shape back before touching the guard. The guard encodes a reviewer's check; weakening it to fit the refactor removes that check silently.
+TAGS: tests, send-path
+
+[2026-10-19] A test fake that accepts any column name hides a wrong column
+WHAT HAPPENED: latestApprovalByAutopilot (first push of #35) ordered pitch_events by `created_at`. The table only has `event_at` (0001), so PostgREST would have returned 42703 in prod and every send-time "review" pitch would have been skipped forever. All tests passed because the fake filtered on whatever key it was given. The conductor's review caught it. The fake in tests/send-path-hardening.test.ts now parses `create table pitch_events` from 0001 and returns an error for unknown columns.
+RULE: A fake for a table a new query reads must check column names against the migration that defines the table, or the test proves nothing about the query. Before writing a select/order on a table, read its create table block.
+TAGS: tests, fakes, schema

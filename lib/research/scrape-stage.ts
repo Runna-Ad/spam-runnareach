@@ -17,6 +17,8 @@ export type ScrapeWebsiteResult =
       emails_count: number;
       what_they_do_set: boolean;
       contact_insert_errors: string[];
+      /** Set when the raw → researched bump failed: the scrape is saved, the status is not. */
+      status_write_error?: string;
     }
   | {
       ok: false;
@@ -361,13 +363,19 @@ export async function scrapeWebsiteWith(
   // Auto-bump status raw → researched. The status was read before the scrape
   // and SMTP screening ran; the WHERE re-checks it so a prospect suppressed in
   // the meantime stays parked (status rule I5).
+  // A failed write is reported, never read as done.
+  let statusWriteError: string | undefined;
   if (prospect.status === "raw") {
-    await supabase
+    const { error: bumpErr } = await supabase
       .from("prospects")
       .update({ status: "researched", updated_at: new Date().toISOString() } as never)
       .eq("id", parsed.data.prospect_id)
       .eq("tenant_id", user.tenantId)
       .eq("status", "raw");
+    if (bumpErr) {
+      statusWriteError = `Status write (researched) failed: ${bumpErr.message || "no message"}`;
+      console.error(`[scrape] ${statusWriteError} for ${parsed.data.prospect_id}`);
+    }
   }
 
   await writeAuditLog({
@@ -395,6 +403,7 @@ export async function scrapeWebsiteWith(
     emails_count: site.contact_emails.length,
     what_they_do_set: Boolean(whatTheyDo),
     contact_insert_errors: contactInsertErrors,
+    ...(statusWriteError ? { status_write_error: statusWriteError } : {}),
   };
 }
 
