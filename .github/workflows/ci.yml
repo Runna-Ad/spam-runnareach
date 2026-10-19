@@ -13,20 +13,55 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      # A change that only touches notes (tasks/, .claude/, *.md) skips the
+      # checks but still reports success, so required checks never hang. Any
+      # doubt (no base, a git error) runs everything.
+      - name: Code changed?
+        id: scope
+        run: |
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            BASE="${{ github.event.pull_request.base.sha }}"
+          else
+            BASE="${{ github.event.before }}"
+          fi
+          if FILES=$(git diff --name-only "$BASE" HEAD 2>/dev/null) && [ -n "$FILES" ] \
+             && ! printf '%s\n' "$FILES" | grep -qvE '^(tasks/|\.claude/)|\.md$'; then
+            echo "Notes-only change; skipping the checks."
+            echo "code=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "code=true" >> "$GITHUB_OUTPUT"
+          fi
 
       - uses: actions/setup-node@v4
+        if: steps.scope.outputs.code == 'true'
         with:
           node-version: 22
           cache: "npm"
 
       - name: Install dependencies
+        if: steps.scope.outputs.code == 'true'
         run: npm ci
 
       - name: Typecheck
+        if: steps.scope.outputs.code == 'true'
         run: npm run typecheck
 
       - name: Lint
+        if: steps.scope.outputs.code == 'true'
         run: npm run lint
 
       - name: Tests
+        if: steps.scope.outputs.code == 'true'
         run: npm test
+
+      # Time bombs: a test that compares the real clock with a fixed date passes
+      # today and fails next month (PR #29, 2026-10-19). Same suite, "now" moved
+      # forward (scripts/clock-shift-preload.mjs).
+      - name: Tests with the clock moved forward (+30 and +120 days)
+        if: steps.scope.outputs.code == 'true'
+        run: |
+          CLOCK_SHIFT_DAYS=30 npm run test:clock
+          CLOCK_SHIFT_DAYS=120 npm run test:clock

@@ -109,6 +109,8 @@ export function SenderInboxDrawer({ mode, brands, open, onOpenChange }: SenderIn
             daily_cap: dailyCap,
             paused: data.paused,
             paused_reason: data.paused_reason.trim() || null,
+            // What this form loaded: the server records a resume only if it showed "paused".
+            loaded_paused: mode.inbox.paused,
           })
         : await createSenderInbox({
             brand_instance_id: data.brand_instance_id,

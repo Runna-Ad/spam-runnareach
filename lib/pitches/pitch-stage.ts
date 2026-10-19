@@ -45,6 +45,7 @@ import {
   type GeneratorInputs,
 } from "./generator";
 import { listNotableClients } from "@/lib/notable-clients/queries";
+import { DO_NOT_SEND_STATUSES } from "@/lib/prospects/status";
 
 const generateSchema = z.object({
   prospect_id: z.string().uuid(),
@@ -404,6 +405,24 @@ export async function generatePitchWith(
   // Every Claude call the write → review → revise loop made, for cost tracking.
   let reviewCalls: ReviewCall[] = [];
   let critic: CriticVerdict | null = null;
+
+  // ── Do-not-send re-check, immediately before any Claude call ──────────
+  // Everything above took seconds of awaits; a pipeline job works through its
+  // ids over many slices, so a company can be suppressed, booked or won in the
+  // meantime. The pipeline's status write would then refuse the pitch, after
+  // Claude was paid for it and a draft no one may send was left behind. Read
+  // fresh and fail closed: an error or a missing row refuses too.
+  const { data: fresh, error: freshErr } = await supabase
+    .from("prospects")
+    .select("status")
+    .eq("id", parsed.data.prospect_id)
+    .eq("tenant_id", user.tenantId)
+    .maybeSingle<{ status: string }>();
+  if (freshErr) return { ok: false, error: `Status re-check failed: ${freshErr.message || "no message"}` };
+  if (!fresh) return { ok: false, error: "Prospect not found." };
+  if (DO_NOT_SEND_STATUSES.has(fresh.status)) {
+    return { ok: false, error: `Not generating: the company is ${fresh.status} (do not send).` };
+  }
 
   if (dailyCap) {
     const cap = dailyCap;

@@ -34,14 +34,15 @@ import { generateWebsitePitchWith } from "@/lib/pitches/website-pitch-stage";
 import { searchBrave } from "@/lib/discover/sources/brave-search";
 import { searchGooglePlaces, googlePlacesIsAvailable } from "@/lib/discover/sources/google-places";
 import { normalizeDomain } from "@/lib/discover/fuzzy-dedupe";
-import { DO_NOT_SEND_STATUSES, protectedStatusFilter } from "@/lib/prospects/status";
+import { DO_NOT_SEND_STATUSES, isPastPipeline, protectedStatusFilter } from "@/lib/prospects/status";
 import type { Database } from "@/lib/supabase/types";
 
 type ProspectUpdate = Database["public"]["Tables"]["prospects"]["Update"];
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
-export type ProspectOutcome = "suppressed" | "needs_review" | "pitched" | "website_pitch" | "error";
+/** "skipped": already contacted or decided (isPastPipeline); nothing was run or written. */
+export type ProspectOutcome = "suppressed" | "needs_review" | "pitched" | "website_pitch" | "skipped" | "error";
 
 export type SinglePipelineResult = {
   prospect_id: string;
@@ -193,7 +194,7 @@ export async function processSingleProspectWith(
     city: string | null;
     country_code: string | null;
   };
-  const { data: p } = await supabase
+  const { data: p, error: pErr } = await supabase
     .from("prospects")
     .select("id, company_name, status, domain, website_url, icp_id, city, country_code")
     .eq("id", prospectId)
@@ -202,22 +203,36 @@ export async function processSingleProspectWith(
 
   const name = p?.company_name ?? prospectId;
 
-  // A parked prospect (suppressed / no_match, or booked / won / lost /
-  // archived_no_meeting) is never reactivated by the pipeline (Pedro
-  // 2026-10-18: the status rule wins), so re-running it would only spend
-  // Claude on research and a pitch nobody may send. Stop before any of it.
-  if (p && DO_NOT_SEND_STATUSES.has(p.status)) {
-    return { prospect_id: prospectId, company_name: name, score: null, outcome: "suppressed" };
+  // Fail closed: without the row we can't tell a new company from a contacted
+  // one, and the lanes below would treat a failed read as "no website, no ICP"
+  // and suppress it (permanent for a replied company, rule I5). Stop, write nothing.
+  if (pErr || !p) {
+    return {
+      prospect_id: prospectId,
+      company_name: name,
+      score: null,
+      outcome: "error",
+      error: pErr ? `Prospect read failed: ${pErr.message || "no message"}` : "Prospect not found.",
+    };
+  }
+
+  // The pipeline only moves a company forward. One already contacted (pitched,
+  // sent, replied …) or parked (suppressed, booked, won …) is never re-processed:
+  // a re-run spent Claude on research and a pitch nobody may send, and its triage
+  // could move a contacted company back to pitched or b_list. Stop before any of it.
+  if (isPastPipeline(p.status)) {
+    const why = DO_NOT_SEND_STATUSES.has(p.status) ? "parked" : "already contacted";
+    return { prospect_id: prospectId, company_name: name, score: null, outcome: "skipped", error: `Skipped: ${why} (${p.status})` };
   }
 
   // Every status write below goes through here. `p` is a snapshot: a job works
   // through its ids over many slices, so a prospect can be bulk-suppressed or
   // booked after the read above. The rule's guard (lib/prospects/status.ts) in
-  // the UPDATE's WHERE refuses such a row. Returns false only when the rule
-  // refused it; a failed write keeps today's outcome (it never changed it).
+  // the UPDATE's WHERE refuses such a row: moved is false. A failed write is
+  // reported (error), never read as allowed: it looks identical to success.
   async function writeStatus(
     fields: ProspectUpdate & { status: NonNullable<ProspectUpdate["status"]> },
-  ): Promise<boolean> {
+  ): Promise<{ moved: boolean; error?: string }> {
     let q = supabase
       .from("prospects")
       .update({ ...fields, updated_at: new Date().toISOString() })
@@ -226,8 +241,22 @@ export async function processSingleProspectWith(
     const guard = protectedStatusFilter(fields.status, "automation");
     if (guard) q = q.not("status", "in", guard);
     const { data, error } = await q.select("id");
-    if (error) return true;
-    return (data ?? []).length > 0;
+    if (error) {
+      console.error(`[pipeline] status write (${fields.status}) failed for ${prospectId}: ${error.message}`);
+      return { moved: false, error: `Status write (${fields.status}) failed: ${error.message || "no message"}` };
+    }
+    return { moved: (data ?? []).length > 0 };
+  }
+
+  /** The result a lane ends with after its status write: an error when the write failed. */
+  function settle(
+    w: { moved: boolean; error?: string },
+    outcome: ProspectOutcome,
+    score: number | null,
+  ): SinglePipelineResult {
+    if (w.error !== undefined) return { prospect_id: prospectId, company_name: name, score, outcome: "error", error: w.error };
+    // Parked while the run worked: it stays parked and counts as such.
+    return { prospect_id: prospectId, company_name: name, score, outcome: w.moved ? outcome : "suppressed" };
   }
 
   let hasWebsite = !!(p?.domain || p?.website_url);
@@ -288,13 +317,13 @@ export async function processSingleProspectWith(
   // (DNS-dead): the domain is cleared first, then the prospect lands here.
   async function runNoWebsiteLane(): Promise<SinglePipelineResult> {
     if (!hasIcp) {
-      await writeStatus({
+      const written = await writeStatus({
         status: "suppressed",
         suppressed_reason: "Auto: no website and no ICP context",
         suppressed_at: new Date().toISOString(),
       });
       revalidatePath("/companies");
-      return { prospect_id: prospectId, company_name: name, score: null, outcome: "suppressed" };
+      return settle(written, "suppressed", null);
     }
 
     // ── No-contact gate (mirrors the scored lane's gate below) ───────────────
@@ -315,41 +344,40 @@ export async function processSingleProspectWith(
       .returns<NwContactRow[]>();
 
     if (!(nwContacts ?? []).some((c) => hasUsableEmail(c.email))) {
-      await writeStatus({
+      const written = await writeStatus({
         status: "suppressed",
         suppressed_reason: "Auto: no website and no contact email (unreachable)",
         suppressed_at: new Date().toISOString(),
         pitch_gate_passed: false,
       });
       revalidatePath("/companies");
-      return { prospect_id: prospectId, company_name: name, score: null, outcome: "suppressed" };
+      return settle(written, "suppressed", null);
     }
 
     // Has ICP + a reachable contact → generate website pitch
     try {
       const pitchResult = await generateWebsitePitchWith(actor, prospectId);
       if (pitchResult.ok) {
-        const moved = await writeStatus({
+        const written = await writeStatus({
           status: "pitched",
           pitch_gate_passed: true,
         });
         revalidatePath("/companies");
         revalidatePath("/funnel");
         revalidatePath("/pitches");
-        // Parked while the pitch was written: it stays parked and counts as such.
-        return { prospect_id: prospectId, company_name: name, score: null, outcome: moved ? "website_pitch" : "suppressed" };
+        return settle(written, "website_pitch", null);
       }
     } catch {
       // fall through to normal suppress if pitch gen explodes
     }
     // Website pitch failed — suppress rather than leave in raw
-    await writeStatus({
+    const written = await writeStatus({
       status: "suppressed",
       suppressed_reason: "Auto: no website, pitch generation failed",
       suppressed_at: new Date().toISOString(),
     });
     revalidatePath("/companies");
-    return { prospect_id: prospectId, company_name: name, score: null, outcome: "suppressed" };
+    return settle(written, "suppressed", null);
   }
 
   if (!hasWebsite) {
@@ -409,13 +437,13 @@ export async function processSingleProspectWith(
   // full deep research. At $0.023/prospect deep research is cheap enough that
   // we'd rather over-research than under-research.
   if (initialScore < 10) {
-    await writeStatus({
+    const written = await writeStatus({
       status: "suppressed",
       suppressed_reason: `Auto: structural score ${initialScore} — clearly wrong fit (industry/geo/size)`,
       suppressed_at: new Date().toISOString(),
     });
     revalidatePath("/companies");
-    return { prospect_id: prospectId, company_name: name, score: initialScore, outcome: "suppressed" };
+    return settle(written, "suppressed", initialScore);
   }
 
   // ── Pass 2: deep research → SnapVerify → pain extraction → final score ──
@@ -511,21 +539,21 @@ export async function processSingleProspectWith(
 
   if (score < 50) {
     // Below the floor — suppress.
-    await writeStatus({
+    const written = await writeStatus({
       status: "suppressed",
       suppressed_reason: `Auto: score ${score} below 50`,
       suppressed_at: new Date().toISOString(),
     });
 
     revalidatePath("/companies");
-    return { prospect_id: prospectId, company_name: name, score, outcome: "suppressed" };
+    return settle(written, "suppressed", score);
   }
 
   if (score < 70) {
     // 50-69 → B-list: a time-boxed, opt-in review pool (out of the default view,
     // auto-suppressed after 21 days untouched by the janitor). updated_at below
     // anchors that clock.
-    const moved = await writeStatus({
+    const written = await writeStatus({
       status: "b_list",
       suppressed_reason: null,
       suppressed_at: null,
@@ -533,7 +561,7 @@ export async function processSingleProspectWith(
     });
 
     revalidatePath("/companies");
-    return { prospect_id: prospectId, company_name: name, score, outcome: moved ? "needs_review" : "suppressed" };
+    return settle(written, "needs_review", score);
   }
 
   // Score ≥ 70 with no verified contact yet: run the full waterfall
@@ -587,26 +615,26 @@ export async function processSingleProspectWith(
     // ≥70 but unreachable: we ran the full enrichment waterfall and still found no
     // email — "if we didn't get it in the pipeline, we aren't getting it" — so
     // suppress rather than park it in a worklist nobody clears.
-    await writeStatus({
+    const written = await writeStatus({
       status: "suppressed",
       suppressed_reason: `Auto: score ${score} but no contact found (unreachable)`,
       suppressed_at: new Date().toISOString(),
       pitch_gate_passed: false,
     });
     revalidatePath("/companies");
-    return { prospect_id: prospectId, company_name: name, score, outcome: "suppressed" };
+    return settle(written, "suppressed", score);
   }
 
   let pitchError: string | null = null;
   try {
     const pitchResult = await generatePitchWith(actor, prospectId);
     if (pitchResult.ok) {
-      const moved = await writeStatus({ status: "pitched", pitch_gate_passed: true });
+      const written = await writeStatus({ status: "pitched", pitch_gate_passed: true });
 
       revalidatePath("/companies");
       revalidatePath("/funnel");
       revalidatePath("/pitches");
-      return { prospect_id: prospectId, company_name: name, score, outcome: moved ? "pitched" : "suppressed" };
+      return settle(written, "pitched", score);
     }
     pitchError = pitchResult.error;
   } catch (err) {
