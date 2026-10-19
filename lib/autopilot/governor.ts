@@ -13,6 +13,8 @@
  * Pure — tested in tests/governor.test.ts.
  */
 
+import { isTrustedForAutoSend } from "../research/verify-recipient.ts";
+
 // ── Lanes ─────────────────────────────────────────────────────────────────────
 
 export type Lane = "auto" | "review" | "drop";
@@ -31,8 +33,8 @@ export type LaneInput = {
   segmentOnProbation?: boolean;
 };
 
-/** Addresses we trust enough to send without a person (same set as the gate's). */
-const TRUSTED_SOURCES = new Set(["snapverify_smtp", "anymail", "hunter", "manual", "scraper"]);
+/** Addresses we trust enough to send without a person: the gate's list, from the verifier. */
+const TRUSTED_SOURCES = { has: isTrustedForAutoSend };
 
 /** Below this the reviewer's "pass" isn't confident enough to skip a person. */
 export const AUTO_MIN_CRITIC_SCORE = 0.8;
