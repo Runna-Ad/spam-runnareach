@@ -14,7 +14,6 @@ RULE: A fake for a table a new query reads must check column names against the m
 TAGS: tests, fakes, schema
 
 ## Out of scope, noticed
-- `app/api/replies/nudge/route.ts:174/332` is a fourth sends_today writer, still read-then-write (`bumpSendsTodayPayload`). It can still under-count when it overlaps a send run. Same fix: `reserveSendSlot` before Gmail, `releaseSendSlot` on refusal.
 - `countVetoes` (lib/autopilot/governor.ts) counts any autopilot-approved pitch back in draft as a veto, including `HELD_BY_AUTOPILOT` pullbacks (holdAutoApprovals and now the send-time doubtful-address hold). Vetoes only gate promotion, so this errs toward caution, but the veto rate stops meaning "a person said no".
 - Follow-up route: the loop-top `TIME_BUDGET_MS` (90 s) check comes before a compose of up to ~20 s, then the claim and Gmail. A pitch started at 89 s can run past 110 s. A claim-side budget check like the send-queue's would close it.
 - `recoverStuckSends` puts a never-sent stuck pitch back to approved without giving its slot back. That over-counts by one (the safe side). Releasing it there would be wrong if the slot was taken on an earlier UTC day.
