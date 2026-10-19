@@ -9,6 +9,8 @@ You were given one brief. Your job is that brief, done well, with the fewest tok
 
 ## 1. Load (and nothing more)
 1. `tasks/briefs/_core-context.md` (always).
+   A "Second brain not attached" note at your first prompt is expected for workers:
+   the brief's "Brain lessons" section carries what applies. Do not ask anyone to attach it.
 2. Your brief, `tasks/briefs/<slug>.md`.
 3. Only the files the brief lists. Prefer `Grep` and ranged `Read` over whole-file reads.
 

@@ -23,6 +23,10 @@ Only what the worker cannot infer from the code. Decisions already made, the pub
 that must stay stable, the data shape in prod, the lesson that applies. Link a section of
 `tasks/audit-2026-10-16.md` only if it is required reading.
 
+## Brain lessons
+From `tasks/tools/brain-recall-for.sh "<goal>"`: one line per article that applies, its
+file name and its rule. "none matched" is an answer.
+
 ## Files
 Allowed to edit:
 - `lib/<module>/<file>.ts`
