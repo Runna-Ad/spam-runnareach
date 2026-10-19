@@ -8,6 +8,11 @@ WHAT HAPPENED: A `giveBack()` helper that released both the slot and the claim b
 RULE: When a refactor trips a source-shape guard, change the code shape back before touching the guard. The guard encodes a reviewer's check; weakening it to fit the refactor removes that check silently.
 TAGS: tests, send-path
 
+[2026-10-19] A test fake that accepts any column name hides a wrong column
+WHAT HAPPENED: latestApprovalByAutopilot (first push of #35) ordered pitch_events by `created_at`. The table only has `event_at` (0001), so PostgREST would have returned 42703 in prod and every send-time "review" pitch would have been skipped forever. All tests passed because the fake filtered on whatever key it was given. The conductor's review caught it. The fake in tests/send-path-hardening.test.ts now parses `create table pitch_events` from 0001 and returns an error for unknown columns.
+RULE: A fake for a table a new query reads must check column names against the migration that defines the table, or the test proves nothing about the query. Before writing a select/order on a table, read its create table block.
+TAGS: tests, fakes, schema
+
 ## Out of scope, noticed
 - `app/api/replies/nudge/route.ts:174/332` is a fourth sends_today writer, still read-then-write (`bumpSendsTodayPayload`). It can still under-count when it overlaps a send run. Same fix: `reserveSendSlot` before Gmail, `releaseSendSlot` on refusal.
 - `countVetoes` (lib/autopilot/governor.ts) counts any autopilot-approved pitch back in draft as a veto, including `HELD_BY_AUTOPILOT` pullbacks (holdAutoApprovals and now the send-time doubtful-address hold). Vetoes only gate promotion, so this errs toward caution, but the veto rate stops meaning "a person said no".
