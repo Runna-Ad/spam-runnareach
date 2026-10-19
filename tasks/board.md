@@ -37,8 +37,8 @@ Open prod checks:
 | Number | Reserved for | Status (reserved → used → applied) |
 |---|---|---|
 | 0045 | platform-reports: `0045_reports_cron.sql` (spam-health-check hourly :25, spam-weekly-report Mon 13:10 UTC) | APPLIED 2026-10-18 16:23 UTC via connector after dry runs were clean; version normalised to `0045` |
-| 0046 | conductor wave 0: `0046_replies_gmail_message_unique.sql` (unique (tenant_id, gmail_message_id) where not null; poll skips 23505) | used (wave 0); apply before deploy (prod had 0 dups at 17:20 UTC) |
-| 0047 | booking-alert-durability: `0047_opportunities_alert_markers.sql` (booked/cancelled alert markers + meeting_start/time zone; backfill existing calendar rows as alerted). Written by the conductor in wave 0 | used (wave 0); apply before deploy (additive) |
+| 0046 | conductor wave 0: `0046_replies_gmail_message_unique.sql` (unique (tenant_id, gmail_message_id) where not null; poll skips 23505) | APPLIED 2026-10-18 20:15 UTC via connector (0 dup pairs just before), version normalised to `0046`, index verified |
+| 0047 | booking-alert-durability: `0047_opportunities_alert_markers.sql` (booked/cancelled alert markers + meeting_start/time zone + cancelled_at; backfill). Written by the conductor in wave 0 | APPLIED 2026-10-18 20:16 UTC via connector, version normalised to `0047`, 5 columns verified |
 | 0048 | — | free |
 
 ## Active and queued tasks
@@ -111,3 +111,5 @@ Batch-audit pairs to check (runtime interactions): send-path-safety × autopilot
 - 2026-10-18 20:08 UTC — Integration → main PR #25 opened and subscribed. Pinging Pedro for "ship it". #17 round 5 continues off the critical path.
 - 2026-10-18 20:10 UTC — Pedro: "ship it" + Q1 default (reactivation skips do-not-send) + Q2 "only monday to friday".
 - 2026-10-18 20:11 UTC — Q2 in this ship: Vercel backstops for send-queue, follow-up and nudge → `1-5` (pinned by tests/vercel-config.test.ts); the veto digest copy said "once around 15:00 UTC on weekends" → "Monday to Friday only" (test updated). 846 tests, typecheck, lint green. Health E3 already judges weekday windows only. Q1 → follow-up PR after the ship. Starting the ship checklist.
+- 2026-10-18 20:16 UTC — Ship step 1 done: 0046 + 0047 applied (0 dup reply pairs, 0 calendar opps), version rows normalised, index + columns verified. Then the PR #25 preview for db545b0 FAILED on Vercel (Turbopack: "next/font/google queries have exactly one entry" in the Inter font CSS, after "Restored build cache"); the same head builds locally and CI is green → not a code failure; merge held until a preview builds.
+- 2026-10-19 00:15 UTC — Worker process restarted ~20:20 → resumed at 00:12 (≈4 h gap; nothing lost, branch in sync). Old code × new schema verified in the gap: all pg_cron jobs succeeded; poll + calendar-sync 200, alerts.failed [], no errors. Redeploy of the preview started (dpl_Ha3nQmi7seEnCzngqkWL4em8Zfsf).
