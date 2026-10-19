@@ -28,7 +28,19 @@ import "server-only";
 import type { Actor } from "@/lib/actor";
 import { isUnderDailyCap } from "@/lib/anthropic/cost-tracking";
 import { evolveSearchSpace, learnFromOutcomes, weeklyReview } from "./learn";
-import { buildVetoDigest, DIGEST_HORIZON_HOURS, digestDue, lastDigestSlot, VETO_WINDOW_HOURS, type DigestItem } from "./hold";
+import { bouncesTodayAfterResume, inboxBounceStats } from "./bounce-breaker";
+import {
+  buildVetoDigest,
+  DIGEST_HORIZON_HOURS,
+  digestDue,
+  holdAutoApprovals,
+  lastDigestSlot,
+  pullbackSentence,
+  pullsBackApprovals,
+  VETO_WINDOW_HOURS,
+  type DigestItem,
+  type PullbackResult,
+} from "./hold";
 import { holdSecret } from "./hold-token";
 import { resumeDiscoveryJobWith, startDiscoveryJobWith } from "@/lib/discover/job-stage";
 import { EMPTY_JOB_STATS } from "@/lib/discover/job-types";
@@ -46,7 +58,7 @@ import { editRatio } from "@/lib/pitches/decision";
 import { generatePitchWith, transitionPitchStatusWith } from "@/lib/pitches/pitch-stage";
 import { WRITER_FIXABLE } from "@/lib/pitches/review";
 import { sendNotification, type NotificationResult } from "@/lib/notify/send";
-import { verifyRecipient } from "@/lib/research/verify-recipient";
+import { isFinderSource, storedVerdictUsable, verifyRecipient } from "@/lib/research/verify-recipient";
 import { checkDeliverabilityHealth } from "@/lib/warmup/deliverability";
 import { analyzeSpamRate } from "@/lib/warmup/intelligence";
 import type { WarmupLogEntry } from "@/lib/warmup/types";
@@ -102,6 +114,8 @@ export type TickReport = {
   /** Emails listed in the twice-daily veto digest this tick (0 when no slot was due). */
   digest?: number;
   stageChange: { from: Stage; to: Stage; reason: string } | null;
+  /** Automatic approvals held because the stage is (or dropped to) shadow/off. */
+  pulledBack?: number;
   review?: { ran: boolean; reason: string; guidance: string[] } | null;
   errors: string[];
 };
@@ -165,7 +179,12 @@ export async function runTick(actor: Actor, now: Date = new Date()): Promise<Tic
   if ((s.stage === "veto" || s.stage === "auto") && !sendingHalted) {
     report.scheduled = await step("schedule", () => scheduleAuto(actor, db, s.stage, now, deadline), 0);
   }
-  report.stageChange = await step("stage", () => evaluateStage(db, s, now), null);
+  const stage = await step("stage", () => evaluateStage(db, s, now), { change: null, pullback: null });
+  report.stageChange = stage.change;
+  if (stage.pullback) {
+    report.pulledBack = stage.pullback.held;
+    if (stage.pullback.error) report.errors.push(`pullback: ${stage.pullback.error}`);
+  }
   // Learning: re-score every arm from settled outcomes (cheap), and once a
   // week let the AI review propose new writing guidance to test.
   await step("learn", () => learnFromOutcomes(db, tenantId, now), undefined);
@@ -223,35 +242,18 @@ async function runBreakers(db: Db, tenantId: string, now: Date): Promise<Breaker
     .eq("tenant_id", tenantId);
   const inboxes = (inboxRows ?? []) as Array<{ id: string; email: string; paused: boolean }>;
 
+  // Bounces count only after the inbox's latest resume (lib/autopilot/bounce-breaker.ts),
+  // so a person's resume sticks; an inbox never resumed counts as before.
   const inboxStats: BreakerMetrics["inboxes"] = [];
   for (const inbox of inboxes) {
-    const { data: sent } = await db
-      .from("pitches")
-      .select("id")
-      .eq("tenant_id", tenantId)
-      .eq("sender_inbox_id", inbox.id)
-      .not("sent_at", "is", null)
-      .order("sent_at", { ascending: false })
-      .limit(50);
-    const ids = ((sent ?? []) as Array<{ id: string }>).map((r) => r.id);
-    let bounces = 0;
-    if (ids.length) {
-      const { count } = await db
-        .from("pitch_events")
-        .select("id", { count: "exact", head: true })
-        .eq("tenant_id", tenantId)
-        .eq("event_type", "bounce")
-        .in("pitch_id", ids);
-      bounces = count ?? 0;
-    }
-    inboxStats.push({ id: inbox.id, recentSends: ids.length, recentHardBounces: bounces, apiErrorsToday: 0 });
+    const stats = await inboxBounceStats(db, tenantId, inbox.id);
+    inboxStats.push({ id: inbox.id, recentSends: stats.recentSends, recentHardBounces: stats.recentHardBounces, apiErrorsToday: 0 });
   }
 
-  const dayStart = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate())).toISOString();
   const weekAgo = new Date(now.getTime() - 7 * DAY).toISOString();
   const monthAgo = new Date(now.getTime() - 30 * DAY).toISOString();
   const [bouncesToday, unsubWeek, hardNoWeek, unsubMonth, hardNoMonth] = await Promise.all([
-    countEvents(db, tenantId, "bounce", dayStart),
+    bouncesTodayAfterResume(db, tenantId, now),
     countEvents(db, tenantId, "unsubscribe", weekAgo),
     countEvents(db, tenantId, "reply", weekAgo, "hard_no"),
     countEvents(db, tenantId, "unsubscribe", monthAgo),
@@ -520,8 +522,12 @@ async function labelDrafts(actor: Actor, db: Db, now: Date, deadline: number): P
         prospects: { domain: string | null } | null;
       } | null;
       selectedBy = contact?.selected_by ?? null;
-      const fresh = contact?.verify_checked_at && now.getTime() - new Date(contact.verify_checked_at).getTime() < 7 * DAY;
-      if (contact?.email && !fresh) {
+      // A stored verdict is reused for 7 days, but never a "send" stored for a
+      // finder address before those needed a person (verify-recipient.ts).
+      const reusable =
+        contact !== null &&
+        storedVerdictUsable({ verdict: contact.verify_verdict, checkedAt: contact.verify_checked_at, selectedBy }, now);
+      if (contact?.email && !reusable) {
         const r = await verifyRecipient(db, {
           tenantId,
           email: contact.email,
@@ -649,7 +655,7 @@ async function scheduleAuto(actor: Actor, db: Db, stage: Stage, now: Date, deadl
 
   const { data } = await db
     .from("pitches")
-    .select("id, subject, prospects:prospect_id(company_name)")
+    .select("id, subject, contact_id, prospects:prospect_id(company_name)")
     .eq("tenant_id", tenantId)
     .eq("status", "draft")
     .eq("autopilot_lane", "auto")
@@ -657,7 +663,7 @@ async function scheduleAuto(actor: Actor, db: Db, stage: Stage, now: Date, deadl
     .order("created_at", { ascending: true })
     .limit(room);
 
-  const candidates = (data ?? []) as Array<{ id: string; subject: string; prospects: { company_name: string } | null }>;
+  const candidates = (data ?? []) as Array<{ id: string; subject: string; contact_id: string | null; prospects: { company_name: string } | null }>;
 
   // A pitch the autopilot already approved that is back in draft was held by a
   // person (the veto). Never re-queue it: it goes to the review lane for good.
@@ -680,11 +686,38 @@ async function scheduleAuto(actor: Actor, db: Db, stage: Stage, now: Date, deadl
       .eq("tenant_id", tenantId);
   }
 
+  // A draft labelled AUTO before finder addresses needed a person (2026-10-19)
+  // still carries that label: never approve on it. Clear the label so §4
+  // labels it again on today's rules (it re-verifies; verify-recipient.ts).
+  // Unreadable sources: approve nothing this tick.
+  const relabel = new Set<string>();
+  const contactIds = [...new Set(candidates.filter((c) => !held.has(c.id)).map((c) => c.contact_id).filter((id): id is string => !!id))];
+  if (contactIds.length) {
+    const { data: contacts, error: contactsError } = await db
+      .from("prospect_contacts")
+      .select("id, selected_by")
+      .eq("tenant_id", tenantId)
+      .in("id", contactIds);
+    if (contactsError) throw new Error(`recipient sources: ${contactsError.message || "no detail"}`);
+    const finder = new Set(
+      ((contacts ?? []) as Array<{ id: string; selected_by: string | null }>).filter((c) => isFinderSource(c.selected_by)).map((c) => c.id),
+    );
+    for (const c of candidates) if (!held.has(c.id) && c.contact_id && finder.has(c.contact_id)) relabel.add(c.id);
+  }
+  if (relabel.size) {
+    await db
+      .from("pitches")
+      .update({ autopilot_lane: null, autopilot_reasons: null })
+      .in("id", [...relabel])
+      .eq("tenant_id", tenantId)
+      .eq("status", "draft");
+  }
+
   const sendAt = new Date(now.getTime() + (stage === "veto" ? VETO_WINDOW_HOURS * 3_600_000 : 0)).toISOString();
   let scheduled = 0;
   let i = 0;
   for (const p of candidates) {
-    if (held.has(p.id)) continue;
+    if (held.has(p.id) || relabel.has(p.id)) continue;
     if (Date.now() > deadline) break;
     // Same gate-checked approval a person uses.
     const approved = await transitionPitchStatusWith(actor, { pitch_id: p.id, next_status: "approved" });
@@ -764,7 +797,11 @@ async function sendVetoDigest(db: Db, tenantId: string, now: Date): Promise<numb
 
 // ── 6. Autonomy stage ─────────────────────────────────────────────────────────
 
-async function evaluateStage(db: Db, s: AutonomyState, now: Date): Promise<TickReport["stageChange"]> {
+async function evaluateStage(
+  db: Db,
+  s: AutonomyState,
+  now: Date,
+): Promise<{ change: TickReport["stageChange"]; pullback: PullbackResult | null }> {
   const tenantId = s.tenant_id;
   const since = s.stage_since;
   const { data: autos } = await db
@@ -835,24 +872,43 @@ async function evaluateStage(db: Db, s: AutonomyState, now: Date): Promise<TickR
     .from("autonomy_state")
     .update({ metrics, reason: next.reason, updated_at: now.toISOString() })
     .eq("tenant_id", tenantId);
-  if (next.stage === s.stage) return null;
+
+  // A stage that never sends automatically keeps no automatic approval waiting
+  // to send (the send-queue sends approved pitches whatever the stage). On the
+  // demotion itself, and on every later tick in that stage, which retries a
+  // pull-back that failed and catches a stage set by hand. Nothing to hold: silent.
+  if (next.stage === s.stage) {
+    if (!pullsBackApprovals(s.stage)) return { change: null, pullback: null };
+    const sweep = await holdAutoApprovals(db, tenantId, s.stage);
+    if (sweep.held > 0) {
+      await insight(db, tenantId, {
+        learner: "governor",
+        kind: "stage",
+        title: `Held ${sweep.held} automatic approval${sweep.held === 1 ? "" : "s"} still waiting in ${s.stage}`,
+        evidence: sweep,
+      });
+    }
+    return { change: null, pullback: sweep };
+  }
 
   await db
     .from("autonomy_state")
     .update({ stage: next.stage, stage_since: now.toISOString() })
     .eq("tenant_id", tenantId);
+  // After the stage write, so no tick schedules new approvals behind the hold.
+  const pullback = pullsBackApprovals(next.stage) ? await holdAutoApprovals(db, tenantId, next.stage) : null;
   await insight(db, tenantId, {
     learner: "governor",
     kind: "stage",
     title: `Autopilot ${s.stage} → ${next.stage}`,
     detail: next.reason,
-    evidence: metrics,
+    evidence: pullback ? { ...metrics, pulledBack: pullback.held, pullbackError: pullback.error } : metrics,
   });
   await notify(
     db,
     tenantId,
     `Autopilot moved from ${s.stage} to ${next.stage}`,
-    `Reason: ${next.reason}.\n\n${appUrl()}/pitches`,
+    `Reason: ${next.reason}.\n\n${pullback ? `${pullbackSentence(pullback)}\n\n` : ""}${appUrl()}/pitches`,
   );
-  return { from: s.stage, to: next.stage, reason: next.reason };
+  return { change: { from: s.stage, to: next.stage, reason: next.reason }, pullback };
 }

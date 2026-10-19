@@ -72,6 +72,15 @@ const UNFIXABLE_REASON = /^(verifier unsure about the address|address source |se
 export const HELD_BY_PERSON = "held by a person";
 
 /**
+ * Prefix of every autopilot_reasons entry that means "the autopilot pulled this
+ * back itself" (an automatic approval still waiting to send when the stage
+ * dropped to shadow or off, lib/autopilot/hold.ts holdAutoApprovals). Not a
+ * person's veto, so it is not HELD_BY_PERSON, but heldAction leaves it alone
+ * the same way: what to do with it is a person's call.
+ */
+export const HELD_BY_AUTOPILOT = "held by the autopilot";
+
+/**
  * Vetoes in the current stage: autopilot-approved pitches a person sent back
  * (current status draft or reviewer_rejected). Counted by the approval event,
  * not the lane: a held pitch is moved to the review lane, so a lane filter
@@ -101,6 +110,9 @@ export function heldAction(
 ): HeldAction {
   if (d.editedByPerson) return { action: "leave", why: "a person edited it" };
   if (d.reasons.some((r) => r.startsWith(HELD_BY_PERSON))) return { action: "leave", why: "a person held it" };
+  if (d.reasons.some((r) => r.startsWith(HELD_BY_AUTOPILOT))) {
+    return { action: "leave", why: "the autopilot pulled it back when its stage dropped" };
+  }
   const why = d.reasons.join("; ") || "held";
   if (d.lane === "drop") return { action: "drop", why };
   if (d.isRewrite) return { action: "drop", why: `still held after one rewrite: ${why}` };
@@ -120,10 +132,12 @@ export type BreakerMetrics = {
     id: string;
     /** Last 50 cold sends from this inbox. */
     recentSends: number;
+    /** Hard bounces among those sends, recorded after the inbox's latest resume (lib/autopilot/bounce-breaker.ts). */
     recentHardBounces: number;
     /** Gmail API 4xx/5xx or token failures today. */
     apiErrorsToday: number;
   }>;
+  /** Hard bounces today (UTC), recorded after the latest resume of any inbox today. */
   hardBouncesToday: number;
   /** Opt-outs + hard no's in the last 7 days, and the 30-day weekly average. */
   optOutsThisWeek: number;
@@ -137,17 +151,29 @@ export type BreakerMetrics = {
 
 export type BreakerTrip = { scope: "inbox" | "all"; inboxId?: string; code: string; reason: string };
 
+/**
+ * The inbox_bounces rule, one predicate for both of its users: the tick pauses
+ * the inbox on it (evaluateBreakers), and the send-queue skips the inbox for
+ * the run on it (lib/autopilot/bounce-breaker.ts inboxBounceBlock), so a drip
+ * stops at the first fresh bounce instead of waiting for the next tick.
+ */
+export function inboxBouncesTrip(inbox: { id: string; recentSends: number; recentHardBounces: number }): BreakerTrip | null {
+  if (inbox.recentSends >= 20 && inbox.recentHardBounces >= 2 && inbox.recentHardBounces / inbox.recentSends >= 0.04) {
+    return {
+      scope: "inbox",
+      inboxId: inbox.id,
+      code: "inbox_bounces",
+      reason: `${inbox.recentHardBounces} hard bounces in the last ${inbox.recentSends} sends`,
+    };
+  }
+  return null;
+}
+
 export function evaluateBreakers(m: BreakerMetrics): BreakerTrip[] {
   const trips: BreakerTrip[] = [];
   for (const inbox of m.inboxes) {
-    if (inbox.recentSends >= 20 && inbox.recentHardBounces >= 2 && inbox.recentHardBounces / inbox.recentSends >= 0.04) {
-      trips.push({
-        scope: "inbox",
-        inboxId: inbox.id,
-        code: "inbox_bounces",
-        reason: `${inbox.recentHardBounces} hard bounces in the last ${inbox.recentSends} sends`,
-      });
-    }
+    const bounced = inboxBouncesTrip(inbox);
+    if (bounced) trips.push(bounced);
     if (inbox.apiErrorsToday >= 3) {
       trips.push({ scope: "inbox", inboxId: inbox.id, code: "gmail_api", reason: `${inbox.apiErrorsToday} Gmail API errors today` });
     }
