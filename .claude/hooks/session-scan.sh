@@ -11,7 +11,9 @@ if [ -f "$STAMP_FILE" ]; then
 fi
 touch "$STAMP_FILE"
 
-cd /Users/work/Projects/S.P.A.M 2>/dev/null || exit 0
+# The project folder on any machine (was hard-coded to the Mac path, so in a
+# cloud session the scan silently never ran).
+cd "${CLAUDE_PROJECT_DIR:-$(git rev-parse --show-toplevel 2>/dev/null)}" 2>/dev/null || exit 0
 
 echo "━━━ S.P.A.M. PROJECT SCAN ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 
