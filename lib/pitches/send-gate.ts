@@ -16,6 +16,7 @@
 
 import { hasUsableEmail, isRoleBasedEmail } from "../research/email-utils.ts";
 import { siteOwnership } from "../research/site-ownership.ts";
+import { isTrustedForAutoSend } from "../research/verify-recipient.ts";
 import {
   INTERNAL_NAMES,
   findBannedTerms,
@@ -153,19 +154,15 @@ export function describeFailures(failures: readonly GateFailure[]): string {
 }
 
 /**
- * Contact provenance we trust enough to send WITHOUT a human.
+ * Contact provenance we trust enough to send WITHOUT a human. One list, owned
+ * by the verifier (isTrustedForAutoSend in lib/research/verify-recipient.ts)
+ * and shared with the governor's lane.
  *
  * Excluded on purpose: 'snapverify_catchall_guess' is a firstname@domain guess
  * kept only because a catch-all domain can't hard-bounce — it may reach nobody.
  * A guess is fine for a human to approve; it is not fine to auto-send.
  */
-const VERIFIED_PROVENANCE = new Set([
-  "snapverify_smtp",
-  "anymail",
-  "hunter",
-  "manual",
-  "scraper", // scraped from the prospect's own site, and SMTP-screened on insert
-]);
+const VERIFIED_PROVENANCE = { has: isTrustedForAutoSend };
 
 /** Words that must never appear as a "first name" in a greeting. */
 const NON_NAME_GREETINGS = new Set(["there", "team", "equipo", "hola", "hi", "hello"]);
