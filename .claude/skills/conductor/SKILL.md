@@ -211,6 +211,14 @@ Small bounded jobs (one test file, a lint sweep, a doc) may use `Agent` with the
   Pedro starts it with: "Read .claude/skills/conductor/SKILL.md, resume from
   tasks/board.md".
 
+## After a restart or a late notification
+- Re-read the last message from Pedro and finish what it asked before replying "no action":
+  a scheduled check-in is a backstop, not the plan (hotfix retro: veto was set 25 min late).
+- Facts you tell Pedro about prod (send times, counts, who did what) come from a query run
+  now, never from memory or an earlier summary (hotfix retro: "one burst" was 6/6/6/1).
+- A promise about how the system will behave ("they wait for you") is checked against the
+  code path that decides it before it is made.
+
 ## Never
 - Merge to `main`. Pedro does, after "ship it".
 - Spawn a worker on `lib/pitches/` while another `pitches` worker is open.

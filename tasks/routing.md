@@ -26,7 +26,7 @@ only for a retro-level audit, never for routine tasks (tokens).
 | `lib/learning/` (pure learners) | opus-5.5 | medium | yes | b2: 1 clean (learning-meeting-outcomes, $1.08) | 2026-10-18 |
 | Reports / alerts (`lib/reports`, consumers of `lib/notify`) | opus-5.5 | medium (high when the task claims/marks rows for durability) | yes | b2: platform-reports 1 rework (an emergency rule fired on designed states); b3: booking-alert-durability (high) 1 rework (overlap test never raced the claim; migration→deploy gap) | 2026-10-18 |
 | `lib/prospects/` status rule and its writers | opus-5.5 | medium | yes (conductor adopts in shared files) | b2: 1 clean (prospect-status-guard, $1.06) | 2026-10-18 |
-| `lib/autopilot/` (briefed tasks) | opus-5.5 | high | NO, one at a time | b2: veto-hold-link 1 rework, both causes conductor brief defects | 2026-10-18 |
+| `lib/autopilot/` (briefed tasks) | opus-5.5 | high | NO, one at a time | b2: veto-hold-link 1 rework, both causes conductor brief defects; hotfix: bounce-hotfix 1 clean (0 blocking, in-session worker) | 2026-10-19 |
 | Reviewer (reads diff + brief, no edits) | opus-5.5 | high | yes | b1: 6 reviews, 3 real regressions; b2: 9 reviews, every blocking finding reproduced, 0 misses found by the Fable audit; b3: 5 reviews, all blocking real (2 reproduced with a real client / mutation) | 2026-10-18 |
 | Log triage, lessons-inbox summarization, fixture generation | haiku-5.5 | low | yes | — | 2026-10-17 |
 

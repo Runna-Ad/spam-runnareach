@@ -19,7 +19,9 @@ What outcome this task produces and why it matters to the product. Written so th
 can tell a good solution from a merely passing one.
 
 ## Context the worker needs
-Only what the worker cannot infer from the code. Decisions already made, the public API
+Only what the worker cannot infer from the code. A change to a verdict,
+label or lane quotes its consumer (e.g. `governor.heldAction`) and states the outcome. Incident
+facts are quoted from a query run for this brief. Decisions already made, the public API
 that must stay stable, the data shape in prod, the lesson that applies. Link a section of
 `tasks/audit-2026-10-16.md` only if it is required reading.
 
