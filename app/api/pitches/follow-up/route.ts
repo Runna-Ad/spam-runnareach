@@ -34,7 +34,8 @@ import {
   type FollowupContext,
 } from "@/lib/pitches/followup-templates";
 import { composeFollowupWithClaude } from "@/lib/pitches/followup-composer";
-import { bumpSendsTodayPayload, effectiveSendsToday } from "@/lib/pitches/daily-cap";
+import { effectiveSendsToday, releaseSendSlot, reserveSendSlot, type SlotClient } from "@/lib/pitches/daily-cap";
+import { inboxBounceBlock } from "@/lib/autopilot/bounce-breaker";
 import { ANTHROPIC_DEFAULT_MODEL, claudeIsAvailable } from "@/lib/anthropic/client";
 import { isUnderDailyCap, recordClaudeCall } from "@/lib/anthropic/cost-tracking";
 import { hasUsableEmail } from "@/lib/research/email-utils";
@@ -135,7 +136,13 @@ function resolveMarket(raw: string): "CA" | "MX" {
 
 // ── Process a single due pitch ─────────────────────────────────────────────────
 
-async function processFollowup(pitch: DuePitchRow): Promise<FollowupResult> {
+/**
+ * Bounce breaker verdicts for this run, by inbox: absent = not checked yet,
+ * string = skip reason, null = clear. Same rule and cadence as the send-queue.
+ */
+type BounceBlocks = Map<string, string | null>;
+
+async function processFollowup(pitch: DuePitchRow, bounceBlocks: BounceBlocks): Promise<FollowupResult> {
   const supabase = createServiceRoleClient();
   const nextStep = pitch.sequence_step + 1; // 2 or 3
 
@@ -275,9 +282,22 @@ async function processFollowup(pitch: DuePitchRow): Promise<FollowupResult> {
   if (!inbox.gmail_refresh_token_encrypted) {
     return { pitch_id: pitch.id, prospect: prospect.company_name, step: nextStep, status: "skipped", reason: "Inbox not connected to Gmail" };
   }
+  // Early answer only (saves the compose): the slot RPC at 7c' enforces the cap.
   const sentToday = effectiveSendsToday(inbox.sends_today, inbox.last_reset_date);
   if (sentToday >= inbox.daily_cap) {
     return { pitch_id: pitch.id, prospect: prospect.company_name, step: nextStep, status: "skipped", reason: `Daily cap reached (${sentToday}/${inbox.daily_cap})` };
+  }
+
+  // ── 5b. Bounce breaker: the send-queue's rule, once per inbox per run ─────
+  // Skip only (the step stays due): the autopilot tick pauses the inbox and
+  // emails. Before the compose, so a blocked inbox costs no AI spend.
+  if (!bounceBlocks.has(inbox.id)) {
+    const block = await inboxBounceBlock(supabase, pitch.tenant_id, inbox.id);
+    bounceBlocks.set(inbox.id, block.blocked ? block.reason : null);
+  }
+  const bounceBlock = bounceBlocks.get(inbox.id);
+  if (bounceBlock) {
+    return { pitch_id: pitch.id, prospect: prospect.company_name, step: nextStep, status: "skipped", reason: bounceBlock };
   }
 
   // ── 6. Get access token ───────────────────────────────────────────────────
@@ -450,6 +470,14 @@ async function processFollowup(pitch: DuePitchRow): Promise<FollowupResult> {
       pause,
     });
 
+  // ── 7c'. Take a daily slot (one SQL statement; overlapping runs can't over-send)
+  const slots = supabase as unknown as SlotClient;
+  const slot = await reserveSendSlot(slots, inbox.id);
+  if (!slot.ok) {
+    await release(false);
+    return { pitch_id: pitch.id, prospect: prospect.company_name, step: nextStep, status: "skipped", reason: slot.reason };
+  }
+
   // ── 7d. Last moment: may this prospect still be emailed? ─────────────────
   // The prospect was read before the compose (~20s with Claude); a manual or
   // bulk suppression, or a DNC entry, added since must stop this send. Can
@@ -461,6 +489,7 @@ async function processFollowup(pitch: DuePitchRow): Promise<FollowupResult> {
   });
   if (lastCheck) {
     const pause = followupPausesFor(lastCheck);
+    await releaseSendSlot(slots, inbox.id, slot.day);
     await release(pause);
     return {
       pitch_id: pitch.id,
@@ -487,7 +516,8 @@ async function processFollowup(pitch: DuePitchRow): Promise<FollowupResult> {
   });
 
   if (!sendResult.ok) {
-    // Gmail refused it, so nothing went out: release the claim for a later run.
+    // Gmail refused it, so nothing went out: give back the slot and the claim.
+    await releaseSendSlot(slots, inbox.id, slot.day);
     await release(false);
     return { pitch_id: pitch.id, prospect: prospect.company_name, step: nextStep, status: "skipped", reason: `Gmail send failed: ${sendResult.error}` };
   }
@@ -524,11 +554,7 @@ async function processFollowup(pitch: DuePitchRow): Promise<FollowupResult> {
 
   // (Step 10 — advancing the original pitch's sequence — happened in the claim.)
 
-  // ── 11. Increment inbox sends_today (resets at the UTC day boundary) ──────
-  await supabase
-    .from("sender_inboxes")
-    .update(bumpSendsTodayPayload(inbox.sends_today, inbox.last_reset_date))
-    .eq("id", inbox.id);
+  // (Step 11 — counting the send against the inbox's cap — happened at 7c'.)
 
   // ── 12. Audit log ─────────────────────────────────────────────────────────
   await supabase.from("audit_log").insert({
@@ -619,6 +645,7 @@ export async function GET(req: NextRequest) {
   console.log(`[follow-up/cron] ${pitches.length} pitches due for follow-up`);
 
   const results: FollowupResult[] = [];
+  const bounceBlocks: BounceBlocks = new Map();
 
   for (const pitch of pitches) {
     // Stop well inside maxDuration (120s): a kill mid-loop is what turns a
@@ -628,7 +655,7 @@ export async function GET(req: NextRequest) {
       continue;
     }
     try {
-      const result = await processFollowup(pitch);
+      const result = await processFollowup(pitch, bounceBlocks);
       results.push(result);
     } catch (err) {
       console.error(`[follow-up/cron] Error processing pitch ${pitch.id}:`, err);
