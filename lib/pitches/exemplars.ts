@@ -76,13 +76,49 @@ export type ExemplarOpts = {
 /** What the writer and critic are given, already scrubbed. */
 export type Exemplar = { pitch_id: string; score: number; subject: string; body: string };
 
+/** A past pitch with its outcome events (pitch_events of OUTCOME_EVENT_TYPES). */
+export type ExemplarCandidateWithEvents = ExemplarCandidate & { events: readonly OutcomeEvent[] };
+
+/** The languages a pitch is written in (ExemplarTarget.lang). */
+const EXEMPLAR_LANGS: ReadonlySet<string> = new Set<ExemplarTarget["lang"]>(["en", "es"]);
+
+function candidateSegment(c: Pick<ExemplarCandidate, "industry" | "market" | "lang">): Segment {
+  return segmentOf({ industry: c.industry, market: c.market, language: c.lang });
+}
+
 /** 1 = same industry and market, 2 = same industry any market, null = no match. */
 export function exemplarTier(c: Pick<ExemplarCandidate, "industry" | "market" | "lang">, target: Segment): 1 | 2 | null {
   // "other" is everything we could not classify: a match there says nothing.
   if (target.industry === "other") return null;
-  const seg = segmentOf({ industry: c.industry, market: c.market, language: c.lang });
+  const seg = candidateSegment(c);
   if (seg.industry !== target.industry) return null;
   return seg.market === target.market && target.market !== "unknown" ? 1 : 2;
+}
+
+/**
+ * The target-independent rules that need no outcome: root, sent, settled by
+ * time, a language we write, a classifiable segment (an "other" pitch matches
+ * no target), not failed by the critic, no gate override, not a test address.
+ * Returns the pitch's segment, or null.
+ */
+function readyBeforeOutcome(c: ExemplarCandidate, opts: ExemplarOpts): Segment | null {
+  const now = opts.now ?? new Date();
+  if (c.parent_pitch_id !== null) return null;
+  if (c.status !== "sent" || !c.sent_at) return null;
+  const sentMs = new Date(c.sent_at).getTime();
+  if (!Number.isFinite(sentMs) || now.getTime() - sentMs < ATTRIBUTION_WINDOW_DAYS * 86_400_000) return null;
+  if (!EXEMPLAR_LANGS.has(c.lang)) return null;
+  if (c.critic_pass === false || c.gate_overridden) return null;
+  if (opts.isTestAddress?.(c.recipient_email)) return null;
+  const segment = candidateSegment(c);
+  return segment.industry === "other" ? null : segment;
+}
+
+/** The target-dependent rules: same language, not the prospect being pitched, a segment match. */
+function matchesTarget(c: ExemplarCandidate, target: ExemplarTarget): boolean {
+  if (c.lang !== target.lang) return false;
+  if (target.prospect_id && c.prospect_id === target.prospect_id) return false;
+  return exemplarTier(c, target.segment) !== null;
 }
 
 /**
@@ -90,16 +126,38 @@ export function exemplarTier(c: Pick<ExemplarCandidate, "industry" | "market" | 
  * time, same language, a segment match, not a test, not failed by the critic.
  */
 export function isEligibleCandidate(c: ExemplarCandidate, target: ExemplarTarget, opts: ExemplarOpts = {}): boolean {
+  return readyBeforeOutcome(c, opts) !== null && matchesTarget(c, target);
+}
+
+/**
+ * Whether a past pitch is an exemplar for SOME target: every rule except the
+ * target-dependent ones (language match, segment tier, the prospect being
+ * pitched now). selectExemplars runs every candidate through it, and the
+ * weekly report counts with it (lib/reports/weekly.ts exemplarReadiness), so
+ * the count and the selection cannot drift. On top of readyBeforeOutcome:
+ * no test event, not bounced, outcome score ≥ minScore and not negative.
+ * Returns the score and the pitch's segment, or null.
+ */
+export function qualifiesAsExemplar(
+  c: ExemplarCandidateWithEvents,
+  opts: ExemplarOpts = {},
+): { score: number; segment: Segment } | null {
   const now = opts.now ?? new Date();
-  if (c.parent_pitch_id !== null) return false;
-  if (c.status !== "sent" || !c.sent_at) return false;
-  const sentMs = new Date(c.sent_at).getTime();
-  if (!Number.isFinite(sentMs) || now.getTime() - sentMs < ATTRIBUTION_WINDOW_DAYS * 86_400_000) return false;
-  if (c.lang !== target.lang) return false;
-  if (target.prospect_id && c.prospect_id === target.prospect_id) return false;
-  if (c.critic_pass === false || c.gate_overridden) return false;
-  if (opts.isTestAddress?.(c.recipient_email)) return false;
-  return exemplarTier(c, target.segment) !== null;
+  const segment = readyBeforeOutcome(c, { ...opts, now });
+  if (!segment) return null;
+  // A test send anywhere on the timeline: not outreach, not an exemplar.
+  if (c.events.some((e) => e.payload?.test)) return null;
+  // A bounced email was never read, whatever the prospect did later: a
+  // meeting booked another way scores 1 and would otherwise outweigh it.
+  if (addressOutcome(c.events) === "bounced") return null;
+  // Pitches sent before pitch_events existed have no "sent" row; the pitch's
+  // own sent_at is the same fact.
+  const events = c.events.some((e) => e.type === "sent")
+    ? c.events
+    : [{ type: "sent", at: c.sent_at!, payload: null }, ...c.events];
+  const outcome = scoreOutcome(events, now);
+  if (outcome.value === null || outcome.negative || outcome.value < (opts.minScore ?? MIN_EXEMPLAR_SCORE)) return null;
+  return { score: outcome.value, segment };
 }
 
 function byTierThenNewest(target: Segment) {
@@ -124,30 +182,19 @@ export function shortlistCandidates(
  * ranks above every tier-2 one), then the higher outcome, then the newer send.
  */
 export function selectExemplars(
-  candidates: ReadonlyArray<ExemplarCandidate & { events: readonly OutcomeEvent[] }>,
+  candidates: ReadonlyArray<ExemplarCandidateWithEvents>,
   target: ExemplarTarget,
   opts: ExemplarOpts = {},
 ): Array<{ pitch_id: string; score: number; tier: 1 | 2 }> {
   const now = opts.now ?? new Date();
-  const minScore = opts.minScore ?? MIN_EXEMPLAR_SCORE;
   const scored: Array<{ c: ExemplarCandidate; score: number; tier: 1 | 2 }> = [];
   for (const c of candidates) {
-    if (!isEligibleCandidate(c, target, { ...opts, now })) continue;
-    // A test send anywhere on the timeline: not outreach, not an exemplar.
-    if (c.events.some((e) => e.payload?.test)) continue;
-    // A bounced email was never read, whatever the prospect did later: a
-    // meeting booked another way scores 1 and would otherwise outweigh it.
-    if (addressOutcome(c.events) === "bounced") continue;
-    // Pitches sent before pitch_events existed have no "sent" row; the pitch's
-    // own sent_at is the same fact.
-    const events = c.events.some((e) => e.type === "sent")
-      ? c.events
-      : [{ type: "sent", at: c.sent_at!, payload: null }, ...c.events];
-    const outcome = scoreOutcome(events, now);
-    if (outcome.value === null || outcome.negative || outcome.value < minScore) continue;
+    if (!matchesTarget(c, target)) continue;
+    const q = qualifiesAsExemplar(c, { ...opts, now });
+    if (!q) continue;
     const tier = exemplarTier(c, target.segment);
     if (tier === null) continue;
-    scored.push({ c, score: outcome.value, tier });
+    scored.push({ c, score: q.score, tier });
   }
   scored.sort(
     (a, b) =>

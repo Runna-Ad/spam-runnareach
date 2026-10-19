@@ -10,8 +10,17 @@ import * as Sentry from "@sentry/nextjs";
 import { getAccessToken } from "@/lib/gmail/client";
 import { createServiceRoleClient } from "@/lib/supabase/service-role";
 import type { ArmRow } from "@/lib/learning/report";
+import { ATTRIBUTION_WINDOW_DAYS, OUTCOME_EVENT_TYPES, type OutcomeEvent } from "@/lib/learning/reward";
+import {
+  EXEMPLAR_CANDIDATE_COLUMNS,
+  candidateFromRow,
+  dncKeys,
+  exemplarsEnabled,
+  toDncEntries,
+  type CandidateRow,
+} from "@/lib/pitches/exemplar-queries";
 import type { HealthProblem, HealthSnapshot } from "./health";
-import type { WeeklyRaw } from "./weekly";
+import type { ExemplarPool, WeeklyRaw } from "./weekly";
 
 // Most of these tables (0040+) aren't in the generated types; queries go through any.
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -23,6 +32,10 @@ const PAGE = 1000;
 const MAX_PAGES = 20;
 /** Code default of the AI cap (lib/anthropic/cost-tracking.ts DAILY_USD_CAP_DEFAULT). */
 const DAILY_USD_CAP_DEFAULT = 6;
+/** Values per .in() list: 100 uuids keep the request URL around 4 KB. */
+const IN_CHUNK = 100;
+/** Every exemplar-pool read together, well inside the route's 60s; past it the line reads n/a. */
+const EXEMPLAR_POOL_BUDGET_MS = 20_000;
 
 export const HEALTH_ALERT_ACTION = "health.alert";
 
@@ -54,6 +67,22 @@ async function all<T>(query: (from: number, to: number) => PromiseLike<Result>, 
   return out;
 }
 
+/** all() over each chunk of an .in() list, one chunk at a time. null on any error. */
+async function allIn<T>(
+  values: readonly string[],
+  query: (chunk: string[], from: number, to: number) => PromiseLike<Result>,
+  map: (row: Db) => T,
+): Promise<T[] | null> {
+  const out: T[] = [];
+  for (let i = 0; i < values.length; i += IN_CHUNK) {
+    const chunk = values.slice(i, i + IN_CHUNK);
+    const rows = await all((a, b) => query(chunk, a, b), map);
+    if (!rows) return null;
+    out.push(...rows);
+  }
+  return out;
+}
+
 /** A to-one embed comes back as an object, but be safe with arrays. */
 function one(v: unknown): Db {
   return Array.isArray(v) ? v[0] ?? null : v ?? null;
@@ -72,7 +101,7 @@ export async function gatherWeeklyRaw(tenantId: string, now: Date): Promise<Week
   const since7 = new Date(now.getTime() - 7 * DAY).toISOString();
   const nowIso = now.toISOString();
 
-  const [sent, replies, opportunities, optOuts, bounces, discoveryJobs, researched, drafts, autoScheduled, state, breakerTrips, arms, insights, aiSpend, warmup, alerts] =
+  const [sent, replies, opportunities, optOuts, bounces, discoveryJobs, researched, drafts, autoScheduled, state, breakerTrips, arms, insights, aiSpend, warmup, alerts, exemplarPool] =
     await Promise.all([
       all(
         (a, b) =>
@@ -172,6 +201,7 @@ export async function gatherWeeklyRaw(tenantId: string, now: Date): Promise<Week
             .eq("tenant_id", tenantId).eq("action", HEALTH_ALERT_ACTION).gte("created_at", since7).order("created_at").range(a, b),
         (r) => ({ at: r.created_at as string, kind: (r.metadata?.kind as string | undefined) ?? "unknown" }),
       ),
+      exemplarPoolOf(db, tenantId, now),
     ]);
 
   const s = state.error ? null : (state.data as { enabled: boolean; stage: string; reason: string | null } | null);
@@ -195,7 +225,58 @@ export async function gatherWeeklyRaw(tenantId: string, now: Date): Promise<Week
     dailyCapUsd: dailyCapUsd(),
     warmup,
     alerts,
+    exemplarsEnabled: exemplarsEnabled(),
+    exemplarPool,
   };
+}
+
+/**
+ * What the exemplar readiness count reads: every settled root send of the
+ * tenant, with the columns fetchExemplars reads (rows passed through as it
+ * gets them), their outcome events, and the do-not-contact entries for their
+ * addresses and domains. Counting is pure (weekly.ts exemplarReadiness).
+ */
+async function exemplarPoolOf(db: Db, tenantId: string, now: Date): Promise<ExemplarPool | null> {
+  const signal = AbortSignal.timeout(EXEMPLAR_POOL_BUDGET_MS);
+  const settled = new Date(now.getTime() - ATTRIBUTION_WINDOW_DAYS * DAY).toISOString();
+  const rows = await all(
+    (a, b) =>
+      db.from("pitches").select(EXEMPLAR_CANDIDATE_COLUMNS)
+        .eq("tenant_id", tenantId).eq("status", "sent").is("parent_pitch_id", null).lte("sent_at", settled)
+        .order("sent_at").order("id").range(a, b).abortSignal(signal),
+    (r) => r as CandidateRow,
+  );
+  if (!rows) return null;
+  // A suppressed prospect's pitch is never counted: its outcome and DNC entries are not needed.
+  const live = rows.filter((r) => candidateFromRow(r) !== null);
+  const events = await allIn(
+    [...new Set(live.map((r) => r.id))],
+    (ids, a, b) =>
+      db.from("pitch_events").select("id, pitch_id, event_type, event_at, payload")
+        .eq("tenant_id", tenantId).in("pitch_id", ids).in("event_type", OUTCOME_EVENT_TYPES)
+        .order("id").range(a, b).abortSignal(signal),
+    (r) => ({ pitchId: r.pitch_id as string, event: { type: r.event_type as string, at: r.event_at as string, payload: r.payload as OutcomeEvent["payload"] } }),
+  );
+  if (!events) return null;
+  const { mailboxes, domains } = dncKeys(live.map((r) => r.prospect_contacts?.email ?? null));
+  const [byEmail, byDomain] = await Promise.all([
+    allIn(
+      mailboxes,
+      (xs, a, b) =>
+        db.from("do_not_contact_list").select("id, email").eq("tenant_id", tenantId).in("email", xs).order("id").range(a, b).abortSignal(signal),
+      (r) => ({ email: (r.email as string | null) ?? null }),
+    ),
+    allIn(
+      domains,
+      (xs, a, b) =>
+        db.from("do_not_contact_list").select("id, domain").eq("tenant_id", tenantId).in("domain", xs).order("id").range(a, b).abortSignal(signal),
+      (r) => ({ domain: (r.domain as string | null) ?? null }),
+    ),
+  ]);
+  if (!byEmail || !byDomain) return null;
+  const byPitch = new Map<string, OutcomeEvent[]>();
+  for (const { pitchId, event } of events) byPitch.set(pitchId, [...(byPitch.get(pitchId) ?? []), event]);
+  return { pitches: rows.map((r) => ({ ...r, events: byPitch.get(r.id) ?? [] })), dnc: toDncEntries(byEmail, byDomain) };
 }
 
 /**
