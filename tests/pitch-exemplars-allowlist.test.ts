@@ -36,9 +36,10 @@ test("adversarial: scripts, look-alikes, invisible splitters, full-width, handle
       ["quick question", `Hi there,\n\nClinics like ${s} lose calls after hours.\n\nHenry\nRunna Advertising`],
       ["quick question", `Hi there,\n\n${s} loses calls after hours.\n\nHenry\nRunna Advertising`],
     ] as const) {
-      // Dropped, or kept with the stranger blanked ([site] for a handle or domain).
+      // Every non-address stranger drops. A handle or domain may instead be blanked to [site], never kept as written.
       const e = toExemplar({ pitch_id: "x", score: 1 }, { subject, body, ...OTHER });
-      if (e && /pat|金|ив|πα|مح|wei|stra|g\u043em/iu.test(`${e.subject} ${e.body}`.normalize("NFKD"))) kept.push(`${s} | ${e.subject} | ${e.body.split("\n")[2]}`);
+      const address = s.startsWith("@") || s.includes(".com");
+      if (e && (!address || `${e.subject} ${e.body}`.includes("patel"))) kept.push(`${s} | ${e.subject} | ${e.body.split("\n")[2]}`);
     }
   }
   // A capitalized word that is also a name, mid-sentence, is a name.
@@ -423,4 +424,60 @@ test("optional: odd spaces between letters drop the exemplar", () => {
   for (const s of ["Pa tel", "Pa　tel", "Pa tel"]) {
     assert.equal(toExemplar({ pitch_id: "x", score: 1 }, { subject: "evening calls", body: wrap(`We spoke with ${s} today.`), ...ARBOL }), null, JSON.stringify(s));
   }
+});
+
+// ── Round 6b ──────────────────────────────────────────────────────────────────
+
+const NOCITY: ExemplarProspect = { company_name: "Arbol Rojo Consultores", domain: "arbolrojo.mx", recipient_name: "Ximena Quiroga", city: null };
+
+test("6b.1: a place the city field misses drops the exemplar, mid-sentence, opening a sentence, or in the subject", () => {
+  const kept: string[] = [];
+  const places = ["Querétaro", "Toronto", "Vancouver", "Quebec", "Waterloo", "Puebla", "Oaxaca", "Veracruz", "Cancún", "Ensenada", "Los Cabos",
+    "Condesa", "Polanco", "Mississauga", "Boca del Río", "San Andrés Cholula", "Monterrey"];
+  for (const pl of places) {
+    for (const [subject, body] of [
+      ["llamadas", wrap(`Vi que son distribuidores Toyota en ${pl} y nadie contesta.`)],
+      ["llamadas", wrap(`${pl} tiene muchas clínicas como la suya.`)],
+      [`clínicas en ${pl.toLowerCase()}`, wrap("Nadie contesta de noche.")],
+    ] as const) {
+      if (toExemplar({ pitch_id: "x", score: 1 }, { subject, body, ...NOCITY })) kept.push(`${pl}: ${subject} | ${body.split("\n")[2]}`);
+    }
+  }
+  // A city field names one place; a nearby one in the text still identifies.
+  for (const [city, line] of [["San Andrés Cholula", "Atendemos clínicas en Puebla."], ["Mississauga", "We work with clinics around Toronto."]] as const) {
+    if (toExemplar({ pitch_id: "x", score: 1 }, { subject: "llamadas", body: wrap(line), ...NOCITY, city })) kept.push(`${city}: ${line}`);
+  }
+  assert.deepEqual(kept, []);
+  // Countries and states or provinces that are not also a city stay allowed.
+  for (const line of ["Trabajamos en México y Canada.", "Clinics in Alberta and Ontario answer by phone.", "En Jalisco y Nuevo León pasa lo mismo."]) {
+    assert.ok(toExemplar({ pitch_id: "x", score: 1 }, { subject: "llamadas", body: wrap(line), ...NOCITY }), line);
+  }
+});
+
+test("6b.2: the greeting's whole rule: a contact 'J Torres' at memo.torres@ is greeted Memo, so Memo is a name", () => {
+  const p: ExemplarProspect = { ...NOCITY, recipient_name: "J Torres", recipient_email: "memo.torres@arbolrojo.mx" };
+  const body = "Hola Memo,\n\nSoy Nils, de Runna Advertising.\n\nSi quieres, Memo, lo vemos en una llamada corta.\n\nNils\nRunna Advertising";
+  assert.equal(keptWith("una llamada corta", body, p, ["memo", "torres"]), null);
+  assert.equal(scrubExemplar("Si quieres, Memo, lo vemos.", p), "Si quieres, [name], lo vemos.");
+  // The leak check reads the address whatever the contact name.
+  assert.notDeepEqual(exemplarLeaks("pregúntale a memo por la agenda", p), []);
+});
+
+test("6b.3: plural acronyms, region words and the platforms our pitches name pass", () => {
+  const lines = [
+    "Most stores track SKUs, KPIs, CTAs, URLs, PDFs and FAQs by hand.",
+    "Clinics in Western Canada, Northern Ontario, Southern Alberta, Eastern Canada, Central Mexico, Atlantic Canada, the Prairies and the Maritimes answer by phone.",
+    "Your site runs on Wix, and most stores we see use Squarespace, Shopify, GoDaddy, Webflow, Tiendanube or Mercado Libre next to WordPress and WooCommerce.",
+  ];
+  for (const line of lines) {
+    const p: ExemplarProspect = { company_name: "Bluefin Plumbing", domain: "bluefin.ca", recipient_name: "Sean Ng", city: "Calgary" };
+    assert.ok(toExemplar({ pitch_id: "x", score: 1 }, { subject: "evening calls", body: wrap(line), ...p }), `${line}: ${exemplarLeaks(wrap(line), p)}`);
+  }
+});
+
+test("6b.5: the round-6 titles are scrubbed, not dropped; '#1 rated' is a number, not a tag", () => {
+  const other: ExemplarProspect = { company_name: null, domain: null, recipient_name: "John Sipos" };
+  assert.equal(scrubExemplar("La recepción la lleva la Profa. Torres.", other), "La recepción la lleva la Profa. [name].");
+  assert.equal(scrubExemplar("Lo atiende el Fisio. Ruiz y el lcdo. peña.", other), "Lo atiende el Fisio. [name] y el lcdo. [name].");
+  assert.equal(scrubExemplar("The #1 rated clinic in town.", other), "The #[n] rated clinic in town.");
 });

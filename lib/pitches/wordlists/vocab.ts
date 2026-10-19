@@ -48,8 +48,6 @@ export const OWN_VOCABULARY: readonly string[] = [
   "harvard", "ipsos", "klaviyo", "litmus", "mckinsey", "datamatics", "nucleus", "omnisend",
   "phocuswright", "phocuswire", "portent", "salesforce", "smartsheet", "spiegel", "northwestern", "sprout", "stanford",
   "persuasive", "toast", "wyzowl", "wharton", "systematic", "meta", "analysis", "pulse",
-  // The one place our own templates name (beach clubs); a prospect's own city is still caught by the field check.
-  "cancun",
 ];
 
 /**
@@ -67,10 +65,20 @@ export const OWN_ACRONYMS: readonly string[] = [
  * "&" also matches "and" / "y".
  */
 export const CAPITALIZED_PHRASES: readonly string[] = [
-  "quintana roo", "nuevo leon", "san luis potosi", "prince edward island",
+  "quintana roo", "nuevo leon", "prince edward island", "cochrane database", "mercado libre", "mercado pago",
   "harvard business review", "bain & company", "mckinsey & company", "deloitte digital",
   "stanford persuasive technology lab", "spiegel research center", "nucleus research", "baymard institute",
   "sprout social", "experian health", "wharton",
+];
+
+/**
+ * The platforms our pitches name, next to WordPress and WooCommerce: brands,
+ * never a person, so they pass capitalized even when they are also a surname (Wix).
+ */
+export const PLATFORMS: readonly string[] = [
+  "wix", "squarespace", "shopify", "godaddy", "webflow", "tiendanube", "wordpress", "woocommerce", "hubspot", "mailchimp",
+  "klaviyo", "calendly", "opentable", "booking", "airbnb", "expedia", "tripadvisor", "whatsapp", "instagram", "facebook",
+  "google", "linkedin", "tiktok", "youtube", "mercadolibre", "stripe", "paypal", "clip", "square",
 ];
 
 /**
@@ -90,12 +98,15 @@ export const CAPITALIZED_WORDS: readonly string[] = [
   // Countries, regions and directions ("businesses in Canada", "North America").
   "canada", "mexico", "america", "usa", "north", "south", "east", "west", "norte", "sur", "oriente", "poniente",
   // Provinces and states: a region, never one business. Not the ones that are surnames too (Guerrero,
-  // Hidalgo, Morelos, León, Prince Edward): those stay names.
-  "ontario", "quebec", "british", "columbia", "alberta", "manitoba", "saskatchewan", "nova", "scotia", "brunswick",
+  // Hidalgo, Morelos, León, Prince Edward), nor the ones that are also a city (Puebla, Querétaro,
+  // Oaxaca, Quebec…): those are refused by the places net.
+  "ontario", "british", "columbia", "alberta", "manitoba", "saskatchewan", "nova", "scotia", "brunswick",
   "newfoundland", "labrador", "island", "yukon", "nunavut", "territories", "jalisco", "nuevo",
-  "yucatan", "baja", "california", "sonora", "chihuahua", "coahuila", "tamaulipas",
-  "veracruz", "oaxaca", "chiapas", "michoacan", "guanajuato", "queretaro", "puebla",
-  "tlaxcala", "sinaloa", "durango", "zacatecas", "nayarit", "colima", "tabasco", "campeche", "aguascalientes",
+  "yucatan", "baja", "california", "sonora", "coahuila", "tamaulipas",
+  "chiapas", "michoacan",
+  "sinaloa", "nayarit", "tabasco",
+  // Regions ("Western Canada", "the Prairies").
+  "western", "northern", "southern", "eastern", "central", "atlantic", "pacific", "prairies", "maritimes",
 ];
 
 /**

@@ -23,6 +23,11 @@
 //     https://raw.githubusercontent.com/LibreOffice/dictionaries/master/en/en_US.aff (and .dic, en_GB, en_CA,
 //     es/es_MX, es/es_ES)
 //
+//   world-cities.csv         GeoNames cities15000 (populated places of 15,000+ and capitals), name, country,
+//     subcountry, geonameid; GeoNames data, CC BY 4.0 (https://www.geonames.org/), via datasets/world-cities
+//     https://raw.githubusercontent.com/datasets/world-cities/master/data/world-cities.csv
+//     Only the Canadian and Mexican rows are used, for lib/pitches/wordlists/places.ts.
+//
 // nspell (MIT) is a dev-time tool, never a dependency of the app: install it anywhere and point
 // NSPELL_DIR at that folder (`npm install --prefix /tmp/nsp nspell@2.1.5`, NSPELL_DIR=/tmp/nsp).
 //
@@ -205,3 +210,61 @@ ${capitalOnly.sort().join("\n")}
 `,
 );
 console.log(`names: ${all.length} (${givenCount} given, ${longTail} long tail), also words: ${wordlike.length}, weak: ${weak.length}`);
+
+// ── Places ────────────────────────────────────────────────────────────────────
+
+/** Mexico City's boroughs and best-known neighbourhoods (cities15000 lists them only in part), and tourist regions. */
+const CDMX = [
+  "Álvaro Obregón", "Azcapotzalco", "Benito Juárez", "Coyoacán", "Cuajimalpa", "Cuauhtémoc", "Gustavo A. Madero",
+  "Iztacalco", "Iztapalapa", "Magdalena Contreras", "Miguel Hidalgo", "Milpa Alta", "Tláhuac", "Tlalpan",
+  "Venustiano Carranza", "Xochimilco", "Condesa", "Roma Norte", "Roma Sur", "Polanco", "Santa Fe", "Del Valle",
+  "Narvarte", "Nápoles", "Escandón", "San Ángel", "Lomas de Chapultepec", "Juárez", "Doctores", "Tlatelolco",
+  "Mixcoac", "Pedregal", "Interlomas", "Ciudad Satélite",
+  // Tourist regions written as a place (a municipality or coast, not a cities15000 row).
+  "Los Cabos", "Riviera Maya", "Riviera Nayarit", "Boca del Río",
+];
+const placeSingles = new Set();
+const placePhrases = new Set();
+const placeRows = read("world-cities.csv").split("\n").slice(1).map((l) => l.split(",")).filter((c) => c[1] === "Mexico" || c[1] === "Canada");
+/** Official prefixes the everyday name drops: "Santiago de Querétaro" is Querétaro, "Heroica Nogales" Nogales. */
+const PLACE_PREFIX = /^(?:santiago de |victoria de |heroica (?:ciudad de )?|ciudad (?:de )?)/;
+const placeNames = [...placeRows.map((c) => c[0] ?? ""), ...CDMX].flatMap((raw) => {
+  const f = fold(raw).split(/[^\p{L}]+/u).filter(Boolean).join(" ");
+  const short = f.replace(PLACE_PREFIX, "");
+  return short && short !== f ? [f, short] : [f];
+});
+for (const name of placeNames) {
+  const ps = name.split(" ");
+  if (ps.length === 1 && ps[0].length >= 3 && /^[a-z]+$/.test(ps[0])) placeSingles.add(ps[0]);
+  else if (ps.length > 1 && ps.every((p) => /^[a-z]+$/.test(p))) placePhrases.add(ps.join(" "));
+}
+const singles = [...placeSingles].sort();
+const placeWords = singles.filter((p) => spellers.some((sp) => sp.correct(p)));
+console.log(`places: ${singles.length} single, ${placePhrases.size} phrases, also words: ${placeWords.join(" ")}`);
+writeFileSync(
+  "lib/pitches/wordlists/places.ts",
+  `/**
+ * The places net of the exemplar leak check (lib/pitches/exemplars.ts): Canadian
+ * and Mexican populated places, folded. A place the prospect's city field does
+ * not name ("en Querétaro", "near Mississauga") still identifies them.
+ * Source: GeoNames cities15000 (places of 15,000+ people, and capitals), the
+ * ${placeRows.length.toLocaleString("en-US")} Canadian and Mexican rows, via datasets/world-cities. GeoNames data is
+ * licensed CC BY 4.0, https://www.geonames.org/ (attribution required); plus
+ * Mexico City's boroughs and best-known neighbourhoods, listed by hand in the
+ * generator. PLACE_WORDS: the single-word places that are also everyday words
+ * ("progreso", "victoria"), allowed in a lower-case subject.
+ * Regenerate with scripts/gen-exemplar-wordlists.mjs, do not hand-edit.
+ */
+export const PLACE_LIST = \`
+${singles.join("\n")}
+\`;
+
+export const PLACE_WORDS = \`
+${placeWords.join("\n")}
+\`;
+
+export const PLACE_PHRASES = \`
+${[...placePhrases].sort().join("\n")}
+\`;
+`,
+);

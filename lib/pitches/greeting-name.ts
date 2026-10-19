@@ -2,7 +2,8 @@
  * The one rule for "which given name does the greeting use when the contact
  * row has no name": read it from the e-mail local part. The composer greets
  * with it (claude-composer.ts firstNameGuess) and the exemplar scrubber
- * blanks it (exemplars.ts), so both must agree. Pure.
+ * blanks it (exemplars.ts), so both must agree: greetingName is the whole
+ * rule, emailGreetingName its address half. Pure.
  */
 
 // Generic inbox local-parts that are NOT a person's name — never greet these.
@@ -12,6 +13,23 @@ export const GENERIC_LOCALS = new Set([
   "recepcion", "reception", "webmaster", "noreply", "no-reply", "mail",
   "correo", "citas", "office", "general", "team", "equipo",
 ]);
+
+/**
+ * Best-effort first name to greet. Prefers the contact's full_name (its first
+ * token of 2+ characters); otherwise infers from the email local-part when it
+ * cleanly reads as a given name (miguel@ → "Miguel"), but never for role
+ * inboxes (info@, ventas@) or when the contact is role-based. Returns null when
+ * there's no confident name.
+ */
+export function greetingName(fullName: string | null, email: string | null, roleBased: boolean): string | null {
+  const cap = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
+  if (fullName && fullName.trim()) {
+    const tok = fullName.trim().split(/\s+/)[0];
+    if (tok && tok.length >= 2) return cap(tok);
+  }
+  if (roleBased) return null;
+  return emailGreetingName(email);
+}
 
 /**
  * The given name an e-mail local part cleanly reads as (miguel@ → "Miguel"),

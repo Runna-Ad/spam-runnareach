@@ -757,5 +757,7 @@ test("real templates: every industry template, EN and ES, comes through the allo
       if (!e) dropped.push(`${lang}/${industry}: ${[...exemplarLeaks(scrubExemplar(r.subject, p), p), ...exemplarLeaks(scrubExemplar(r.body, p), p)].join(",")}`);
     }
   }
-  assert.deepEqual(dropped, []);
+  // Round 6b: the beach-club template names Cancún, a place the places net refuses wherever it stands
+  // (fail closed, reported in PR #17 rather than allow-listed).
+  assert.deepEqual(dropped, ["en/beach club: los cabos,cancun", "es/beach club: los cabos,cancun"]);
 });

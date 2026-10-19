@@ -51,3 +51,8 @@ TAGS: pitches, exemplars, allow-list, review
 WHAT HAPPENED: The round-5 generator read Hunspell .dic stems, so forth, math, fallen (missing or irregular) and haga, vea, vida, debo, cierra (inflected Spanish) were classed as name-only and refused even in lower case. nspell (dev-time only) over en_US/en_GB/en_CA/es_MX/es_ES fixed it, and the generator now prints every top-20k word that ends name-only so a gap shows at build time.
 RULE: When a build step classifies words with a dictionary, check inflected forms with the dictionary's own affix rules, and print the frequent words the step ends up refusing.
 TAGS: pitches, exemplars, generator, dictionaries
+
+[2026-10-19] Official place names hide the everyday one; a place net needs the short forms
+WHAT HAPPENED: GeoNames lists "Santiago de Querétaro", "Heroica Nogales", "Victoria de Durango", so a place deny built from cities15000 as-is missed "en Querétaro" (round 6b of exemplar-scrubber-gaps). Stripping official prefixes (Santiago de, Victoria de, Heroica, Ciudad de) added the names people write; regions that are municipalities (Los Cabos) and CDMX colonias needed a hand list. State names that are also cities (Puebla, Querétaro, Oaxaca, Quebec) had to leave the "always allowed" list, found by intersecting it with the place list in the generator, not by eye.
+RULE: When a deny list comes from a gazetteer, add the everyday short forms and intersect every allow list with it at build time; anything on both is a decision, not a default.
+TAGS: pitches, exemplars, places, generator

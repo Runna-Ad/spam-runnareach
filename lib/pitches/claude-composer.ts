@@ -23,7 +23,7 @@ import { hasUsableEmail } from "../research/email-utils.ts";
 import { findBannedTerms } from "./content-rules.ts";
 import { senderIdentity } from "./sender-identity.ts";
 import { writerExemplarSection } from "./exemplars.ts";
-import { emailGreetingName } from "./greeting-name.ts";
+import { greetingName } from "./greeting-name.ts";
 import type { ComposedPitch, GeneratorInputs } from "./generator.ts";
 
 // Who the intro line names. Resolved once at module load so each language's
@@ -459,25 +459,8 @@ OUTPUT: one JSON object with exactly these fields, all required (null only where
 }`;
 }
 
-/**
- * Best-effort first name to greet. Prefers the contact's full_name; otherwise
- * infers from the email local-part when it cleanly reads as a given name
- * (miguel@ → "Miguel"), but never for role inboxes (info@, ventas@) or when the
- * contact is role-based. Returns null when there's no confident name.
- */
-export function firstNameGuess(
-  fullName: string | null,
-  email: string | null,
-  roleBased: boolean,
-): string | null {
-  const cap = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
-  if (fullName && fullName.trim()) {
-    const tok = fullName.trim().split(/\s+/)[0];
-    if (tok && tok.length >= 2) return cap(tok);
-  }
-  if (roleBased) return null;
-  return emailGreetingName(email);
-}
+/** The greeting's first name: the rule lives in greeting-name.ts, shared with the exemplar scrubber. */
+export const firstNameGuess = greetingName;
 
 function buildStage2UserPrompt(input: GeneratorInputs): string {
   const lang = input.prospect.language;
