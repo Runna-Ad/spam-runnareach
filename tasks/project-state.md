@@ -79,7 +79,7 @@ SHIPPED on Pedro's "ship it": migrations 0040 + 0041 applied, main = `4b22ad1`+,
 - **Scheduler** (migration 0041): pg_cron + pg_net; token generated inside Postgres, kept in Vault, checked via `scheduler_token_valid` (service role only); tick every 15 min, reply poll every 30 min, send-queue every 10 min and follow-ups hourly Mon–Fri 15–22 UTC. Vercel daily crons stay as backstop.
 - Session note: the Auto-mode safety check refused the service-role pipeline and creating an account; Pedro switched the session to "Accept edits" and approved. Permission rules were not edited.
 
-## Phase 3 — #17 exemplar allow-list (PR to main, waiting on Pedro's "ship it")
+## Phase 3 — #17 exemplar allow-list (PR #28 to main, waiting on Pedro's "ship it")
 Past winning pitches become anonymised style examples for new pitches, only when `EXEMPLARS_ENABLED=1` (not set in
 Vercel: verified 2026-10-19 02:58; the switch is checked before any DB read in `fetchExemplars`). Ships with the switch OFF:
 - `lib/pitches/exemplars.ts`: scrubber + an independent fail-closed leak check. A kept exemplar may contain only words
@@ -92,10 +92,20 @@ Vercel: verified 2026-10-19 02:58; the switch is checked before any DB read in `
 - Measured on 30 real prod pitches: 24 kept, all 6 drops real leaks, no person or place name in the kept 24. Stated
   residuals (exemplars.ts header): common-word names at a sentence start, top-300-word names (He, Lo, Will), name-months,
   names made of ordinary words, lowercase places in a body, brands alone.
-Ship steps: merge → deploy READY (nothing changes with the switch off). Then Pedro decides when to set
-`EXEMPLARS_ENABLED=1` in Vercel (production) and redeploy. After the flip: `select decision->>'exemplar_prompt_version' v,
-count(*) from pitches where created_at > '<flip time>' group by 1` (null = no exemplar qualified); spot-check the first
-5 exemplar rows for another prospect's company, place or a capitalized mid-sentence name.
+- `fetchExemplars` skips a prospect suppressed since its send and any address/domain on the do-not-contact list
+  (pre-ship audit, c77c664); booked/won/lost stay eligible (an outcome is not an opt-out).
+Pre-ship audit (Fable, cd7bde3 vs main 729b299): ship, 0 blocking. Switch off: no new Claude/DB/network call; composer
+prompts byte-identical (greeting 0 diffs on 870 inputs); `.next/server` 98.9 → 120.6 MB, 7 of 50 entrypoints carry the
+word lists (tick, discover/run, dashboard pages), cold start +14–23 ms each. Switch on: inside the cost cap, tenant-scoped,
+3 s fetch budget, never throws; first `toExemplar` per isolate ≈ 0.9 s.
+Ship steps: (1) `EXEMPLARS_ENABLED` absent in Production AND Preview (checked 2026-10-19 02:58: absent); (2) merge →
+deploy READY; neutrality: `select count(*) from pitches where decision->>'exemplar_prompt_version' is not null` = 0
+before (0 at 04:20 UTC) and after, first tick after READY 200 with its usual duration. (3) The flip is Pedro's call: set
+`EXEMPLARS_ENABLED=1` in Production, REDEPLOY, record the time. (4) After the flip: Vercel logs `[exemplars]`
+(`scrub_failed` = expected; `… query failed` / `not loaded` = degraded, pitches still written); `select
+decision->>'exemplar_prompt_version' v, count(*) from pitches where created_at > '<flip time>' group by 1` (null = none
+qualified); spot-check the first 5 exemplar pitches against their exemplars' prospects (company, city, contact, email
+local part). Rollback: unset the variable and redeploy; nothing to clean.
 
 ## Phase 3 — batch 3 follow-up: status rule in discovery (SHIPPED 2026-10-19 on Pedro's "ship it": main = `729b299`, PR #27)
 Ship verified: no migrations; deploy dpl_J3tEospxUg8mzz27FkAuGdUTcuPv READY (checked 01:19 UTC); prod verification query = 0 before and after the deploy (141 prospects parked).
