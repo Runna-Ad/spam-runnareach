@@ -30,7 +30,7 @@ import {
 import { isUnderDailyCap, recordClaudeCall } from "@/lib/anthropic/cost-tracking";
 import { scrapeSite } from "./scraper";
 import { scoreProspectWith } from "./score-stage";
-import { protectedStatusFilter } from "@/lib/prospects/status";
+import { DO_NOT_SEND_STATUSES, protectedStatusFilter } from "@/lib/prospects/status";
 import { buildDeepResearchPrompt, type TaxonomyEntry } from "./deep-research-prompt";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -45,6 +45,8 @@ export type DeepResearchResult =
       contact_found: string | null;
       cost_usd: number;
       raw_response: string; // full Claude text for transparency
+      /** Set when the low-score suppress write failed: the research is saved, the status is not. */
+      status_write_error?: string;
     }
   | { ok: false; error: string };
 
@@ -93,6 +95,14 @@ export async function deepResearchProspectWith(
     .maybeSingle<ProspectRow>();
 
   if (pErr || !prospect) return { ok: false, error: pErr?.message ?? "Prospect not found." };
+
+  // No Claude money on a company we may not email: everything paid is below.
+  if (DO_NOT_SEND_STATUSES.has(prospect.status)) {
+    return {
+      ok: false,
+      error: `Deep research skipped: this company is ${prospect.status}, so we may not email it. Change its status first if that is wrong.`,
+    };
+  }
 
   const targetUrl =
     prospect.website_url ??
@@ -357,6 +367,7 @@ export async function deepResearchProspectWith(
   // immediately overwritten. Standalone UI callers keep it (default) so the
   // "deep research this prospect" button stays self-contained.
   let score = 0;
+  let statusWriteError: string | undefined;
   let outcome: "pitched_ready" | "needs_review" | "low_score" = "needs_review";
   if (!options?.skipScore) {
     const scoreResult = await scoreProspectWith(actor, prospectId);
@@ -374,7 +385,7 @@ export async function deepResearchProspectWith(
     // must be a prospect_status value, or Postgres rejects the whole UPDATE.
     const SUPPRESSIBLE = ["raw", "researched"] as const;
     if (score < 40 && (SUPPRESSIBLE as readonly string[]).includes(prospect.status)) {
-      await supabase
+      const { error: suppressErr } = await supabase
         .from("prospects")
         .update({
           status: "suppressed",
@@ -389,6 +400,11 @@ export async function deepResearchProspectWith(
         // only the early funnel is ever suppressed here.
         .in("status", [...SUPPRESSIBLE])
         .not("status", "in", protectedStatusFilter("suppressed", "automation")!);
+      // A failed write is reported, never read as done.
+      if (suppressErr) {
+        statusWriteError = `Status write (suppressed) failed: ${suppressErr.message || "no message"}`;
+        console.error(`[deep-research] ${statusWriteError} for ${prospectId}`);
+      }
     }
   }
 
@@ -404,6 +420,7 @@ export async function deepResearchProspectWith(
     contact_found: contactFound,
     cost_usd: costUsd,
     raw_response: rawResponse,
+    ...(statusWriteError ? { status_write_error: statusWriteError } : {}),
   };
 }
 
