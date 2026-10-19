@@ -79,6 +79,14 @@ SHIPPED on Pedro's "ship it": migrations 0040 + 0041 applied, main = `4b22ad1`+,
 - **Scheduler** (migration 0041): pg_cron + pg_net; token generated inside Postgres, kept in Vault, checked via `scheduler_token_valid` (service role only); tick every 15 min, reply poll every 30 min, send-queue every 10 min and follow-ups hourly Mon–Fri 15–22 UTC. Vercel daily crons stay as backstop.
 - Session note: the Auto-mode safety check refused the service-role pipeline and creating an account; Pedro switched the session to "Accept edits" and approved. Permission rules were not edited.
 
+## Weekly report: exemplar readiness + designed HTML (PR to main, waiting on Pedro's "ship it")
+Pedro 2026-10-19: the Monday report says how many past pitches would qualify as exemplars (one shared predicate
+`qualifiesAsExemplar` in lib/pitches/exemplars.ts, used by the selector and the count) and is sent with a designed HTML
+part (header, KPI tiles, section cards, semantic delta colours; the plain-text part is unchanged apart from the new
+"Exemplars:" line and the plural fix). Plumbing: `NotificationMessage.html` → the email's HTML part (lib/gmail/mime.ts).
+No migrations. Prod verification: `GET /api/reports/weekly?dry=1` (CRON_SECRET) → body has "Exemplars: off
+(EXEMPLARS_ENABLED unset). Past pitches that qualify: 0", html starts with `<!doctype html>` and has "Open analytics".
+
 ## Phase 3 — #17 exemplar allow-list (SHIPPED 2026-10-19 on Pedro's "ship it", switch OFF: main = `3808b56`, PR #28)
 Ship verified: deploy dpl_2HXPGhFNHqCSUmPzWAobwgfQgA3C READY 04:25:17 UTC; 0 exemplar pitches after the deploy; ticks 04:30/04:45 200.
 Past winning pitches become anonymised style examples for new pitches, only when `EXEMPLARS_ENABLED=1` (not set in
