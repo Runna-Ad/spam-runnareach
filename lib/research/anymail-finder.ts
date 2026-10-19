@@ -44,7 +44,7 @@ export type AnymailResult =
 type AnymailResponse = {
   email?: string | null;
   valid_email?: string | null;
-  email_status?: string | null;
+  email_status?: unknown;
   person_full_name?: string | null;
   person_job_title?: string | null;
   person_linkedin_url?: string | null;
@@ -54,12 +54,13 @@ type AnymailResponse = {
 
 /**
  * The address Anymail verified, or null. Pure (tested in
- * tests/anymail-finder.test.ts): a response counts only when email_status is
+ * tests/address-trust.test.ts): a response counts only when email_status is
  * "valid" AND valid_email is a non-empty string. `email` alone is Anymail's
  * best guess and is never used.
  */
 export function verifiedEmailOf(d: AnymailResponse): string | null {
-  if ((d.email_status ?? "").trim().toLowerCase() !== "valid") return null;
+  // A non-string status (true, ["valid"]) is "not verified", never a throw.
+  if (typeof d.email_status !== "string" || d.email_status.trim().toLowerCase() !== "valid") return null;
   const email = typeof d.valid_email === "string" ? d.valid_email.trim().toLowerCase() : "";
   return email || null;
 }
@@ -129,7 +130,12 @@ export async function anymailFindDecisionMaker(domain: string): Promise<AnymailR
   const d = (json ?? {}) as AnymailResponse;
   const email = verifiedEmailOf(d);
   if (!email) {
-    return { ok: false, error: "No valid email found", emailStatus: d.email_status ?? null };
+    const emailStatus =
+      typeof d.email_status === "string" ? d.email_status : d.email_status == null ? null : JSON.stringify(d.email_status);
+    // If Anymail's word for "verified" ever stops being exactly "valid", every
+    // lookup would silently find nothing; this line makes that visible. No address logged.
+    console.warn(`[anymail] ${clean}: rejected, email_status=${emailStatus ?? "none"}`);
+    return { ok: false, error: "No valid email found", emailStatus };
   }
 
   return {

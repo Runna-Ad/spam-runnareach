@@ -101,6 +101,36 @@ test("anymail: verifiedEmailOf accepts only status valid plus valid_email", () =
   assert.equal(verifiedEmailOf({ email: "a@b.ca" }), null);
 });
 
+test("anymail: a non-string status is no contact, never a throw", async () => {
+  for (const email_status of [true, ["valid"], { v: "valid" }, 1]) {
+    assert.equal(verifiedEmailOf({ email_status, valid_email: "a@b.ca" }), null, JSON.stringify(email_status));
+    await withAnymail({ ...person, valid_email: "henry@acme.ca", email_status }, async () => {
+      const r = await anymailFindDecisionMaker("acme.ca");
+      assert.equal(r.ok, false, JSON.stringify(email_status));
+    });
+  }
+});
+
+test("anymail: a rejected lookup logs the domain and status, never the address", async () => {
+  const realWarn = console.warn;
+  const lines: string[] = [];
+  console.warn = (...args: unknown[]) => void lines.push(args.map(String).join(" "));
+  try {
+    await withAnymail({ ...person, email: "henry.guess@acme.ca", valid_email: null, email_status: "risky" }, async () => {
+      await anymailFindDecisionMaker("acme.ca");
+    });
+    await withAnymail({ ...person, valid_email: "henry.v@acme.ca", email_status: "valid" }, async () => {
+      await anymailFindDecisionMaker("acme.ca");
+    });
+  } finally {
+    console.warn = realWarn;
+  }
+  assert.equal(lines.length, 1, lines.join("\n"));
+  assert.match(lines[0]!, /acme\.ca/);
+  assert.match(lines[0]!, /email_status=risky/);
+  assert.doesNotMatch(lines[0]!, /@/);
+});
+
 // ── One answer for every selected_by value ─────────────────────────────────────
 
 type Row = { provenance: Provenance; finder: boolean; trusted: boolean; verdict: Verdict };
@@ -119,7 +149,17 @@ const TODAY: Record<string, Row> = {
 const NEW: Record<string, Row> = {
   anymail_verified: { provenance: "medium", finder: false, trusted: true, verdict: "send" },
 };
-const ALL = { ...TODAY, ...NEW };
+/**
+ * The predicate is exact match: case, spaces and unknown values are untrusted.
+ * The verifier says "send" for them (default provenance, not a finder, same as
+ * null), so the lane's source check is what holds them for a person.
+ */
+const ODD: Record<string, Row> = {
+  Scraper: { provenance: "medium", finder: false, trusted: false, verdict: "send" },
+  " manual": { provenance: "medium", finder: false, trusted: false, verdict: "send" },
+  unknown_xyz: { provenance: "medium", finder: false, trusted: false, verdict: "send" },
+};
+const ALL = { ...TODAY, ...NEW, ...ODD };
 const val = (k: string) => (k === "(null)" ? null : k);
 
 const NONE = new Set<string>();
@@ -186,6 +226,15 @@ test("anymail_verified sends unattended; legacy anymail still needs a person", (
   assert.deepEqual(verified, { lane: "auto", reasons: [] });
   const legacy = laneFor({ ...cleanLane, recipientSelectedBy: "anymail", verify: verdictFor("anymail").verdict });
   assert.equal(legacy.lane, "review");
+});
+
+test("anymail_verified at a free-mail address goes to a person", () => {
+  const r = verifyEmailPure(
+    { email: "henry.jonk@gmail.com", selectedBy: "anymail_verified", prospectDomain: "acme.ca", bouncedDomains: NONE },
+    "mx",
+  );
+  assert.equal(r.verdict, "review");
+  assert.equal(laneFor({ ...cleanLane, recipientSelectedBy: "anymail_verified", verify: r.verdict }).lane, "review");
 });
 
 test("anymail_verified on a domain that already bounced is dropped", () => {
