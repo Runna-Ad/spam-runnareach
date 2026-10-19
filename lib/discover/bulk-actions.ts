@@ -9,6 +9,7 @@ import { generatePitchWith } from "@/lib/pitches/pitch-stage";
 import { processSingleProspect } from "@/lib/discover/pipeline-action";
 import { enrichContactsForProspect } from "@/lib/discover/enrich-contacts";
 import { hasUsableEmail } from "@/lib/research/email-utils";
+import { protectedStatusFilter } from "@/lib/prospects/status";
 import { createClient } from "@/lib/supabase/server";
 import type { Database } from "@/lib/supabase/types";
 
@@ -316,12 +317,12 @@ export async function bulkScoreProspects(
   const failed = results.length - affected;
   const firstErr = results.find((r) => !r.ok);
 
-  // ── Symmetric re-score triage ─────────────────────────────────────────────
-  // Mirror the pipeline's gate so bulk re-scoring keeps statuses honest:
-  //   score < 40  → suppress (only from early funnel states)
-  //   score ≥ 40 AND auto-suppressed before → un-suppress back to "researched"
-  // We only ever touch raw/researched/auto-suppressed rows — never a manually
-  // suppressed prospect or one a human advanced (pitched/replied/booked/won/lost).
+  // ── Re-score triage ───────────────────────────────────────────────────────
+  // Mirror the pipeline's gate: score < 40 → suppress, only from early funnel
+  // states. A parked prospect (suppressed / no_match) is never restored to a
+  // sendable status here, whatever it scores: the status rule
+  // (lib/prospects/status.ts, I5) refuses it and Pedro chose the rule over
+  // reactivation (2026-10-18).
   const scoreById = new Map<string, number>();
   ids.forEach((id, i) => {
     const r = results[i];
@@ -330,34 +331,29 @@ export async function bulkScoreProspects(
 
   const supabase = await createClient();
   const nowIso = new Date().toISOString();
-  type StatusRow = { id: string; status: string; suppressed_reason: string | null };
+  type StatusRow = { id: string; status: string };
   const { data: statusRows } = await supabase
     .from("prospects")
-    .select("id, status, suppressed_reason")
+    .select("id, status")
     .in("id", [...scoreById.keys()])
     .eq("tenant_id", user.tenantId)
     .returns<StatusRow[]>();
 
   const toSuppress: string[] = [];
-  const toRestore: string[] = [];
   for (const row of statusRows ?? []) {
     const score = scoreById.get(row.id);
     if (score === undefined) continue;
     if (score < 40 && (row.status === "raw" || row.status === "researched")) {
       toSuppress.push(row.id);
-    } else if (
-      score >= 40 &&
-      ((row.status === "suppressed" && (row.suppressed_reason ?? "").startsWith("Auto:")) ||
-        row.status === "no_match")
-    ) {
-      // Reactivate a parked prospect that now clears the bar (auto-suppressed
-      // under an old score, or no_match-archived by the legacy scrape path).
-      toRestore.push(row.id);
     }
   }
 
+  // The status read above can be stale by the time this runs (a booking, a
+  // reply): the rule's guard in the WHERE refuses a protected row, and only
+  // the rows that actually moved are audited.
+  let suppressedIds: string[] = [];
   if (toSuppress.length > 0) {
-    await supabase
+    const { data: moved } = await supabase
       .from("prospects")
       .update({
         status: "suppressed",
@@ -366,24 +362,16 @@ export async function bulkScoreProspects(
         updated_at: nowIso,
       })
       .in("id", toSuppress)
-      .eq("tenant_id", user.tenantId);
-  }
-  if (toRestore.length > 0) {
-    // Restore to "researched" (scored, not yet pitched) and clear the auto-suppress.
-    await supabase
-      .from("prospects")
-      .update({
-        status: "researched",
-        suppressed_reason: null,
-        suppressed_at: null,
-        updated_at: nowIso,
-      })
-      .in("id", toRestore)
-      .eq("tenant_id", user.tenantId);
+      .eq("tenant_id", user.tenantId)
+      .in("status", ["raw", "researched"])
+      .not("status", "in", protectedStatusFilter("suppressed", "automation")!)
+      .select("id")
+      .returns<{ id: string }[]>();
+    suppressedIds = (moved ?? []).map((r) => r.id);
   }
 
   await Promise.all(
-    [...toSuppress, ...toRestore].map((id) =>
+    suppressedIds.map((id) =>
       writeAuditLog({
         tenantId: user.tenantId,
         actorId: user.id,
@@ -392,7 +380,7 @@ export async function bulkScoreProspects(
         entityId: id,
         metadata: {
           via: "bulk_rescore",
-          to: toSuppress.includes(id) ? "suppressed" : "researched",
+          to: "suppressed",
           score: scoreById.get(id) ?? null,
         },
       }),
@@ -499,8 +487,7 @@ export async function bulkScoreProspects(
   revalidatePath("/dashboard");
 
   const triageNote = [
-    toSuppress.length > 0 ? `${toSuppress.length} suppressed (<40)` : null,
-    toRestore.length > 0 ? `${toRestore.length} restored (≥40)` : null,
+    suppressedIds.length > 0 ? `${suppressedIds.length} suppressed (<40)` : null,
     enrichedCount > 0 ? `${enrichedCount} decision-maker${enrichedCount === 1 ? "" : "s"} found` : null,
     noContactCount > 0 ? `${noContactCount} still unreachable` : null,
   ]

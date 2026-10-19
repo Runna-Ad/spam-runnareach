@@ -145,14 +145,25 @@ test("intent-actions: wants_meeting leaves won/lost alone, bounce leaves booked/
   assert.equal(protectedStatusFilter("lost", "person"), null);
 });
 
-test("pipeline re-run never reactivates a parked prospect (Pedro 2026-10-18: the status rule wins)", async () => {
-  // I5: suppressed / no_match → researched is refused for automation and people alike.
+test("I5: automated writers never un-park a prospect (suppressed / no_match → sendable)", () => {
+  // The pipeline, bulk re-score and deep research enforce this through the guard
+  // in each UPDATE's WHERE: tests/pipeline-status-rule.test.ts drives them. A
+  // person's direct status change (bulkTransitionStatus, transitionStatus) can
+  // still un-suppress (Pedro 2026-10-18).
   for (const parked of ["suppressed", "no_match"]) {
-    assert.equal(mayOverwriteStatus(parked, "researched", "automation"), false);
-    assert.equal(mayOverwriteStatus(parked, "researched", "person"), false);
+    for (const next of ["researched", "pitched", "b_list", "raw", "scored"]) {
+      assert.equal(mayOverwriteStatus(parked, next, "automation"), false, `${parked} → ${next}`);
+    }
   }
-  // And the pipeline stage no longer writes that transition at all.
+});
+
+test("automated early-funnel writes re-check their from-state in the WHERE (stale reads can't un-park or over-suppress)", async () => {
   const { readFileSync } = await import("node:fs");
-  const src = readFileSync(new URL("../lib/discover/pipeline-stage.ts", import.meta.url), "utf8");
-  assert.doesNotMatch(src, /status:\s*"researched"/);
+  const read = (p: string) => readFileSync(new URL(`../${p}`, import.meta.url), "utf8");
+  // scrape: raw → researched only while still raw.
+  assert.match(read("lib/research/scrape-stage.ts"), /status: "researched"[\s\S]{0,200}\.eq\("status", "raw"\)/);
+  // deep research and bulk re-score suppress only the early funnel.
+  for (const p of ["lib/research/deep-research-stage.ts", "lib/discover/bulk-actions.ts"]) {
+    assert.match(read(p), /status: "suppressed"[\s\S]{0,900}\.in\("status", \["raw", "researched"\]\)/, p);
+  }
 });
