@@ -16,7 +16,16 @@ import { isSchedulerAuthorized } from "@/lib/cron-auth";
 import { createServiceRoleClient } from "@/lib/supabase/service-role";
 import { getAccessToken, sendGmailMessage } from "@/lib/gmail/client";
 import { bodyWithFooter, getOutboundCompliance } from "@/lib/compliance/outbound";
-import { effectiveSendsToday, utcToday } from "@/lib/pitches/daily-cap";
+import {
+  effectiveSendsToday,
+  hasTimeToClaim,
+  holdDoubtfulAutoApproval,
+  latestApprovalByAutopilot,
+  releaseSendSlot,
+  reserveSendSlot,
+  sendTimeVerdictAction,
+  type SlotClient,
+} from "@/lib/pitches/daily-cap";
 import { hasUsableEmail } from "@/lib/research/email-utils";
 import { isEmailOnDncList, type DncClient } from "@/lib/discover/dnc-check";
 import { findSentMessage } from "@/lib/gmail/read";
@@ -174,12 +183,14 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
+  const startMs = Date.now();
   const supabase = createServiceRoleClient() as AnySupabase;
+  const slots = supabase as SlotClient;
   const nowIso = new Date().toISOString();
   const results: SendOutcome[] = [];
 
-  // Inbox send-budget cache for THIS tick: tracks how many we've already sent
-  // per inbox so we respect daily_cap without re-reading after every send.
+  // Inbox cache for THIS tick. `remaining` only skips work early; the slot
+  // RPC (migration 0049) is what enforces daily_cap, across overlapping runs.
   const inboxCache = new Map<
     string,
     {
@@ -187,8 +198,7 @@ export async function GET(req: NextRequest) {
       display_name: string;
       token: string | null;
       paused: boolean;
-      sends_today: number; // running count, written back after each send
-      remaining: number; // daily_cap - sends_today, decremented as we send
+      remaining: number; // daily_cap - sends_today at first read; 0 once the slot RPC says the cap is reached
       bounceBlock?: string | null; // undefined = not checked yet this run; string = skip reason
     }
   >();
@@ -217,6 +227,11 @@ export async function GET(req: NextRequest) {
       // resolves it on the next run from Gmail's Sent folder.
       try {
         if (sentThisTick >= SEND_PER_TICK) break;
+        // Time budget: what's left is picked up by the next run (every 10 min).
+        if (!hasTimeToClaim(startMs)) {
+          results.push({ pitch_id: pitch.id, status: "skipped", reason: "Time budget reached — next run" });
+          break;
+        }
         if (!pitch.sender_inbox_id) {
           results.push({ pitch_id: pitch.id, status: "skipped", reason: "No sender inbox" });
           continue;
@@ -241,7 +256,6 @@ export async function GET(req: NextRequest) {
             display_name: row.display_name,
             token: row.gmail_refresh_token_encrypted,
             paused: row.paused,
-            sends_today: sentToday,
             remaining: Math.max(0, (row.daily_cap ?? 0) - sentToday),
           };
           inboxCache.set(pitch.sender_inbox_id, inbox);
@@ -336,18 +350,32 @@ export async function GET(req: NextRequest) {
           continue;
         }
         // SPAM Verify: an address that can only bounce, or must never be
-        // pitched, leaves the queue. "review" still sends — a human approved it;
-        // the autopilot will only ever auto-send "send".
+        // pitched, leaves the queue. "review" sends when a person approved it
+        // (their call); when the autopilot approved it, the address became
+        // doubtful after approval, so it goes back to a person instead.
         const verify = await verifyRecipient(supabase, {
           tenantId: pitch.tenant_id,
           email: toEmail,
           selectedBy: contact?.selected_by ?? null,
           prospectDomain: prospectRow?.domain ?? null,
         });
-        if (verify.verdict === "drop") {
+        const byAutopilot =
+          verify.verdict === "review" ? await latestApprovalByAutopilot(supabase, pitch.tenant_id, pitch.id) : false;
+        const verdictAction = sendTimeVerdictAction(verify.verdict, byAutopilot);
+        if (verdictAction === "drop") {
           const reason = `SPAM Verify: ${verify.reasons.join("; ")}`;
           await dropFromQueue(supabase, pitch.id, reason);
           results.push({ pitch_id: pitch.id, status: "skipped", reason });
+          continue;
+        }
+        if (verdictAction === "skip") {
+          results.push({ pitch_id: pitch.id, status: "skipped", reason: "Couldn't read who approved it (address needs review) — not sent" });
+          continue;
+        }
+        if (verdictAction === "hold") {
+          const why = `SPAM Verify review: ${verify.reasons.join("; ")}`;
+          await holdDoubtfulAutoApproval(supabase, { tenantId: pitch.tenant_id, pitchId: pitch.id, why });
+          results.push({ pitch_id: pitch.id, status: "skipped", reason: `Back to review — ${why}` });
           continue;
         }
         const body = (pitch.body_edited ?? pitch.body_original ?? "").trim();
@@ -405,6 +433,12 @@ export async function GET(req: NextRequest) {
           continue;
         }
 
+        // The checks above take seconds each: re-check the budget at the claim.
+        if (!hasTimeToClaim(startMs)) {
+          results.push({ pitch_id: pitch.id, status: "skipped", reason: "Time budget reached — next run" });
+          break;
+        }
+
         // ── Optimistic lock: claim the pitch (approved → sending) ────────────
         const { data: locked } = await supabase
           .from("pitches")
@@ -418,10 +452,23 @@ export async function GET(req: NextRequest) {
           continue;
         }
 
-        // ── Send ─────────────────────────────────────────────────────────────
+        // ── Take a daily slot (one SQL statement; overlapping runs can't over-send) ─
         const releaser = supabase as unknown as ReleaseClient;
+        const inboxId = pitch.sender_inbox_id;
+        const slot = await reserveSendSlot(slots, inboxId);
+        if (!slot.ok) {
+          await releaseClaim(releaser, { pitchId: pitch.id, to: "approved" });
+          if (slot.capReached) inbox.remaining = 0;
+          results.push({ pitch_id: pitch.id, status: "skipped", reason: slot.reason });
+          continue;
+        }
+        // From here, every exit where Gmail did not take the message gives back
+        // the slot AND the claim.
+
+        // ── Send ─────────────────────────────────────────────────────────────
         const tokenResult = await getAccessToken(inbox.token);
         if (!tokenResult.ok) {
+          await releaseSendSlot(slots, inboxId);
           await releaseClaim(releaser, { pitchId: pitch.id, to: "approved" });
           results.push({ pitch_id: pitch.id, status: "error", reason: `Auth: ${tokenResult.error}` });
           continue;
@@ -440,6 +487,7 @@ export async function GET(req: NextRequest) {
           email: toEmail,
         });
         if (lastCheck) {
+          await releaseSendSlot(slots, inboxId);
           await releaseClaim(releaser, { pitchId: pitch.id, ...queueReleaseFor(lastCheck) });
           results.push({ pitch_id: pitch.id, status: "skipped", reason: lastCheck.reason });
           continue;
@@ -459,6 +507,7 @@ export async function GET(req: NextRequest) {
         });
 
         if (!sendResult.ok) {
+          await releaseSendSlot(slots, inboxId);
           await releaseClaim(releaser, { pitchId: pitch.id, to: "approved" });
           results.push({ pitch_id: pitch.id, status: "error", reason: `Send: ${sendResult.error}` });
           continue;
@@ -479,14 +528,7 @@ export async function GET(req: NextRequest) {
           })
           .eq("id", pitch.id);
 
-        // Increment the inbox's daily counter (cache-tracked to stay correct
-        // across multiple sends from the same inbox within this tick).
-        inbox.sends_today += 1;
-        inbox.remaining -= 1;
-        await supabase
-          .from("sender_inboxes")
-          .update({ sends_today: inbox.sends_today, last_reset_date: utcToday() })
-          .eq("id", pitch.sender_inbox_id);
+        // (The send was counted when its slot was reserved.)
 
         await recordPitchEvent(supabase, {
           tenantId: pitch.tenant_id,

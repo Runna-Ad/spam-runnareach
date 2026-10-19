@@ -4,16 +4,16 @@
  * sendPitch — server action
  *
  * Loads an approved pitch + the chosen sender inbox, verifies ownership,
- * checks the daily cap, decrypts the refresh token, exchanges it for an
- * access token, sends via Gmail, then marks the pitch `sent` and
- * increments `sends_today` on the inbox — all in a single atomic-ish
- * operation (best-effort: the DB write happens after a successful send).
+ * takes one of the inbox's daily slots (atomic RPC, migration 0049),
+ * decrypts the refresh token, exchanges it for an access token, sends via
+ * Gmail, then marks the pitch `sent`. The slot goes back if Gmail did not
+ * accept the message.
  */
 
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { writeAuditLog } from "@/lib/audit/log";
-import { bumpSendsTodayPayload, effectiveSendsToday } from "@/lib/pitches/daily-cap";
+import { effectiveSendsToday, releaseSendSlot, reserveSendSlot, type SlotClient } from "@/lib/pitches/daily-cap";
 import { fetchTopUsableContact } from "@/lib/pitches/contacts";
 import { hasUsableEmail } from "@/lib/research/email-utils";
 import { isEmailOnDncList, type DncClient } from "@/lib/discover/dnc-check";
@@ -203,7 +203,8 @@ export async function sendPitch(input: {
     return { ok: false, error: "Inbox is not connected to Gmail. Connect it first in Settings → Sending." };
   }
   // Daily cap resets at the UTC day boundary — a stale last_reset_date means
-  // yesterday's count no longer applies.
+  // yesterday's count no longer applies. Early answer only: the slot RPC
+  // below is what enforces the cap.
   const sentToday = effectiveSendsToday(inbox.sends_today, inbox.last_reset_date);
   if (sentToday >= inbox.daily_cap) {
     return {
@@ -231,10 +232,27 @@ export async function sendPitch(input: {
   // person rejected meanwhile must not be re-approved by this rollback.
   const releaser = supabase as unknown as ReleaseClient;
 
+  // ── 3b. Take a daily slot (one SQL statement; a cron run at the same time
+  // can't push the inbox past its cap). Untyped: the RPC isn't in types.ts yet.
+  const slots = supabase as unknown as SlotClient;
+  const slot = await reserveSendSlot(slots, inbox_id);
+  if (!slot.ok) {
+    await releaseClaim(releaser, { pitchId: pitch_id, tenantId: user.tenantId, to: "approved" });
+    return {
+      ok: false,
+      error: slot.capReached
+        ? `Daily cap reached (${inbox.daily_cap}/${inbox.daily_cap}). Try another inbox or wait until tomorrow.`
+        : `${slot.reason}. Not sent — try again.`,
+    };
+  }
+  // From here, every exit where Gmail did not take the message gives back the
+  // slot AND the claim.
+
   // ── 4. Exchange refresh token → access token ───────────────────────────────
   const tokenResult = await getAccessToken(inbox.gmail_refresh_token_encrypted);
   if (!tokenResult.ok) {
     // Rollback status so user can retry after fixing creds
+    await releaseSendSlot(slots, inbox_id);
     await releaseClaim(releaser, { pitchId: pitch_id, tenantId: user.tenantId, to: "approved" });
     return { ok: false, error: `Gmail auth failed: ${tokenResult.error}` };
   }
@@ -247,6 +265,7 @@ export async function sendPitch(input: {
     email: toEmail,
   });
   if (lastCheck) {
+    await releaseSendSlot(slots, inbox_id);
     await releaseClaim(releaser, { pitchId: pitch_id, tenantId: user.tenantId, to: "approved" });
     return { ok: false, error: `${lastCheck.reason} — not sending.` };
   }
@@ -268,6 +287,7 @@ export async function sendPitch(input: {
 
   if (!sendResult.ok) {
     // Rollback so user can retry
+    await releaseSendSlot(slots, inbox_id);
     await releaseClaim(releaser, { pitchId: pitch_id, tenantId: user.tenantId, to: "approved" });
     return { ok: false, error: `Send failed: ${sendResult.error}` };
   }
@@ -292,11 +312,7 @@ export async function sendPitch(input: {
     .eq("id", pitch_id)
     .eq("tenant_id", user.tenantId);
 
-  await supabase
-    .from("sender_inboxes")
-    .update(bumpSendsTodayPayload(inbox.sends_today, inbox.last_reset_date))
-    .eq("id", inbox_id)
-    .eq("tenant_id", user.tenantId);
+  // (The send was counted when its slot was reserved.)
 
   await recordPitchEvent(supabase, {
     tenantId: user.tenantId,
