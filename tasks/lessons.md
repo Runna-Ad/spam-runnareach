@@ -1692,3 +1692,8 @@ TAGS: autopilot, verify, caching
 WHAT HAPPENED: holdAutoApprovals selects approved pitches, then updates them with .eq("status","approved"). The mutation check (remove the guard) passed all tests, because the read already filtered on status. Adding a beforeUpdate hook to the fake (the send-queue claims a row between our read and our write) made the mutation fail.
 RULE: For every WHERE guard on an update that repeats the read's filter, write the test where another writer changes the row between the read and the update; run the mutation (delete the guard) to prove it.
 TAGS: testing, autopilot, races
+
+[2026-10-19] PEDRO_OVERRIDE: a bounce is an address problem, not a pitch-quality problem; it must not demote the autopilot
+WHAT HAPPENED: Two hard bounces on the first AUTO drip tripped the inbox_bounces breaker, which paused the inbox (right) AND dropped the autopilot veto -> shadow (nextStage demotes on ANY breaker trip in the stage, autoBreakerTrips). Pedro: "that had nothing to do with the quality of the pitches." Shadow then needs 7 days + 100 decisions to climb back, which stalls a system meant to run fully automatic, for a cause the stage system does not measure.
+RULE: Keep the two kinds of trust separate. Deliverability trips (bounces, Gmail API errors, DMARC, blocklist, placement) PAUSE SENDING and never move the stage; only pitch-quality signals (factual or recipient errors, veto/edit rate, possibly an opt-out spike) demote. Until batch 4 changes nextStage, a deliverability demotion is undone by hand once its cause is fixed (done 2026-10-19: back to veto after the bounce hotfix).
+TAGS: autopilot, stages, breakers, pedro-override
