@@ -80,6 +80,7 @@ SHIPPED on Pedro's "ship it": migrations 0040 + 0041 applied, main = `4b22ad1`+,
 - Session note: the Auto-mode safety check refused the service-role pipeline and creating an account; Pedro switched the session to "Accept edits" and approved. Permission rules were not edited.
 
 ## Weekly report: exemplar readiness + designed HTML (SHIPPED 2026-10-19 on Pedro's "ship it": main = `45519c8`, PR #29)
+Ship verified: deploy dpl_GY6srNis2CwRmtxjtgvkvCVNU5mY READY 13:59:26 UTC; ticks 14:00–14:45 200 errors []; health 14:25 problems [].
 Pedro 2026-10-19: the Monday report says how many past pitches would qualify as exemplars (one shared predicate
 `qualifiesAsExemplar` in lib/pitches/exemplars.ts, used by the selector and the count) and is sent with a designed HTML
 part (header, KPI tiles, section cards, semantic delta colours; the plain-text part is unchanged apart from the new
