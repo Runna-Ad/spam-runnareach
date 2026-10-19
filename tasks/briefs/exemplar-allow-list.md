@@ -326,3 +326,24 @@ drop); streets made of everyday words; department inboxes (Not now).
 Acceptance (6c): a test per blocking item that fails on da78f31; all earlier tests green;
 held-out names ≥ 98%; the conductor re-runs the 30 real pitches (target ≥ 24 kept, every
 drop real). Same stop rule.
+
+## Round 6d (conductor, 2026-10-19, after the 6c review: fix-then-merge, 1 blocking, no new class)
+6c measured: 24/30 real kept, identical to 6b; 909 green; B1/B2 fixed for every probe.
+1. **BLOCKING: dotted initials** (exemplars.ts ~1192 allowListLeaks + ~373 `inWords` passes
+   any token ≤ 1 letter). City null (or Coyoacán/Polanco): "Atendemos clínicas en el D.F.
+   desde hace años." KEPT; "Clínicas en la C.D.M.X. pierden llamadas." KEPT; subject
+   "clínicas en el d.f." KEPT; "Hoteles en G.D.L. y M.T.Y." KEPT; "Clinics in T.O." KEPT.
+   In allowListLeaks, collapse each run of dotted single letters and look the joined form
+   up in places plus a small hand set (df, cdmx, gdl, mty, qro, slp, to, bc, bcs, edomex if
+   missing). Do NOT require the joined form to be a word ("e.g.", "i.e.", "a.m.", "p.m."
+   must still pass). Test with the five probes (fails on 6084273).
+2. Optional, take: suffix-stripped heads that are everyday words only cost false drops
+   (Fuentes del Valle → fuentes, Jardines de la Silla → jardines, Playas del Rosario →
+   playas, Terrazas del Valle, Pórticos de San Antonio): keep a suffix-stripped head as a
+   single-word place only if it is NOT a top-20k word (the full phrase stays). Generate
+   "cd X" / "cd. X" for every "ciudad X" phrase ("Cd. Victoria"). "#3amigos" → [site] like
+   "@3amigos".
+Not taken: the Cancún / Los Cabos template switch stays off (it would pass both places in
+every real pitch).
+Acceptance: the five probes drop; e.g./i.e./a.m./p.m. pass; all tests green; the conductor
+verifies this delta directly and re-runs the 30 real pitches.
