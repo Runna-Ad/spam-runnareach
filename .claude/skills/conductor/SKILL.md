@@ -89,6 +89,10 @@ rework in retros traces to a missing sentence in the brief. Before spawning, che
   (the conductor exports a fixture to the worker or measures before review). A metric on
   a generator built from the same vocabulary the worker then tunes measures nothing
   (batch 3: 0.8% generated vs 80% real drop rate).
+- A list built from external data (gazetteer, names, dictionary): the brief names the
+  everyday spellings to probe that the data writes differently ("Mexico City" vs "Ciudad
+  de México", "León de los Aldama" vs "León") and asks the generator to print what it
+  added and what it intersects with our allow lists (#17 r6b: 1 blocking from each).
 - A migration the old prod code will run against (applied before the deploy): the brief
   says what rows the old code writes in the gap and what the new code then does to them;
   never key a window on `updated_at` (the trigger bumps it on every write).

@@ -1,14 +1,19 @@
 // Exemplar memory, the data side: read the candidates, their outcomes, and the
 // chosen pitches' text. Selection and scrubbing are pure (./exemplars.ts).
 //
-// Three small reads, tenant-scoped, under ONE shared time budget
+// Small reads, tenant-scoped, under ONE shared time budget
 // (EXEMPLAR_FETCH_BUDGET_MS) so the writer and critic are never starved:
 //   1. recent settled root pitches in the prospect's language (light columns),
 //      filtered to the segment in memory (prospect.industry is free text, so
-//      SQL cannot match a segment),
+//      SQL cannot match a segment); a prospect suppressed since (opt-out,
+//      bounce, a person) is skipped,
 //   2. outcome events for every eligible candidate (at most EXEMPLAR_SHORTLIST),
 //      so a pitch with a reply is scored even when newer silent sends exist,
-//   3. subject + body + who it went to, for the (at most two) chosen.
+//   3. the do-not-contact list for the picked addresses and their domains: an
+//      opted-out address is never anyone's example, even when its own
+//      unsubscribe event is missing (a manual entry, an opt-out logged on
+//      another root pitch),
+//   4. subject + body + who it went to, for the (at most two) chosen.
 // Never throws: an exemplar is an enhancement, not a dependency. Any failure
 // is logged and returns [], and the pitch is written exactly as without
 // exemplars. A chosen pitch whose scrubbed text still names its prospect is
@@ -41,7 +46,7 @@ type CandidateRow = {
   sent_at: string | null;
   critic_pass: boolean | null;
   gate_override: unknown;
-  prospects: { industry: string | null; market: string | null; language: string } | null;
+  prospects: { industry: string | null; market: string | null; language: string; status: string | null } | null;
   prospect_contacts: { email: string | null } | null;
 };
 
@@ -61,6 +66,43 @@ function overridden(v: unknown): boolean {
   return Array.isArray(codes) ? codes.length > 0 : true;
 }
 
+type DncEntries = { emails: Set<string>; domains: Set<string> };
+
+const mailbox = (email: string | null | undefined) => (email ?? "").trim().toLowerCase();
+const domainOf = (mailboxAddress: string) => mailboxAddress.split("@")[1] ?? "";
+
+/** True when the address, or its whole domain, is on the do-not-contact list (same match as isEmailOnDncList). */
+export function onDnc(dnc: DncEntries, email: string | null | undefined): boolean {
+  const m = mailbox(email);
+  if (!m.includes("@")) return false;
+  return dnc.emails.has(m) || dnc.domains.has(domainOf(m));
+}
+
+/** The do-not-contact entries for these addresses and their domains; null when the lookup failed. */
+async function dncEntries(
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  supabase: SupabaseClient<any>,
+  tenantId: string,
+  emails: Array<string | null>,
+  signal: AbortSignal,
+): Promise<DncEntries | null> {
+  const mailboxes = [...new Set(emails.map(mailbox).filter((m) => m.includes("@")))];
+  const out: DncEntries = { emails: new Set(), domains: new Set() };
+  if (mailboxes.length === 0) return out;
+  const domains = [...new Set(mailboxes.map(domainOf).filter(Boolean))];
+  const [byEmail, byDomain] = await Promise.all([
+    supabase.from("do_not_contact_list").select("email").eq("tenant_id", tenantId).in("email", mailboxes).abortSignal(signal),
+    supabase.from("do_not_contact_list").select("domain").eq("tenant_id", tenantId).in("domain", domains).abortSignal(signal),
+  ]);
+  if (byEmail.error || byDomain.error) {
+    console.error("[exemplars] do-not-contact query failed:", (byEmail.error ?? byDomain.error)?.message);
+    return null;
+  }
+  for (const r of (byEmail.data ?? []) as Array<{ email: string | null }>) if (r.email) out.emails.add(mailbox(r.email));
+  for (const r of (byDomain.data ?? []) as Array<{ domain: string | null }>) if (r.domain) out.domains.add(r.domain.trim().toLowerCase());
+  return out;
+}
+
 export async function fetchExemplars(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   supabase: SupabaseClient<any>,
@@ -68,9 +110,8 @@ export async function fetchExemplars(
   target: ExemplarTarget,
   now: Date = new Date(),
 ): Promise<Exemplar[]> {
-  // Kill switch (conductor, 2026-10-18): off until the allow-list leak check
-  // (PR #17) is merged. The deny-list scrubber still leaks some name and city
-  // spellings; no exemplar has qualified in prod yet, so this costs nothing today.
+  // Kill switch: off unless EXEMPLARS_ENABLED=1 in Vercel (Pedro's call; the
+  // allow-list leak check of PR #17 is what makes turning it on safe).
   if (process.env.EXEMPLARS_ENABLED !== "1") return [];
   if (target.segment.industry === "other") return [];
   const signal = AbortSignal.timeout(EXEMPLAR_FETCH_BUDGET_MS);
@@ -79,7 +120,7 @@ export async function fetchExemplars(
     const { data: rows, error } = await supabase
       .from("pitches")
       .select(
-        "id, prospect_id, parent_pitch_id, status, sent_at, critic_pass:decision->critic->pass, gate_override, prospects!inner(industry, market, language), prospect_contacts:contact_id(email)",
+        "id, prospect_id, parent_pitch_id, status, sent_at, critic_pass:decision->critic->pass, gate_override, prospects!inner(industry, market, language, status), prospect_contacts:contact_id(email)",
       )
       .eq("tenant_id", tenantId)
       .eq("status", "sent")
@@ -96,7 +137,7 @@ export async function fetchExemplars(
     }
     if (!rows || rows.length === 0) return [];
 
-    const candidates: ExemplarCandidate[] = rows.map((r) => ({
+    const candidates: ExemplarCandidate[] = rows.filter((r) => r.prospects?.status !== "suppressed").map((r) => ({
       pitch_id: r.id,
       prospect_id: r.prospect_id,
       parent_pitch_id: r.parent_pitch_id,
@@ -140,13 +181,20 @@ export async function fetchExemplars(
     );
     if (picked.length === 0) return [];
 
+    // Fails closed: an exemplar is an enhancement, so an unreadable list means none.
+    const emailOf = new Map(shortlist.map((c) => [c.pitch_id, c.recipient_email]));
+    const dnc = await dncEntries(supabase, tenantId, picked.map((p) => emailOf.get(p.pitch_id) ?? null), signal);
+    if (!dnc) return [];
+    const allowed = picked.filter((p) => !onDnc(dnc, emailOf.get(p.pitch_id)));
+    if (allowed.length === 0) return [];
+
     const { data: texts, error: textErr } = await supabase
       .from("pitches")
       .select(
         "id, subject, body_original, body_edited, prospects(company_name, domain, website_url, city), prospect_contacts:contact_id(full_name, email)",
       )
       .eq("tenant_id", tenantId)
-      .in("id", picked.map((p) => p.pitch_id))
+      .in("id", allowed.map((p) => p.pitch_id))
       .abortSignal(signal)
       .returns<TextRow[]>();
     if (textErr) {
@@ -158,7 +206,7 @@ export async function fetchExemplars(
 
     const out: Exemplar[] = [];
     let scrubFailed = 0;
-    for (const p of picked) {
+    for (const p of allowed) {
       if (out.length >= MAX_EXEMPLARS) break;
       const t = byId.get(p.pitch_id);
       // What a person approved, without the compliance footer body_sent carries.

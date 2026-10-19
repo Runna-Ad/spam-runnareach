@@ -243,3 +243,107 @@ real leak, kept exemplars carry no capitalized mid-sentence token from a public 
 Stop rule: if the round-6 review finds another BLOCKING leak class, #17 is parked and the
 conductor proposes a different design to Pedro (exemplars written as templates at
 generation time). Say in the PR body what you could not close.
+
+## Round 6b (conductor, 2026-10-19, after the round-6 review: merge, 0 blocking, no new blocking leak class)
+Not a new design round: the base merge this branch needs anyway (GitHub: dirty against
+729b299), plus the optional findings below, in ONE push. The stop rule still holds for the
+review of this push.
+0. **Merge the base first.** `origin/claude/optimistic-tesla-3gceud` is now main 729b299 (+
+   docs). It was restarted from main after PR #27's squash, so the conflicts in
+   lib/discover/bulk-actions.ts, lib/research/deep-research-stage.ts, tasks/board.md,
+   tests/pipeline-status-rule.test.ts and tests/prospect-status.test.ts are #27's: take the
+   BASE side for every file outside the exemplar set. Afterwards
+   `git diff origin/claude/optimistic-tesla-3gceud --name-only` lists only the exemplar files,
+   claude-composer.ts, greeting-name.ts and your lessons-inbox file.
+1. **Places when the city field misses them** (review optional 1; the round-5 must-drop
+   "Monterrey" class). City null, "Vi que son distribuidores Toyota en Querétaro" is kept;
+   23/132 CA/MX cities pass (Toronto, Vancouver, Quebec, Waterloo, Puebla, Querétaro, Oaxaca,
+   Veracruz, Cancún, Ensenada, Los Cabos, Condesa…) because they are on our word lists; city
+   field "San Andrés Cholula" with "Puebla" in the body, "Mississauga" with "Toronto" also pass.
+   (a) Remove from CAPITALIZED_WORDS every state/province name that is also a city
+   (puebla, queretaro, oaxaca, chihuahua, aguascalientes, durango, zacatecas, colima,
+   campeche, tlaxcala, veracruz, guanajuato, quebec, and any other you find).
+   (b) A place deny built by the generator at dev time from GeoNames (free, CC BY 4.0: put
+   the attribution in the generator and the list header; no runtime dependency, no paid
+   service): CA + MX populated places with population ≥ 15,000 (cities15000), multi-word
+   ones as phrases (Los Cabos, Boca del Río, San Andrés Cholula), plus CDMX alcaldías and the
+   best-known colonias if the data is at hand (Condesa, Polanco, Roma, Coyoacán, Santa Fe).
+   Denied in any position and case tier where a strong name is denied, AND at a sentence
+   start (a place opening a sentence identifies as much). Countries and states/provinces
+   that are not also a city stay allowed (México, Canada, Alberta, Ontario, Jalisco).
+   Fail closed; report the false drops it causes on the generator and our 22 templates
+   rather than allow-listing them silently.
+2. **Greeting rule shared whole** (optional 2): "J Torres" + memo.torres@ → composer greets
+   "Memo" → kept. Move firstNameGuess's WHOLE rule (full-name first token ≥ 2 chars, else
+   email local part, else role) into greeting-name.ts; the scrubber uses it; the leak
+   check drops its `!recipient_name` condition (its coarse email rule always applies).
+3. **False drops measured on real pitches:** plural acronyms (SKUs, KPIs, CTAs, URLs,
+   PDFs, FAQs: capitals + lowercase "s"; regression vs round 5's must-pass "skus"); region
+   words (Western, Northern, Southern, Eastern, Central, Atlantic, Prairies, Maritimes);
+   the platforms our pitches name (Wix, Squarespace, Shopify, GoDaddy, Webflow, Tiendanube,
+   Mercado Libre) next to WordPress/WooCommerce.
+4. Tests: one per item above that fails on d425754; tighten
+   tests/pitch-exemplars-allowlist.test.ts:40 (assert null for the non-address adversarial
+   inputs: a kept Cyrillic "Pаtel" must fail the test).
+5. If cheap: scrubber title patterns get the round-6 titles (Profa., Fisio., Lcdo.… scrub
+   instead of drop); cosmetic "[site]]" and "#1 rated" → "[site] rated".
+Not now (carried): brands alone (Toyota, Volvo: not identifying without a place, which 1
+closes); nicknames missing from the names list (third person only); ROLE_LOCALS
+department inboxes (fails closed); lowercase COMMON_NAMES false drops (rojas, ríos).
+Acceptance (6b): 902+ tests green; held-out names ≥ 98%; each item a test failing on
+d425754; the conductor re-runs the 30 real pitches (target: ≥ 21 kept, the SKUs / Western /
+Wix drops gone, no GeoNames place token in any kept exemplar).
+
+## Round 6c (conductor, 2026-10-19, after the 6b review: fix-then-merge, 2 blocking, no new blocking leak class)
+6b measured on the 30 real pitches: 24/30 kept, every drop a real leak, 0 false drops. Fix:
+1. **BLOCKING B1, places the list misses** (item 1's own class). (a) The Spanish name of Mexico
+   City is in no list (GeoNames: "Mexico City"; "ciudad" is a word, "méxico" is allowed):
+   city null or an alcaldía, "Vi que atienden clínicas en Ciudad de México…" is KEPT, also
+   "Cd. de México", "Cd. México", sentence start, lowercase subject. Add Ciudad de México /
+   Cd. de México / Cd. México (and the CA/MX alternate names GeoNames carries for the same
+   rows, if your source has them) as place phrases. (b) The generator strips official
+   PREFIXES but not suffixes: "León de los Aldama" leaves "León" KEPT (sentence start,
+   subject "clínicas en león"); "Iguala" (de la Independencia) KEPT everywhere; "Poza Rica"
+   (de Hidalgo), "La Piedad" (de Cabadas) KEPT in a lowercase subject. Strip " de …" / " del …"
+   suffixes too (keep both forms), and add the result as a build-time print like the
+   name-only one.
+2. **BLOCKING B2, regression in the last-name-piece rule** (exemplars.ts ~1037–1043):
+   appending the email local part moves the `last` index, so a particle surname stops being
+   checked: recipient "Minh Le" + minhle@ → "Le and her team answer every call" KEPT (and
+   "Thanh Do" + thanhdo@). Compute `last` over leakParts(recipient_name) only; add the I3
+   particle test with recipient_email set.
+3. Optional, take: "cabo" (and "Playa" as Playa del Carmen's short form) as places; a place
+   phrase counts when any word after the first is capitalized ("en los Cabos"); "@3amigos"
+   → [site] again (blank digit-led handles, or match [@#] in ADDRESS_LEFT); refresh the
+   exemplars.ts header invariant (PLATFORMS beat the name deny; place positions; the new
+   residuals: lowercase places in a body, placeWords in a lowercase subject); make the
+   "intersect every allow list with places" step real in the generator (a build-time print).
+   If cheap: the best-known MTY/GDL colonias (Cumbres, San Pedro, Valle Oriente, Providencia,
+   Andares, Chapultepec) like the CDMX hand list.
+Not taken: exempting placeWords at a sentence start (the false drops on "Doctores…",
+"Madera…" stay fail-closed: the exemption would also pass "León tiene…", which B1 must
+drop); streets made of everyday words; department inboxes (Not now).
+Acceptance (6c): a test per blocking item that fails on da78f31; all earlier tests green;
+held-out names ≥ 98%; the conductor re-runs the 30 real pitches (target ≥ 24 kept, every
+drop real). Same stop rule.
+
+## Round 6d (conductor, 2026-10-19, after the 6c review: fix-then-merge, 1 blocking, no new class)
+6c measured: 24/30 real kept, identical to 6b; 909 green; B1/B2 fixed for every probe.
+1. **BLOCKING: dotted initials** (exemplars.ts ~1192 allowListLeaks + ~373 `inWords` passes
+   any token ≤ 1 letter). City null (or Coyoacán/Polanco): "Atendemos clínicas en el D.F.
+   desde hace años." KEPT; "Clínicas en la C.D.M.X. pierden llamadas." KEPT; subject
+   "clínicas en el d.f." KEPT; "Hoteles en G.D.L. y M.T.Y." KEPT; "Clinics in T.O." KEPT.
+   In allowListLeaks, collapse each run of dotted single letters and look the joined form
+   up in places plus a small hand set (df, cdmx, gdl, mty, qro, slp, to, bc, bcs, edomex if
+   missing). Do NOT require the joined form to be a word ("e.g.", "i.e.", "a.m.", "p.m."
+   must still pass). Test with the five probes (fails on 6084273).
+2. Optional, take: suffix-stripped heads that are everyday words only cost false drops
+   (Fuentes del Valle → fuentes, Jardines de la Silla → jardines, Playas del Rosario →
+   playas, Terrazas del Valle, Pórticos de San Antonio): keep a suffix-stripped head as a
+   single-word place only if it is NOT a top-20k word (the full phrase stays). Generate
+   "cd X" / "cd. X" for every "ciudad X" phrase ("Cd. Victoria"). "#3amigos" → [site] like
+   "@3amigos".
+Not taken: the Cancún / Los Cabos template switch stays off (it would pass both places in
+every real pitch).
+Acceptance: the five probes drop; e.g./i.e./a.m./p.m. pass; all tests green; the conductor
+verifies this delta directly and re-runs the 30 real pitches.

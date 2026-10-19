@@ -71,3 +71,7 @@ reported enabled before it was).
    the counts on the board. The batch is closed only when that row shows no error.
 6. Write the ship steps and their verified state into `tasks/project-state.md` so any
    other session that fetches `main` reads the same facts the conductor has.
+7. Bring `main` back into the integration branch with a merge commit (`git merge
+   origin/main`, same tree after a squash ship); never restart it with a force push. 2026-10-19:
+   a force-with-lease restart after PR #27 tripped the auto-mode classifier, which then blocked
+   even read-only calls until the container restarted.
