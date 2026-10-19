@@ -48,6 +48,10 @@ const MAX_DISCOVER_ATTEMPTS = 3;
 
 const PIPELINE_CAP = 50; // matches the prior client-side cap
 
+// The pitching phase picks up prospects scoring at least this that have no
+// pitch yet. The researched sweep leaves those rows to it.
+const PITCHING_MIN_SCORE = 70;
+
 // Time-budgeted slicing (prod functions are capped at 120s; a single heavy
 // prospect can blow a fixed batch). Process prospects ONE at a time until we're
 // out of budget, then hand off. A fresh slice has ~110s; we stop starting new
@@ -116,9 +120,9 @@ async function bumpHeartbeat(supabase: AnySupabase, jobId: string) {
 // companies and waste research spend.
 // `from` is the only status swept, and it sits in the WHERE: a row another
 // writer has moved on since (pitched, b_list, booked …) is never touched.
-// 'researched' is swept only for ids whose run errored or timed out: a
-// researched prospect whose run finished (pitch failed → needs_review) waits
-// for the pitching phase, and is no unfinished run.
+// 'researched' is swept only for ids whose run errored or timed out, and never
+// a row scoring PITCHING_MIN_SCORE or more: the pitching phase catches exactly
+// those (scored, then timed out before the in-slice pitch).
 async function suppressUnfinished(
   supabase: AnySupabase,
   tenantId: string,
@@ -126,7 +130,7 @@ async function suppressUnfinished(
   from: "raw" | "researched" = "raw",
 ) {
   if (ids.length === 0) return;
-  const { error } = await supabase
+  let q = supabase
     .from("prospects")
     .update({
       status: "suppressed",
@@ -137,7 +141,10 @@ async function suppressUnfinished(
     .in("id", ids)
     .eq("tenant_id", tenantId)
     .eq("status", from);
-  // A failed sweep leaves the rows for the next run's sweep; say so, never pass silently.
+  if (from === "researched") q = q.or(`match_score.is.null,match_score.lt.${PITCHING_MIN_SCORE}`);
+  const { error } = await q;
+  // Nothing retries a failed sweep: its rows stay as they are (raw ones can be
+  // re-selected by a refill, researched ones cannot). Say so, never pass silently.
   if (error) console.error(`[discover/run] unfinished sweep (${from}) failed for ${ids.length} ids: ${error.message}`);
 }
 
@@ -386,8 +393,11 @@ export async function POST(req: NextRequest) {
             }
           }
         }
-        stats.processed = (stats.processed ?? 0) + batch.length;
-        stats.processed_ids = [...(stats.processed_ids ?? []), ...batch];
+        // A skipped (already contacted) company was not researched: the tick reads
+        // processed as researched (pitch yield), so it counts only real runs.
+        const researched = batch.filter((_, i) => outcomes[i]?.outcome !== "skipped");
+        stats.processed = (stats.processed ?? 0) + researched.length;
+        stats.processed_ids = [...(stats.processed_ids ?? []), ...researched];
 
         // A prospect the run moved to 'researched' and then errored or timed out
         // is no longer raw, so the raw sweep misses it and no refill re-selects
@@ -520,7 +530,7 @@ export async function POST(req: NextRequest) {
         .from("prospects")
         .select("id, status")
         .eq("tenant_id", user.tenantId)
-        .gte("match_score", 70);
+        .gte("match_score", PITCHING_MIN_SCORE);
       const { data: highScorers } = icpId
         ? await highScorersQuery.eq("icp_id", icpId)
         : await highScorersQuery.in("id", ids);

@@ -232,6 +232,31 @@ test("b_list and the early funnel are re-run (not skipped)", async () => {
   }
 });
 
+test("a failed first read (empty-message error) ends as error before anything else: no writes, no paid call", async () => {
+  for (const status of ["replied", "raw"]) {
+    const calls: string[] = [];
+    (globalThis as Record<string, unknown>).__pipelineStubs = new Proxy({}, {
+      get: (_t, name: string) => (...a: unknown[]) => { calls.push(name); void a; return undefined; },
+    });
+    const row: Row = { ...BASE, ...SITE, status };
+    const writes: unknown[] = [];
+    const supabase = {
+      from: () => ({
+        select() { return this; }, eq() { return this; },
+        maybeSingle: async () => ({ data: null, error: { message: "" } }),
+        update: (v: unknown) => { writes.push(v); throw new Error("no write expected"); },
+      }),
+    };
+    const { processSingleProspectWith } = await import(STAGE_URL.href);
+    const result = await processSingleProspectWith({ supabase, user: { id: "u1", tenantId: "t1", role: "admin" } }, "p1");
+    assert.equal(result.outcome, "error", status);
+    assert.match(result.error, /^Prospect read failed/, status);
+    assert.deepEqual(writes, [], status);
+    assert.deepEqual(calls.filter((c) => PAID.includes(c)), [], status);
+    assert.equal(row.status, status);
+  }
+});
+
 test("a failed status write is reported as an error, never as the lane's outcome", async () => {
   for (const s of SCENARIOS) {
     const { result } = await run(s, "raw", undefined, { message: "" });

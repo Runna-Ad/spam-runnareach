@@ -194,7 +194,7 @@ export async function processSingleProspectWith(
     city: string | null;
     country_code: string | null;
   };
-  const { data: p } = await supabase
+  const { data: p, error: pErr } = await supabase
     .from("prospects")
     .select("id, company_name, status, domain, website_url, icp_id, city, country_code")
     .eq("id", prospectId)
@@ -203,11 +203,24 @@ export async function processSingleProspectWith(
 
   const name = p?.company_name ?? prospectId;
 
+  // Fail closed: without the row we can't tell a new company from a contacted
+  // one, and the lanes below would treat a failed read as "no website, no ICP"
+  // and suppress it (permanent for a replied company, rule I5). Stop, write nothing.
+  if (pErr || !p) {
+    return {
+      prospect_id: prospectId,
+      company_name: name,
+      score: null,
+      outcome: "error",
+      error: pErr ? `Prospect read failed: ${pErr.message || "no message"}` : "Prospect not found.",
+    };
+  }
+
   // The pipeline only moves a company forward. One already contacted (pitched,
   // sent, replied …) or parked (suppressed, booked, won …) is never re-processed:
   // a re-run spent Claude on research and a pitch nobody may send, and its triage
   // could move a contacted company back to pitched or b_list. Stop before any of it.
-  if (p && isPastPipeline(p.status)) {
+  if (isPastPipeline(p.status)) {
     const why = DO_NOT_SEND_STATUSES.has(p.status) ? "parked" : "already contacted";
     return { prospect_id: prospectId, company_name: name, score: null, outcome: "skipped", error: `Skipped: ${why} (${p.status})` };
   }

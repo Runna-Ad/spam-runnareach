@@ -100,6 +100,14 @@ class Query implements PromiseLike<Result> {
     }
     return this;
   }
+  /** Only the shape the route sends: "col.is.null,col.lt.N". */
+  or(expr: string) {
+    const m = /^(\w+)\.is\.null,\1\.lt\.(\d+)$/.exec(expr);
+    if (!m) throw new Error(`fake .or: unsupported ${expr}`);
+    const [, col, n] = m;
+    this.filters.push((r) => r[col!] == null || Number(r[col!]) < Number(n));
+    return this;
+  }
   order() { return this; }
   limit() { return this; }
   returns() { return this; }
@@ -302,7 +310,7 @@ globalThis.setTimeout = ((fn: () => void, ms?: number) => {
   return t;
 }) as typeof setTimeout;
 
-type Run = { leave: string; outcome: string; error?: string };
+type Run = { leave: string; outcome: string; error?: string; score?: number | null };
 
 /**
  * One pipeline slice over the given prospects (all start raw). Each fake run
@@ -321,6 +329,7 @@ async function slice(runs: Record<string, Run>, o: { skipPrune?: boolean; meanwh
   const db: Db = { tables: { prospects, discovery_jobs: [job], pitches: [] }, prospectReads: 0 };
   const supabase = { from: (t: string) => new Query(db, t) };
   let settled = 0;
+  const pitchedIds: string[] = [];
   stub({
     systemActorFromRequest: async () => ({ user: ACTOR_USER, supabase, system: true }),
     getCurrentUser: async () => null,
@@ -334,19 +343,23 @@ async function slice(runs: Record<string, Run>, o: { skipPrune?: boolean; meanwh
     getProspectIdsForRunsWith: async () => ({ ok: true, ids: [] }),
     runAllSourcesWith: async () => ({ ok: false, error: "unused" }),
     pruneRunToTop30With: async () => ({ ok: true, kept: 0, deleted: 0 }),
-    generatePitchWith: async () => ({ ok: false, error: "unused" }),
+    generatePitchWith: async (_a: unknown, id: string) => { pitchedIds.push(id); return { ok: false, error: "stub" }; },
     processSingleProspectWith: async (_a: unknown, id: string) => {
       const run = runs[id]!;
-      prospects.find((p) => p.id === id)!.status = run.leave;
+      const row = prospects.find((p) => p.id === id)!;
+      row.status = run.leave;
+      if (run.score !== undefined) row.match_score = run.score;
       if (++settled === ids.length) o.meanwhile?.(prospects);
       return { prospect_id: id, company_name: "x", score: null, outcome: run.outcome, error: run.error };
     },
   }, calls);
   const { POST } = await import(ROUTE_URL.href);
-  const req = new Request("http://localhost/api/discover/run", { method: "POST", body: JSON.stringify({ jobId: "job1" }) });
-  const res = await POST(req);
+  const req = () => new Request("http://localhost/api/discover/run", { method: "POST", body: JSON.stringify({ jobId: "job1" }) });
+  let res = await POST(req());
+  // Follow the chain (pruning → pitching) the stubbed after() would trigger.
+  for (let i = 0; i < 4 && job.status === "running"; i++) res = await POST(req());
   const status = Object.fromEntries(prospects.map((p) => [p.id, p.status]));
-  return { res, status, job, calls };
+  return { res, status, job, calls, pitchedIds };
 }
 
 test("route: a prospect researched then errored is swept; finished and skipped ones are not", async () => {
@@ -359,9 +372,21 @@ test("route: a prospect researched then errored is swept; finished and skipped o
   });
   assert.deepEqual(status, { a: "suppressed", b: "researched", c: "suppressed", d: "b_list", e: "sent" });
   const stats = job.stats as Record<string, number>;
-  // A skip is not an error.
+  // A skip is not an error, and was not researched.
   assert.equal(stats.error_count, 2);
-  assert.equal(stats.processed, 5);
+  assert.equal(stats.processed, 4);
+  assert.deepEqual((job.stats as { processed_ids: string[] }).processed_ids, ["a", "b", "c", "d"]);
+});
+
+test("route: a researched + errored prospect scoring ≥ 70 is left to the pitching phase; < 70 or unscored is swept", async () => {
+  const { status, pitchedIds } = await slice({
+    hi: { leave: "researched", outcome: "error", error: "prospect-timeout", score: 85 },
+    edge: { leave: "researched", outcome: "error", error: "prospect-timeout", score: 70 },
+    lo: { leave: "researched", outcome: "error", error: "prospect-timeout", score: 40 },
+    none: { leave: "researched", outcome: "error", error: "Final score failed: x", score: null },
+  });
+  assert.deepEqual(status, { hi: "researched", edge: "researched", lo: "suppressed", none: "suppressed" });
+  assert.deepEqual(pitchedIds.sort(), ["edge", "hi"]);
 });
 
 test("route: the sweep never touches a row another writer has moved on since", async () => {
@@ -384,6 +409,10 @@ test("route source: the pitching phase filters with isPastPipeline (one predicat
   const src = readFileSync(ROUTE_URL, "utf8");
   assert.match(src, /\.filter\(\(p\) => !isPastPipeline\(p\.status\)\)/);
   assert.doesNotMatch(src, /NON_PITCHABLE/);
+  // One threshold for the pitching phase and the sweep's exclusion.
+  assert.match(src, /\.gte\("match_score", PITCHING_MIN_SCORE\)/);
+  assert.match(src, /match_score\.lt\.\$\{PITCHING_MIN_SCORE\}/);
+  assert.doesNotMatch(src, /match_score", 70/);
 });
 
 test("source: the scrape bump and the deep-research suppress write check their error and report it", () => {
