@@ -10,7 +10,12 @@
 
 cat >/dev/null  # SessionStart input is not needed
 
-[ -f "$HOME/.claude/CLAUDE.md" ] && exit 0
+# Loaded natively (a Mac, or the cloud setup script, Moisty-Mango/dotclaude
+# hooks/cloud-setup-script.sh). Its "could not load" notice does not count: then the
+# rules still come from the clones below when they are attached.
+if [ -f "$HOME/.claude/CLAUDE.md" ] && ! grep -q 'CLOUD-SETUP-STUB' "$HOME/.claude/CLAUDE.md"; then
+    exit 0
+fi
 
 PROJECT="${CLAUDE_PROJECT_DIR:-$(git rev-parse --show-toplevel 2>/dev/null)}"
 for d in "$PROJECT/../dotclaude" "/home/user/dotclaude" "$HOME/dotclaude"; do

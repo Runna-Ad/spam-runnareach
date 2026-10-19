@@ -47,5 +47,15 @@ mkdir -p "$HOME/Brain" "$HOME/.claude/hooks" 2>/dev/null
 [ -e "$HOME/Brain/brain-starter" ] || ln -s "$VAULT_SRC" "$HOME/Brain/brain-starter"
 [ -e "$HOME/.claude/hooks/user-text.py" ] || ln -s "$DOT_SRC/hooks/user-text.py" "$HOME/.claude/hooks/user-text.py"
 
+# The cloud setup script's clones can be up to ~7 days old (the environment
+# reuses its setup), so refresh them once per container, in the background.
+# Read-only and silent: a failed fetch just leaves recall on the older copy.
+if [ ! -f /tmp/cloud_brain_refreshed ]; then
+    touch /tmp/cloud_brain_refreshed
+    ( export GIT_TERMINAL_PROMPT=0
+      git -C "$VAULT_SRC" pull -q --ff-only
+      git -C "$DOT_SRC" pull -q --ff-only ) >/dev/null 2>&1 &
+fi
+
 printf '%s' "$INPUT" | bash "$DOT_SRC/hooks/brain-recall.sh"
 exit 0
