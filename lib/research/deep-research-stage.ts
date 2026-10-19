@@ -30,6 +30,7 @@ import {
 import { isUnderDailyCap, recordClaudeCall } from "@/lib/anthropic/cost-tracking";
 import { scrapeSite } from "./scraper";
 import { scoreProspectWith } from "./score-stage";
+import { protectedStatusFilter } from "@/lib/prospects/status";
 import { buildDeepResearchPrompt, type TaxonomyEntry } from "./deep-research-prompt";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -369,9 +370,10 @@ export async function deepResearchProspectWith(
     // e.g. 28 here stays visible in the active list with a failing score. We
     // only suppress (never un-suppress or downgrade a manually-advanced status)
     // — and only from the early funnel states, so we don't yank a replied/
-    // booked/won prospect.
-    const SUPPRESSIBLE = new Set(["raw", "researched", "needs_review"]);
-    if (score < 40 && SUPPRESSIBLE.has(prospect.status)) {
+    // booked/won prospect. One list for the check and the WHERE: every entry
+    // must be a prospect_status value, or Postgres rejects the whole UPDATE.
+    const SUPPRESSIBLE = ["raw", "researched"] as const;
+    if (score < 40 && (SUPPRESSIBLE as readonly string[]).includes(prospect.status)) {
       await supabase
         .from("prospects")
         .update({
@@ -381,7 +383,12 @@ export async function deepResearchProspectWith(
           updated_at: new Date().toISOString(),
         })
         .eq("id", prospectId)
-        .eq("tenant_id", user.tenantId);
+        .eq("tenant_id", user.tenantId)
+        // prospect.status was read at the start of the run: a booking or reply
+        // since then must win (status rule I3), so the WHERE re-checks it, and
+        // only the early funnel is ever suppressed here.
+        .in("status", [...SUPPRESSIBLE])
+        .not("status", "in", protectedStatusFilter("suppressed", "automation")!);
     }
   }
 

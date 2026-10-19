@@ -5,30 +5,19 @@ file alone. Update it on every spawn, every status change, every merge. Keep clo
 for the current phase; move older ones to the retro.
 
 ## Current phase
-`phase3-batch3` ACTIVE. **Owner: session_017nqBxLFFXKbhDwKiPi6xLf** (Opus 5.5), took the lock 2026-10-18 17:09 UTC (lock was released by session_018Qvu38cNFVCuWNq41wYfxJ; Pedro: "Run phase3-batch3 ... Go").
-Integration branch: `claude/optimistic-tesla-3gceud` (this session's designated branch, cut from main e10a326). Workers PR into it.
-Scope (Pedro read it 2026-10-18: "all seem good"), in order:
-1. Send-path safety: DO_NOT_SEND_STATUSES in `lib/pitches/send-action.ts` and the send-queue route, plus a status guard on `transitionPitchStatusWith`. First: 19 AUTO pitches start sending Mon 15:00 UTC.
-2. Unique index on replies(tenant_id, gmail_message_id). Needs a reserved migration number.
-3. Booking-alert durability in `lib/opportunities/calendar-sync.ts`, same claim/sweep pattern as the reply alerts.
-4. /pitches resilience (`tasks/briefs/pitches-list-resilience.md`, sonnet/medium).
-5. #17 exemplar allow-list to the reviewer's strict/generous design (batch 2 log 16:24). Opus/high, parallel track; flip EXEMPLARS_ENABLED once merged.
-Not code: pipeline-stage reactivation vs the status rule is a product question for Pedro.
-Previous: `phase3-batch2` CLOSED (main e10a326). Its rows, log and hand-off are in `tasks/retros/2026-10-18-phase3-batch2.md` (appendix).
-
-Open prod checks:
-- The 01:00 and 13:00 UTC digests list the 19 AUTO pitches.
-- First weekly report, Mon 13:10 UTC.
-- First AUTO sends, Mon 15:00 UTC.
-- First real lead alert shows alerts{sent:3,failed:[]}.
-- First use of a hold link.
+`phase3-batch3` SHIPPED 2026-10-19 00:19 UTC (main 9c98448, PR #25, deploy dpl_EvZj8YDtbvAZunU79Hr3C5t5hTj6 READY). **Owner: session_017nqBxLFFXKbhDwKiPi6xLf.** Integration branch `claude/optimistic-tesla-3gceud` restarted from main 9c98448 for the follow-ups.
+Open:
+- Q1 follow-up (Pedro: default): pipeline reactivation skips do-not-send prospects. b08c324 + PR #26 (merged) + e20b246 on the integration branch → PR #27 to main (subscribed), waiting on its own "ship it". No migrations.
+- #17 exemplar allow-list ROUND 6 (last on this design; worker session_01UKwyaiiw7nmqT9GEFR6ixb, PR #17 → this branch). r5: 20/30 real kept, 0 identifying tokens in kept, held-out 226/228; r5 review fix-then-merge, 7 blocking. Stop rule: another blocking leak class in the r6 review → park #17, propose generation-time templates to Pedro. EXEMPLARS_ENABLED stays off.
+- Prod checks (scheduled): first poll + calendar-sync on the new code (00:30 / 01:05), the 01:00 and 13:00 UTC digests, the weekly report Mon 13:10 UTC, the first AUTO sends Mon 15:00 UTC, the first real lead alert, the first hold-link use.
+Previous: `phase3-batch2` CLOSED (main e10a326). Rows, log and hand-off in `tasks/retros/2026-10-18-phase3-batch2.md` (appendix).
 
 ## Approvals and checks
 | Item | State |
 |---|---|
 | Prod = main head READY before cutting integration | e10a326 READY (dpl_8udavQRnDUycKVocmcXakCav9pEm, verified 19:45) |
 | Batch plan sent to Pedro | scope approved in advance ("all seem good", 2026-10-18); Pedro "Go" 17:07 UTC |
-| Integration → main PR | #25 opened 20:10 UTC, subscribed; waiting for Pedro's "ship it" |
+| Integration → main PR | #25 squash-merged → main 9c98448 (2026-10-19 00:17 UTC); deploy READY 00:19:14. Q1 follow-up: #27 opened 01:12 UTC (no migrations), waiting on Pedro's "ship it" |
 | Questions sent | with PR #25 (2: pipeline reactivation vs status rule; weekend Vercel send-queue) |
 | `npm run build` green on integration | yes after #24 (845 tests) |
 | Origin in sync (`git status -sb`) | yes |
@@ -47,10 +36,11 @@ Open prod checks:
 | wave0-conductor | migrations 0046 + 0047, poll insert 23505 handling, core-context refresh, 4 briefs | conductor | integration | this | — | — | merged (726 tests, lint, build green) | — | | | | |
 | send-path-safety | send-action.ts, send-queue + follow-up + nudge routes, transitionPitchStatusWith (+ new pure status-transitions.ts) | opus/high | claude/send-path-safety | session_01GQrLz2TkuQdQRLfXA2Hco4 | #21 | wave0 | merged 0128b6b (790 tests) | | ~30 | 0 (8 optional) | 0 | 0 | | | | | |
 | booking-alert-durability | lib/opportunities/calendar-sync.ts + booking-alert.ts + route | opus/high (deviation: alerts lane is medium; same durability class reworked twice in b2) | claude/booking-alert-durability | session_01V52B5CStFDH8bHRXbbggve | #22 | wave0 (0047 file) | merged (820 tests on integration) | | ~30 | 2 (race test never races the claim; deploy-gap duplicate) + 7 optional | 0 | 1 | | | | | |
-| exemplar-allow-list | lib/pitches/exemplars.ts + wordlists (hub), PR #17 round 4 | opus/high | claude/exemplar-scrubber-gaps (existing) | session_01UKwyaiiw7nmqT9GEFR6ixb | #17 (base retargeted to integration, subscribed) | — | round 5 sent (r4 6adf251: fix-then-merge, 3 blocking + real-data drop 80%) | | | b2: r1 5, r2 6, r3 2; b3: r4 3 | | 4 |
+| exemplar-allow-list | lib/pitches/exemplars.ts + wordlists (hub), PR #17 round 4 | opus/high | claude/exemplar-scrubber-gaps (existing) | session_01UKwyaiiw7nmqT9GEFR6ixb | #17 (base retargeted to integration, subscribed) | — | round 6 sent 00:51 10-19 (r5 7bde03b: 20/30 real kept; review fix-then-merge, 7 blocking) | | | b2: r1 5, r2 6, r3 2; b3: r4 3, r5 7 | | 5 |
 | send-path-safety-2 | follow-up route last-moment recheck, DNC error → fail closed at recheck, stronger source-order test, one message | opus/high | claude/send-path-safety-2 | session_01GQrLz2TkuQdQRLfXA2Hco4 (same worker, warm context) | #24 | send-path-safety merged | merged (845 tests, build green) | | ~20 | 1 (DNC error with an empty message reads as 'not listed' → sends) + 9 optional | 0 | 1 | | | | | |
 | pitches-list-resilience | lib/pitches/queries.ts (listPitches) + /pitches | sonnet/medium | claude/pitches-list-resilience | session_019XtZMnCmBLJ2hxdMSgtJAe | #23 | send-path-safety merged | merged (824 tests); new file hot-lead-events.ts accepted (testability) | | ~20 | 1 (a Hot leads filter left on when badges become unavailable empties the list and can't be cleared) | 0 | 1 | | | | | |
 
+| pipeline-status-rule | lib/discover/pipeline-stage.ts processSingleProspectWith + bulkScoreProspects + deep-research status write | opus/medium | claude/pipeline-status-rule | session_01QuH6x9TWuEooudp6LQXVxm (archived) | #26 | b08c324 | merged 8385ff1 + conductor e20b246 (857 tests, build green) | | | 0 (optional: scrape-stage raw→researched unguarded; suppress writes lacked from-states → taken by conductor) | 0 | 0 |
 Column meanings: Turns = assistant turns in the worker session (proxy for tokens).
 Review findings = blocking findings the reviewer raised. CI reds = failed CI runs on the
 PR. Rework = times the task went back to the worker or was redone by another worker.
@@ -64,6 +54,7 @@ Batch-audit pairs to check (runtime interactions): send-path-safety × autopilot
 | # | From task | Question | Default if unanswered | Answer |
 |---|---|---|---|---|
 | 1 | b2 status rule | pipeline-stage reactivation moves suppressed/no_match back to researched (breaks I5): keep or skip do-not-send prospects? | skip them (status rule wins) | Pedro 20:10: default (skip) → follow-up PR after the ship |
+| 3 | Q1 review | May a PERSON still un-suppress by hand (/companies bulk "researched", prospect page)? The status rule as written says no (I5 + I6); DNC still blocks any opted-out address either way | yes, manual stays possible (a deliberate correction); automated never | Pedro 00:40 10-19: "yes, manual stays possible" → status.ts header now says so (conductor); worker told |
 | 2 | b3 audit | Vercel daily send-queue backstop also sends on weekends (pg_cron is Mon–Fri): keep? | keep until the atomic sends_today fix | Pedro 20:10: "only monday to friday" → Vercel send-queue/follow-up/nudge backstops 1-5 in this ship (+ digest copy) |
 
 ## Worktrees to clean up (in-session workers only)
@@ -82,6 +73,10 @@ Batch-audit pairs to check (runtime interactions): send-path-safety × autopilot
 - Open: placeholder regex duplicated in send-gate and composer (export one); needsReconnect persists silently (Sentry warning); warn when CALENDAR_BOOKING_INBOX matches no inbox; root-pitch.ts drops its query error; prospect activity feed does not render opportunity.won/lost; reward.ts and hot-lead.ts decide audit_scan stage with different rules (share levelOf); 200-row /pitches window hides old hot leads; "Asked to talk" chip tone; /learning: trials=100 boundary test, honest "arms not loaded" error state, order + truncation notice at 2000, icp learner never writes arms, UI <20 vs bandit 15/30 thresholds; dedupe opportunities per prospect on rebook.
 
 - From batch 3 reviews (carried, not done): reply poll — a run killed between the reply insert and its opt-out leaves the opt-out to the lead alert's optOutFailed flag (0046 makes the next run skip the row); calendar-sync — kill between createOpportunity and recordEvent/audit loses those writes (pre-existing); booking alert "Who" reads "unknown attendee" when the contact row is gone; one shared deadline across tenants in the calendar sync; follow-up DNC/suppression pauses write no audit row; follow-up release restores next_followup_at and can undo a concurrent OOO postponement (inherited); the recheck's two GETs run on a client with no fetch timeout (service-role, conductor-only); poll DEAD_STATUSES lacks no_match; nudge route accepts only CRON_SECRET; first-read DNC checks fail open by design; 200-row /pitches window; share levelOf with reward.ts.
+
+- From PR #26 (worker, out of scope): a prospect parked mid-run can still get an orphan draft pitch before the guarded status write refuses (status stays parked, sends blocked; generatePitchWith could check status before the Claude call); standalone deep research (UI button) still spends Claude on a do-not-send prospect (only its suppress write is guarded).
+
+- From the e20b246 review (pre-existing, next batch): /companies "Run pipeline" accepts any status and processSingleProspectWith's writeStatus has no from-state, so re-running a sent/replied/ghosted/bounced/pitched prospect moves it back to pitched/b_list/suppressed (allowed by I1–I5 but backwards in the funnel); the scrape bump and deep-research suppress ignore `error`; run route's suppressUnfinished sweeps only `raw`, so a prospect bumped to researched then errored is neither swept nor re-selected.
 
 ## Shared-file changes pending (conductor does these)
 | Requested by | File | Change | Done |
@@ -113,3 +108,15 @@ Batch-audit pairs to check (runtime interactions): send-path-safety × autopilot
 - 2026-10-18 20:11 UTC — Q2 in this ship: Vercel backstops for send-queue, follow-up and nudge → `1-5` (pinned by tests/vercel-config.test.ts); the veto digest copy said "once around 15:00 UTC on weekends" → "Monday to Friday only" (test updated). 846 tests, typecheck, lint green. Health E3 already judges weekday windows only. Q1 → follow-up PR after the ship. Starting the ship checklist.
 - 2026-10-18 20:16 UTC — Ship step 1 done: 0046 + 0047 applied (0 dup reply pairs, 0 calendar opps), version rows normalised, index + columns verified. Then the PR #25 preview for db545b0 FAILED on Vercel (Turbopack: "next/font/google queries have exactly one entry" in the Inter font CSS, after "Restored build cache"); the same head builds locally and CI is green → not a code failure; merge held until a preview builds.
 - 2026-10-19 00:15 UTC — Worker process restarted ~20:20 → resumed at 00:12 (≈4 h gap; nothing lost, branch in sync). Old code × new schema verified in the gap: all pg_cron jobs succeeded; poll + calendar-sync 200, alerts.failed [], no errors. Redeploy of the preview started (dpl_Ha3nQmi7seEnCzngqkWL4em8Zfsf).
+- 2026-10-19 00:16 UTC — Preview redeploy of db545b0 READY (the 20:12 failure was transient Vercel font-fetch/cache, not code); PR head 35f9496 CI + preview green.
+- 2026-10-19 00:17 UTC — PR #25 squash-merged → main 9c98448. Deploy dpl_EvZj8YDtbvAZunU79Hr3C5t5hTj6 READY 00:19:14 UTC.
+- 2026-10-19 00:23 UTC — Post-deploy marker step: 0 rows (0 calendar opportunities exist); no spam-calendar-sync run between READY and the update. Branch restarted from main 9c98448 (force-with-lease; it held only merged history). project-state updated. Next: Q1 follow-up PR; first-run checks at 00:30 / 01:00 / 01:05.
+- 2026-10-19 00:27 UTC — #17 round 5 (7bde03b, pushed 19:44): conductor re-measure on the same 30 real pitches → KEPT 20/30 (r4: 6/30). Correct drops (real leaks): Zona Benessere (business name not in the company field), MEC, Monterrey (city, null field), IRT, "Busy Bee" (company phrase the scrubber missed → caught), Bulkley Valley/Fjällräven. False drops: forth ×3, haga, vea. 20 kept exemplars: no identifying token; only generic company fragments (Consultores, Industrial, Spa, Fitness, N'). Held-out names 226/228 (worker). Round-5 review running; the 3-word fix rides with its findings. Q1 follow-up (pipeline reactivation off) written by the conductor (847 tests, build green; pin test fails on the old code), reviewer running.
+- 2026-10-19 00:32 UTC — Q1 review (b08c324): fix-then-merge, 1 blocking: processSingleProspectWith still un-parks a suppressed/no_match prospect via the successful-pitch write (→ pitched, ~612), the no-website lane (~312) and the b_list write (~527), unguarded; also via an autopilot job's stale id list; bulkScoreProspects restore is the twin; deep-research suppress breaks I3. Not small → brief `pipeline-status-rule` (opus/medium): guard every automated status write with protectedStatusFilter + early return for DO_NOT_SEND prospects. New question for Pedro (default given): may a PERSON still un-suppress manually (bulk 'researched' button, prospect page)?
+- 2026-10-19 00:33 UTC — First runs on 9c98448: reply poll 00:30 200 (errors [], alerts {sent:0,failed:[]}); tick 00:30 200 (veto; discovery skipped: AI budget $2.78/$3.00, designed); health 00:25 problems []. pipeline-status-rule worker spawned 00:32 (session_01QuH6x9TWuEooudp6LQXVxm), PR check-in armed in the same turn.
+- 2026-10-19 00:36 UTC — Pedro Q3: manual un-suppress stays possible. lib/prospects/status.ts header (I6) corrected: direct manual status changes are deliberate corrections outside the rule; every automated writer goes through it. pipeline-status-rule worker told (test wording).
+- 2026-10-19 00:45 UTC — PR #26 (pipeline-status-rule) found by the armed check-in 3 min after it opened (the lesson worked). Prod baseline for its verification: 0 prospects in pitched/b_list/researched with a suppressed_reason; 0 bulk_rescore→researched audit rows.
+- 2026-10-19 00:52 UTC — #17 r5 review (7bde03b): fix-then-merge, 7 blocking: address chunks regressed (@torres, vega-dental.com, instagram.com/peña.dental pass); OWN/CAPITALIZED_WORDS beat the name deny (Julio, Abril, Domingo, Quintana; Seo/Ota); S4 scrubber + leak check share one gate (memo@/chema@ leak); Profa./Fisio. dot rule; generator classifies with stem-only Hunspell → forth/haga/vea/vida false drops (947 EN / 707 ES top-10k refused); weak-name cutoff from US data passes 47/47 probed Mexican surnames (2,369 exempt); lowercase subject tier passes peña/chan. Round 6 sent with the review's fixes as spec + stop rule; safety check-in trig_01Ee3hvizNi9UYcJEWBJUe49 01:52.
+- 2026-10-19 01:00 UTC — PR #26 review: merge, 0 blocking (early return for DO_NOT_SEND, all 9 status writes guarded via writeStatus, outcomes 'suppressed'; 6/9 new tests fail on base). Merged 8385ff1. Optional taken by the conductor (e20b246): scrape-stage raw→researched bump had no from-state (a prospect suppressed during the scrape was un-parked); deep-research + bulkScore suppress writes now also require raw/researched; source pin test fails on the old code. 857 tests, typecheck, lint, build green. Worker archived. Next: integration → main PR for the Q1 follow-up.
+- 2026-10-19 01:11 UTC — e20b246 review: merge, 0 blocking. Optional taken (conductor): one SUPPRESSIBLE list per suppress write for the check and the WHERE (deep research's dead `needs_review` dropped: not an enum value, would reject the UPDATE); bulkScore behavioural test with a row pitched after the read (fails with the `.in` removed); pin test slices function/statement. 857 tests, typecheck, lint, build green. Carried: pipeline re-run of sent/replied/pitched moves them backwards (pre-existing). #17 r6 pushed 01:06 (d425754): conductor re-measure KEPT 21/30, 6 drops real leaks + 3 fail-closed (Wix, SKUs, Western Canada), 0 identifying tokens in kept; r6 review running.
+- 2026-10-19 01:12 UTC — PR #27 (integration → main, Q1 follow-up) opened and subscribed; Pedro asked for its "ship it". #17 stays out of it.

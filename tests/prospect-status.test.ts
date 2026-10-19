@@ -144,3 +144,45 @@ test("intent-actions: wants_meeting leaves won/lost alone, bounce leaves booked/
   assert.equal(protectedStatusFilter("won", "person"), null);
   assert.equal(protectedStatusFilter("lost", "person"), null);
 });
+
+test("I5: automated writers never un-park a prospect (suppressed / no_match → sendable)", () => {
+  // The pipeline, bulk re-score and deep research enforce this through the guard
+  // in each UPDATE's WHERE: tests/pipeline-status-rule.test.ts drives them. A
+  // person's direct status change (bulkTransitionStatus, transitionStatus) can
+  // still un-suppress (Pedro 2026-10-18).
+  for (const parked of ["suppressed", "no_match"]) {
+    for (const next of ["researched", "pitched", "b_list", "raw", "scored"]) {
+      assert.equal(mayOverwriteStatus(parked, next, "automation"), false, `${parked} → ${next}`);
+    }
+  }
+});
+
+test("automated early-funnel writes re-check their from-state in the WHERE (stale reads can't un-park or over-suppress)", async () => {
+  const { readFileSync } = await import("node:fs");
+  const read = (p: string) => readFileSync(new URL(`../${p}`, import.meta.url), "utf8");
+  // Slice one function, then one statement, so a match can't come from a later one.
+  const fnBody = (src: string, name: string) => {
+    const start = src.indexOf(`export async function ${name}`);
+    assert.ok(start >= 0, name);
+    const end = src.indexOf("\nexport ", start + 1);
+    return src.slice(start, end < 0 ? undefined : end);
+  };
+  const statementFrom = (src: string, marker: string) => {
+    const at = src.indexOf(marker);
+    assert.ok(at >= 0, marker);
+    return src.slice(at, src.indexOf(";", at));
+  };
+  // scrape: raw → researched only while still raw.
+  const scrape = fnBody(read("lib/research/scrape-stage.ts"), "scrapeWebsiteWith");
+  assert.match(statementFrom(scrape, 'status: "researched"'), /\.eq\("status", "raw"\)/);
+  // deep research and bulk re-score suppress only the early funnel, from one list
+  // used for both the in-memory check and the WHERE (enum values only).
+  for (const [p, name] of [
+    ["lib/research/deep-research-stage.ts", "deepResearchProspectWith"],
+    ["lib/discover/bulk-actions.ts", "bulkScoreProspects"],
+  ] as const) {
+    const fn = fnBody(read(p), name);
+    assert.match(fn, /const SUPPRESSIBLE = \["raw", "researched"\] as const;/, p);
+    assert.match(statementFrom(fn, 'status: "suppressed"'), /\.in\("status", \[\.\.\.SUPPRESSIBLE\]\)/, p);
+  }
+});
