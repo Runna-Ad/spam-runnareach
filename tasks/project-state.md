@@ -80,6 +80,7 @@ SHIPPED on Pedro's "ship it": migrations 0040 + 0041 applied, main = `4b22ad1`+,
 - Session note: the Auto-mode safety check refused the service-role pipeline and creating an account; Pedro switched the session to "Accept edits" and approved. Permission rules were not edited.
 
 ## Phase 3 — #17 exemplar allow-list (SHIPPED 2026-10-19 on Pedro's "ship it", switch OFF: main = `3808b56`, PR #28)
+Ship verified: deploy dpl_2HXPGhFNHqCSUmPzWAobwgfQgA3C READY 04:25:17 UTC; 0 exemplar pitches after the deploy; ticks 04:30/04:45 200.
 Past winning pitches become anonymised style examples for new pitches, only when `EXEMPLARS_ENABLED=1` (not set in
 Vercel: verified 2026-10-19 02:58; the switch is checked before any DB read in `fetchExemplars`). Ships with the switch OFF:
 - `lib/pitches/exemplars.ts`: scrubber + an independent fail-closed leak check. A kept exemplar may contain only words
