@@ -5,9 +5,8 @@ file alone. Update it on every spawn, every status change, every merge. Keep clo
 for the current phase; move older ones to the retro.
 
 ## Current phase
-`phase3-batch3` SHIPPED 2026-10-19 00:19 UTC (main 9c98448, PR #25, deploy dpl_EvZj8YDtbvAZunU79Hr3C5t5hTj6 READY). **Owner: session_017nqBxLFFXKbhDwKiPi6xLf.** Integration branch `claude/optimistic-tesla-3gceud` restarted from main 9c98448 for the follow-ups.
+`phase3-batch3` SHIPPED 2026-10-19 00:19 UTC (main 9c98448, PR #25); Q1 follow-up SHIPPED 2026-10-19 (merged 01:14 UTC, READY by 01:19; main 729b299, PR #27, deploy dpl_J3tEospxUg8mzz27FkAuGdUTcuPv READY). **Owner: session_017nqBxLFFXKbhDwKiPi6xLf.** Integration branch `claude/optimistic-tesla-3gceud` restarted from main 729b299.
 Open:
-- Q1 follow-up (Pedro: default): pipeline reactivation skips do-not-send prospects. b08c324 + PR #26 (merged) + e20b246 on the integration branch → PR #27 to main (subscribed), waiting on its own "ship it". No migrations.
 - #17 exemplar allow-list ROUND 6 (last on this design; worker session_01UKwyaiiw7nmqT9GEFR6ixb, PR #17 → this branch). r5: 20/30 real kept, 0 identifying tokens in kept, held-out 226/228; r5 review fix-then-merge, 7 blocking. Stop rule: another blocking leak class in the r6 review → park #17, propose generation-time templates to Pedro. EXEMPLARS_ENABLED stays off.
 - Prod checks (scheduled): first poll + calendar-sync on the new code (00:30 / 01:05), the 01:00 and 13:00 UTC digests, the weekly report Mon 13:10 UTC, the first AUTO sends Mon 15:00 UTC, the first real lead alert, the first hold-link use.
 Previous: `phase3-batch2` CLOSED (main e10a326). Rows, log and hand-off in `tasks/retros/2026-10-18-phase3-batch2.md` (appendix).
@@ -17,7 +16,7 @@ Previous: `phase3-batch2` CLOSED (main e10a326). Rows, log and hand-off in `task
 |---|---|
 | Prod = main head READY before cutting integration | e10a326 READY (dpl_8udavQRnDUycKVocmcXakCav9pEm, verified 19:45) |
 | Batch plan sent to Pedro | scope approved in advance ("all seem good", 2026-10-18); Pedro "Go" 17:07 UTC |
-| Integration → main PR | #25 squash-merged → main 9c98448 (2026-10-19 00:17 UTC); deploy READY 00:19:14. Q1 follow-up: #27 opened 01:12 UTC (no migrations), waiting on Pedro's "ship it" |
+| Integration → main PR | #25 squash-merged → main 9c98448 (2026-10-19 00:17 UTC); deploy READY 00:19:14. Q1 follow-up: #27 opened 01:12 UTC, Pedro "ship it" 01:14, squash-merged → main 729b299, deploy READY |
 | Questions sent | with PR #25 (2: pipeline reactivation vs status rule; weekend Vercel send-queue) |
 | `npm run build` green on integration | yes after #24 (845 tests) |
 | Origin in sync (`git status -sb`) | yes |
@@ -120,3 +119,6 @@ Batch-audit pairs to check (runtime interactions): send-path-safety × autopilot
 - 2026-10-19 01:00 UTC — PR #26 review: merge, 0 blocking (early return for DO_NOT_SEND, all 9 status writes guarded via writeStatus, outcomes 'suppressed'; 6/9 new tests fail on base). Merged 8385ff1. Optional taken by the conductor (e20b246): scrape-stage raw→researched bump had no from-state (a prospect suppressed during the scrape was un-parked); deep-research + bulkScore suppress writes now also require raw/researched; source pin test fails on the old code. 857 tests, typecheck, lint, build green. Worker archived. Next: integration → main PR for the Q1 follow-up.
 - 2026-10-19 01:11 UTC — e20b246 review: merge, 0 blocking. Optional taken (conductor): one SUPPRESSIBLE list per suppress write for the check and the WHERE (deep research's dead `needs_review` dropped: not an enum value, would reject the UPDATE); bulkScore behavioural test with a row pitched after the read (fails with the `.in` removed); pin test slices function/statement. 857 tests, typecheck, lint, build green. Carried: pipeline re-run of sent/replied/pitched moves them backwards (pre-existing). #17 r6 pushed 01:06 (d425754): conductor re-measure KEPT 21/30, 6 drops real leaks + 3 fail-closed (Wix, SKUs, Western Canada), 0 identifying tokens in kept; r6 review running.
 - 2026-10-19 01:12 UTC — PR #27 (integration → main, Q1 follow-up) opened and subscribed; Pedro asked for its "ship it". #17 stays out of it.
+- 2026-10-19 01:14 UTC — Pedro: "ship it" (#27). Head 97a93f5 green (Typecheck + Lint + Tests, Vercel preview). Squash-merged → main 729b299.
+- 2026-10-19 01:15 UTC — Integration branch restarted from main 729b299 (force-with-lease from 97a93f5; trees identical). The auto-mode classifier flagged the force push and blocked the next read-only calls until the container restart; Pedro told. #17's base moved: its GitHub diff shows #27's content again until its branch merges the new base (merges cleanly).
+- 2026-10-19 01:19 UTC — Ship verified: deploy dpl_J3tEospxUg8mzz27FkAuGdUTcuPv READY; prod verification (pitched/b_list/researched with a suppressed_reason) = 0 before and after (141 parked). 01:00 UTC veto digest: tick digest 19 = 19 approved AUTO pitches, audit autopilot.digest 01:00:04; 01:15 tick digest 0 (slot already sent); poll 01:00 + calendar-sync 01:05 200, errors [], alerts {sent:0,failed:[]}; no reply since 2026-08-08 (no lead alert due). Discovery paused by the AI budget ($2.78/$3.00), by design. Container restart killed the #17 r6 review → restarted.
