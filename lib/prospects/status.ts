@@ -10,8 +10,14 @@
 //   I3 suppressed never overwrites booked, won, lost.
 //   I4 replied never overwrites archived_no_meeting, suppressed, booked, won, lost.
 //   I5 From a do-not-send status the next status is also do-not-send.
-//   I6 A person may set won/lost over anything; every other rule applies to people too.
+//   I6 A person may set won/lost over anything; every other rule applies to people too
+//      when they act through a flow that writes a status as a side effect (inbox intent
+//      actions, opportunity outcomes).
 // Same-status writes are always allowed (they change nothing).
+// Not covered: a person's direct status change (/companies bulk status, the prospect
+// page) is a deliberate correction and may un-suppress (Pedro, 2026-10-19); the
+// do-not-contact list still blocks any opted-out address. Every AUTOMATED writer
+// (pipeline, scoring, research, replies, calendar) goes through this rule.
 //
 // Pure: no server imports, safe in tests and client code.
 

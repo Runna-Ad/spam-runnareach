@@ -144,3 +144,15 @@ test("intent-actions: wants_meeting leaves won/lost alone, bounce leaves booked/
   assert.equal(protectedStatusFilter("won", "person"), null);
   assert.equal(protectedStatusFilter("lost", "person"), null);
 });
+
+test("pipeline re-run never reactivates a parked prospect (Pedro 2026-10-18: the status rule wins)", async () => {
+  // I5: suppressed / no_match → researched is refused for automation and people alike.
+  for (const parked of ["suppressed", "no_match"]) {
+    assert.equal(mayOverwriteStatus(parked, "researched", "automation"), false);
+    assert.equal(mayOverwriteStatus(parked, "researched", "person"), false);
+  }
+  // And the pipeline stage no longer writes that transition at all.
+  const { readFileSync } = await import("node:fs");
+  const src = readFileSync(new URL("../lib/discover/pipeline-stage.ts", import.meta.url), "utf8");
+  assert.doesNotMatch(src, /status:\s*"researched"/);
+});

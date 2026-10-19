@@ -37,7 +37,7 @@
   "crons": [
     {
       "path": "/api/replies/nudge",
-      "schedule": "0 17 * * *"
+      "schedule": "0 17 * * 1-5"
     },
     {
       "path": "/api/reports/health",
@@ -57,11 +57,11 @@
     },
     {
       "path": "/api/pitches/send-queue",
-      "schedule": "0 15 * * *"
+      "schedule": "0 15 * * 1-5"
     },
     {
       "path": "/api/pitches/follow-up",
-      "schedule": "0 16 * * *"
+      "schedule": "0 16 * * 1-5"
     },
     {
       "path": "/api/replies/poll",

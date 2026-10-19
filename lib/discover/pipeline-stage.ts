@@ -637,14 +637,12 @@ export async function processSingleProspectWith(
   }
 
   // Score passed but pitch couldn't be created — mark gate passed so UI shows
-  // correct state, and reactivate if the prospect was parked.
-  const reactivate = p?.status === "suppressed" || p?.status === "no_match";
+  // correct state. A parked prospect (suppressed / no_match) stays parked: the
+  // status rule (lib/prospects/status.ts, I5) never moves a do-not-send status
+  // to a sendable one, and Pedro chose that over reactivation (2026-10-18).
   await supabase
     .from("prospects")
     .update({
-      ...(reactivate
-        ? { status: "researched", suppressed_reason: null, suppressed_at: null }
-        : {}),
       pitch_gate_passed: true,
       updated_at: new Date().toISOString(),
     })

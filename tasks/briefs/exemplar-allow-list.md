@@ -187,3 +187,59 @@ Acceptance (round 5):
 4. Existing exemplar tests unchanged and green; typecheck, lint, test green.
 If the targets conflict (a name net that drops most real pitches), stop and report the
 numbers: the conductor decides, and #17 stays out of this ship either way.
+
+## Round 6 (conductor, 2026-10-19, after the round-5 review) — LAST round on this design
+Round 5 measured: 20/30 real pitches kept (r4: 6/30), no identifying token in the kept 20,
+held-out names 226/228. The review (fix-then-merge) found these, each traced through
+`toExemplar`; fix them as stated (the reviewer's fixes are the spec):
+1. **Address chunks regressed** (exemplars.ts ~1090): handles/domains with name-like words
+   pass ("@torres o @vega", "instagram.com/peña.dental", "vega-dental.com", "@chan.dental",
+   "luna.dental"). Every name is denied in an address chunk (S2 said strict = 20k − ALL
+   names). Better: the scrubber blanks every bare domain and handle as [site], and the leak
+   check flags any address chunk left. Treat "_" as an address-chunk marker.
+2. **OWN / CAPITALIZED_WORDS beat the name deny** (~274, ~318): "mencionan a Julio",
+   "Abril contesta", "Abril y Domingo", "Quintana y Asociados", Title-case "Seo"/"Ota".
+   Apply the deny after OWN for names (except the senders henry, nils); drop Spanish month /
+   day words that are names (julio, abril, domingo, agosto, mayo) from CAPITALIZED_WORDS;
+   "Quintana Roo" as a phrase, not "quintana"; OWN acronyms only all-caps or lowercase.
+3. **S4 shares one gate** between scrubber and leak check (~642, ~948): memo@, chema@,
+   nacho@, toño@ → "Si quieres, Memo, lo vemos" kept. Scrubber: use the composer's own
+   local-part predicate (move `firstNameGuess`'s rule from claude-composer.ts ~478 into a
+   pure shared module both import: one predicate for "what name does the greeting use";
+   claude-composer.ts is in your allow-list for that move only). Leak check: its own
+   coarser rule: any leading letter run of 3+ letters that is not a role inbox, no
+   names-list gate.
+4. **Titles before a dot** (~1052): "la Profa. Torres", "Fisio.", "Notar.", "Contad." end a
+   sentence. Add profa, profr, profra, licdo, lcdo, ingra, enf, psic (and similar) to
+   HONORIFICS, AND make the rule structural: a capitalized token directly before "." never
+   opens a sentence for the next capitalized word.
+5. **False drops from the generator's dictionary** (forth, haga, vea; also vida, debo,
+   cierra, math, fallen…): en_US.dic lacks forth/fallen/math and es_MX.dic is a stem list,
+   so real words become NAME_ONLY and are refused even lowercase. Root fix in
+   `scripts/gen-exemplar-wordlists.mjs`: decide "is a word" with an affix-aware Hunspell
+   check (nspell, MIT; dev-time only, never shipped) over en_US+en_GB(+en_CA) and
+   es_MX+es_ES; the script prints every top-20k word that ends NAME_ONLY so a dictionary gap
+   shows at build time. No new runtime dependency.
+6. **Weak-name cutoff uses the wrong population** (47/47 probed Mexican surnames kept
+   mid-sentence; Ding, Tao, Kan, Sen, Raja, Pilar, Serge…; 2,369 net names exempt). Take
+   the reviewer's (a)+(b): a weak name is exempt only if it is in the top 3,000 words, and a
+   Census surname with ≥ 50% Hispanic or Asian share counts as strong.
+7. **Lowercase subject tokens** (your departure): house-style subjects are lowercase, so
+   case says nothing there. Lowercase subject tokens use the capital-tier rule (strong
+   names denied). Conductor decision: accept the cost ("the price of…" may drop).
+Optional, take if cheap: capital tiers strip only plural -s/-es (Thind → thin+d); lazy-init
+the word sets (~400 ms / 45 MB at import of every composer route even with the switch off);
+flag \p{Zs} other than U+0020/U+00A0 between letters; add AI, PDF, FAQ, API, QR, IVA, PYME,
+PYMES, RFC, CFDI, SAAS, WIFI, NPS, ERP, TPV, SPEI to OWN (all-caps only); correct the header
+claim that the leak check "shares only the word lists" (inWords/bases/hostOf are shared:
+split them or say so); put the .rda→csv command in the generator.
+First merge `origin/claude/optimistic-tesla-3gceud` (now main 9c98448 + follow-ups): every
+conflict outside the exemplar files takes the base side (hold.ts carries the weekday-only
+digest text); afterwards `git diff origin/claude/optimistic-tesla-3gceud --name-only` lists
+only exemplar files, claude-composer.ts and the shared predicate module.
+Acceptance (round 6): every reviewer probe above drops or scrubs clean (add them as tests);
+held-out names ≥ 98% still; the conductor re-runs the 30 real pitches: target every drop a
+real leak, kept exemplars carry no capitalized mid-sentence token from a public names list.
+Stop rule: if the round-6 review finds another BLOCKING leak class, #17 is parked and the
+conductor proposes a different design to Pedro (exemplars written as templates at
+generation time). Say in the PR body what you could not close.
