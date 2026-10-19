@@ -384,7 +384,9 @@ export async function deepResearchProspectWith(
         .eq("id", prospectId)
         .eq("tenant_id", user.tenantId)
         // prospect.status was read at the start of the run: a booking or reply
-        // since then must win (status rule I3), so the WHERE re-checks it.
+        // since then must win (status rule I3), so the WHERE re-checks it, and
+        // only the early funnel is ever suppressed here.
+        .in("status", ["raw", "researched"])
         .not("status", "in", protectedStatusFilter("suppressed", "automation")!);
     }
   }

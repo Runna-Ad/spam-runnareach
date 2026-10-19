@@ -156,3 +156,14 @@ test("I5: automated writers never un-park a prospect (suppressed / no_match → 
     }
   }
 });
+
+test("automated early-funnel writes re-check their from-state in the WHERE (stale reads can't un-park or over-suppress)", async () => {
+  const { readFileSync } = await import("node:fs");
+  const read = (p: string) => readFileSync(new URL(`../${p}`, import.meta.url), "utf8");
+  // scrape: raw → researched only while still raw.
+  assert.match(read("lib/research/scrape-stage.ts"), /status: "researched"[\s\S]{0,200}\.eq\("status", "raw"\)/);
+  // deep research and bulk re-score suppress only the early funnel.
+  for (const p of ["lib/research/deep-research-stage.ts", "lib/discover/bulk-actions.ts"]) {
+    assert.match(read(p), /status: "suppressed"[\s\S]{0,900}\.in\("status", \["raw", "researched"\]\)/, p);
+  }
+});

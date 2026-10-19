@@ -358,13 +358,16 @@ export async function scrapeWebsiteWith(
       .eq("tenant_id", user.tenantId);
   }
 
-  // Auto-bump status raw → researched.
+  // Auto-bump status raw → researched. The status was read before the scrape
+  // and SMTP screening ran; the WHERE re-checks it so a prospect suppressed in
+  // the meantime stays parked (status rule I5).
   if (prospect.status === "raw") {
     await supabase
       .from("prospects")
       .update({ status: "researched", updated_at: new Date().toISOString() } as never)
       .eq("id", parsed.data.prospect_id)
-      .eq("tenant_id", user.tenantId);
+      .eq("tenant_id", user.tenantId)
+      .eq("status", "raw");
   }
 
   await writeAuditLog({

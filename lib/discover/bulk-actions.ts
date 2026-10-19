@@ -363,6 +363,7 @@ export async function bulkScoreProspects(
       })
       .in("id", toSuppress)
       .eq("tenant_id", user.tenantId)
+      .in("status", ["raw", "researched"])
       .not("status", "in", protectedStatusFilter("suppressed", "automation")!)
       .select("id")
       .returns<{ id: string }[]>();
