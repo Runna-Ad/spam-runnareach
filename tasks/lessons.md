@@ -1,5 +1,10 @@
 # S.P.A.M. — Lessons (newest first)
 
+[2026-10-19] PEDRO_OVERRIDE: Build on the existing second brain and wrap-up routine; never design a parallel one
+WHAT HAPPENED: Asked how to make the conductor workflow smarter, the conductor (a cloud session) proposed a new lessons loop and a new /wrap-up command. Pedro already runs both: the second brain (Moisty-Mango/second-brain: recall hook, capture on session end, weekly distill) and the wrap-up routine in his global rules (Moisty-Mango/dotclaude CLAUDE.md). Cloud sessions load neither (the hooks and rules assume /Users/work and $HOME/Brain on his Macs), so the conductor never saw them, skipped the wrap-up, logged no PEDRO_OVERRIDEs and broke the global writing rules all session.
+RULE: At the start of any cloud session, check whether the global rules and the brain are present (~/.claude/CLAUDE.md, $HOME/Brain/brain-starter). If not, say so to Pedro and ask to attach Moisty-Mango/dotclaude and Moisty-Mango/second-brain read-only before proposing any process change. Improve his loop; never replace it.
+TAGS: process, second-brain, wrap-up, cloud-sessions, conductor
+
 ## Merged from lessons-inbox, exemplar-readiness-report (2026-10-19)
 
 [2026-10-19] A count of "what the pipeline would pick" shares the pipeline's predicate, row mapper and columns
@@ -1655,3 +1660,35 @@ ROOT CAUSE: Applying migration 0038 through the Supabase MCP, every call contain
 RULE: If a Supabase MCP call times out, first check whether anything landed (columns, pg_proc, pg_trigger, schema_migrations), then look for a destructive keyword. Prefer non-destructive forms in migrations run through the MCP: `create or replace trigger` (PG14+) instead of drop + create, `add column if not exists`, `on conflict do nothing`. Split a migration into idempotent steps so a timeout tells you which step it was.
 TAGS: #supabase #mcp #migrations #timeouts
 
+
+[2026-10-19] LESSON: the bounce breaker reads bounces every 30 min, the drip sends every 10, so it could only act after the drip was done
+ROOT CAUSE: The send queue sent the 19 due AUTO pitches 6 at a time at 15:00, 15:10, 15:20 and 15:30 UTC. Two addresses did not exist; Gmail's bounce notices landed at 15:00:31 and 15:00:36, within seconds of the first batch. But the reply poll reads the inbox every 30 minutes (15:30) and the breaker runs on the 15-minute tick (15:45), so the last 13 sends went out after the bounces existed and before anything could see them. The two bounces were 1 of 9 Anymail addresses (11%) and 1 of 39 scraped ones (a dentist whose site publishes a dead contacto@).
+RULE: A breaker only protects sends that come after it can see a bounce. Read bounces faster than the send spacing (or check for new bounce notices inside the send run before each batch). Judge an address source by its bounce rate on our own sends, not by its label: verify-recipient.ts treats Anymail as "medium" provenance (auto-send), and 1 in 9 bounced.
+TAGS: #autopilot #deliverability #bounces #breakers #anymail
+
+[2026-10-19] LESSON: demoting the autopilot does not pull back the AUTO pitches it already approved
+ROOT CAUSE: After the bounce breaker, the stage dropped veto -> shadow (shadow = a person approves everything). 9 AUTO pitches approved before the demotion stayed status=approved with a scheduled_send_at, 6 of them Anymail addresses. The send queue checks only the inbox's paused flag, never the stage, so resuming the inbox would send them unreviewed.
+RULE: A stage change is a promise about what sends without a person. When the autopilot steps down, return its not-yet-sent approvals to review (the digest hold path) in the same step, and test it: demote, then assert nothing autopilot-approved is still due.
+TAGS: #autopilot #stages #send-queue #safety
+
+[2026-10-19] LESSON: a resumed inbox is re-paused by the same bounces 15 minutes later
+ROOT CAUSE: The inbox_bounces breaker counts hard bounces in the inbox's last 50 sends, with no notion of "since a person resumed it". Someone resumed pedro@runnareach.com in Settings between 15:45 and 16:00 UTC (the only code path that sets paused=false; it writes no audit row), and the 16:00 tick tripped on the same 2 bounces and paused it again, with a second email. Until ~48 more sends push those bounces out of the window, a resume cannot stick, and the paused inbox cannot send them.
+RULE: Every breaker that a person can clear must measure from the last clear (store resumed_at; count only events after it), and the resume itself must be audited. Test it: trip, resume, tick, assert still resumed.
+
+
+## Merged from lessons-inbox, bounce-hotfix (2026-10-19)
+
+[2026-10-19] A breaker that a person can reset needs a recorded reset, or the reset is undone by the same evidence
+WHAT HAPPENED: The inbox_bounces breaker (lib/autopilot/tick.ts runBreakers) counted bounces over "the last 50 sends" with no notion of a resume, so a resume in Settings was re-paused 15 minutes later by the same two bounces; a paused inbox never makes the 48 sends that would age them out. Fix: the resume writes audit_log sender_inbox.resumed (lib/autopilot/inbox-resume.ts) and the breaker counts only bounces recorded after it (lib/autopilot/bounce-breaker.ts). If the row can't be written, the save puts the pause back and says so.
+RULE: Any automatic pause a person can lift must count evidence only after the latest lift, and the lift must be a row only the lift writes (never updated_at). Without the row the breaker must still fail toward pausing, and the UI must not show "resumed" when the record is missing.
+TAGS: autopilot, breakers, send-path
+
+[2026-10-19] A cached verdict outlives a rule change: re-check what the new rule would no longer give
+WHAT HAPPENED: Making Anymail/Hunter addresses "review" in verifyEmailPure was not enough on its own: the tick reuses a stored verify_verdict for 7 days (labelDrafts), and drafts already labelled AUTO keep that label until scheduleAuto approves them. Both would have auto-sent finder addresses for up to a week after the deploy. Fix: storedVerdictUsable (lib/research/verify-recipient.ts) refuses a stored "send" for a finder source, and scheduleAuto clears the AUTO label of a finder-address draft so it is labelled again.
+RULE: When a rule tightens a verdict, grep every place that stores or caches that verdict or a decision derived from it (labels, lanes, approvals) and say what happens to rows decided under the old rule. Same family as "say what the OLD code does in the migration gap", applied to cached decisions.
+TAGS: autopilot, verify, caching
+
+[2026-10-19] A guard that only matters in a race needs a race in the fake, or deleting it passes every test
+WHAT HAPPENED: holdAutoApprovals selects approved pitches, then updates them with .eq("status","approved"). The mutation check (remove the guard) passed all tests, because the read already filtered on status. Adding a beforeUpdate hook to the fake (the send-queue claims a row between our read and our write) made the mutation fail.
+RULE: For every WHERE guard on an update that repeats the read's filter, write the test where another writer changes the row between the read and the update; run the mutation (delete the guard) to prove it.
+TAGS: testing, autopilot, races

@@ -9,7 +9,8 @@
  *   3. DNS         — the domain exists and accepts mail (MX, or A fallback;
  *                    a null MX or a missing domain can only bounce)
  *   4. ownership   — the address belongs to the prospect's own domain
- *   5. provenance  — published on their site > verified finder > guess
+ *   5. provenance  — published on their site > verified finder > guess;
+ *                    a finder's address (Anymail, Hunter) is never "send"
  *   6. memory      — a domain that already hard-bounced on us only gets
  *                    addresses the company itself publishes
  *
@@ -84,6 +85,36 @@ export function provenanceOf(selectedBy: string | null): Provenance {
   }
 }
 
+/**
+ * Finder services (paid lookups) infer an address from name patterns and their
+ * own data; the company never published it. On 2026-10-19, 1 of 9 Anymail
+ * sends hard-bounced (1 of 39 scraped ones did), so a finder's address goes
+ * to a person and never out automatically.
+ */
+const FINDER_SOURCES: ReadonlySet<string> = new Set(["anymail", "hunter"]);
+
+export function isFinderSource(selectedBy: string | null | undefined): boolean {
+  return FINDER_SOURCES.has((selectedBy ?? "").trim().toLowerCase());
+}
+
+/** How long a stored verdict (prospect_contacts.verify_verdict) is reused before it is checked again. */
+export const VERDICT_TTL_MS = 7 * 86_400_000;
+
+/**
+ * May a stored verdict be reused instead of verifying again? Within the TTL,
+ * except a stored "send" for a finder address: that was stored before finder
+ * addresses needed a person, and today's rules would not give it.
+ */
+export function storedVerdictUsable(
+  c: { verdict: Verdict | null; checkedAt: string | null; selectedBy: string | null },
+  now: Date,
+): boolean {
+  if (!c.verdict || !c.checkedAt) return false;
+  const age = now.getTime() - Date.parse(c.checkedAt);
+  if (!(age < VERDICT_TTL_MS)) return false;
+  return !(c.verdict === "send" && isFinderSource(c.selectedBy));
+}
+
 export function verifyEmailPure(input: VerifyInput, dns: DnsStatus): VerifyResult {
   const email = input.email.trim().toLowerCase();
   const provenance = provenanceOf(input.selectedBy);
@@ -132,6 +163,10 @@ export function verifyEmailPure(input: VerifyInput, dns: DnsStatus): VerifyResul
   }
 
   if (provenance === "low") review.push(`Guessed address (${input.selectedBy ?? "unknown source"}) — not proven to exist`);
+  // Provenance stays "medium", so the bounced-domain rule above still drops it.
+  if (isFinderSource(input.selectedBy)) {
+    review.push(`Address from a finder service (${input.selectedBy}), not published by the company`);
+  }
 
   const verdict: Verdict = drop.length > 0 ? "drop" : review.length > 0 ? "review" : "send";
   return { verdict, provenance, reasons: [...drop, ...review] };

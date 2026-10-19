@@ -30,7 +30,13 @@ Every conductor session starts here, including the first one:
    workers (board Session = agent) there are no PRs: check the branch instead and list
    worktrees to clean up (`git worktree list`).
 5. Check `git status -sb`: anything unpushed goes on the board before you do more.
-6. Write a one-line "resumed" entry in the board log, timestamped with `date -u`.
+6. Check the brain is here. A "PEDRO'S GLOBAL RULES" block at session start and a
+   "SECOND BRAIN" catalog on the first prompt mean yes (`.claude/hooks/cloud-rules.sh`,
+   `cloud-brain.sh`). A "Second brain not attached" note means no: ask Pedro to attach
+   Moisty-Mango/second-brain and Moisty-Mango/dotclaude read-only before planning
+   anything. Those global rules (wrap-up, PEDRO_OVERRIDE, writing check) apply to the
+   conductor in full (PEDRO_OVERRIDE 2026-10-19).
+7. Write a one-line "resumed" entry in the board log, timestamped with `date -u`.
 
 ## 1. Start a phase (once per phase)
 1. Cut `claude/<phase>-integration` from `origin/main`. Push it.
@@ -97,6 +103,9 @@ rework in retros traces to a missing sentence in the brief. Before spawning, che
   says what rows the old code writes in the gap and what the new code then does to them;
   never key a window on `updated_at` (the trigger bumps it on every write).
 - Model/effort copied from `tasks/routing.md`, and the brief says why if it deviates.
+- "Brain lessons": run `tasks/tools/brain-recall-for.sh "<the brief's goal in a sentence>"`
+  and paste the RULE of each article that really applies (skip weak matches). Worker
+  sessions do not get the brain; the brief is how its lessons reach them.
 Keep the brief in the repo (commit to the integration branch) so the worker's fresh
 clone has it.
 

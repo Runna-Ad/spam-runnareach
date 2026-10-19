@@ -2,6 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
+import { saveSenderInbox } from "@/lib/autopilot/inbox-resume";
 import { requireUser } from "@/lib/auth";
 import { createClient } from "@/lib/supabase/server";
 
@@ -82,22 +83,23 @@ export async function updateSenderInbox(input: UpdateSenderInboxInput): Promise<
 
   const supabase = await createClient();
 
-  const payload = {
-    display_name: parsed.data.display_name,
-    linkedin_url: parsed.data.linkedin_url,
-    daily_cap: parsed.data.daily_cap,
-    paused: parsed.data.paused,
-    paused_reason: parsed.data.paused ? parsed.data.paused_reason : null,
-    updated_at: new Date().toISOString(),
-  };
+  // Saving a paused inbox unpaused records the resume (audit_log
+  // sender_inbox.resumed): the bounce breaker counts only bounces after it.
+  const saved = await saveSenderInbox(supabase, {
+    tenantId: user.tenantId,
+    inboxId: parsed.data.id,
+    actorId: user.id,
+    patch: {
+      display_name: parsed.data.display_name,
+      linkedin_url: parsed.data.linkedin_url,
+      daily_cap: parsed.data.daily_cap,
+      paused: parsed.data.paused,
+      paused_reason: parsed.data.paused ? parsed.data.paused_reason : null,
+      updated_at: new Date().toISOString(),
+    },
+  });
 
-  const { error } = await supabase
-    .from("sender_inboxes")
-    .update(payload)
-    .eq("id", parsed.data.id)
-    .eq("tenant_id", user.tenantId);
-
-  if (error) return { ok: false, error: `Could not save sender inbox: ${error.message}` };
+  if (!saved.ok) return { ok: false, error: saved.error };
 
   revalidatePath("/settings/sending");
   return { ok: true, id: parsed.data.id };
