@@ -6,7 +6,8 @@
  *                    address is verified and the segment isn't on probation.
  *   evaluateBreakers circuit breakers (audit §5.4): what to pause, and why.
  *   nextStage        autonomy stages (off → shadow → veto → auto), promoted
- *                    on measured agreement, demoted automatically on trouble.
+ *                    on measured agreement, demoted automatically when the
+ *                    pitches themselves go wrong (never on delivery trouble).
  *
  * Learning changes WHAT is said and TO WHOM. It never changes these.
  *
@@ -83,18 +84,28 @@ export const HELD_BY_PERSON = "held by a person";
 export const HELD_BY_AUTOPILOT = "held by the autopilot";
 
 /**
+ * The one test for "a person sent this autopilot approval back": it is back in
+ * draft or rejected, and NOT because the autopilot pulled it back itself
+ * (HELD_BY_AUTOPILOT: a stage drop or the kill switch). Used by countVetoes
+ * (the stage's veto rate) and by the weekly report's "Held by a person".
+ */
+export function vetoedByPerson(p: { status: string; autopilot_reasons?: readonly string[] | null }): boolean {
+  if (p.status !== "draft" && p.status !== "reviewer_rejected") return false;
+  return !(p.autopilot_reasons ?? []).some((r) => r.startsWith(HELD_BY_AUTOPILOT));
+}
+
+/**
  * Vetoes in the current stage: autopilot-approved pitches a person sent back
- * (current status draft or reviewer_rejected). Counted by the approval event,
- * not the lane: a held pitch is moved to the review lane, so a lane filter
- * would never see it.
+ * (vetoedByPerson). Counted by the approval event, not the lane: a held pitch
+ * is moved to the review lane, so a lane filter would never see it.
  */
 export function countVetoes(
   autopilotApproved: ReadonlySet<string>,
-  current: ReadonlyArray<{ id: string; status: string }>,
+  current: ReadonlyArray<{ id: string; status: string; autopilot_reasons?: readonly string[] | null }>,
 ): number {
   const seen = new Set<string>();
   for (const r of current) {
-    if (autopilotApproved.has(r.id) && (r.status === "draft" || r.status === "reviewer_rejected")) seen.add(r.id);
+    if (autopilotApproved.has(r.id) && vetoedByPerson(r)) seen.add(r.id);
   }
   return seen.size;
 }
@@ -151,7 +162,39 @@ export type BreakerMetrics = {
   warmupInboxRate: number | null;
 };
 
-export type BreakerTrip = { scope: "inbox" | "all"; inboxId?: string; code: string; reason: string };
+export type BreakerCode = "inbox_bounces" | "gmail_api" | "bounces_today" | "opt_out_spike" | "dmarc" | "blocklist" | "placement";
+
+export type BreakerTrip = { scope: "inbox" | "all"; inboxId?: string; code: BreakerCode; reason: string };
+
+/**
+ * What each breaker says about the autopilot. DELIVERY: the mail isn't getting
+ * through (dead mailboxes, Gmail, DNS, blocklists, placement): sending pauses,
+ * the stage stays. QUALITY: people react to what we send and to whom (opt-outs
+ * and hard no's): sending pauses AND the stage drops. The stage measures one
+ * thing, whether the pitches are good enough to send without a person
+ * (PEDRO_OVERRIDE 2026-10-19). One map, read by nextStage's input (the tick's
+ * stage step, lib/autopilot/hold.ts stageQualityTrips); a new code must be
+ * classified here or it doesn't compile.
+ */
+export const BREAKER_KIND: Readonly<Record<BreakerCode, "delivery" | "quality">> = {
+  inbox_bounces: "delivery",
+  gmail_api: "delivery",
+  bounces_today: "delivery",
+  dmarc: "delivery",
+  blocklist: "delivery",
+  placement: "delivery",
+  opt_out_spike: "quality",
+};
+
+/**
+ * Does this breaker insight's code count against the stage? Read from stored
+ * evidence, so it takes any value: a code this version doesn't know counts as
+ * quality (fails toward a person, never toward more autonomy).
+ */
+export function isQualityBreaker(code: unknown): boolean {
+  if (typeof code === "string" && Object.hasOwn(BREAKER_KIND, code)) return BREAKER_KIND[code as BreakerCode] === "quality";
+  return true;
+}
 
 /**
  * The inbox_bounces rule, one predicate for both of its users: the tick pauses
@@ -229,8 +272,10 @@ export type StageMetrics = {
   autoVetoed: number;
   /** Hard-bounce rate of AUTO sends in this stage. */
   autoBounceRate: number;
-  /** Breakers that tripped in this stage where AUTO sends were the cause. */
-  autoBreakerTrips: number;
+  /** QUALITY breakers (BREAKER_KIND) that tripped in this stage. Delivery trips never count. */
+  autoQualityTrips: number;
+  /** Their codes, for the demotion reason (lib/autopilot/hold.ts stageQualityTrips). */
+  autoQualityTripCodes?: string[];
 };
 
 export const STAGE_RULES = {
@@ -238,13 +283,20 @@ export const STAGE_RULES = {
   veto: { minDays: 14, minScheduled: 100, maxVetoRate: 0.05, maxBounceRate: 0.02 },
 } as const;
 
+/** "a quality breaker tripped: opt_out_spike" (each code once, in order of first trip). */
+export function qualityTripReason(codes: readonly string[]): string {
+  const unique = [...new Set(codes)];
+  return unique.length ? `a quality breaker tripped: ${unique.join(", ")}` : "a quality breaker tripped";
+}
+
 export function nextStage(stage: Stage, m: StageMetrics): { stage: Stage; reason: string } {
-  // Demotion first: trouble caused by automatic sends drops a stage at once.
-  if ((stage === "auto" || stage === "veto") && (m.autoBreakerTrips > 0 || m.autoFactualErrors > 0)) {
+  // Demotion first: pitches going wrong drops a stage at once. Delivery
+  // trouble pauses sending (the breakers) and never moves the stage.
+  if ((stage === "auto" || stage === "veto") && (m.autoQualityTrips > 0 || m.autoFactualErrors > 0)) {
     const down: Stage = stage === "auto" ? "veto" : "shadow";
     return {
       stage: down,
-      reason: m.autoBreakerTrips > 0 ? "a circuit breaker tripped on automatic sends" : "an automatic pitch had a factual or recipient error",
+      reason: m.autoFactualErrors > 0 ? "an automatic pitch had a factual or recipient error" : qualityTripReason(m.autoQualityTripCodes ?? []),
     };
   }
 
@@ -273,4 +325,14 @@ export function nextStage(stage: Stage, m: StageMetrics): { stage: Stage; reason
   }
 
   return { stage, reason: stage === "auto" ? "healthy" : "autopilot off" };
+}
+
+/**
+ * The autopilot is switched off (kill switch, stage off, or no state row). The
+ * tick then runs only its safety steps: the breakers (pause + email, since the
+ * send-queue sends approved pitches whatever the stage) and the pull-back of
+ * automatic approvals still waiting (lib/autopilot/hold.ts holdAutoApprovals).
+ */
+export function safetyOnly(s: { enabled: boolean; stage: Stage } | null): boolean {
+  return !s || !s.enabled || s.stage === "off";
 }

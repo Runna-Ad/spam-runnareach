@@ -148,7 +148,8 @@ test("the tick labels with storedVerdictUsable and never schedules on a finder a
   assert.match(label, /storedVerdictUsable\(\{ verdict: contact\.verify_verdict, checkedAt: contact\.verify_checked_at, selectedBy \}, now\)/);
   assert.match(label, /if \(contact\?\.email && !reusable\)/);
   const schedule = s.slice(s.indexOf("async function scheduleAuto"), s.indexOf("async function sendVetoDigest"));
-  assert.match(schedule, /isFinderSource\(c\.selected_by\)/);
+  // The relabel itself is tested against a fake db (tests/bounce-incident.test.ts relabelFinderDrafts).
+  assert.match(schedule, /const relabel = await relabelFinderDrafts\(db, tenantId, candidates\.filter\(\(c\) => !held\.has\(c\.id\)\)\);/);
   assert.match(schedule, /if \(held\.has\(p\.id\) \|\| relabel\.has\(p\.id\)\) continue;/);
   assert.ok(schedule.indexOf("relabel.has(p.id)") < schedule.indexOf("transitionPitchStatusWith("), "checked before the approval");
 });

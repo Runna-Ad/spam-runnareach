@@ -12,6 +12,7 @@
  *   - Arm rates only from 20 trials up (lib/learning/report.ts); else "too early".
  */
 
+import { vetoedByPerson } from "../autopilot/governor.ts";
 import { isTestAddress } from "../compliance/test-addresses.ts";
 import { summarizeArms, type ArmRow } from "../learning/report.ts";
 import type { OutcomeEvent } from "../learning/reward.ts";
@@ -59,8 +60,12 @@ export type WeeklyRaw = {
   researched: Rows<{ at: string }>;
   /** First-touch pitches created (drafts), with how the autopilot treated them. */
   drafts: Rows<{ at: string; email: string | null; autoRejected: boolean; reason: string | null }>;
-  /** Autopilot approvals (AUTO scheduled), with the pitch's status now. */
-  autoScheduled: Rows<{ at: string; status: string; email: string | null }>;
+  /**
+   * Autopilot approvals (AUTO scheduled), with the pitch's status and
+   * autopilot_reasons now (reasons tell a person's hold from the autopilot's
+   * own pull-back; absent = read as a person's).
+   */
+  autoScheduled: Rows<{ at: string; status: string; email: string | null; reasons?: string[] | null }>;
   autopilot: { enabled: boolean; stage: string; reason: string | null } | null;
   breakerTrips: Rows<{ at: string; title: string }>;
   arms: Rows<ArmRow>;
@@ -177,9 +182,10 @@ export function buildWeeklyStats(raw: WeeklyRaw): WeeklyStats {
     researched: pair(raw.researched, (r) => r.at, now),
     drafts: pair(drafts, (d) => d.at, now),
     autoScheduled: pair(autos, (a) => a.at, now),
-    // Same predicate as the governor's autoVetoed (lib/autopilot/tick.ts evaluateStage):
-    // approved by the autopilot, then moved back to draft or rejected by a person.
-    vetoed: autos ? thisWeek(autos, (a) => a.at, now).filter((a) => a.status === "draft" || a.status === "reviewer_rejected").length : null,
+    // Approved by the autopilot, then sent back by a person: the same predicate
+    // as the stage's veto count (governor vetoedByPerson). A pull-back by the
+    // autopilot itself (stage drop or kill switch) is not a person's veto.
+    vetoed: autos ? thisWeek(autos, (a) => a.at, now).filter((a) => vetoedByPerson({ status: a.status, autopilot_reasons: a.reasons })).length : null,
     autoRejected: rejectedThisWeek
       ? { count: rejectedThisWeek.length, topReasons: tally(rejectedThisWeek.map((d) => reasonLabel(d.reason))).slice(0, 3) }
       : null,

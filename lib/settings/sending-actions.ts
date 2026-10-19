@@ -21,6 +21,8 @@ const updateSchema = z.object({
   daily_cap: z.number().int().min(1).max(500),
   paused: z.boolean(),
   paused_reason: z.string().trim().max(500).nullable(),
+  /** The paused value the form loaded: a resume counts only if the person saw "paused". */
+  loaded_paused: z.boolean(),
 });
 
 export type CreateSenderInboxInput = z.input<typeof createSchema>;
@@ -85,10 +87,12 @@ export async function updateSenderInbox(input: UpdateSenderInboxInput): Promise<
 
   // Saving a paused inbox unpaused records the resume (audit_log
   // sender_inbox.resumed): the bounce breaker counts only bounces after it.
+  // Only from a form that loaded "paused" (lib/autopilot/inbox-resume.ts).
   const saved = await saveSenderInbox(supabase, {
     tenantId: user.tenantId,
     inboxId: parsed.data.id,
     actorId: user.id,
+    loadedPaused: parsed.data.loaded_paused,
     patch: {
       display_name: parsed.data.display_name,
       linkedin_url: parsed.data.linkedin_url,

@@ -17,9 +17,15 @@ import "server-only";
  *                 (governor.heldAction)
  *   5. schedule   veto stage: AUTO pitches approved and scheduled 18h out, with
  *                 a digest so a person can hold any; auto stage: scheduled now
- *   6. stage      promote / demote the autonomy stage on measured results
+ *   6. stage      promote / demote the autonomy stage on measured results;
+ *                 only pitch quality demotes (a factual error, an opt-out
+ *                 spike), never a delivery breaker
  *   7. learn      re-score writer variants and search cells from outcomes;
  *                 weekly AI review proposes new guidance to test (learn.ts)
+ *
+ * With the autopilot off (kill switch, stage off) only the safety steps run:
+ * the pull-back of automatic approvals still waiting, the veto digest, and
+ * 1 (breakers). The route ticks every tenant with a state row for this.
  *
  * Every autonomous change writes a learning_insights row; breaker trips and
  * stage changes also email the notify address.
@@ -33,10 +39,14 @@ import {
   buildVetoDigest,
   DIGEST_HORIZON_HOURS,
   digestDue,
+  demotionHoldReason,
   holdAutoApprovals,
+  KILL_SWITCH_HOLD_REASON,
   lastDigestSlot,
   pullbackSentence,
   pullsBackApprovals,
+  relabelFinderDrafts,
+  stageQualityTrips,
   VETO_WINDOW_HOURS,
   type DigestItem,
   type PullbackResult,
@@ -58,7 +68,7 @@ import { editRatio } from "@/lib/pitches/decision";
 import { generatePitchWith, transitionPitchStatusWith } from "@/lib/pitches/pitch-stage";
 import { WRITER_FIXABLE } from "@/lib/pitches/review";
 import { sendNotification, type NotificationResult } from "@/lib/notify/send";
-import { isFinderSource, storedVerdictUsable, verifyRecipient } from "@/lib/research/verify-recipient";
+import { storedVerdictUsable, verifyRecipient } from "@/lib/research/verify-recipient";
 import { checkDeliverabilityHealth } from "@/lib/warmup/deliverability";
 import { analyzeSpamRate } from "@/lib/warmup/intelligence";
 import type { WarmupLogEntry } from "@/lib/warmup/types";
@@ -69,6 +79,7 @@ import {
   heldAction,
   laneFor,
   nextStage,
+  safetyOnly,
   type BreakerMetrics,
   type BreakerTrip,
   type Lane,
@@ -144,23 +155,6 @@ export async function runTick(actor: Actor, now: Date = new Date()): Promise<Tic
     .eq("tenant_id", tenantId)
     .maybeSingle();
   const s = state as AutonomyState | null;
-  // The digest lists approved emails, and the send-queue sends them whatever the
-  // stage, so it runs even when the autopilot is switched off or was demoted.
-  // Only the auto stage (scheduled to send now, no veto window) skips it. First,
-  // so it runs well inside the time budget.
-  if (s && s.stage !== "auto") {
-    try {
-      report.digest = await sendVetoDigest(db, tenantId, now);
-    } catch (err) {
-      report.errors.push(`digest: ${(err as Error).message}`);
-    }
-  }
-  if (!s || !s.enabled || s.stage === "off") {
-    report.skipped = "autopilot off for this tenant";
-    return report;
-  }
-  report.stage = s.stage;
-
   const step = async <T>(name: string, fn: () => Promise<T>, fallback: T): Promise<T> => {
     try {
       return await fn();
@@ -170,7 +164,45 @@ export async function runTick(actor: Actor, now: Date = new Date()): Promise<Tic
     }
   };
 
+  // Kill switch or stage off: no automatic approval stays waiting to send (the
+  // send-queue sends approved pitches whatever the stage). Before the digest,
+  // so the digest never lists an approval this same tick holds.
+  if (safetyOnly(s)) {
+    const reason = s && s.enabled ? demotionHoldReason("off") : KILL_SWITCH_HOLD_REASON;
+    const sweep = await step("pullback", () => holdAutoApprovals(db, tenantId, "off", reason), { held: 0, error: null });
+    if (sweep.error) report.errors.push(`pullback: ${sweep.error}`);
+    if (sweep.held > 0) {
+      report.pulledBack = sweep.held;
+      await insight(db, tenantId, {
+        learner: "governor",
+        kind: "stage",
+        title: `Held ${sweep.held} automatic approval${sweep.held === 1 ? "" : "s"} still waiting with the autopilot off`,
+        evidence: sweep,
+      });
+    }
+  }
+  // The digest lists approved emails, and the send-queue sends them whatever the
+  // stage, so it runs even when the autopilot is switched off or was demoted.
+  // Only the auto stage (scheduled to send now, no veto window) skips it. Early,
+  // so it runs well inside the time budget.
+  if (s && s.stage !== "auto") {
+    try {
+      report.digest = await sendVetoDigest(db, tenantId, now);
+    } catch (err) {
+      report.errors.push(`digest: ${(err as Error).message}`);
+    }
+  }
+
+  // Breakers whatever the stage: the send-queue sends approved pitches (and
+  // blocks an inbox on fresh bounces for one run only) even with the autopilot
+  // off, so only this step turns trouble into a pause + email.
   report.breakers = await step("breakers", () => runBreakers(db, tenantId, now), []);
+  if (!s || safetyOnly(s)) {
+    report.skipped = "autopilot off for this tenant";
+    return report;
+  }
+  report.stage = s.stage;
+
   const sendingHalted = report.breakers.some((t) => t.scope === "all");
   report.resumedJobs = await step("watchdog", () => resumeStaleJobs(actor, db, now), 0);
   report.discovery = await step("supply", () => maybeStartDiscovery(actor, db, now), { started: false, reason: "error" });
@@ -687,31 +719,9 @@ async function scheduleAuto(actor: Actor, db: Db, stage: Stage, now: Date, deadl
   }
 
   // A draft labelled AUTO before finder addresses needed a person (2026-10-19)
-  // still carries that label: never approve on it. Clear the label so §4
-  // labels it again on today's rules (it re-verifies; verify-recipient.ts).
-  // Unreadable sources: approve nothing this tick.
-  const relabel = new Set<string>();
-  const contactIds = [...new Set(candidates.filter((c) => !held.has(c.id)).map((c) => c.contact_id).filter((id): id is string => !!id))];
-  if (contactIds.length) {
-    const { data: contacts, error: contactsError } = await db
-      .from("prospect_contacts")
-      .select("id, selected_by")
-      .eq("tenant_id", tenantId)
-      .in("id", contactIds);
-    if (contactsError) throw new Error(`recipient sources: ${contactsError.message || "no detail"}`);
-    const finder = new Set(
-      ((contacts ?? []) as Array<{ id: string; selected_by: string | null }>).filter((c) => isFinderSource(c.selected_by)).map((c) => c.id),
-    );
-    for (const c of candidates) if (!held.has(c.id) && c.contact_id && finder.has(c.contact_id)) relabel.add(c.id);
-  }
-  if (relabel.size) {
-    await db
-      .from("pitches")
-      .update({ autopilot_lane: null, autopilot_reasons: null })
-      .in("id", [...relabel])
-      .eq("tenant_id", tenantId)
-      .eq("status", "draft");
-  }
+  // is relabelled, never approved (hold.ts relabelFinderDrafts). Unreadable
+  // sources throw: approve nothing this tick.
+  const relabel = await relabelFinderDrafts(db, tenantId, candidates.filter((c) => !held.has(c.id)));
 
   const sendAt = new Date(now.getTime() + (stage === "veto" ? VETO_WINDOW_HOURS * 3_600_000 : 0)).toISOString();
   let scheduled = 0;
@@ -829,14 +839,15 @@ async function evaluateStage(
   // Vetoes by approval event, whatever the lane: a held pitch is moved to the
   // review lane (§5, the digest hold), so `rows` (lane auto) never holds it.
   const approvedIds = [...autopilotApproved];
-  const current: Array<{ id: string; status: string }> = [];
+  // With their reasons: an autopilot pull-back is not a person's veto (governor vetoedByPerson).
+  const current: Array<{ id: string; status: string; autopilot_reasons: string[] | null }> = [];
   for (let k = 0; k < approvedIds.length; k += 200) {
     const { data: chunk } = await db
       .from("pitches")
-      .select("id, status")
+      .select("id, status, autopilot_reasons")
       .eq("tenant_id", tenantId)
       .in("id", approvedIds.slice(k, k + 200));
-    current.push(...((chunk ?? []) as Array<{ id: string; status: string }>));
+    current.push(...((chunk ?? []) as Array<{ id: string; status: string; autopilot_reasons: string[] | null }>));
   }
   const vetoed = countVetoes(autopilotApproved, current);
   const sentAuto = rows.filter((r) => autopilotApproved.has(r.id) && r.sent_at).map((r) => r.id);
@@ -850,12 +861,8 @@ async function evaluateStage(
       .in("pitch_id", sentAuto);
     bounces = count ?? 0;
   }
-  const { count: trips } = await db
-    .from("learning_insights")
-    .select("id", { count: "exact", head: true })
-    .eq("tenant_id", tenantId)
-    .eq("kind", "breaker")
-    .gte("created_at", since);
+  // Only quality breakers count against the stage (governor BREAKER_KIND).
+  const qualityTrips = s.stage === "shadow" ? [] : await stageQualityTrips(db, tenantId, since);
 
   const metrics: StageMetrics = {
     daysInStage: (now.getTime() - new Date(since).getTime()) / DAY,
@@ -865,7 +872,8 @@ async function evaluateStage(
     autoScheduled: autopilotApproved.size,
     autoVetoed: vetoed,
     autoBounceRate: sentAuto.length ? bounces / sentAuto.length : 0,
-    autoBreakerTrips: s.stage === "shadow" ? 0 : trips ?? 0,
+    autoQualityTrips: qualityTrips.length,
+    autoQualityTripCodes: qualityTrips,
   };
   const next = nextStage(s.stage, metrics);
   await db

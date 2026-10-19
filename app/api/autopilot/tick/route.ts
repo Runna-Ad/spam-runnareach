@@ -3,9 +3,12 @@
 // The autopilot's heartbeat. Supabase pg_cron calls it every 15 minutes
 // (migration 0041); it can also be called by hand with the cron secret.
 //
-// For every tenant whose autonomy_state is enabled, runs one tick as that
-// tenant's system actor (lib/autopilot/tick.ts): breakers, watchdog, scout,
-// labels, scheduling, stage. A tenant with the kill switch off is skipped.
+// For every tenant with an autonomy_state row, runs one tick as that tenant's
+// system actor (lib/autopilot/tick.ts): breakers, watchdog, scout, labels,
+// scheduling, stage. A tenant with the kill switch off is ticked too, and
+// runTick runs only its safety steps for it (governor.safetyOnly): the
+// pull-back of automatic approvals, the veto digest and the breakers, because
+// the send-queue sends approved pitches whatever the switch says.
 //
 // Auth: Authorization: Bearer <CRON_SECRET>, or pg_cron's Vault-held token
 // (lib/cron-auth.ts isSchedulerAuthorized).
@@ -27,7 +30,7 @@ async function handle(req: NextRequest) {
   // autonomy_state (0040) isn't in the generated types.
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const supabase = createServiceRoleClient() as any;
-  const { data, error } = await supabase.from("autonomy_state").select("tenant_id").eq("enabled", true);
+  const { data, error } = await supabase.from("autonomy_state").select("tenant_id");
   if (error) return NextResponse.json({ ok: false, error: error.message }, { status: 500 });
 
   const reports: TickReport[] = [];
