@@ -20,6 +20,8 @@ export type NotificationMessage = {
   kind: NotifyKind;
   subject: string;
   body: string;
+  /** Optional designed HTML part; `body` stays the plain-text part (lib/gmail/mime.ts). */
+  html?: string;
   fromName: string;
 };
 
@@ -38,6 +40,7 @@ export async function sendNotificationWithToken(
         to,
         subject: message.subject,
         body: message.body,
+        html: message.html,
         // Alerts often run at the end of a route near its maxDuration.
         timeoutMs: NOTIFY_SEND_TIMEOUT_MS,
       });

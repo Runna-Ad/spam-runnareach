@@ -171,3 +171,20 @@ test("structured footer: text part shows the URL, HTML part shows only the label
 test("HTML body without footer has no footer block", () => {
   assert.doesNotMatch(buildHtmlBody("Hi there", "en"), /border-top/);
 });
+
+test("a supplied html body replaces the rendered HTML part; the text part stays the plain body", () => {
+  const html = '<!doctype html><html><body><table role="presentation"><tr><td style="color:#334155">Replies: 3 → 5 (+2)</td></tr></table></body></html>';
+  const raw = buildRfc2822({
+    fromEmail: "ops@example.com", fromName: "S.P.A.M. weekly", to: "pedro@example.com",
+    subject: "Weekly report", body: "Replies: 5 (last week 3)", html, boundary: "B", date: new Date(0),
+  });
+  const parts = raw.split("--B");
+  const textPart = parts.find((p) => p.includes("text/plain"))!;
+  const htmlPart = parts.find((p) => p.includes("text/html"))!;
+  assert.equal(strictQpDecode(textPart.split("\r\n\r\n")[1]!.trim()), "Replies: 5 (last week 3)");
+  assert.equal(strictQpDecode(htmlPart.split("\r\n\r\n")[1]!.trim()), html);
+  // Without it, the pitch rendering is unchanged.
+  const plain = buildRfc2822({ fromEmail: "ops@example.com", fromName: "x", to: "p@example.com", subject: "s", body: "hello", boundary: "B", date: new Date(0) });
+  const plainHtml = plain.split("--B").find((p) => p.includes("text/html"))!;
+  assert.equal(strictQpDecode(plainHtml.split("\r\n\r\n")[1]!.trim()), buildHtmlBody("hello"));
+});

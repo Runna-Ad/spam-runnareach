@@ -1,6 +1,8 @@
 /**
  * The Monday weekly report: what the platform did in the last 7 days, against
- * the 7 before, and how healthy it is. Plain text, no AI, read in a minute.
+ * the 7 before, and how healthy it is. No AI, read in a minute: a plain-text
+ * part (formatWeeklyReport) and a designed HTML part with the same numbers
+ * (formatWeeklyReportHtml).
  *
  * Pure: snapshot.ts gathers the rows, this file counts and formats them, so
  * tests/reports-weekly.test.ts runs it over a fixture. Rules:
@@ -12,11 +14,35 @@
 
 import { isTestAddress } from "../compliance/test-addresses.ts";
 import { summarizeArms, type ArmRow } from "../learning/report.ts";
+import type { OutcomeEvent } from "../learning/reward.ts";
+import { candidateFromRow, onDnc, type CandidateRow, type DncEntries } from "../pitches/exemplar-queries.ts";
+import { qualifiesAsExemplar } from "../pitches/exemplars.ts";
 
 const DAY = 86_400_000;
 
 /** null = the query failed or the source doesn't exist: printed as "n/a". */
 type Rows<T> = T[] | null;
+
+/**
+ * Every settled root send of the tenant as fetchExemplars reads it
+ * (EXEMPLAR_CANDIDATE_COLUMNS), with its outcome events, and the
+ * do-not-contact entries for their addresses and domains.
+ */
+export type ExemplarPool = {
+  pitches: Array<CandidateRow & { events: OutcomeEvent[] }>;
+  dnc: DncEntries;
+};
+
+export type ExemplarReadiness = {
+  count: number;
+  /** "EN" / "ES" → pitches, biggest first. */
+  byLang: Array<[string, number]>;
+  /** "legal/ca" etc. → pitches, the three biggest. */
+  topSegments: Array<[string, number]>;
+};
+
+/** From this many qualifying pitches, the report suggests turning EXEMPLARS_ENABLED on. */
+export const EXEMPLARS_WORTH_IT = 5;
 
 export type WeeklyRaw = {
   /** ISO time the report covers up to; the windows are the 7 and 14 days before. */
@@ -46,6 +72,10 @@ export type WeeklyRaw = {
   warmup: Rows<{ at: string; landed: boolean | null }>;
   /** health.alert audit rows of the last 7 days. */
   alerts: Rows<{ at: string; kind: string }>;
+  /** The exemplar kill switch (lib/pitches/exemplar-queries.ts exemplarsEnabled). */
+  exemplarsEnabled: boolean;
+  /** null when any of its reads failed: printed as "n/a". */
+  exemplarPool: ExemplarPool | null;
 };
 
 type Pair = { thisWeek: number; lastWeek: number } | null;
@@ -76,6 +106,7 @@ export type WeeklyStats = {
   aiCapUsd: number;
   placement: { inbox: number; checked: number } | null;
   alerts: { count: number; kinds: string[] } | null;
+  exemplars: { enabled: boolean; qualifying: ExemplarReadiness | null };
 };
 
 const realEmail = (email: string | null | undefined) => !isTestAddress(email);
@@ -172,7 +203,31 @@ export function buildWeeklyStats(raw: WeeklyRaw): WeeklyStats {
     aiCapUsd: raw.dailyCapUsd * 7,
     placement: checks && checks.length > 0 ? { inbox: checks.filter((c) => c.landed === true).length, checked: checks.length } : null,
     alerts: alerts ? { count: alerts.length, kinds: [...new Set(alerts.map((a) => a.kind))].sort() } : null,
+    exemplars: { enabled: raw.exemplarsEnabled, qualifying: raw.exemplarPool ? exemplarReadiness(raw.exemplarPool, new Date(now)) : null },
   };
+}
+
+/**
+ * How many past pitches fetchExemplars could pick for some target today, each
+ * counted once: its row mapping (a suppressed prospect is skipped), the shared
+ * qualifiesAsExemplar (everything but the target match), and the
+ * do-not-contact list.
+ */
+export function exemplarReadiness(pool: ExemplarPool, now: Date): ExemplarReadiness {
+  const seen = new Set<string>();
+  const langs: string[] = [];
+  const segments: string[] = [];
+  for (const row of pool.pitches) {
+    if (seen.has(row.id)) continue;
+    seen.add(row.id);
+    const c = candidateFromRow(row);
+    if (!c) continue;
+    const q = qualifiesAsExemplar({ ...c, events: row.events }, { now, isTestAddress });
+    if (!q || onDnc(pool.dnc, c.recipient_email)) continue;
+    langs.push(c.lang.toUpperCase());
+    segments.push(`${q.segment.industry}/${q.segment.market}`);
+  }
+  return { count: langs.length, byLang: tally(langs), topSegments: tally(segments).slice(0, 3) };
 }
 
 /** Group reasons by their first clause so "x: detail A" and "x: detail B" count together. */
@@ -187,6 +242,39 @@ const vs = (label: string, p: Pair) => `${label}: ${n(p, "thisWeek")} (last week
 const usd = (v: number) => `$${v.toFixed(2)}`;
 const cad = (v: number | null) => (v === null ? "value n/a" : `CAD ${Math.round(v).toLocaleString("en-US")}`);
 const day = (iso: string) => iso.slice(0, 10);
+
+/** "Exemplars: off (EXEMPLARS_ENABLED unset). Past pitches that qualify: 3 (EN 2, ES 1; top: legal/ca 2, dental/mx 1)". */
+function exemplarsLine(e: WeeklyStats["exemplars"]): string {
+  const head = e.enabled ? "Exemplars: on." : "Exemplars: off (EXEMPLARS_ENABLED unset).";
+  return `${head} Past pitches that qualify: ${exemplarsCount(e)}`;
+}
+
+/** Off, and enough qualify that switching on would show examples. */
+function worthTurningOn(e: WeeklyStats["exemplars"]): boolean {
+  return !e.enabled && (e.qualifying?.count ?? 0) >= EXEMPLARS_WORTH_IT;
+}
+
+const exemplarLangs = (q: ExemplarReadiness) => q.byLang.map(([k, v]) => `${k} ${v}`).join(", ");
+const exemplarTop = (q: ExemplarReadiness) => q.topSegments.map(([k, v]) => `${k} ${v}`).join(", ");
+
+/** The count with its breakdown, and the hint when it is worth switching on. */
+function exemplarsCount(e: WeeklyStats["exemplars"]): string {
+  const q = e.qualifying;
+  if (!q) return "n/a";
+  if (q.count === 0) return "0";
+  return `${q.count} (${exemplarLangs(q)}; top: ${exemplarTop(q)})${worthTurningOn(e) ? ": worth turning on" : ""}`;
+}
+
+/** "2 sent, 2 replies, 1 meeting": the subject line and the HTML header. null when all three are n/a. */
+function summaryOf(s: WeeklyStats): string | null {
+  const n = (count: number, one: string, many: string) => `${count} ${count === 1 ? one : many}`;
+  const parts = [
+    s.firstEmails ? `${s.firstEmails.thisWeek} sent` : null,
+    s.replies ? n(s.replies.thisWeek, "reply", "replies") : null,
+    s.meetings ? n(s.meetings.thisWeek, "meeting", "meetings") : null,
+  ].filter(Boolean);
+  return parts.length ? parts.join(", ") : null;
+}
 
 export function formatWeeklyReport(s: WeeklyStats, appUrl: string): { subject: string; body: string } {
   const lines: string[] = [];
@@ -239,6 +327,7 @@ export function formatWeeklyReport(s: WeeklyStats, appUrl: string): { subject: s
     lines.push(`Insights this week: ${s.insights.count}${kinds ? ` (${kinds})` : ""}`);
     for (const t of s.insights.titles) lines.push(`  - ${t.slice(0, 120)}`);
   }
+  lines.push(exemplarsLine(s.exemplars));
   lines.push("");
   lines.push("HEALTH");
   lines.push(`AI spend: ${s.aiSpendUsd === null ? "n/a" : usd(s.aiSpendUsd)} of ${usd(s.aiCapUsd)} weekly cap (7 × daily cap)`);
@@ -253,12 +342,235 @@ export function formatWeeklyReport(s: WeeklyStats, appUrl: string): { subject: s
   lines.push("");
   lines.push(`${appUrl}/analytics`);
 
-  const parts = [
-    s.firstEmails ? `${s.firstEmails.thisWeek} sent` : null,
-    s.replies ? `${s.replies.thisWeek} replies` : null,
-    s.meetings ? `${s.meetings.thisWeek} meetings` : null,
-  ].filter(Boolean);
-  return { subject: `S.P.A.M. weekly: ${parts.length ? parts.join(", ") : "report"}`, body: lines.join("\n") };
+  return { subject: `S.P.A.M. weekly: ${summaryOf(s) ?? "report"}`, body: lines.join("\n") };
+}
+
+// ── The designed HTML part ────────────────────────────────────────────────────
+//
+// The same numbers as formatWeeklyReport, laid out to scan in a minute. Email-
+// safe only: role="presentation" tables, inline styles, max 600px, the system
+// font stack, no images, no <style>, no external CSS, fonts or JS, and no URL
+// but appUrl. Light backgrounds and no dark fills, so Gmail's dark mode can
+// invert it cleanly. Every interpolated string goes through esc().
+
+const FONT = "-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif";
+const COLOR = {
+  page: "#ffffff",
+  card: "#f8fafc",
+  border: "#e2e8f0",
+  text: "#0f172a",
+  secondary: "#475569",
+  muted: "#94a3b8",
+  good: "#15803d",
+  bad: "#b91c1c",
+  neutral: "#64748b",
+  button: "#1d4ed8",
+} as const;
+
+/** Which way is good: up for sent/replies/meetings…, down for opt-outs/bounces…, neither for the rest. */
+type Tone = "upGood" | "upBad" | "neutral";
+
+const esc = (v: string | number) =>
+  String(v).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#39;");
+
+const span = (text: string | number, color: string, extra = "") => `<span style="color:${color};${extra}">${esc(text)}</span>`;
+const NA = span("n/a", COLOR.muted);
+
+/** ▲2 / ▼1 / — against last week, coloured by what is good for this metric. */
+function deltaHtml(p: Pair, tone: Tone): string {
+  if (!p) return "";
+  const d = p.thisWeek - p.lastWeek;
+  if (d === 0) return span("—", COLOR.neutral, "font-size:12px;font-weight:600;");
+  const color = tone === "neutral" ? COLOR.neutral : (d > 0) === (tone === "upGood") ? COLOR.good : COLOR.bad;
+  return span(`${d > 0 ? "▲" : "▼"}${Math.abs(d)}`, color, "font-size:12px;font-weight:600;");
+}
+
+/** A count with no last-week number (won, auto-rejected, breaker trips, emergencies): coloured when it is not 0. */
+function countColor(count: number, tone: Tone): string {
+  if (count === 0 || tone === "neutral") return COLOR.text;
+  return tone === "upGood" ? COLOR.good : COLOR.bad;
+}
+
+const CELL = `font-family:${FONT};font-size:14px;line-height:20px;padding:6px 0;border-top:1px solid ${COLOR.border};`;
+
+/** label | this week (+ delta) | last week. */
+function pairRow(label: string, p: Pair, tone: Tone): string {
+  const thisWeek = p ? `${span(p.thisWeek, COLOR.text, "font-weight:600;")}&nbsp;${deltaHtml(p, tone)}` : NA;
+  const lastWeek = p ? span(p.lastWeek, COLOR.secondary) : NA;
+  return (
+    `<tr><td style="${CELL}color:${COLOR.text};">${esc(label)}</td>` +
+    `<td align="right" style="${CELL}white-space:nowrap;">${thisWeek}</td>` +
+    `<td align="right" style="${CELL}white-space:nowrap;width:80px;">${lastWeek}</td></tr>`
+  );
+}
+
+/** label | a value over both columns (already-escaped HTML). */
+function valueRow(label: string, valueHtml: string): string {
+  return (
+    `<tr><td style="${CELL}color:${COLOR.text};">${esc(label)}</td>` +
+    `<td colspan="2" align="right" style="${CELL}">${valueHtml}</td></tr>`
+  );
+}
+
+/** A secondary line under a row: intents, reasons, arms, titles, breakdowns. */
+function detailRow(text: string): string {
+  return `<tr><td colspan="3" style="font-family:${FONT};font-size:12px;line-height:18px;padding:0 0 6px 12px;color:${COLOR.secondary};">${esc(text)}</td></tr>`;
+}
+
+/** A count, then restHtml (already escaped) after it; n/a when the count is unknown. */
+const countValue = (count: number | null, tone: Tone, restHtml = "") =>
+  count === null ? NA : `${span(count, countColor(count, tone), "font-weight:600;")}${restHtml}`;
+const aside = (text: string) => (text ? span(text, COLOR.secondary) : "");
+/** " (CAD 4,500)", or a muted " (value n/a)". */
+const cadAside = (v: number | null) => (v === null ? span(" (value n/a)", COLOR.muted) : aside(` (${cad(v)})`));
+
+function card(title: string, rows: string[], withColumns: boolean): string {
+  const head = withColumns
+    ? `<tr><td style="font-family:${FONT};font-size:11px;color:${COLOR.secondary};padding:0 0 4px;"></td>` +
+      `<td align="right" style="font-family:${FONT};font-size:11px;color:${COLOR.secondary};padding:0 0 4px;white-space:nowrap;">This week</td>` +
+      `<td align="right" style="font-family:${FONT};font-size:11px;color:${COLOR.secondary};padding:0 0 4px;white-space:nowrap;width:80px;">Last week</td></tr>`
+    : "";
+  return (
+    `<tr><td style="padding:0 0 16px;">` +
+    `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" bgcolor="${COLOR.card}" style="background-color:${COLOR.card};border:1px solid ${COLOR.border};border-radius:8px;">` +
+    `<tr><td style="padding:14px 16px;">` +
+    `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">` +
+    `<tr><td colspan="3" style="font-family:${FONT};font-size:13px;font-weight:700;letter-spacing:0.04em;color:${COLOR.text};padding:0 0 8px;">${esc(title)}</td></tr>` +
+    head +
+    rows.join("") +
+    `</table></td></tr></table></td></tr>`
+  );
+}
+
+function tile(label: string, p: Pair): string {
+  const big = p ? span(p.thisWeek, COLOR.text) : NA;
+  const last = `last week ${p ? esc(p.lastWeek) : NA}`;
+  return (
+    `<td width="33%" valign="top" bgcolor="${COLOR.card}" style="background-color:${COLOR.card};border:1px solid ${COLOR.border};border-radius:8px;padding:12px 14px;">` +
+    `<div style="font-family:${FONT};font-size:12px;color:${COLOR.secondary};">${esc(label)}</div>` +
+    `<div style="font-family:${FONT};font-size:28px;line-height:34px;font-weight:700;padding:4px 0 2px;">${big}</div>` +
+    `<div style="font-family:${FONT};font-size:12px;color:${COLOR.secondary};">${last}&nbsp;&nbsp;${deltaHtml(p, "upGood")}</div>` +
+    `</td>`
+  );
+}
+
+export function formatWeeklyReportHtml(s: WeeklyStats, appUrl: string): string {
+  const outreach = [
+    pairRow("First emails sent", s.firstEmails, "upGood"),
+    pairRow("Follow-ups sent", s.followUps, "neutral"),
+    pairRow("Replies", s.replies, "upGood"),
+    ...(s.repliesByIntent && s.repliesByIntent.length > 0 ? [detailRow(`by intent: ${s.repliesByIntent.map(([k, v]) => `${k} ${v}`).join(", ")}`)] : []),
+    pairRow("Meetings booked", s.meetings, "upGood"),
+    valueRow("Won", s.won ? countValue(s.won.count, "upGood", cadAside(s.won.valueCad)) : NA),
+    valueRow("Lost", s.lost ? countValue(s.lost.count, "neutral", cadAside(s.lost.valueCad)) : NA),
+    pairRow("Opt-outs", s.optOuts, "upBad"),
+    pairRow("Bounces", s.bounces, "upBad"),
+  ];
+  const pipeline = [
+    pairRow("Discovery jobs", s.discoveryJobs, "neutral"),
+    pairRow("Prospects researched", s.researched, "upGood"),
+    pairRow("Drafts written", s.drafts, "upGood"),
+    pairRow("AUTO scheduled", s.autoScheduled, "upGood"),
+    valueRow("Held by a person (vetoes)", countValue(s.vetoed, "neutral")),
+    // Auto-rejects are routine (the gate doing its job): neutral, not red every week.
+    valueRow("Auto-rejected", countValue(s.autoRejected?.count ?? null, "neutral")),
+    ...(s.autoRejected?.topReasons ?? []).map(([reason, count]) => detailRow(`${count} × ${reason}`)),
+  ];
+  const autopilot = [
+    valueRow(
+      "Stage",
+      s.autopilot
+        ? `${span(s.autopilot.stage, COLOR.text, "font-weight:600;")}${s.autopilot.enabled ? "" : span(" (kill switch OFF)", COLOR.bad, "font-weight:600;")}`
+        : NA,
+    ),
+    ...(s.autopilot?.reason ? [detailRow(s.autopilot.reason)] : []),
+    valueRow("Breaker trips this week", countValue(s.breakerTrips, "upBad")),
+  ];
+  const learning: string[] = [];
+  if (!s.topArms) learning.push(valueRow("Top arms", NA));
+  else if (s.topArms.length === 0) learning.push(valueRow("Top arms", span("none yet", COLOR.secondary)));
+  else {
+    learning.push(valueRow("Top arms by trials", ""));
+    for (const a of s.topArms) {
+      const rate = a.rate === null ? "too early" : `${(a.rate * 100).toFixed(1)}% reward rate (${a.confidence})`;
+      learning.push(detailRow(`${a.learner} / ${a.key}: ${a.trials} trials, ${rate}`));
+    }
+  }
+  if (!s.insights) learning.push(valueRow("Insights this week", NA));
+  else {
+    const kinds = s.insights.byKind.map(([k, v]) => `${k} ${v}`).join(", ");
+    learning.push(valueRow("Insights this week", countValue(s.insights.count, "neutral", aside(kinds ? ` (${kinds})` : ""))));
+    for (const t of s.insights.titles) learning.push(detailRow(`- ${t.slice(0, 120)}`));
+  }
+  const ex = s.exemplars;
+  learning.push(
+    valueRow(
+      "Exemplars",
+      ex.enabled ? span("on", COLOR.good, "font-weight:600;") : `${span("off", COLOR.text, "font-weight:600;")}${span(" (EXEMPLARS_ENABLED unset)", COLOR.secondary)}`,
+    ),
+    valueRow(
+      "Past pitches that qualify",
+      `${countValue(ex.qualifying?.count ?? null, "neutral")}${worthTurningOn(ex) ? span(" worth turning on", COLOR.good, "font-weight:600;") : ""}`,
+    ),
+  );
+  if (ex.qualifying && ex.qualifying.count > 0) learning.push(detailRow(`${exemplarLangs(ex.qualifying)}; top: ${exemplarTop(ex.qualifying)}`));
+  const health = [
+    valueRow(
+      "AI spend",
+      `${s.aiSpendUsd === null ? NA : span(usd(s.aiSpendUsd), COLOR.text, "font-weight:600;")}${span(` of ${usd(s.aiCapUsd)} weekly cap`, COLOR.secondary)}`,
+    ),
+    detailRow("Weekly cap = 7 × daily cap"),
+    valueRow(
+      "Warmup inbox placement",
+      s.placement
+        ? `${span(`${Math.round((s.placement.inbox / s.placement.checked) * 100)}% inbox`, COLOR.text, "font-weight:600;")}${span(` (${s.placement.inbox}/${s.placement.checked} checked)`, COLOR.secondary)}`
+        : `${NA}${span(" (not measured this week)", COLOR.muted)}`,
+    ),
+    valueRow("Emergencies raised", countValue(s.alerts?.count ?? null, "upBad", aside(s.alerts?.kinds.length ? ` (${s.alerts.kinds.join(", ")})` : ""))),
+  ];
+
+  const summary = summaryOf(s);
+  const analytics = `${appUrl}/analytics`;
+  const gap = `<td width="8" style="width:8px;font-size:0;line-height:0;">&nbsp;</td>`;
+  return (
+    `<!doctype html><html lang="en"><head><meta charset="utf-8">` +
+    `<meta name="viewport" content="width=device-width,initial-scale=1">` +
+    `<meta name="color-scheme" content="light"><meta name="supported-color-schemes" content="light">` +
+    `<title>S.P.A.M. weekly</title></head>` +
+    `<body style="margin:0;padding:0;background-color:${COLOR.page};">` +
+    `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" bgcolor="${COLOR.page}" style="background-color:${COLOR.page};">` +
+    `<tr><td align="center" style="padding:24px 12px;">` +
+    `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="max-width:600px;width:100%;">` +
+    // Header
+    `<tr><td style="padding:0 0 16px;font-family:${FONT};color:${COLOR.text};">` +
+    `<div style="font-size:22px;line-height:28px;font-weight:700;">S.P.A.M. weekly</div>` +
+    `<div style="font-size:13px;line-height:20px;color:${COLOR.secondary};">${esc(`${day(s.from)} to ${day(s.to)}`)} · last 7 days vs the 7 before</div>` +
+    (summary ? `<div style="font-size:15px;line-height:22px;padding-top:6px;color:${COLOR.text};">${esc(summary)}</div>` : "") +
+    `</td></tr>` +
+    // KPI tiles
+    `<tr><td style="padding:0 0 16px;"><table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"><tr>` +
+    tile("First emails", s.firstEmails) +
+    gap +
+    tile("Replies", s.replies) +
+    gap +
+    tile("Meetings", s.meetings) +
+    `</tr></table></td></tr>` +
+    // Sections
+    card("OUTREACH", outreach, true) +
+    card("PIPELINE", pipeline, true) +
+    card("AUTOPILOT", autopilot, false) +
+    card("LEARNING", learning, false) +
+    card("HEALTH", health, false) +
+    // Button
+    `<tr><td align="center" style="padding:4px 0 16px;">` +
+    `<table role="presentation" cellpadding="0" cellspacing="0" border="0"><tr>` +
+    `<td bgcolor="${COLOR.button}" style="background-color:${COLOR.button};border-radius:6px;">` +
+    `<a href="${esc(analytics)}" style="display:inline-block;padding:12px 22px;font-family:${FONT};font-size:14px;font-weight:600;color:#ffffff;text-decoration:none;">Open analytics</a>` +
+    `</td></tr></table></td></tr>` +
+    // Footer
+    `<tr><td align="center" style="font-family:${FONT};font-size:12px;line-height:18px;color:${COLOR.secondary};">Test addresses are excluded. n/a = no data.</td></tr>` +
+    `</table></td></tr></table></body></html>`
+  );
 }
 
 // ── Route orchestration (deps injected so tests run it in memory) ──────────────
@@ -267,7 +579,8 @@ export type WeeklyRouteDeps = {
   authorize: (req: Request) => Promise<boolean>;
   tenantIds: () => Promise<string[]>;
   gather: (tenantId: string, now: Date) => Promise<WeeklyRaw>;
-  send: (tenantId: string, message: { subject: string; body: string }) => Promise<{ sent: number; failed: string[] }>;
+  /** body = the plain-text part, html = the designed HTML part (lib/notify/send.ts NotificationMessage). */
+  send: (tenantId: string, message: { subject: string; body: string; html?: string }) => Promise<{ sent: number; failed: string[] }>;
   now?: () => Date;
 };
 
@@ -287,7 +600,8 @@ export async function handleWeeklyReport(req: Request, deps: WeeklyRouteDeps): P
   for (const tenantId of tenants) {
     try {
       const raw = await deps.gather(tenantId, now);
-      const message = formatWeeklyReport(buildWeeklyStats(raw), raw.appUrl);
+      const stats = buildWeeklyStats(raw);
+      const message = { ...formatWeeklyReport(stats, raw.appUrl), html: formatWeeklyReportHtml(stats, raw.appUrl) };
       if (dry) {
         reports.push({ tenantId, ...message });
         continue;

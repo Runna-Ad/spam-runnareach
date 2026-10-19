@@ -25,6 +25,12 @@ export type MimeMessageInput = {
   /** Optional Reply-To (defaults to fromEmail). */
   replyTo?: string;
   /**
+   * A complete, designed HTML body for the html part (internal notifications
+   * such as the weekly report). Replaces the rendering of `body`, which stays
+   * the text part. Never set on a prospect send: the footer is not added to it.
+   */
+  html?: string;
+  /**
    * Recipient's language. Decides the CTA button label and the HTML lang.
    * A bare "👉 <link>" CTA has no prose to sniff, so guessing from the text
    * produced English buttons on Spanish emails.
@@ -75,7 +81,7 @@ export function buildRfc2822(input: MimeMessageInput): string {
 
   const footerText = typeof input.footer === "string" ? input.footer : input.footer?.text;
   const textBody = footerText ? `${input.body}\n\n${footerText}` : input.body;
-  const htmlBody = buildHtmlBody(input.body, input.lang, input.footer);
+  const htmlBody = input.html ?? buildHtmlBody(input.body, input.lang, input.footer);
 
   const textPart = [
     `--${boundary}`,

@@ -274,7 +274,7 @@ const ITEMS = [
 ];
 
 test("digest: every line gets its own hold link that verifies for its pitch, with its scheduled time", () => {
-  const digest = buildVetoDigest({ items: ITEMS, tenantId: TENANT, appUrl: "https://spam-runnareach.vercel.app/", secret: SECRET });
+  const digest = buildVetoDigest({ items: ITEMS, tenantId: TENANT, appUrl: "https://spam-runnareach.vercel.app/", secret: SECRET, now: NOW });
   // Printed so the PR body can show a rendered digest (node --test shows stdout).
   console.log(`--- digest subject ---\n${digest.subject}\n--- digest body ---\n${digest.body}\n--- end ---`);
   assert.equal(digest.subject, "Autopilot: 2 emails will send in the next 24h unless held");
@@ -289,7 +289,9 @@ test("digest: every line gets its own hold link that verifies for its pitch, wit
 });
 
 test("digest: each hold link expires 24h after ITS email's send time", () => {
-  const digest = buildVetoDigest({ items: ITEMS, tenantId: TENANT, appUrl: "https://x.test", secret: SECRET });
+  // The digest is built before the sends (NOW): with the real clock past SEND_AT the
+  // email is overdue and its link rightly lives 24h from now instead (next test).
+  const digest = buildVetoDigest({ items: ITEMS, tenantId: TENANT, appUrl: "https://x.test", secret: SECRET, now: NOW });
   const tokens = [...digest.body.matchAll(/hold\?t=(\S+)/g)].map((m) => decodeURIComponent(m[1]!));
   assert.ok(verifyHoldToken(tokens[1]!, SECRET, new Date("2026-10-20T09:29:00Z")));
   assert.equal(verifyHoldToken(tokens[0]!, SECRET, new Date("2026-10-20T06:00:00Z")), null);
@@ -306,7 +308,7 @@ test("digest: an overdue email (waiting for sending hours) still gets a live hol
 });
 
 test("digest without a key: no hold links, /pitches instructions kept", () => {
-  const digest = buildVetoDigest({ items: ITEMS, tenantId: TENANT, appUrl: "https://spam-runnareach.vercel.app", secret: null });
+  const digest = buildVetoDigest({ items: ITEMS, tenantId: TENANT, appUrl: "https://spam-runnareach.vercel.app", secret: null, now: NOW });
   assert.doesNotMatch(digest.body, /Hold:/);
   assert.doesNotMatch(digest.body, /api\/autopilot\/hold/);
   assert.match(digest.body, /To hold one, move it back to draft on \/pitches before it sends\./);
@@ -314,7 +316,7 @@ test("digest without a key: no hold links, /pitches instructions kept", () => {
 });
 
 test("digest subject is singular for one email", () => {
-  const digest = buildVetoDigest({ items: ITEMS.slice(0, 1), tenantId: TENANT, appUrl: "https://x.test", secret: SECRET });
+  const digest = buildVetoDigest({ items: ITEMS.slice(0, 1), tenantId: TENANT, appUrl: "https://x.test", secret: SECRET, now: NOW });
   assert.equal(digest.subject, "Autopilot: 1 email will send in the next 24h unless held");
 });
 

@@ -38,7 +38,14 @@ const CANDIDATE_SCAN = 200;
 /** All three reads together, inside the 48s compose budget; normally ~0.1s. */
 export const EXEMPLAR_FETCH_BUDGET_MS = 3_000;
 
-type CandidateRow = {
+/**
+ * The candidate columns. The weekly report's readiness count
+ * (lib/reports/snapshot.ts) reads the same ones, so both map rows alike.
+ */
+export const EXEMPLAR_CANDIDATE_COLUMNS =
+  "id, prospect_id, parent_pitch_id, status, sent_at, critic_pass:decision->critic->pass, gate_override, prospects!inner(industry, market, language, status), prospect_contacts:contact_id(email)";
+
+export type CandidateRow = {
   id: string;
   prospect_id: string;
   parent_pitch_id: string | null;
@@ -66,7 +73,33 @@ function overridden(v: unknown): boolean {
   return Array.isArray(codes) ? codes.length > 0 : true;
 }
 
-type DncEntries = { emails: Set<string>; domains: Set<string> };
+/**
+ * One candidate row as the selector sees it; null when the prospect was
+ * suppressed since (opt-out, bounce, a person): never anyone's example.
+ */
+export function candidateFromRow(r: CandidateRow): ExemplarCandidate | null {
+  if (r.prospects?.status === "suppressed") return null;
+  return {
+    pitch_id: r.id,
+    prospect_id: r.prospect_id,
+    parent_pitch_id: r.parent_pitch_id,
+    status: r.status,
+    sent_at: r.sent_at,
+    lang: r.prospects?.language ?? "",
+    industry: r.prospects?.industry ?? null,
+    market: r.prospects?.market ?? null,
+    recipient_email: r.prospect_contacts?.email ?? null,
+    critic_pass: typeof r.critic_pass === "boolean" ? r.critic_pass : null,
+    gate_overridden: overridden(r.gate_override),
+  };
+}
+
+/** The kill switch: off unless EXEMPLARS_ENABLED=1 in Vercel. */
+export function exemplarsEnabled(): boolean {
+  return process.env.EXEMPLARS_ENABLED === "1";
+}
+
+export type DncEntries = { emails: Set<string>; domains: Set<string> };
 
 const mailbox = (email: string | null | undefined) => (email ?? "").trim().toLowerCase();
 const domainOf = (mailboxAddress: string) => mailboxAddress.split("@")[1] ?? "";
@@ -78,6 +111,23 @@ export function onDnc(dnc: DncEntries, email: string | null | undefined): boolea
   return dnc.emails.has(m) || dnc.domains.has(domainOf(m));
 }
 
+/** What to look up on the do-not-contact list for these addresses: their mailboxes and domains, normalized as onDnc matches. */
+export function dncKeys(emails: ReadonlyArray<string | null | undefined>): { mailboxes: string[]; domains: string[] } {
+  const mailboxes = [...new Set(emails.map(mailbox).filter((m) => m.includes("@")))];
+  return { mailboxes, domains: [...new Set(mailboxes.map(domainOf).filter(Boolean))] };
+}
+
+/** do_not_contact_list rows (by email, by domain) → the entries onDnc reads. */
+export function toDncEntries(
+  byEmail: ReadonlyArray<{ email: string | null }>,
+  byDomain: ReadonlyArray<{ domain: string | null }>,
+): DncEntries {
+  const out: DncEntries = { emails: new Set(), domains: new Set() };
+  for (const r of byEmail) if (r.email) out.emails.add(mailbox(r.email));
+  for (const r of byDomain) if (r.domain) out.domains.add(r.domain.trim().toLowerCase());
+  return out;
+}
+
 /** The do-not-contact entries for these addresses and their domains; null when the lookup failed. */
 async function dncEntries(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -86,10 +136,8 @@ async function dncEntries(
   emails: Array<string | null>,
   signal: AbortSignal,
 ): Promise<DncEntries | null> {
-  const mailboxes = [...new Set(emails.map(mailbox).filter((m) => m.includes("@")))];
-  const out: DncEntries = { emails: new Set(), domains: new Set() };
-  if (mailboxes.length === 0) return out;
-  const domains = [...new Set(mailboxes.map(domainOf).filter(Boolean))];
+  const { mailboxes, domains } = dncKeys(emails);
+  if (mailboxes.length === 0) return toDncEntries([], []);
   const [byEmail, byDomain] = await Promise.all([
     supabase.from("do_not_contact_list").select("email").eq("tenant_id", tenantId).in("email", mailboxes).abortSignal(signal),
     supabase.from("do_not_contact_list").select("domain").eq("tenant_id", tenantId).in("domain", domains).abortSignal(signal),
@@ -98,9 +146,7 @@ async function dncEntries(
     console.error("[exemplars] do-not-contact query failed:", (byEmail.error ?? byDomain.error)?.message);
     return null;
   }
-  for (const r of (byEmail.data ?? []) as Array<{ email: string | null }>) if (r.email) out.emails.add(mailbox(r.email));
-  for (const r of (byDomain.data ?? []) as Array<{ domain: string | null }>) if (r.domain) out.domains.add(r.domain.trim().toLowerCase());
-  return out;
+  return toDncEntries((byEmail.data ?? []) as Array<{ email: string | null }>, (byDomain.data ?? []) as Array<{ domain: string | null }>);
 }
 
 export async function fetchExemplars(
@@ -112,16 +158,14 @@ export async function fetchExemplars(
 ): Promise<Exemplar[]> {
   // Kill switch: off unless EXEMPLARS_ENABLED=1 in Vercel (Pedro's call; the
   // allow-list leak check of PR #17 is what makes turning it on safe).
-  if (process.env.EXEMPLARS_ENABLED !== "1") return [];
+  if (!exemplarsEnabled()) return [];
   if (target.segment.industry === "other") return [];
   const signal = AbortSignal.timeout(EXEMPLAR_FETCH_BUDGET_MS);
   try {
     const cutoff = new Date(now.getTime() - ATTRIBUTION_WINDOW_DAYS * 86_400_000).toISOString();
     const { data: rows, error } = await supabase
       .from("pitches")
-      .select(
-        "id, prospect_id, parent_pitch_id, status, sent_at, critic_pass:decision->critic->pass, gate_override, prospects!inner(industry, market, language, status), prospect_contacts:contact_id(email)",
-      )
+      .select(EXEMPLAR_CANDIDATE_COLUMNS)
       .eq("tenant_id", tenantId)
       .eq("status", "sent")
       .is("parent_pitch_id", null)
@@ -137,19 +181,7 @@ export async function fetchExemplars(
     }
     if (!rows || rows.length === 0) return [];
 
-    const candidates: ExemplarCandidate[] = rows.filter((r) => r.prospects?.status !== "suppressed").map((r) => ({
-      pitch_id: r.id,
-      prospect_id: r.prospect_id,
-      parent_pitch_id: r.parent_pitch_id,
-      status: r.status,
-      sent_at: r.sent_at,
-      lang: r.prospects?.language ?? "",
-      industry: r.prospects?.industry ?? null,
-      market: r.prospects?.market ?? null,
-      recipient_email: r.prospect_contacts?.email ?? null,
-      critic_pass: typeof r.critic_pass === "boolean" ? r.critic_pass : null,
-      gate_overridden: overridden(r.gate_override),
-    }));
+    const candidates = rows.map(candidateFromRow).filter((c): c is ExemplarCandidate => c !== null);
     const opts = { now, isTestAddress };
     const shortlist = shortlistCandidates(candidates, target, { ...opts, limit: EXEMPLAR_SHORTLIST });
     if (shortlist.length === 0) return [];
