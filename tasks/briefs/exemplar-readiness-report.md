@@ -86,3 +86,32 @@ with "off" and "qualify: 0".
 ## Out of scope
 The switch itself; exemplar selection changes; other report sections. Notes → lessons
 inbox (`tasks/lessons-inbox/exemplar-readiness-report.md`).
+
+## Part 2 (conductor, 2026-10-19 04:56): a designed HTML version of the weekly report
+Pedro: "put a little bit of design so they are easier to read". Same branch, a second
+commit, after part 1. First `git merge origin/claude/optimistic-tesla-3gceud` (7b88a82
+adds the hook: `NotificationMessage.html` → the email's HTML part; `body` stays the
+plain-text part, unchanged).
+- Add a pure `formatWeeklyReportHtml(stats, appUrl): string` (in weekly.ts or a new
+  `lib/reports/weekly-html.ts`, allowed) and pass it as `html` in the message
+  `handleWeeklyReport` sends. The text part (`formatWeeklyReport`) does not change.
+- Email-safe HTML only: `role="presentation"` tables, inline styles, max-width 600px,
+  system font stack, no images, no external CSS/fonts/JS, no URL except `appUrl`. Must
+  read well in Gmail web/iOS/Android and survive Gmail dark mode (white background,
+  light grey section cards #f8fafc, text #0f172a, secondary #475569; no black fills).
+- Layout: a header (S.P.A.M. weekly, date range, the subject's one-line summary); three
+  KPI tiles (First emails, Replies, Meetings: big this-week number, "last week N", a
+  delta like ▲2 / ▼1 / —); then one card per section (Outreach, Pipeline, Autopilot,
+  Learning incl. the Exemplars line, Health) as label | this week | last week rows; a
+  button "Open analytics" → `${appUrl}/analytics`.
+- Delta colour is semantic: up is good (green #15803d) for sent, replies, meetings, won,
+  researched, drafts, AUTO scheduled; up is bad (red #b91c1c) for opt-outs, bounces,
+  auto-rejected, breaker trips, emergencies; neutral grey otherwise. "n/a" prints muted.
+- Every DB-sourced string (insight titles, reject reasons, intents, kinds) is
+  HTML-escaped.
+Acceptance (part 2): tests — every number in the text version for the fixture appears
+in the HTML; a `<script>` insight title is escaped; n/a and zero render; delta colours
+follow the table above; no `http` URL other than appUrl; output < 100 KB (Gmail clips at
+102 KB). Write the fixture's rendered HTML to
+`/tmp/claude-0/-home-user-spam-runnareach/a7d87703-f1fe-5083-aa66-e8aa02f06187/scratchpad/weekly-preview.html`
+(not committed) so the conductor can screenshot it for Pedro.
