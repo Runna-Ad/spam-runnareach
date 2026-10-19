@@ -16,11 +16,14 @@ abbotsford
 acajete
 acambaro
 acaponeta
+acapulco
+acatlan
 acatzingo
 acayucan
 actopan
 acuna
 aguascalientes
+ahualulco
 airdrie
 ajalpan
 ajax
@@ -36,8 +39,10 @@ alvarado
 ameca
 amecameca
 amos
+amozoc
 anahuac
 ancaster
+andares
 annex
 apan
 apatzingan
@@ -45,13 +50,18 @@ apizaco
 apodaca
 arandas
 arcelia
+ario
 armdale
 armeria
 arriaga
+atlacomulco
 atlixco
+atoyac
 aurora
+autlan
 axochiapan
 aylmer
+ayutla
 azcapotzalco
 banderilla
 barrie
@@ -85,6 +95,7 @@ buckingham
 buenavista
 burlington
 burnaby
+cabo
 caborca
 cacahoatan
 cadereyta
@@ -98,38 +109,46 @@ camrose
 cananea
 cancun
 candiac
+capulhuac
 cardenas
 carey
 cariboo
 cartierville
 castanos
 catemaco
+cdmx
 celaya
 centretown
 chalco
 chambly
 champoton
 chapala
+chapultepec
 charlesbourg
 charlottetown
 chateauguay
 chatham
 chestermere
 chetumal
+chiapa
 chicoloapan
 chiconcuac
 chicoutimi
 chignahuapan
 chihuahua
+chilapa
 chilliwack
 chilpancingo
 chinatown
 cholula
 chomedey
+cienega
 cihuatlan
+cintalapa
 cliffcrest
 cloverdale
 coacalco
+coalcoman
 coatepec
 coatzacoalcos
 coatzintla
@@ -153,6 +172,7 @@ cordoba
 cornwall
 cortazar
 cosamaloapan
+coscomatepec
 cosoleacaque
 courtenay
 coyoacan
@@ -170,6 +190,7 @@ cuautla
 cuautlancingo
 cuernavaca
 culiacan
+cumbres
 cunduacan
 dartmouth
 delicias
@@ -182,14 +203,17 @@ duncan
 durango
 duvernay
 ebano
+ecatepec
 edgemont
 edmonds
 edmonton
 edmundston
 empalme
+encarnacion
 ensenada
 escandon
 escarcega
+escuinapa
 esperanza
 esquimalt
 etobicoke
@@ -201,9 +225,11 @@ fergus
 fernandez
 fiddlesticks
 fleetwood
+fortin
 fredericton
 fresnillo
 frontera
+fuentes
 garcia
 gatineau
 georgetown
@@ -226,11 +252,14 @@ harewood
 hermosillo
 hespeler
 hidalgo
+huajuapan
 huamantla
 huatabampo
 huatusco
 huauchinango
 huejotzingo
+huejutla
+huetamo
 huilango
 huimanguillo
 huitzuco
@@ -240,6 +269,7 @@ hull
 humbermede
 huntsville
 hunucma
+iguala
 innisfil
 interlomas
 irapuato
@@ -248,18 +278,29 @@ ixmiquilpan
 ixtaczoquitlan
 ixtapa
 ixtapaluca
+ixtapan
 ixtepec
+ixtlan
 izamal
 iztacalco
 iztapalapa
+izucar
+jacona
 jalostotitlan
+jalpa
+jaltipan
 jamay
+jaral
+jardines
+jerez
+jiquilpan
 jiutepec
 jocotepec
 jojutla
 joliette
 jonquiere
 juarez
+juchitan
 juchitepec
 kamloops
 kanasin
@@ -275,6 +316,7 @@ kitchener
 kitsilano
 ladner
 lafleche
+lagos
 lakewood
 langford
 langley
@@ -283,7 +325,9 @@ laval
 lawson
 leamington
 leduc
+leon
 lerdo
+lerma
 lethbridge
 levis
 libres
@@ -304,9 +348,11 @@ malvern
 mante
 manzanillo
 mapastepec
+maravatio
 marfil
 markham
 marpole
+martinez
 mascouche
 matamoros
 matehuala
@@ -318,7 +364,9 @@ merida
 metepec
 metrotown
 mexicali
+mexico
 mezcales
+miahuatlan
 midland
 milliken
 milton
@@ -331,6 +379,7 @@ misantla
 mission
 mississauga
 mixcoac
+mixquiahuala
 monclova
 moncton
 montemorelos
@@ -343,9 +392,11 @@ motozintla
 motul
 moyotzingo
 nanaimo
+nanchital
 napoles
 naranjos
 narvarte
+naucalpan
 nava
 navojoa
 navolato
@@ -354,6 +405,7 @@ newmarket
 newton
 nezahualcoyotl
 niagara
+nochistlan
 nogales
 oakville
 oaxaca
@@ -361,6 +413,7 @@ obregon
 ocosingo
 ocotlan
 ocoyoacac
+ocozocoautla
 ojinaga
 okotoks
 ometepec
@@ -372,16 +425,23 @@ oshawa
 ottawa
 outremont
 oxkutzkab
+ozumba
+pabellon
+pachuca
 palau
 palenque
 panuco
 papalotla
+papantla
+paracho
 paradise
 paraiso
+parras
 patzcuaro
 pedregal
 penjamo
 penticton
+periban
 perote
 petatlan
 petawawa
@@ -390,9 +450,15 @@ peto
 pickering
 pierrefonds
 pijijiapan
+playa
+playas
 polanco
+porticos
 progreso
+providencia
 puebla
+purepero
+purisima
 puruandiro
 quebec
 queretaro
@@ -403,6 +469,7 @@ repentigny
 reynosa
 richmond
 rimouski
+rincon
 rioverde
 riverview
 romita
@@ -412,7 +479,10 @@ rutland
 saanich
 sabinas
 saguenay
+sahuayo
+salaberry
 salamanca
+salinas
 saltillo
 salvatierra
 sanctorum
@@ -425,7 +495,9 @@ seafair
 serdan
 shawinigan
 sherbrooke
+silao
 snowdon
+soledad
 sombrerete
 sooke
 squamish
@@ -441,31 +513,42 @@ suchiapa
 sunset
 surrey
 sydney
+tacambaro
 tala
+tamazula
 tamazunchale
 tampico
 tamuin
+tangancicuaro
 tantoyuca
 tapachula
 taradale
+taxco
 teapa
 tecamac
 tecamachalco
 tecate
 tecax
 tecoman
+tecpan
 tecumseh
 tehuacan
+tejupilco
 teloloapan
 temixco
+tenango
 tenosique
 teocaltiche
 teolocholco
 teoloyucan
 teopisca
+teotihuacan
 tepalcatepec
+tepatitlan
+tepatlaxco
 tepeaca
 tepeapulco
+tepeji
 tepexpan
 tepic
 tepotzotlan
@@ -473,8 +556,10 @@ tequila
 tequisquiapan
 tequixquiac
 terrace
+terrazas
 terrebonne
 tetla
+texcoco
 teziutlan
 tezoyuca
 thornhill
@@ -483,11 +568,15 @@ ticul
 tijuana
 tillsonburg
 timmins
+tixtla
 tizayuca
 tizimin
 tlahuac
+tlajomulco
 tlalnepantla
 tlalpan
+tlaltenango
+tlapa
 tlapacoyan
 tlaquepaque
 tlaquiltenango
@@ -500,11 +589,14 @@ toronto
 torreon
 townline
 tsawwassen
+tula
 tulancingo
 tulantongo
 tultepec
+tultitlan
 tulum
 tuscany
+tuxpam
 tuxpan
 tuxtepec
 tuxtla
@@ -544,9 +636,11 @@ winnipeg
 woburn
 woodlawn
 woodstock
+xalapa
 xalatlaco
 xalisco
 xico
+xicotepec
 xochimilco
 xochitepec
 xonacatlan
@@ -561,14 +655,18 @@ yuriria
 zacapu
 zacatecas
 zacatelco
+zacatepec
 zacatlan
+zacoalco
 zacualtipan
+zamora
 zapopan
 zapotiltic
 zapotlanejo
 zaragoza
 zinacantepec
 zinacatepec
+zinapecuaro
 zitacuaro
 zumpango
 `;
@@ -578,10 +676,13 @@ acuna
 allende
 alma
 amos
+andares
 annex
+ario
 aurora
 banderilla
 beltline
+cabo
 campeche
 cananea
 carey
@@ -589,6 +690,7 @@ chihuahua
 colima
 condesa
 confederation
+cumbres
 delicias
 delta
 doctores
@@ -599,11 +701,17 @@ evergreen
 fiddlesticks
 fresnillo
 frontera
+fuentes
 harewood
 hidalgo
 hull
+iguala
 isla
+jaral
+jardines
+jerez
 kitchener
+lagos
 lerdo
 libres
 linares
@@ -625,20 +733,28 @@ newton
 nogales
 palenque
 paradise
+parras
 pedregal
 peto
+playa
+playas
+porticos
 progreso
+providencia
 puebla
 reforma
 rouge
 sabinas
+salinas
 santiago
+soledad
 sombrerete
 sunset
 surrey
 tala
 tequila
 terrace
+terrazas
 valles
 venceremos
 victoria
@@ -689,6 +805,8 @@ cap rouge
 capulhuac de mirafuentes
 carlos a carrillo
 casa blanca
+cd de mexico
+cd mexico
 central coquitlam
 central lonsdale
 central saanich
@@ -712,6 +830,7 @@ ciudad de allende
 ciudad de armeria
 ciudad de huajuapan de leon
 ciudad de huitzuco
+ciudad de mexico
 ciudad de villa de alvarez
 ciudad del carmen
 ciudad delicias
@@ -742,6 +861,7 @@ clarence rockland
 clayton park west
 coalcoman de vazquez pallares
 cole harbour
+colonia americana
 colonia del sol
 colonia del valle
 colonia lindavista
@@ -759,10 +879,12 @@ cuautitlan izcalli
 danforth east york
 del carmen
 del valle
+delegacion cuajimalpa
 delegacion cuajimalpa de morelos
 desmarchais crawford
 deux montagnes
 dewdney east
+distrito federal
 dollard des ormeaux
 dolores hidalgo
 don antonio
@@ -801,6 +923,7 @@ fraccionamiento ciudad olmeca
 fraccionamiento real palmas
 francisco i madero
 fraser heights
+fray bernardino
 fray bernardino de sahagun
 fredericton northside
 fuentes del valle
@@ -878,6 +1001,7 @@ la joya
 la magdalena tlaltelulco
 la orilla
 la paz
+la piedad
 la piedad de cabadas
 la prairie
 la providencia siglo xxi
@@ -888,6 +1012,7 @@ las choapas
 las delicias
 las guacamayas
 las margaritas
+las pintas
 las pintas de arriba
 las pintitas
 las rosas
@@ -911,6 +1036,7 @@ lomas del sur
 lopez mateos
 los cabos
 los mochis
+los reyes
 los reyes acaquilpan
 los reyes de juarez
 los reyes de salgado
@@ -931,6 +1057,7 @@ melchor muzquiz
 melchor ocampo
 mercier hochelaga maisonneuve
 mexico city
+mexico d f
 miahuatlan de porfirio diaz
 miguel aleman
 miguel aleman la doce
@@ -968,7 +1095,9 @@ north cowichan
 north delta
 north st james town
 north vancouver
+notre dame
 notre dame de grace
+nueva italia
 nueva italia de ruiz
 nueva rosita
 nuevo casas grandes
@@ -1010,6 +1139,7 @@ port colborne
 port coquitlam
 port moody
 porticos de san antonio
+poza rica
 poza rica de hidalgo
 prince albert
 prince edward
@@ -1050,8 +1180,10 @@ rouyn noranda
 sabinas hidalgo
 saddle ridge
 sahuayo de morelos
+saint augustin
 saint augustin de desmaures
 saint basile le grand
+saint bruno
 saint bruno de montarville
 saint charles borromee
 saint constant
@@ -1068,8 +1200,10 @@ saint laurent
 saint lazare
 saint leonard
 saint lin laurentides
+saint louis
 saint louis de terrebonne
 saint michel
+saint vincent
 saint vincent de paul
 sainte catherine
 sainte foy
@@ -1085,14 +1219,17 @@ san andres cholula
 san andres cuexcontitlan
 san andres tuxtla
 san angel
+san antonio
 san antonio acahualco
 san antonio de la cal
 san antonio tecomitl
 san bernardino tlaxcalancingo
 san buenaventura
+san cristobal
 san cristobal de las casas
 san felipe
 san fernando
+san francisco
 san francisco acuautla
 san francisco cuaxusco
 san francisco de los romo
@@ -1103,6 +1240,7 @@ san isidro
 san jeronimo
 san jeronimo cuatro vientos
 san jorge pueblo nuevo
+san jose
 san jose de los olvera
 san jose del cabo
 san jose del castillo
@@ -1110,26 +1248,32 @@ san jose del quince
 san jose del valle
 san jose guadalupe otzacatipan
 san jose iturbide
+san juan
 san juan de los lagos
 san juan del rio
 san juan ixtayopan
 san juan zitlaltepec
 san lorenzo acopilco
+san luis
 san luis de la paz
 san luis potosi
 san luis rio colorado
 san martin azcatepec
 san martin cuautlalpan
+san martin texmelucan
 san martin texmelucan de labastida
 san mateo atenco
 san mateo huitzilzingo
 san mateo otzacatipan
+san miguel
 san miguel ajusco
 san miguel coatlinchan
 san miguel de allende
 san miguel el alto
 san miguel topilejo
+san nicolas
 san nicolas de los garza
+san pablo
 san pablo autopan
 san pablo de las salinas
 san pablo oztotepec
@@ -1155,6 +1299,7 @@ santa maria chimalhuacan
 santa maria totoltepec
 santa rosa jauregui
 santa rosa treinta
+santa rosalia
 santa rosalia de camargo
 santa teresa
 santiago de queretaro
@@ -1232,6 +1377,7 @@ valente diaz
 valle de bravo
 valle de santiago
 valle hermoso
+valle oriente
 valley east
 vaudreuil dorion
 vedder crossing
@@ -1272,6 +1418,7 @@ york university heights
 zacatepec de hidalgo
 zacoalco de torres
 zamora de hidalgo
+zapopan centro
 zinapecuaro de figueroa
 zumpango del rio
 `;

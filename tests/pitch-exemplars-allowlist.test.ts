@@ -481,3 +481,47 @@ test("6b.5: the round-6 titles are scrubbed, not dropped; '#1 rated' is a number
   assert.equal(scrubExemplar("Lo atiende el Fisio. Ruiz y el lcdo. peña.", other), "Lo atiende el Fisio. [name] y el lcdo. [name].");
   assert.equal(scrubExemplar("The #1 rated clinic in town.", other), "The #[n] rated clinic in town.");
 });
+
+// ── Round 6c ──────────────────────────────────────────────────────────────────
+
+test("6c.B1: Mexico City's Spanish names and places with an official suffix drop the exemplar", () => {
+  const kept: string[] = [];
+  for (const city of [null, "Coyoacán"]) {
+    const p: ExemplarProspect = { ...NOCITY, city };
+    for (const pl of ["Ciudad de México", "Cd. de México", "Cd. México"]) {
+      for (const [subject, body] of [
+        ["llamadas", wrap(`Vi que atienden clínicas en ${pl} y nadie contesta.`)],
+        ["llamadas", wrap(`${pl} tiene muchas clínicas como la suya.`)],
+        [`clínicas en ${pl.toLowerCase()}`, wrap("Nadie contesta de noche.")],
+      ] as const) {
+        if (toExemplar({ pitch_id: "x", score: 1 }, { subject, body, ...p })) kept.push(`${city}: ${subject} | ${body.split("\n")[2]}`);
+      }
+    }
+  }
+  for (const [subject, body] of [
+    ["llamadas", wrap("León tiene muchas clínicas como la suya.")],
+    ["clínicas en león", wrap("Nadie contesta de noche.")],
+    ["llamadas", wrap("Atendemos clínicas en Iguala y en Taxco.")],
+    ["clínicas en iguala", wrap("Nadie contesta de noche.")],
+    ["clínicas en poza rica", wrap("Nadie contesta de noche.")],
+    ["clínicas en la piedad", wrap("Nadie contesta de noche.")],
+    ["llamadas", wrap("Hoteles en los Cabos y en Cabo pagan comisión.")],
+    ["llamadas", wrap("Hoteles en Playa pagan comisión a las OTA.")],
+  ] as const) {
+    if (toExemplar({ pitch_id: "x", score: 1 }, { subject, body, ...NOCITY })) kept.push(`${subject} | ${body.split("\n")[2]}`);
+  }
+  assert.deepEqual(kept, []);
+});
+
+test("6c.B2: a particle last name is still checked when the contact has an address", () => {
+  for (const [name, email, last] of [["Minh Le", "minhle@clinic.ca", "Le"], ["Thanh Do", "thanhdo@clinic.ca", "Do"], ["Minh Le", "minh.le@clinic.ca", "Le"]] as const) {
+    const p: ExemplarProspect = { company_name: null, domain: null, recipient_name: name, recipient_email: email };
+    assert.notDeepEqual(exemplarLeaks(`Thanks, ${last}.`, p), [], `${name} ${email}`);
+    assert.notDeepEqual(exemplarLeaks(`${last} and her team answer every call.`, p), [], `${name} ${email}`);
+    assert.equal(toExemplar({ pitch_id: "x", score: 1 }, { subject: "evening calls", body: wrap(`${last} and her team answer every call.`), ...p }), null, `${name} ${email}`);
+  }
+});
+
+test("6c: a handle that starts with a digit is blanked", () => {
+  assert.equal(scrubExemplar("Síguelos en @3amigos para citas.", NOCITY), "Síguelos en [site] para citas.");
+});

@@ -801,8 +801,8 @@ export function scrubExemplar(text: string, prospect: ExemplarProspect): string 
     return m;
   });
   // Every other handle and tag is someone's address: "@torres", "#VegaDental" (bare domains below).
-  // A tag starts with a letter: "#1 rated" is a number, not a tag.
-  out = out.replace(/(?<![\p{L}\p{N}])[#@][\p{L}_][\p{L}\p{N}_]*(?:\.[\p{L}\p{N}_]+)*/gu, "[site]");
+  // A tag starts with a letter ("#1 rated" is a number); a handle may start with a digit ("@3amigos").
+  out = out.replace(/(?<![\p{L}\p{N}])(?:@[\p{L}\p{N}_]+|#[\p{L}_][\p{L}\p{N}_]*)(?:\.[\p{L}\p{N}_]+)*/gu, "[site]");
 
   // Names the contact row did not know: after an honorific (capitalized, then
   // any case), and the greeting's addressee.
@@ -861,10 +861,14 @@ export function scrubExemplar(text: string, prospect: ExemplarProspect): string 
 //    of up to 4 letters, an honorific: "J. Torres", "Nut. Cruz" are
 //    mid-sentence). A colon never opens one ("Front desk: Grant").
 // I3 Tiers, by position (sets in ws(), names from ./wordlists/names.ts). A
-//    name is refused BEFORE our vocabulary is consulted; only our senders,
-//    CAPITALIZED_WORDS (months, countries, provinces) and CAPITALIZED_PHRASES
+//    name or place is refused BEFORE our vocabulary is consulted; only our
+//    senders, CAPITALIZED_WORDS (months, countries, provinces and states that
+//    are no city, regions), PLATFORMS (Wix, Shopify) and CAPITALIZED_PHRASES
 //    ("Quintana Roo", "Bain & Company") beat it, and our acronyms pass written
-//    in all capitals or all lower case only.
+//    in all capitals or all lower case only (plurals: "SKUs").
+//    Places (./wordlists/places.ts, GeoNames CA/MX and short forms) are
+//    refused wherever a strong name is AND opening a sentence; a multi-word
+//    place counts when any of its words is capitalized, or in the subject.
 //    - an address chunk ("@", "#", "_", "://", "www", a dot between letters):
 //      any name at all; and a handle, tag or domain the scrubber left
 //      unblanked drops the exemplar by itself;
@@ -882,7 +886,10 @@ export function scrubExemplar(text: string, prospect: ExemplarProspect): string 
 //    "Lo", "Will") capitalized mid-sentence, English months that are names
 //    ("April"), a frequent word-like name in a lower-case subject ("grant",
 //    "rosa"), a two-letter name in lower case, a single-word publisher that is
-//    a name (Gartner, Clio) dropping the exemplar.
+//    a name (Gartner, Clio) dropping the exemplar, a place in lower case in a
+//    body, a place that is an everyday word in a lower-case subject
+//    ("progreso"), and places that are everyday words dropping the exemplar
+//    when they open a sentence ("Doctores…", "Madera…").
 // I4 The field checks and the honorific and greeting spans (exemplarLeaks)
 //    run as well: they catch the current prospect's name, and with no contact
 //    name the given name in the address (monica@), even when it is a word.
@@ -1036,10 +1043,12 @@ export function exemplarLeaks(rawText: string, prospect: ExemplarProspect, opts:
   // Coarser than the greeting's own rule, on purpose.
   const local = /^[a-z]+/.exec(leakFold(prospect.recipient_email?.split("@")[0] ?? ""))?.[0] ?? "";
   const fromEmail = local.length >= 3 && !ROLE_LOCALS.has(local) && !GENERIC_LOCALS.has(local) && !GENERIC_WORDS.has(local);
-  const name = [...new Set([...leakParts(prospect.recipient_name).map((p) => p.f), ...(fromEmail ? [local] : [])])];
+  // The last piece is the contact name's own last piece ("Minh Le"): the address local part comes after it, never instead.
+  const contact = leakParts(prospect.recipient_name).map((p) => p.f);
+  const name = [...contact, ...(fromEmail && !contact.includes(local) ? [local] : [])];
   name.forEach((f, i) => {
     if (f.length < 2 || /^\d+$/.test(f)) return;
-    const last = i === name.length - 1;
+    const last = i === contact.length - 1 || i >= contact.length;
     if (NAME_PARTICLES.has(f) && !last) return;
     const common = COMMON_WORD_NAMES.has(f) || NAME_PARTICLES.has(f);
     word(f, common ? "capital" : "any");
@@ -1170,8 +1179,8 @@ function allowListLeaks(text: string, subject: boolean): string[] {
     .replace(/(?<!\p{L})([ODLMN])['’](?=\p{Lu})/gu, "$1")
     // Places and publishers allowed as a whole phrase only: "Quintana Roo", "Bain & Company".
     .replace(w.phrases, LEAK_BLANK);
-  // A multi-word place, capitalized (or anywhere in the subject): "Los Cabos", "Boca del Río".
-  for (const m of norm.matchAll(w.placePhrases)) if (subject || /^\p{Lu}/u.test(m[0])) out.push(leakFold(m[0]));
+  // A multi-word place with any word capitalized (or anywhere in the subject): "Los Cabos", "en los Cabos", "Boca del Río".
+  for (const m of norm.matchAll(w.placePhrases)) if (subject || /\p{Lu}/u.test(m[0])) out.push(leakFold(m[0]));
   const split = INWORD_SEPARATOR.exec(norm);
   if (split) out.push(split[0]);
   for (const chunk of norm.matchAll(/\S+/gu)) {

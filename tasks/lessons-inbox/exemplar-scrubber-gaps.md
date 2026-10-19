@@ -56,3 +56,8 @@ TAGS: pitches, exemplars, generator, dictionaries
 WHAT HAPPENED: GeoNames lists "Santiago de Querétaro", "Heroica Nogales", "Victoria de Durango", so a place deny built from cities15000 as-is missed "en Querétaro" (round 6b of exemplar-scrubber-gaps). Stripping official prefixes (Santiago de, Victoria de, Heroica, Ciudad de) added the names people write; regions that are municipalities (Los Cabos) and CDMX colonias needed a hand list. State names that are also cities (Puebla, Querétaro, Oaxaca, Quebec) had to leave the "always allowed" list, found by intersecting it with the place list in the generator, not by eye.
 RULE: When a deny list comes from a gazetteer, add the everyday short forms and intersect every allow list with it at build time; anything on both is a decision, not a default.
 TAGS: pitches, exemplars, places, generator
+
+[2026-10-19] When two lists feed one positional rule, compute the position over the list the rule is about
+WHAT HAPPENED: Round 6b of exemplar-scrubber-gaps appended the e-mail local part to the contact's name pieces, and the "last piece is always checked" rule (for particle surnames: "Minh Le") read `i === name.length - 1`, so with minhle@ the local part became "last" and "Le and her team answer every call" was kept. Round 6c computes the index over the contact name only.
+RULE: When you extend an array that a positional rule (first, last, index) reads, check what the position now means; keep the rule's index on the original list.
+TAGS: pitches, exemplars, regression, review

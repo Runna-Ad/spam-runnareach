@@ -213,8 +213,15 @@ console.log(`names: ${all.length} (${givenCount} given, ${longTail} long tail), 
 
 // ── Places ────────────────────────────────────────────────────────────────────
 
-/** Mexico City's boroughs and best-known neighbourhoods (cities15000 lists them only in part), and tourist regions. */
-const CDMX = [
+/**
+ * By hand: Mexico City's Spanish names (GeoNames has only "Mexico City"), its boroughs and best-known
+ * neighbourhoods, Monterrey's and Guadalajara's best-known colonias (cities15000 lists them only in part),
+ * and tourist regions and short forms.
+ */
+const HAND_PLACES = [
+  "Ciudad de México", "Cd. de México", "Cd. México", "CDMX", "México D.F.", "Distrito Federal",
+  "Cumbres", "San Pedro", "Valle Oriente", "Providencia", "Andares", "Chapultepec", "Colonia Americana", "Zapopan Centro",
+  "Cabo", "Playa",
   "Álvaro Obregón", "Azcapotzalco", "Benito Juárez", "Coyoacán", "Cuajimalpa", "Cuauhtémoc", "Gustavo A. Madero",
   "Iztacalco", "Iztapalapa", "Magdalena Contreras", "Miguel Hidalgo", "Milpa Alta", "Tláhuac", "Tlalpan",
   "Venustiano Carranza", "Xochimilco", "Condesa", "Roma Norte", "Roma Sur", "Polanco", "Santa Fe", "Del Valle",
@@ -228,17 +235,43 @@ const placePhrases = new Set();
 const placeRows = read("world-cities.csv").split("\n").slice(1).map((l) => l.split(",")).filter((c) => c[1] === "Mexico" || c[1] === "Canada");
 /** Official prefixes the everyday name drops: "Santiago de Querétaro" is Querétaro, "Heroica Nogales" Nogales. */
 const PLACE_PREFIX = /^(?:santiago de |victoria de |heroica (?:ciudad de )?|ciudad (?:de )?)/;
-const placeNames = [...placeRows.map((c) => c[0] ?? ""), ...CDMX].flatMap((raw) => {
+/**
+ * And the official suffixes: "León de los Aldama" is León, "Iguala de la Independencia" Iguala, "Poza Rica
+ * de Hidalgo" Poza Rica. Never down to a lone generic word ("Ciudad", "Villa", "San").
+ */
+const PLACE_SUFFIX = / (?:de|del) .+$/;
+const GENERIC_PLACE_HEADS = new Set(["ciudad", "cd", "villa", "san", "santa", "santo", "puerto", "boca", "valle", "nuevo", "nueva",
+  "la", "el", "los", "las", "lomas", "colonia", "fraccionamiento", "pueblo", "heroica", "real", "rancho", "ejido", "barrio"]);
+/** A short form that is an everyday word ("puente", "tres", "ojo") is no place on its own; hand-listed ones are (Playa). */
+const top3000 = new Set([...read("en_50k.txt").split("\n").slice(0, 3000), ...read("es_50k.txt").split("\n").slice(0, 3000)].map((l) => fold(l.split(" ")[0] ?? "")));
+const shortForms = [];
+const placeNames = [...placeRows.map((c) => c[0] ?? ""), ...HAND_PLACES].flatMap((raw) => {
   const f = fold(raw).split(/[^\p{L}]+/u).filter(Boolean).join(" ");
-  const short = f.replace(PLACE_PREFIX, "");
-  return short && short !== f ? [f, short] : [f];
+  const forms = new Set([f]);
+  for (const g of [f, f.replace(PLACE_PREFIX, "")]) {
+    forms.add(g);
+    const head = g.replace(PLACE_SUFFIX, "");
+    const generic = head.split(" ").every((w) => GENERIC_PLACE_HEADS.has(w)) || (!head.includes(" ") && top3000.has(head));
+    if (head !== g && !generic) forms.add(head);
+  }
+  for (const x of forms) if (x !== f && x) shortForms.push(`${f} → ${x}`);
+  return [...forms].filter(Boolean);
 });
+console.log(`place short forms (${shortForms.length}): ${shortForms.join("; ")}`);
 for (const name of placeNames) {
   const ps = name.split(" ");
   if (ps.length === 1 && ps[0].length >= 3 && /^[a-z]+$/.test(ps[0])) placeSingles.add(ps[0]);
   else if (ps.length > 1 && ps.every((p) => /^[a-z]+$/.test(p))) placePhrases.add(ps.join(" "));
 }
 const singles = [...placeSingles].sort();
+// Every always-allowed list, intersected with the places: anything on both is a decision, printed here.
+const vocab = readFileSync("lib/pitches/wordlists/vocab.ts", "utf8");
+for (const list of ["OWN_VOCABULARY", "OWN_ACRONYMS", "PLATFORMS", "CAPITALIZED_WORDS", "CAPITALIZED_PHRASES"]) {
+  const body = vocab.split(`export const ${list}`)[1]?.split("];")[0] ?? "";
+  const words = [...body.matchAll(/"([^"]+)"/g)].map((m) => m[1]);
+  const both = words.filter((w) => placeSingles.has(w) || placePhrases.has(w));
+  console.log(`${list} ∩ places: ${both.join(" ") || "none"}`);
+}
 const placeWords = singles.filter((p) => spellers.some((sp) => sp.correct(p)));
 console.log(`places: ${singles.length} single, ${placePhrases.size} phrases, also words: ${placeWords.join(" ")}`);
 writeFileSync(
