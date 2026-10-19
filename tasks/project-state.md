@@ -79,6 +79,24 @@ SHIPPED on Pedro's "ship it": migrations 0040 + 0041 applied, main = `4b22ad1`+,
 - **Scheduler** (migration 0041): pg_cron + pg_net; token generated inside Postgres, kept in Vault, checked via `scheduler_token_valid` (service role only); tick every 15 min, reply poll every 30 min, send-queue every 10 min and follow-ups hourly Mon–Fri 15–22 UTC. Vercel daily crons stay as backstop.
 - Session note: the Auto-mode safety check refused the service-role pipeline and creating an account; Pedro switched the session to "Accept edits" and approved. Permission rules were not edited.
 
+## Phase 3 — #17 exemplar allow-list (PR to main, waiting on Pedro's "ship it")
+Past winning pitches become anonymised style examples for new pitches, only when `EXEMPLARS_ENABLED=1` (not set in
+Vercel: verified 2026-10-19 02:58; the switch is checked before any DB read in `fetchExemplars`). Ships with the switch OFF:
+- `lib/pitches/exemplars.ts`: scrubber + an independent fail-closed leak check. A kept exemplar may contain only words
+  from the 20k EN/ES frequency lists (hermitdave, CC BY-SA 4.0), our own vocabulary, or blanks; names (SSA + Census,
+  public domain) and places (GeoNames cities15000 CA+MX, CC BY 4.0, plus short forms, CDMX/MTY/GDL colonias, dotted
+  initials) are refused by position and case. Lists in `lib/pitches/wordlists/`, built at dev time by
+  `scripts/gen-exemplar-wordlists.mjs` (no runtime dependency, no paid service).
+- `lib/pitches/greeting-name.ts`: the composer's greeting rule, shared with the scrubber (composer behaviour unchanged:
+  0 diffs on 760 inputs).
+- Measured on 30 real prod pitches: 24 kept, all 6 drops real leaks, no person or place name in the kept 24. Stated
+  residuals (exemplars.ts header): common-word names at a sentence start, top-300-word names (He, Lo, Will), name-months,
+  names made of ordinary words, lowercase places in a body, brands alone.
+Ship steps: merge → deploy READY (nothing changes with the switch off). Then Pedro decides when to set
+`EXEMPLARS_ENABLED=1` in Vercel (production) and redeploy. After the flip: `select decision->>'exemplar_prompt_version' v,
+count(*) from pitches where created_at > '<flip time>' group by 1` (null = no exemplar qualified); spot-check the first
+5 exemplar rows for another prospect's company, place or a capitalized mid-sentence name.
+
 ## Phase 3 — batch 3 follow-up: status rule in discovery (SHIPPED 2026-10-19 on Pedro's "ship it": main = `729b299`, PR #27)
 Ship verified: no migrations; deploy dpl_J3tEospxUg8mzz27FkAuGdUTcuPv READY (checked 01:19 UTC); prod verification query = 0 before and after the deploy (141 prospects parked).
 Pedro 2026-10-18/19: pipeline reactivation skips do-not-send prospects; a person's direct status change may still
@@ -124,7 +142,7 @@ Deploy order (conductor runs each step and verifies by query; Fable batch audit:
    today's sent count).
 6. Never call the integration preview's /api/opportunities/calendar-sync before 0047 (shares the prod DB).
 NOT in this ship: PR #17 (exemplar allow-list, round 5 in progress; `EXEMPLARS_ENABLED` stays unset = off).
-Open / next: #17 (then flip EXEMPLARS_ENABLED); atomic sends_today increment (Vercel + pg_cron send-queue runs overlap and under-count the cap); tick should skip a candidate whose approve was a no-op; poll
+Open / next: atomic sends_today increment (Vercel + pg_cron send-queue runs overlap and under-count the cap); tick should skip a candidate whose approve was a no-op; poll
 `DEAD_STATUSES` lacks no_match (drafting gate); nudge route accepts only CRON_SECRET (a pg_cron schedule would 401);
 calendar-sync: a kill between createOpportunity and its pitch event/audit loses those writes (pre-existing).
 
