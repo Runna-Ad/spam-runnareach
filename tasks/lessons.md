@@ -1,5 +1,10 @@
 # S.P.A.M. — Lessons (newest first)
 
+[2026-10-19] PEDRO_OVERRIDE: Build on the existing second brain and wrap-up routine; never design a parallel one
+WHAT HAPPENED: Asked how to make the conductor workflow smarter, the conductor (a cloud session) proposed a new lessons loop and a new /wrap-up command. Pedro already runs both: the second brain (Moisty-Mango/second-brain: recall hook, capture on session end, weekly distill) and the wrap-up routine in his global rules (Moisty-Mango/dotclaude CLAUDE.md). Cloud sessions load neither (the hooks and rules assume /Users/work and $HOME/Brain on his Macs), so the conductor never saw them, skipped the wrap-up, logged no PEDRO_OVERRIDEs and broke the global writing rules all session.
+RULE: At the start of any cloud session, check whether the global rules and the brain are present (~/.claude/CLAUDE.md, $HOME/Brain/brain-starter). If not, say so to Pedro and ask to attach Moisty-Mango/dotclaude and Moisty-Mango/second-brain read-only before proposing any process change. Improve his loop; never replace it.
+TAGS: process, second-brain, wrap-up, cloud-sessions, conductor
+
 ## Merged from lessons-inbox, exemplar-readiness-report (2026-10-19)
 
 [2026-10-19] A count of "what the pipeline would pick" shares the pipeline's predicate, row mapper and columns
