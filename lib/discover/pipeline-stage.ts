@@ -34,6 +34,10 @@ import { generateWebsitePitchWith } from "@/lib/pitches/website-pitch-stage";
 import { searchBrave } from "@/lib/discover/sources/brave-search";
 import { searchGooglePlaces, googlePlacesIsAvailable } from "@/lib/discover/sources/google-places";
 import { normalizeDomain } from "@/lib/discover/fuzzy-dedupe";
+import { DO_NOT_SEND_STATUSES, protectedStatusFilter } from "@/lib/prospects/status";
+import type { Database } from "@/lib/supabase/types";
+
+type ProspectUpdate = Database["public"]["Tables"]["prospects"]["Update"];
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -197,6 +201,35 @@ export async function processSingleProspectWith(
     .maybeSingle<ProspectRow>();
 
   const name = p?.company_name ?? prospectId;
+
+  // A parked prospect (suppressed / no_match, or booked / won / lost /
+  // archived_no_meeting) is never reactivated by the pipeline (Pedro
+  // 2026-10-18: the status rule wins), so re-running it would only spend
+  // Claude on research and a pitch nobody may send. Stop before any of it.
+  if (p && DO_NOT_SEND_STATUSES.has(p.status)) {
+    return { prospect_id: prospectId, company_name: name, score: null, outcome: "suppressed" };
+  }
+
+  // Every status write below goes through here. `p` is a snapshot: a job works
+  // through its ids over many slices, so a prospect can be bulk-suppressed or
+  // booked after the read above. The rule's guard (lib/prospects/status.ts) in
+  // the UPDATE's WHERE refuses such a row. Returns false only when the rule
+  // refused it; a failed write keeps today's outcome (it never changed it).
+  async function writeStatus(
+    fields: ProspectUpdate & { status: NonNullable<ProspectUpdate["status"]> },
+  ): Promise<boolean> {
+    let q = supabase
+      .from("prospects")
+      .update({ ...fields, updated_at: new Date().toISOString() })
+      .eq("id", prospectId)
+      .eq("tenant_id", user.tenantId);
+    const guard = protectedStatusFilter(fields.status, "automation");
+    if (guard) q = q.not("status", "in", guard);
+    const { data, error } = await q.select("id");
+    if (error) return true;
+    return (data ?? []).length > 0;
+  }
+
   let hasWebsite = !!(p?.domain || p?.website_url);
   const hasIcp = !!(p?.icp_id);
   // The domain later steps should use. `p` is a snapshot from before website
@@ -255,16 +288,11 @@ export async function processSingleProspectWith(
   // (DNS-dead): the domain is cleared first, then the prospect lands here.
   async function runNoWebsiteLane(): Promise<SinglePipelineResult> {
     if (!hasIcp) {
-      await supabase
-        .from("prospects")
-        .update({
-          status: "suppressed",
-          suppressed_reason: "Auto: no website and no ICP context",
-          suppressed_at: new Date().toISOString(),
-          updated_at: new Date().toISOString(),
-        })
-        .eq("id", prospectId)
-        .eq("tenant_id", user.tenantId);
+      await writeStatus({
+        status: "suppressed",
+        suppressed_reason: "Auto: no website and no ICP context",
+        suppressed_at: new Date().toISOString(),
+      });
       revalidatePath("/companies");
       return { prospect_id: prospectId, company_name: name, score: null, outcome: "suppressed" };
     }
@@ -287,17 +315,12 @@ export async function processSingleProspectWith(
       .returns<NwContactRow[]>();
 
     if (!(nwContacts ?? []).some((c) => hasUsableEmail(c.email))) {
-      await supabase
-        .from("prospects")
-        .update({
-          status: "suppressed",
-          suppressed_reason: "Auto: no website and no contact email (unreachable)",
-          suppressed_at: new Date().toISOString(),
-          pitch_gate_passed: false,
-          updated_at: new Date().toISOString(),
-        })
-        .eq("id", prospectId)
-        .eq("tenant_id", user.tenantId);
+      await writeStatus({
+        status: "suppressed",
+        suppressed_reason: "Auto: no website and no contact email (unreachable)",
+        suppressed_at: new Date().toISOString(),
+        pitch_gate_passed: false,
+      });
       revalidatePath("/companies");
       return { prospect_id: prospectId, company_name: name, score: null, outcome: "suppressed" };
     }
@@ -306,34 +329,25 @@ export async function processSingleProspectWith(
     try {
       const pitchResult = await generateWebsitePitchWith(actor, prospectId);
       if (pitchResult.ok) {
-        await supabase
-          .from("prospects")
-          .update({
-            status: "pitched",
-            pitch_gate_passed: true,
-            updated_at: new Date().toISOString(),
-          })
-          .eq("id", prospectId)
-          .eq("tenant_id", user.tenantId);
+        const moved = await writeStatus({
+          status: "pitched",
+          pitch_gate_passed: true,
+        });
         revalidatePath("/companies");
         revalidatePath("/funnel");
         revalidatePath("/pitches");
-        return { prospect_id: prospectId, company_name: name, score: null, outcome: "website_pitch" };
+        // Parked while the pitch was written: it stays parked and counts as such.
+        return { prospect_id: prospectId, company_name: name, score: null, outcome: moved ? "website_pitch" : "suppressed" };
       }
     } catch {
       // fall through to normal suppress if pitch gen explodes
     }
     // Website pitch failed — suppress rather than leave in raw
-    await supabase
-      .from("prospects")
-      .update({
-        status: "suppressed",
-        suppressed_reason: "Auto: no website, pitch generation failed",
-        suppressed_at: new Date().toISOString(),
-        updated_at: new Date().toISOString(),
-      })
-      .eq("id", prospectId)
-      .eq("tenant_id", user.tenantId);
+    await writeStatus({
+      status: "suppressed",
+      suppressed_reason: "Auto: no website, pitch generation failed",
+      suppressed_at: new Date().toISOString(),
+    });
     revalidatePath("/companies");
     return { prospect_id: prospectId, company_name: name, score: null, outcome: "suppressed" };
   }
@@ -395,16 +409,11 @@ export async function processSingleProspectWith(
   // full deep research. At $0.023/prospect deep research is cheap enough that
   // we'd rather over-research than under-research.
   if (initialScore < 10) {
-    await supabase
-      .from("prospects")
-      .update({
-        status: "suppressed",
-        suppressed_reason: `Auto: structural score ${initialScore} — clearly wrong fit (industry/geo/size)`,
-        suppressed_at: new Date().toISOString(),
-        updated_at: new Date().toISOString(),
-      })
-      .eq("id", prospectId)
-      .eq("tenant_id", user.tenantId);
+    await writeStatus({
+      status: "suppressed",
+      suppressed_reason: `Auto: structural score ${initialScore} — clearly wrong fit (industry/geo/size)`,
+      suppressed_at: new Date().toISOString(),
+    });
     revalidatePath("/companies");
     return { prospect_id: prospectId, company_name: name, score: initialScore, outcome: "suppressed" };
   }
@@ -502,16 +511,11 @@ export async function processSingleProspectWith(
 
   if (score < 50) {
     // Below the floor — suppress.
-    await supabase
-      .from("prospects")
-      .update({
-        status: "suppressed",
-        suppressed_reason: `Auto: score ${score} below 50`,
-        suppressed_at: new Date().toISOString(),
-        updated_at: new Date().toISOString(),
-      })
-      .eq("id", prospectId)
-      .eq("tenant_id", user.tenantId);
+    await writeStatus({
+      status: "suppressed",
+      suppressed_reason: `Auto: score ${score} below 50`,
+      suppressed_at: new Date().toISOString(),
+    });
 
     revalidatePath("/companies");
     return { prospect_id: prospectId, company_name: name, score, outcome: "suppressed" };
@@ -521,20 +525,15 @@ export async function processSingleProspectWith(
     // 50-69 → B-list: a time-boxed, opt-in review pool (out of the default view,
     // auto-suppressed after 21 days untouched by the janitor). updated_at below
     // anchors that clock.
-    await supabase
-      .from("prospects")
-      .update({
-        status: "b_list",
-        suppressed_reason: null,
-        suppressed_at: null,
-        pitch_gate_passed: false,
-        updated_at: new Date().toISOString(),
-      })
-      .eq("id", prospectId)
-      .eq("tenant_id", user.tenantId);
+    const moved = await writeStatus({
+      status: "b_list",
+      suppressed_reason: null,
+      suppressed_at: null,
+      pitch_gate_passed: false,
+    });
 
     revalidatePath("/companies");
-    return { prospect_id: prospectId, company_name: name, score, outcome: "needs_review" };
+    return { prospect_id: prospectId, company_name: name, score, outcome: moved ? "needs_review" : "suppressed" };
   }
 
   // Score ≥ 70 with no verified contact yet: run the full waterfall
@@ -588,17 +587,12 @@ export async function processSingleProspectWith(
     // ≥70 but unreachable: we ran the full enrichment waterfall and still found no
     // email — "if we didn't get it in the pipeline, we aren't getting it" — so
     // suppress rather than park it in a worklist nobody clears.
-    await supabase
-      .from("prospects")
-      .update({
-        status: "suppressed",
-        suppressed_reason: `Auto: score ${score} but no contact found (unreachable)`,
-        suppressed_at: new Date().toISOString(),
-        pitch_gate_passed: false,
-        updated_at: new Date().toISOString(),
-      })
-      .eq("id", prospectId)
-      .eq("tenant_id", user.tenantId);
+    await writeStatus({
+      status: "suppressed",
+      suppressed_reason: `Auto: score ${score} but no contact found (unreachable)`,
+      suppressed_at: new Date().toISOString(),
+      pitch_gate_passed: false,
+    });
     revalidatePath("/companies");
     return { prospect_id: prospectId, company_name: name, score, outcome: "suppressed" };
   }
@@ -607,16 +601,12 @@ export async function processSingleProspectWith(
   try {
     const pitchResult = await generatePitchWith(actor, prospectId);
     if (pitchResult.ok) {
-      await supabase
-        .from("prospects")
-        .update({ status: "pitched", pitch_gate_passed: true, updated_at: new Date().toISOString() })
-        .eq("id", prospectId)
-        .eq("tenant_id", user.tenantId);
+      const moved = await writeStatus({ status: "pitched", pitch_gate_passed: true });
 
       revalidatePath("/companies");
       revalidatePath("/funnel");
       revalidatePath("/pitches");
-      return { prospect_id: prospectId, company_name: name, score, outcome: "pitched" };
+      return { prospect_id: prospectId, company_name: name, score, outcome: moved ? "pitched" : "suppressed" };
     }
     pitchError = pitchResult.error;
   } catch (err) {
@@ -637,20 +627,22 @@ export async function processSingleProspectWith(
   }
 
   // Score passed but pitch couldn't be created — mark gate passed so UI shows
-  // correct state. A parked prospect (suppressed / no_match) stays parked: the
-  // status rule (lib/prospects/status.ts, I5) never moves a do-not-send status
-  // to a sendable one, and Pedro chose that over reactivation (2026-10-18).
-  await supabase
+  // correct state. No status write: a prospect parked during the run stays
+  // parked (status rule I5), and is counted as suppressed, not needs_review.
+  const { data: after } = await supabase
     .from("prospects")
     .update({
       pitch_gate_passed: true,
       updated_at: new Date().toISOString(),
     })
     .eq("id", prospectId)
-    .eq("tenant_id", user.tenantId);
+    .eq("tenant_id", user.tenantId)
+    .select("status")
+    .maybeSingle<{ status: string }>();
 
   revalidatePath("/companies");
-  return { prospect_id: prospectId, company_name: name, score, outcome: "needs_review" };
+  const parked = !!after && DO_NOT_SEND_STATUSES.has(after.status);
+  return { prospect_id: prospectId, company_name: name, score, outcome: parked ? "suppressed" : "needs_review" };
 }
 
 // ── Public: re-enrich contacts for an existing prospect ──────────────────────

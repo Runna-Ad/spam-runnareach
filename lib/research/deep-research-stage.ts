@@ -30,6 +30,7 @@ import {
 import { isUnderDailyCap, recordClaudeCall } from "@/lib/anthropic/cost-tracking";
 import { scrapeSite } from "./scraper";
 import { scoreProspectWith } from "./score-stage";
+import { protectedStatusFilter } from "@/lib/prospects/status";
 import { buildDeepResearchPrompt, type TaxonomyEntry } from "./deep-research-prompt";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -381,7 +382,10 @@ export async function deepResearchProspectWith(
           updated_at: new Date().toISOString(),
         })
         .eq("id", prospectId)
-        .eq("tenant_id", user.tenantId);
+        .eq("tenant_id", user.tenantId)
+        // prospect.status was read at the start of the run: a booking or reply
+        // since then must win (status rule I3), so the WHERE re-checks it.
+        .not("status", "in", protectedStatusFilter("suppressed", "automation")!);
     }
   }
 
