@@ -5,30 +5,19 @@ file alone. Update it on every spawn, every status change, every merge. Keep clo
 for the current phase; move older ones to the retro.
 
 ## Current phase
-`phase3-batch3` ACTIVE. **Owner: session_017nqBxLFFXKbhDwKiPi6xLf** (Opus 5.5), took the lock 2026-10-18 17:09 UTC (lock was released by session_018Qvu38cNFVCuWNq41wYfxJ; Pedro: "Run phase3-batch3 ... Go").
-Integration branch: `claude/optimistic-tesla-3gceud` (this session's designated branch, cut from main e10a326). Workers PR into it.
-Scope (Pedro read it 2026-10-18: "all seem good"), in order:
-1. Send-path safety: DO_NOT_SEND_STATUSES in `lib/pitches/send-action.ts` and the send-queue route, plus a status guard on `transitionPitchStatusWith`. First: 19 AUTO pitches start sending Mon 15:00 UTC.
-2. Unique index on replies(tenant_id, gmail_message_id). Needs a reserved migration number.
-3. Booking-alert durability in `lib/opportunities/calendar-sync.ts`, same claim/sweep pattern as the reply alerts.
-4. /pitches resilience (`tasks/briefs/pitches-list-resilience.md`, sonnet/medium).
-5. #17 exemplar allow-list to the reviewer's strict/generous design (batch 2 log 16:24). Opus/high, parallel track; flip EXEMPLARS_ENABLED once merged.
-Not code: pipeline-stage reactivation vs the status rule is a product question for Pedro.
-Previous: `phase3-batch2` CLOSED (main e10a326). Its rows, log and hand-off are in `tasks/retros/2026-10-18-phase3-batch2.md` (appendix).
-
-Open prod checks:
-- The 01:00 and 13:00 UTC digests list the 19 AUTO pitches.
-- First weekly report, Mon 13:10 UTC.
-- First AUTO sends, Mon 15:00 UTC.
-- First real lead alert shows alerts{sent:3,failed:[]}.
-- First use of a hold link.
+`phase3-batch3` SHIPPED 2026-10-19 00:19 UTC (main 9c98448, PR #25, deploy dpl_EvZj8YDtbvAZunU79Hr3C5t5hTj6 READY). **Owner: session_017nqBxLFFXKbhDwKiPi6xLf.** Integration branch `claude/optimistic-tesla-3gceud` restarted from main 9c98448 for the follow-ups.
+Open:
+- Q1 follow-up (Pedro: default): pipeline reactivation skips do-not-send prospects → small PR into the restarted branch, then its own "ship it".
+- #17 exemplar allow-list round 5 (worker session_01UKwyaiiw7nmqT9GEFR6ixb, PR #17 → this branch); conductor re-measures on the 30 real pitches; EXEMPLARS_ENABLED stays off.
+- Prod checks (scheduled): first poll + calendar-sync on the new code (00:30 / 01:05), the 01:00 and 13:00 UTC digests, the weekly report Mon 13:10 UTC, the first AUTO sends Mon 15:00 UTC, the first real lead alert, the first hold-link use.
+Previous: `phase3-batch2` CLOSED (main e10a326). Rows, log and hand-off in `tasks/retros/2026-10-18-phase3-batch2.md` (appendix).
 
 ## Approvals and checks
 | Item | State |
 |---|---|
 | Prod = main head READY before cutting integration | e10a326 READY (dpl_8udavQRnDUycKVocmcXakCav9pEm, verified 19:45) |
 | Batch plan sent to Pedro | scope approved in advance ("all seem good", 2026-10-18); Pedro "Go" 17:07 UTC |
-| Integration → main PR | #25 opened 20:10 UTC, subscribed; waiting for Pedro's "ship it" |
+| Integration → main PR | #25 squash-merged → main 9c98448 (2026-10-19 00:17 UTC); deploy READY 00:19:14 |
 | Questions sent | with PR #25 (2: pipeline reactivation vs status rule; weekend Vercel send-queue) |
 | `npm run build` green on integration | yes after #24 (845 tests) |
 | Origin in sync (`git status -sb`) | yes |
@@ -113,3 +102,6 @@ Batch-audit pairs to check (runtime interactions): send-path-safety × autopilot
 - 2026-10-18 20:11 UTC — Q2 in this ship: Vercel backstops for send-queue, follow-up and nudge → `1-5` (pinned by tests/vercel-config.test.ts); the veto digest copy said "once around 15:00 UTC on weekends" → "Monday to Friday only" (test updated). 846 tests, typecheck, lint green. Health E3 already judges weekday windows only. Q1 → follow-up PR after the ship. Starting the ship checklist.
 - 2026-10-18 20:16 UTC — Ship step 1 done: 0046 + 0047 applied (0 dup reply pairs, 0 calendar opps), version rows normalised, index + columns verified. Then the PR #25 preview for db545b0 FAILED on Vercel (Turbopack: "next/font/google queries have exactly one entry" in the Inter font CSS, after "Restored build cache"); the same head builds locally and CI is green → not a code failure; merge held until a preview builds.
 - 2026-10-19 00:15 UTC — Worker process restarted ~20:20 → resumed at 00:12 (≈4 h gap; nothing lost, branch in sync). Old code × new schema verified in the gap: all pg_cron jobs succeeded; poll + calendar-sync 200, alerts.failed [], no errors. Redeploy of the preview started (dpl_Ha3nQmi7seEnCzngqkWL4em8Zfsf).
+- 2026-10-19 00:16 UTC — Preview redeploy of db545b0 READY (the 20:12 failure was transient Vercel font-fetch/cache, not code); PR head 35f9496 CI + preview green.
+- 2026-10-19 00:17 UTC — PR #25 squash-merged → main 9c98448. Deploy dpl_EvZj8YDtbvAZunU79Hr3C5t5hTj6 READY 00:19:14 UTC.
+- 2026-10-19 00:23 UTC — Post-deploy marker step: 0 rows (0 calendar opportunities exist); no spam-calendar-sync run between READY and the update. Branch restarted from main 9c98448 (force-with-lease; it held only merged history). project-state updated. Next: Q1 follow-up PR; first-run checks at 00:30 / 01:00 / 01:05.

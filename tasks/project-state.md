@@ -13,7 +13,7 @@
 - **Sibling repo:** `runna-hunter` (separate Vercel project) — the self-serve Inefficiency Hunter the pitch CTA deep-links to.
 
 ## What's deployed
-- Prod = `main` = `8db8b1c` (2026-10-18, Phase 3 batch 2). Before that `a15d1d8` (2026-10-17, Phase 3 batch 1 shipped on Pedro's "ship it"; Phase 2 and earlier below). `main` = prod.
+- Prod = `main` = `9c98448` (2026-10-19 00:19 UTC, Phase 3 batch 3, dpl_EvZj8YDtbvAZunU79Hr3C5t5hTj6). Before that `e10a326` / `8db8b1c` (2026-10-18, Phase 3 batch 2). Before that `a15d1d8` (2026-10-17, Phase 3 batch 1 shipped on Pedro's "ship it"; Phase 2 and earlier below). `main` = prod.
 - Migration **0038** (pitches.decision + write-once trigger, pitches.attribution_code, pitch_event_type values, prospect_contacts.verify_*) applied to prod 2026-10-17, recorded as version 0038.
 - Migration **0039** (hunter_scans.ref + trigger `hunter_scans_pitch_event`: a scan carrying a pitch's attribution code → `pitch_events` 'audit_scan' {stage: scan}; its contact-form submit → {stage: contact_request}) applied 2026-10-17, recorded as version 0039. runna-hunter `3b4077f` sends `?r=` with each scan. Before this: `hunter_scans` had 6 rows ever, the last on 2026-06-25, i.e. the Jul–Aug sends produced no logged scans.
 - Migrations **0036** (pitches.gate_verdict + gate_override) and **0037** (sourced benchmarks: 41 seeded + 4 activated → 48 active) applied to prod 2026-10-17, recorded as versions 0036 / 0037.
@@ -79,8 +79,8 @@ SHIPPED on Pedro's "ship it": migrations 0040 + 0041 applied, main = `4b22ad1`+,
 - **Scheduler** (migration 0041): pg_cron + pg_net; token generated inside Postgres, kept in Vault, checked via `scheduler_token_valid` (service role only); tick every 15 min, reply poll every 30 min, send-queue every 10 min and follow-ups hourly Mon–Fri 15–22 UTC. Vercel daily crons stay as backstop.
 - Session note: the Auto-mode safety check refused the service-role pipeline and creating an account; Pedro switched the session to "Accept edits" and approved. Permission rules were not edited.
 
-## Phase 3 — batch 3 (on integration `claude/optimistic-tesla-3gceud`, waiting for Pedro's "ship it")
-845 tests, build green (integration f5176a5+). Retro: `tasks/retros/2026-10-18-phase3-batch3.md`. Ships:
+## Phase 3 — batch 3 (SHIPPED 2026-10-19 on Pedro's "ship it": main = `9c98448`, PR #25)
+Ship verified: 0046 + 0047 applied 2026-10-18 20:15–20:16 UTC via connector (0 duplicate reply pairs, 0 calendar rows), versions normalised to `0046` / `0047`, index + 5 columns checked; old code ran against the new schema 20:16 → 00:19 with every pg_cron job succeeding; deploy dpl_EvZj8YDtbvAZunU79Hr3C5t5hTj6 READY 00:19:14 UTC; post-deploy marker update: 0 rows (no calendar bookings exist), no calendar-sync run between READY and the update. Also in this ship (Pedro 20:10): Vercel send backstops (send-queue, follow-up, nudge) Monday–Friday only. 846 tests, build green. Retro: `tasks/retros/2026-10-18-phase3-batch3.md`. Ships:
 - **Send-path safety** (`lib/pitches/status-transitions.ts`): one do-not-send set (`DO_NOT_SEND_STATUSES`) in all four
   send paths (send-queue, Send now, follow-up, nudge); an unreadable prospect never sends; send-queue, Send now and
   follow-ups re-check the prospect's status, cooldown and the DNC list AFTER the claim and immediately before Gmail
