@@ -12,11 +12,35 @@
 
 import { isTestAddress } from "../compliance/test-addresses.ts";
 import { summarizeArms, type ArmRow } from "../learning/report.ts";
+import type { OutcomeEvent } from "../learning/reward.ts";
+import { candidateFromRow, onDnc, type CandidateRow, type DncEntries } from "../pitches/exemplar-queries.ts";
+import { qualifiesAsExemplar } from "../pitches/exemplars.ts";
 
 const DAY = 86_400_000;
 
 /** null = the query failed or the source doesn't exist: printed as "n/a". */
 type Rows<T> = T[] | null;
+
+/**
+ * Every settled root send of the tenant as fetchExemplars reads it
+ * (EXEMPLAR_CANDIDATE_COLUMNS), with its outcome events, and the
+ * do-not-contact entries for their addresses and domains.
+ */
+export type ExemplarPool = {
+  pitches: Array<CandidateRow & { events: OutcomeEvent[] }>;
+  dnc: DncEntries;
+};
+
+export type ExemplarReadiness = {
+  count: number;
+  /** "EN" / "ES" → pitches, biggest first. */
+  byLang: Array<[string, number]>;
+  /** "legal/ca" etc. → pitches, the three biggest. */
+  topSegments: Array<[string, number]>;
+};
+
+/** From this many qualifying pitches, the report suggests turning EXEMPLARS_ENABLED on. */
+export const EXEMPLARS_WORTH_IT = 5;
 
 export type WeeklyRaw = {
   /** ISO time the report covers up to; the windows are the 7 and 14 days before. */
@@ -46,6 +70,10 @@ export type WeeklyRaw = {
   warmup: Rows<{ at: string; landed: boolean | null }>;
   /** health.alert audit rows of the last 7 days. */
   alerts: Rows<{ at: string; kind: string }>;
+  /** The exemplar kill switch (lib/pitches/exemplar-queries.ts exemplarsEnabled). */
+  exemplarsEnabled: boolean;
+  /** null when any of its reads failed: printed as "n/a". */
+  exemplarPool: ExemplarPool | null;
 };
 
 type Pair = { thisWeek: number; lastWeek: number } | null;
@@ -76,6 +104,7 @@ export type WeeklyStats = {
   aiCapUsd: number;
   placement: { inbox: number; checked: number } | null;
   alerts: { count: number; kinds: string[] } | null;
+  exemplars: { enabled: boolean; qualifying: ExemplarReadiness | null };
 };
 
 const realEmail = (email: string | null | undefined) => !isTestAddress(email);
@@ -172,7 +201,31 @@ export function buildWeeklyStats(raw: WeeklyRaw): WeeklyStats {
     aiCapUsd: raw.dailyCapUsd * 7,
     placement: checks && checks.length > 0 ? { inbox: checks.filter((c) => c.landed === true).length, checked: checks.length } : null,
     alerts: alerts ? { count: alerts.length, kinds: [...new Set(alerts.map((a) => a.kind))].sort() } : null,
+    exemplars: { enabled: raw.exemplarsEnabled, qualifying: raw.exemplarPool ? exemplarReadiness(raw.exemplarPool, new Date(now)) : null },
   };
+}
+
+/**
+ * How many past pitches fetchExemplars could pick for some target today, each
+ * counted once: its row mapping (a suppressed prospect is skipped), the shared
+ * qualifiesAsExemplar (everything but the target match), and the
+ * do-not-contact list.
+ */
+export function exemplarReadiness(pool: ExemplarPool, now: Date): ExemplarReadiness {
+  const seen = new Set<string>();
+  const langs: string[] = [];
+  const segments: string[] = [];
+  for (const row of pool.pitches) {
+    if (seen.has(row.id)) continue;
+    seen.add(row.id);
+    const c = candidateFromRow(row);
+    if (!c) continue;
+    const q = qualifiesAsExemplar({ ...c, events: row.events }, { now, isTestAddress });
+    if (!q || onDnc(pool.dnc, c.recipient_email)) continue;
+    langs.push(c.lang.toUpperCase());
+    segments.push(`${q.segment.industry}/${q.segment.market}`);
+  }
+  return { count: langs.length, byLang: tally(langs), topSegments: tally(segments).slice(0, 3) };
 }
 
 /** Group reasons by their first clause so "x: detail A" and "x: detail B" count together. */
@@ -187,6 +240,23 @@ const vs = (label: string, p: Pair) => `${label}: ${n(p, "thisWeek")} (last week
 const usd = (v: number) => `$${v.toFixed(2)}`;
 const cad = (v: number | null) => (v === null ? "value n/a" : `CAD ${Math.round(v).toLocaleString("en-US")}`);
 const day = (iso: string) => iso.slice(0, 10);
+
+/** "Exemplars: off (EXEMPLARS_ENABLED unset). Past pitches that qualify: 3 (EN 2, ES 1; top: legal/ca 2, dental/mx 1)". */
+function exemplarsLine(e: WeeklyStats["exemplars"]): string {
+  const head = e.enabled ? "Exemplars: on." : "Exemplars: off (EXEMPLARS_ENABLED unset).";
+  return `${head} Past pitches that qualify: ${exemplarsCount(e)}`;
+}
+
+/** The count with its breakdown, and the hint when it is worth switching on; shared by both formats. */
+export function exemplarsCount(e: WeeklyStats["exemplars"]): string {
+  const q = e.qualifying;
+  if (!q) return "n/a";
+  if (q.count === 0) return "0";
+  const langs = q.byLang.map(([k, v]) => `${k} ${v}`).join(", ");
+  const top = q.topSegments.map(([k, v]) => `${k} ${v}`).join(", ");
+  const hint = !e.enabled && q.count >= EXEMPLARS_WORTH_IT ? ": worth turning on" : "";
+  return `${q.count} (${langs}; top: ${top})${hint}`;
+}
 
 export function formatWeeklyReport(s: WeeklyStats, appUrl: string): { subject: string; body: string } {
   const lines: string[] = [];
@@ -239,6 +309,7 @@ export function formatWeeklyReport(s: WeeklyStats, appUrl: string): { subject: s
     lines.push(`Insights this week: ${s.insights.count}${kinds ? ` (${kinds})` : ""}`);
     for (const t of s.insights.titles) lines.push(`  - ${t.slice(0, 120)}`);
   }
+  lines.push(exemplarsLine(s.exemplars));
   lines.push("");
   lines.push("HEALTH");
   lines.push(`AI spend: ${s.aiSpendUsd === null ? "n/a" : usd(s.aiSpendUsd)} of ${usd(s.aiCapUsd)} weekly cap (7 × daily cap)`);

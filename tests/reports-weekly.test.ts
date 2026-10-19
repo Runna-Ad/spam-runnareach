@@ -83,6 +83,27 @@ function fixture(): WeeklyRaw {
       { at: d(2), landed: null },
     ],
     alerts: [{ at: d(2), kind: "emails_stuck" }],
+    exemplarsEnabled: false,
+    exemplarPool: {
+      pitches: [
+        {
+          id: "pitch-exemplar",
+          prospect_id: "prospect-exemplar",
+          parent_pitch_id: null,
+          status: "sent",
+          sent_at: d(30),
+          critic_pass: true,
+          gate_override: null,
+          prospects: { industry: "Law firm", market: "CA", language: "en", status: "sent" },
+          prospect_contacts: { email: REAL(15) },
+          events: [
+            { type: "sent", at: d(30), payload: null },
+            { type: "reply", at: d(28), payload: { intent: "wants_meeting" } },
+          ],
+        },
+      ],
+      dnc: { emails: new Set(), domains: new Set() },
+    },
   };
 }
 
