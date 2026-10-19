@@ -24,7 +24,8 @@ import { segmentOf, type Segment } from "../learning/segments.ts";
 import { EN_WORDS } from "./wordlists/en.ts";
 import { ES_WORDS } from "./wordlists/es.ts";
 import { NAME_CAPITAL_ONLY, NAME_LIST, NAME_WEAK, NAME_WORDS } from "./wordlists/names.ts";
-import { CAPITALIZED_WORDS, COMMON_NAMES, OWN_VOCABULARY } from "./wordlists/vocab.ts";
+import { CAPITALIZED_PHRASES, CAPITALIZED_WORDS, COMMON_NAMES, OWN_ACRONYMS, OWN_VOCABULARY } from "./wordlists/vocab.ts";
+import { emailGreetingName, GENERIC_LOCALS } from "./greeting-name.ts";
 
 /** Recorded in the decision record when exemplars were shown. */
 export const EXEMPLAR_PROMPT_VERSION = "exemplar-v3-2026-10-18";
@@ -242,46 +243,85 @@ function lettersPattern(letters: string): RegExp {
 
 /**
  * The allow-list's word sets (the leak check's header says which applies where).
- * Loaded once. ALL_NAMES is the names net (./wordlists/names.ts plus our hand
- * list); the names that are also everyday words ("rosa", "price", "flores") are
- * allowed in lower case and, when common, at a sentence start; the rest
- * (NAME_ONLY: garcia, patel, gordon) nowhere. Our own vocabulary always passes.
+ * Built on first use, not at import: every composer route imports this module,
+ * with exemplars switched on or not. The names net is ./wordlists/names.ts plus
+ * our hand list; the names that are also everyday words ("rosa", "price",
+ * "flores") pass in lower case and, when common, at a sentence start; the rest
+ * (name-only: garcia, patel, gordon) nowhere.
  */
 const lines = (s: string) => s.split("\n").filter(Boolean);
-const EN = lines(EN_WORDS);
-const ES = lines(ES_WORDS);
-const FREQ_20K = new Set([...EN.slice(0, 20000), ...ES.slice(0, 20000)]);
-const FREQ_50K = new Set([...EN, ...ES]);
 /** The hand list: always a name, even when the dictionaries know the word. */
 const NAMES = new Set(COMMON_NAMES);
-const ALL_NAMES = new Set([...lines(NAME_LIST), ...COMMON_NAMES]);
-const NAME_WORD_SET = new Set(lines(NAME_WORDS).filter((w) => !NAMES.has(w)));
-/** Two-letter names ("du", "ng") pass in lower case: no identity there, and "du lado" is prose. */
-const NAME_ONLY = new Set([...ALL_NAMES].filter((w) => w.length >= 3 && !NAME_WORD_SET.has(w)));
-const OWN = [...OWN_VOCABULARY, ...CAPITALIZED_WORDS];
-const without = (words: Iterable<string>, deny: ReadonlySet<string>) => [...words].filter((w) => !deny.has(w));
-/**
- * Names that count capitalized mid-sentence: all but the word-like ones that are
- * weak names ("La", "More", "Re") or among the 300 most frequent words ("Will",
- * "Do"). "Grant", "Lee", "Graham", "Cruz" are names there.
- */
-const TOP_300 = new Set([...EN.slice(0, 300), ...ES.slice(0, 300)]);
-const CAPITAL_DENY = new Set([
-  ...without(ALL_NAMES, new Set([...lines(NAME_WEAK), ...TOP_300].filter((w) => NAME_WORD_SET.has(w)))),
-  ...lines(NAME_CAPITAL_ONLY),
-]);
-/** Capitalized mid-sentence, all capitals, and capitals in a subject or an address. */
-const CAPITAL_WORDS = new Set([...without(FREQ_20K, CAPITAL_DENY), ...OWN]);
-/** A capital opening a sentence: also the common names that are words ("Mark the date", "Rosa mexicano"). */
-const OPENER_NAMES = new Set([...NAME_WORD_SET].filter((w) => FREQ_20K.has(w)));
-const OPENER_WORDS = new Set([...CAPITAL_WORDS, ...OPENER_NAMES]);
-const OPENER_DENY = new Set(without(ALL_NAMES, OPENER_NAMES));
-/** Lower case in a subject or an address. */
-const LOWER_STRICT_WORDS = new Set([...without(FREQ_20K, NAME_ONLY), ...OWN]);
-/** Lower case anywhere else in a body. */
-const KNOWN_WORDS = new Set([...without(FREQ_50K, NAME_ONLY), ...OWN]);
-/** The 3,000 most frequent of each: words common enough to follow a name ("Dr. [name] told us"). */
-const TOP_WORDS = new Set([...EN_WORDS.split("\n").slice(1, 3001), ...ES_WORDS.split("\n").slice(1, 3001)]);
+/** Our senders (lib/pitches/sender-identity.ts defaults): names, but ours, so they pass capitalized. */
+const SENDERS = new Set(["henry", "nils"]);
+const CAPITALIZED = new Set(CAPITALIZED_WORDS);
+/** Spanish writes months and days in lower case, so a capitalized one is a name even opening a sentence ("Abril contesta"). */
+const NAME_MONTHS = new Set(["abril", "mayo", "julio", "agosto", "domingo"]);
+const ACRONYMS = new Set(OWN_ACRONYMS);
+const OWN = [...OWN_VOCABULARY, ...OWN_ACRONYMS, ...CAPITALIZED_WORDS];
+
+type WordSets = {
+  /** Lower case anywhere but the subject: the 50k lists minus name-only names. */
+  known: ReadonlySet<string>;
+  /** The scrubber's "ordinary word": the 20k lists minus name-only names. */
+  common: ReadonlySet<string>;
+  /** A capital mid-sentence, all capitals, and every subject token: the 20k lists, any name refused first. */
+  capital: ReadonlySet<string>;
+  capitalDeny: ReadonlySet<string>;
+  /**
+   * A lower-case subject token: the capital deny, less the names that are words among the 5,000 most
+   * frequent ("book", "brand", "cuesta", "worth" in our own template subjects) and the capital-only
+   * long-tail names ("valen"). Case says nothing in a house-style subject, so a rarer word-like name
+   * ("torres", "vega") and every name-only one stay refused.
+   */
+  subjectDeny: ReadonlySet<string>;
+  /** Every name, for address chunks (handles, domains): no exemption at all. */
+  addressDeny: ReadonlySet<string>;
+  /** A capital opening a sentence may also be a common name that is a word ("Mark the date", "Rosa mexicano"). */
+  openerNames: ReadonlySet<string>;
+  nameOnly: ReadonlySet<string>;
+  /** The 3,000 most frequent of each: words common enough to follow a name ("Dr. [name] told us"). */
+  top3000: ReadonlySet<string>;
+  freq20k: ReadonlySet<string>;
+  phrases: RegExp;
+};
+let wordSets: WordSets | null = null;
+
+function ws(): WordSets {
+  if (wordSets) return wordSets;
+  const en = lines(EN_WORDS);
+  const es = lines(ES_WORDS);
+  const freq20k = new Set([...en.slice(0, 20000), ...es.slice(0, 20000)]);
+  const top3000 = new Set([...en.slice(0, 3000), ...es.slice(0, 3000)]);
+  const top5000 = new Set([...en.slice(0, 5000), ...es.slice(0, 5000)]);
+  const top300 = new Set([...en.slice(0, 300), ...es.slice(0, 300)]);
+  const allNames = new Set([...lines(NAME_LIST), ...COMMON_NAMES]);
+  const nameWords = new Set(lines(NAME_WORDS).filter((w) => !NAMES.has(w)));
+  // Two-letter names ("du", "ng") pass in lower case: no identity there, and "du lado" is prose.
+  const nameOnly = new Set([...allNames].filter((w) => w.length >= 3 && !nameWords.has(w)));
+  // Capitalized mid-sentence every name is refused, but for word-like ones among the 300 most
+  // frequent words ("Will", "Do") and weak ones among the 3,000 ("La", "More", "Re").
+  const exempt = new Set([...top300, ...lines(NAME_WEAK).filter((w) => top3000.has(w))].filter((w) => nameWords.has(w)));
+  // Long-tail given names that are frequent words count only outside the 3,000 most frequent ("casi", "marca" stay words).
+  const capitalOnly = lines(NAME_CAPITAL_ONLY).filter((w) => !top3000.has(w));
+  const capitalDeny = new Set([...[...allNames].filter((w) => !exempt.has(w)), ...capitalOnly]);
+  const without = (words: Iterable<string>, deny: ReadonlySet<string>) => [...words].filter((w) => !deny.has(w));
+  const phrase = (p: string) => p.split(" ").map((w) => (w === "&" ? "(?:&|and|y)" : w)).join("\\s+");
+  wordSets = {
+    known: new Set([...without([...en, ...es], nameOnly), ...OWN]),
+    common: new Set([...without(freq20k, nameOnly), ...OWN]),
+    capital: new Set([...freq20k, ...OWN_VOCABULARY]),
+    capitalDeny,
+    subjectDeny: new Set([...allNames].filter((n) => !exempt.has(n) && !(nameWords.has(n) && top5000.has(n)))),
+    addressDeny: new Set([...allNames, ...capitalOnly]),
+    openerNames: new Set([...nameWords].filter((w) => freq20k.has(w))),
+    nameOnly,
+    top3000,
+    freq20k,
+    phrases: new RegExp(`(?<!\\p{L})(?:${CAPITALIZED_PHRASES.map(phrase).join("|")})(?!\\p{L})`, "giu"),
+  };
+  return wordSets;
+}
 /**
  * Endings and prefixes stripped to find a listed base form, up to two steps:
  * clinics → clinic, agendan → agendar, medibles → medir, quedándote → quedar,
@@ -305,23 +345,39 @@ const ENDINGS: ReadonlyArray<readonly [string, readonly string[]]> = [
 ];
 const PREFIXES = ["in", "im", "un", "re", "des", "dis", "pre"];
 
-function bases(w: string): string[] {
+/** In a capital position, no bare "-d": "Thind" is not "thin" + "d". */
+const CAPITAL_ENDINGS = ENDINGS.filter(([end]) => end !== "d");
+
+function bases(w: string, endings = ENDINGS): string[] {
   const out: string[] = [];
-  for (const [end, adds] of ENDINGS) {
+  for (const [end, adds] of endings) {
     if (w.endsWith(end) && w.length > end.length + 2) for (const a of adds) out.push(w.slice(0, -end.length) + a);
   }
   for (const pre of PREFIXES) if (w.startsWith(pre) && w.length > pre.length + 3) out.push(w.slice(pre.length));
   return out;
 }
 
-function inWords(words: ReadonlySet<string>, w: string, deny: ReadonlySet<string> = NAMES): boolean {
+function inWords(words: ReadonlySet<string>, w: string, deny: ReadonlySet<string> = NAMES, endings = ENDINGS): boolean {
   if (w.length <= 1 || words.has(w) || HONORIFICS.has(w)) return true;
   if (deny.has(w)) return false;
-  return bases(w).some((b) => words.has(b) || bases(b).some((c) => words.has(c)));
+  return bases(w, endings).some((b) => (words.has(b) && !deny.has(b)) || bases(b, endings).some((c) => words.has(c) && !deny.has(c)));
 }
-const isKnownWord = (w: string) => inWords(KNOWN_WORDS, w, NAME_ONLY);
+const isKnownWord = (w: string) => inWords(ws().known, w, ws().nameOnly);
 /** The scrubber's "is this an ordinary word" (initials as a word, a name inside a handle): the 20k tier. */
-const isCommonWord = (w: string) => inWords(LOWER_STRICT_WORDS, w, NAME_ONLY);
+const isCommonWord = (w: string) => inWords(ws().common, w, ws().nameOnly);
+
+/**
+ * A token where a name would be capitalized (mid-sentence, all capitals, the subject): the name deny
+ * comes first; only our senders, months, places and the like beat it. Our acronyms pass written all
+ * capitals or all lower case, never as a name ("Seo", "Ota").
+ */
+function capitalOk(raw: string, f: string, deny: ReadonlySet<string>): boolean {
+  if (SENDERS.has(f) || CAPITALIZED.has(f)) return true;
+  // "OTA" (or "ota" in a lower-case subject) is ours though Ota is a surname; "Ota" and "Seo" read as names.
+  if (ACRONYMS.has(f)) return raw === raw.toUpperCase() || raw === raw.toLowerCase();
+  if (deny.has(f)) return false;
+  return inWords(ws().capital, f, deny, CAPITAL_ENDINGS);
+}
 
 /** The blanks themselves: never matched, so a surname "Hunter" or a company word "url" cannot break them. */
 const PLACEHOLDER_RE = /\[(?:name|company|site|city|n)\]|\{hunter_url\}/g;
@@ -580,6 +636,9 @@ const FUNCTION_WORDS = new Set([
 const HONORIFICS = new Set([
   "dr", "dra", "drs", "lic", "licda", "lcda", "ing", "arq", "mtro", "mtra", "prof", "sr", "sra", "srta", "cp", "don",
   "dona", "mr", "mrs", "ms",
+  // Mexican professional titles: "la Profa. Torres", "Fisio. Ruiz", "Notar. Peña".
+  "profa", "profr", "profra", "licdo", "lcdo", "ingra", "enf", "psic", "fisio", "notar", "contad", "abog", "odont",
+  "nut", "mvz", "qfb", "dir", "gte", "coord", "mgtr", "mtr",
   // Plurals: "Drs. Patel and Wong", "Sres. Gómez".
   "dres", "dras", "sres", "sras", "srs", "lics", "ings", "arqs", "profs", "messrs", "mmes", "mme", "mlle",
 ]);
@@ -624,7 +683,7 @@ const NUMBER_WORDS = [
 ];
 const NUMBER_WORDS_RE = new RegExp(`(?<![\\p{L}\\p{N}])(?:${NUMBER_WORDS.join("|")})(?![\\p{L}\\p{N}])`, "gu");
 
-/** Inboxes that name a role, not a person: never read as a given name. */
+/** Inboxes that name a role, not a person: the leak check never reads them as a given name. */
 const ROLE_LOCALS = new Set([
   "info", "informes", "informacion", "contact", "contacto", "contactanos", "hello", "hola", "hi", "admin", "office",
   "oficina", "sales", "ventas", "support", "soporte", "help", "ayuda", "booking", "bookings", "reservas",
@@ -632,17 +691,6 @@ const ROLE_LOCALS = new Set([
   "webmaster", "noreply", "marketing", "store", "tienda", "shop", "orders", "pedidos", "billing", "facturacion",
   "clinic", "clinica", "hotel", "restaurant", "restaurante", "direccion", "gerencia", "manager", "owner",
 ]);
-
-/**
- * With no contact name, the writer greets from the e-mail address when it
- * reads as a given name (monica@ → "Hola Monica"): that name is a field too.
- * The scrubber's reading: the first segment of the local part, 3+ letters,
- * a known name and no role inbox.
- */
-function emailGivenName(email: string | null | undefined): string | null {
-  const seg = fold(email?.split("@")[0] ?? "").split(/[._+\-\d]+/)[0] ?? "";
-  return /^\p{L}{3,}$/u.test(seg) && !ROLE_LOCALS.has(seg) && ALL_NAMES.has(seg) ? seg : null;
-}
 
 /**
  * Replace the past recipient's name, company, site and city, and every digit,
@@ -698,7 +746,8 @@ export function scrubExemplar(text: string, prospect: ExemplarProspect): string 
   // Contact: the full name, then each space-separated part ("Núñez-Ruiz",
   // "O’Brien"), then each piece of those. A particle or two-letter word as the
   // last name ("Minh Le", "Minh To") goes only where it cannot open a sentence.
-  const fullName = prospect.recipient_name?.trim() || emailGivenName(prospect.recipient_email);
+  // No contact name: the given name the greeting read from the address (greeting-name.ts) is the name.
+  const fullName = prospect.recipient_name?.trim() || emailGreetingName(prospect.recipient_email);
   if (fullName) {
     out = replacePhrase(out, fullName, "[name]", commonOnly(fullName) ? nameRule(pieces(fullName)) : "any");
     const chunks = fullName.split(/\s+/);
@@ -734,6 +783,8 @@ export function scrubExemplar(text: string, prospect: ExemplarProspect): string 
     if (nameKeys.some((k) => f.includes(k))) return `${sigil}[name]`;
     return m;
   });
+  // Every other handle and tag is someone's address: "@torres", "#VegaDental" (bare domains below).
+  out = out.replace(/(?<![\p{L}\p{N}])[#@][\p{L}\p{N}_]+(?:\.[\p{L}\p{N}_]+)*/gu, "[site]");
 
   // Names the contact row did not know: after an honorific (capitalized, then
   // any case), and the greeting's addressee.
@@ -753,6 +804,13 @@ export function scrubExemplar(text: string, prospect: ExemplarProspect): string 
   });
   out = out.slice(0, lead) + greeted + (nl === -1 ? "" : out.slice(nl));
 
+  // Every bare domain is someone's site: "instagram.com/peña.dental", "vega-dental.com", "luna.dental".
+  // After the honorifics, so "ing.ruiz" is a title and a name, not a domain.
+  out = out.replace(/(?<![\p{L}\p{N}@._/-])(?:[\p{L}\p{N}][\p{L}\p{N}-]*[\p{L}\p{N}]\.)+\p{Ll}{2,24}(?:\/[^\s<>()]*)?(?![\p{L}\p{N}])/gu, (d) => {
+    const trail = d.match(/[.,;:!?)\]]+$/)?.[0] ?? "";
+    return `[site]${trail}`;
+  });
+
   // "[name] [name]" (María José) and "[company]-[company]" (Smith-Jones) are one blank.
   out = out.replace(/\[(name|company|city|site)\](?:[ \t‐-]+\[\1\])+/g, "[$1]");
 
@@ -768,7 +826,9 @@ export function scrubExemplar(text: string, prospect: ExemplarProspect): string 
 // it can see what the scrubber's rules miss. Its own fold (NFKD + stroke
 // letters), its own tokenizer (the dots inside initials removed, so "C.D.M.X."
 // is the token "CDMX"), letters-only substrings for long company words, and
-// span rules after honorifics and greetings. It shares only the word lists.
+// span rules after honorifics and greetings. What it does share with the
+// scrubber: the word lists and their lookups (inWords, bases), hostOf, and
+// the field constants (LEGAL_PIECES, GENERIC_WORDS, honorifics, city groups).
 //
 // The invariant a kept exemplar satisfies (allowListLeaks):
 // I1 Tokens. Format characters (\p{Cf}: zero-width, soft hyphen, bidi marks)
@@ -782,20 +842,29 @@ export function scrubExemplar(text: string, prospect: ExemplarProspect): string 
 //    . ! ? ¿ ¡ … that is not an abbreviation dot (one letter, a capitalized run
 //    of up to 4 letters, an honorific: "J. Torres", "Nut. Cruz" are
 //    mid-sentence). A colon never opens one ("Front desk: Grant").
-// I3 Tiers, by position (sets below, names from ./wordlists/names.ts):
-//    - capitalized mid-sentence, all capitals (2+ letters), any capital in the
-//      subject or in an address chunk ("@", "#", "://", "www", a dot between
-//      letters): the 20k lists minus every name (CAPITAL_DENY), plus our
-//      vocabulary and CAPITALIZED_WORDS (months, countries, provinces);
+// I3 Tiers, by position (sets in ws(), names from ./wordlists/names.ts). A
+//    name is refused BEFORE our vocabulary is consulted; only our senders,
+//    CAPITALIZED_WORDS (months, countries, provinces) and CAPITALIZED_PHRASES
+//    ("Quintana Roo", "Bain & Company") beat it, and our acronyms pass written
+//    in all capitals or all lower case only.
+//    - an address chunk ("@", "#", "_", "://", "www", a dot between letters):
+//      any name at all; and a handle, tag or domain the scrubber left
+//      unblanked drops the exemplar by itself;
+//    - capitalized mid-sentence, or all capitals (2+ letters): the 20k lists,
+//      every name refused but the word-like ones among the 300 most frequent
+//      words ("Will", "Do") and the weak ones among the 3,000 ("La", "Re");
 //    - capitalized at a sentence start: that, plus the names that are common
-//      words ("Mark the date", "Rosa mexicano");
-//    - lower case in the subject or an address chunk: the 20k lists minus
-//      NAME_ONLY (names that are no word: garcia, patel, gordon);
-//    - lower case anywhere else: the 50k lists minus NAME_ONLY.
+//      words ("Mark the date"), but not Spanish months that are names (Abril);
+//    - every subject token: the same capital rule; a lower-case one is also
+//      allowed when it is a word-like name among the 5,000 most frequent
+//      words ("book", "cuesta") or a capital-only one ("valen");
+//    - lower case anywhere else: the 50k lists minus NAME_ONLY (garcia, patel).
 //    Residuals, accepted: a common-word name at a sentence start ("Grant
 //    Hill runs the desk."), a name among the 300 most frequent words ("He",
-//    "Lo", "Will") or a weak one (no given name, surname rank past 10,000:
-//    "La", "Re") capitalized mid-sentence, a two-letter name in lower case.
+//    "Lo", "Will") capitalized mid-sentence, English months that are names
+//    ("April"), a frequent word-like name in a lower-case subject ("grant",
+//    "rosa"), a two-letter name in lower case, a single-word publisher that is
+//    a name (Gartner, Clio) dropping the exemplar.
 // I4 The field checks and the honorific and greeting spans (exemplarLeaks)
 //    run as well: they catch the current prospect's name, and with no contact
 //    name the given name in the address (monica@), even when it is a word.
@@ -899,7 +968,7 @@ export function exemplarLeaks(rawText: string, prospect: ExemplarProspect, opts:
       run += f;
       continue;
     }
-    if (run.length >= 2) word(run, FREQ_20K.has(run) && !NAMES.has(run) ? "upper" : "any");
+    if (run.length >= 2) word(run, ws().freq20k.has(run) && !NAMES.has(run) ? "upper" : "any");
     run = "";
     if (f === " " || leakGeneric(f)) continue;
     if (f.length >= 5) substring(f);
@@ -944,9 +1013,10 @@ export function exemplarLeaks(rawText: string, prospect: ExemplarProspect, opts:
   }
 
   // Contact.
-  // No contact name: the address's leading letters, when they are a name, are the name ("monica.r@" → monica).
+  // No contact name: the address's leading letters are the name ("monica.r@" → monica, "memo@" → memo),
+  // whatever they are, unless the inbox names a role. Coarser than the greeting's own rule, on purpose.
   const local = /^[a-z]+/.exec(leakFold(prospect.recipient_email?.split("@")[0] ?? ""))?.[0] ?? "";
-  const fromEmail = !prospect.recipient_name?.trim() && local.length >= 3 && !ROLE_LOCALS.has(local) && ALL_NAMES.has(local);
+  const fromEmail = !prospect.recipient_name?.trim() && local.length >= 3 && !ROLE_LOCALS.has(local) && !GENERIC_LOCALS.has(local);
   const name = fromEmail ? [local] : leakParts(prospect.recipient_name).map((p) => p.f);
   name.forEach((f, i) => {
     if (f.length < 2 || /^\d+$/.test(f)) return;
@@ -994,7 +1064,7 @@ export function exemplarLeaks(rawText: string, prospect: ExemplarProspect, opts:
       if (FUNCTION_WORDS.has(u.f)) return;
       // After the blank, a capitalized word is a name; so is any lower-case word
       // after a lower-case title, or one too rare to follow a name ("Dr. [name] patel").
-      if (!seen || /^\p{Lu}/u.test(u.raw) || lowerStyle || !inWords(TOP_WORDS, u.f)) leaks.add(`${label} ${u.f}`);
+      if (!seen || /^\p{Lu}/u.test(u.raw) || lowerStyle || !inWords(ws().top3000, u.f)) leaks.add(`${label} ${u.f}`);
       return;
     }
   };
@@ -1028,12 +1098,16 @@ const LEAK_BLANK = "\uE000";
 const OPENER_SKIP = /[^\S\n]|["“”'‘’«»([*•·\p{Pd}\p{So}\p{Sk}]/u;
 /** Not ":": "Front desk: Grant" is mid-sentence. */
 const SENTENCE_END = /[\n.!?¿¡…]/u;
-/** A chunk that is a handle, hashtag, email, URL or domain: every token in it is strict. */
-const ADDRESS_CHUNK = /[@#]|:\/\/|www|\p{L}\.\p{L}/iu;
+/** A chunk that may be a handle, hashtag, email, URL or domain: every token in it is refused if it is any name. */
+const ADDRESS_CHUNK = /[@#_]|:\/\/|www|\p{L}\.\p{L}/iu;
+/** An address the scrubber should have blanked ([site]) and did not: the exemplar drops ("Dr.Patel" too). */
+const ADDRESS_LEFT = /[@#][\p{L}\p{N}_]|:\/\/|www\.|_|[\p{L}\p{N}]{2,}\.\p{L}{2,}/iu;
 /** Letters drawn as symbols, with no NFKD letter inside: 🅟🅐🅣, 🅿🅰🆃, regional indicators, ⒫⒜⒯ (NFKD "(p)(a)(t)"). */
 const LETTER_SYMBOLS = /[\u2460-\u24ff\u{1f100}-\u{1f1ff}]/u;
 /** Visible marks that split a word without looking like a break: "Wil·son", "Wiŀson", "Pa‧tel", "Pa᠆tel", "Pa⠀tel". */
 const INWORD_SEPARATOR = /\p{L}[\u00b7\u0387\u2027\u1806\u2800\u2219\u22c5\u30fb\u318d]+\p{L}/u;
+/** Spaces other than the plain and no-break ones, between letters (NFKD would turn them into " "): "Pa\u2009tel". */
+const ODD_SPACE = /\p{L}[\u1680\u2000-\u200a\u202f\u205f\u3000]\p{L}/u;
 
 function leakOpensSentence(norm: string, at: number): boolean {
   let i = at;
@@ -1047,9 +1121,10 @@ function leakOpensSentence(norm: string, at: number): boolean {
   const end = norm[i - 1]!;
   if (!SENTENCE_END.test(end)) return false;
   if (end === ".") {
-    // The dot of an initial or a short title ends nothing: "J. Torres", "C.D. Torres", "Nut. Cruz" are mid-sentence.
+    // The dot after an initial, a title or any capitalized word ends nothing for the next capital:
+    // "J. Torres", "C.D. Torres", "la Profa. Torres", "Fisio. Ruiz" are mid-sentence.
     const before = /(\p{L}+)$/u.exec(norm.slice(0, i - 1))?.[1] ?? "";
-    if (before.length === 1 || (before.length <= 4 && /^\p{Lu}/u.test(before)) || HONORIFICS.has(leakFold(before))) return false;
+    if (before.length === 1 || /^\p{Lu}/u.test(before) || HONORIFICS.has(leakFold(before))) return false;
   }
   return true;
 }
@@ -1064,16 +1139,25 @@ function allowListLeaks(text: string, subject: boolean): string[] {
   const out: string[] = [];
   const symbol = LETTER_SYMBOLS.exec(text);
   if (symbol) out.push(symbol[0]);
+  const oddSpace = ODD_SPACE.exec(text.replace(/\p{Cf}/gu, ""));
+  if (oddSpace) out.push(oddSpace[0]);
+  const w = ws();
   const norm = text
     .replace(/\p{Cf}/gu, "")
     .replace(PLACEHOLDER_RE, LEAK_BLANK)
     .normalize("NFKD")
     .replace(/\p{M}/gu, "")
     // "O’Brien", "D'Angelo" are one word.
-    .replace(/(?<!\p{L})([ODLMN])['’](?=\p{Lu})/gu, "$1");
+    .replace(/(?<!\p{L})([ODLMN])['’](?=\p{Lu})/gu, "$1")
+    // Places and publishers allowed as a whole phrase only: "Quintana Roo", "Bain & Company".
+    .replace(w.phrases, LEAK_BLANK);
   const split = INWORD_SEPARATOR.exec(norm);
   if (split) out.push(split[0]);
   for (const chunk of norm.matchAll(/\S+/gu)) {
+    if (ADDRESS_LEFT.test(chunk[0])) {
+      out.push(chunk[0]);
+      continue;
+    }
     const address = ADDRESS_CHUNK.test(chunk[0]);
     for (const m of chunk[0].matchAll(/\p{L}+/gu)) {
       const raw = m[0];
@@ -1085,9 +1169,11 @@ function allowListLeaks(text: string, subject: boolean): string[] {
       const capital = /^\p{Lu}/u.test(raw);
       const caps = raw.length >= 2 && !/\p{Ll}/u.test(raw);
       let ok: boolean;
-      if (capital && (caps || subject || address || !leakOpensSentence(norm, chunk.index + m.index))) ok = inWords(CAPITAL_WORDS, f, CAPITAL_DENY);
-      else if (capital) ok = inWords(OPENER_WORDS, f, OPENER_DENY);
-      else if (subject || address) ok = inWords(LOWER_STRICT_WORDS, f, NAME_ONLY);
+      // House-style subjects are lower case, so case says nothing there: every subject token is a capital position.
+      if (address) ok = capitalOk(raw, f, w.addressDeny);
+      else if (subject && !capital) ok = capitalOk(raw, f, w.subjectDeny);
+      else if (subject || caps || (capital && !leakOpensSentence(norm, chunk.index + m.index))) ok = capitalOk(raw, f, w.capitalDeny);
+      else if (capital) ok = capitalOk(raw, f, w.capitalDeny) || (w.openerNames.has(f) && !NAMES.has(f) && !NAME_MONTHS.has(f));
       else ok = isKnownWord(f);
       if (!ok) out.push(f);
     }

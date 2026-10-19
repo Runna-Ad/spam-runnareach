@@ -15,9 +15,8 @@
 export const OWN_VOCABULARY: readonly string[] = [
   // Us and our senders (the default sender names, lib/pitches/sender-identity.ts).
   "runna", "nils", "henry",
-  // Cold-email and marketing words.
-  "cta", "ctas", "url", "urls", "seo", "sem", "ppc", "cpc", "cpa", "roi", "roas", "ltv", "crm", "cms", "ux", "ui", "kpi",
-  "kpis", "ota", "otas", "dtc", "ecommerce", "signup", "signups", "checkout", "inbox", "workflow", "workflows", "triage",
+  // Cold-email and marketing words (acronyms are in OWN_ACRONYMS).
+  "ecommerce", "signup", "signups", "checkout", "inbox", "workflow", "workflows", "triage",
   "dropshipping", "retargeting", "chatbot", "chatbots", "benchmark", "benchmarks", "metric", "metrics", "keyword",
   "keywords", "wellness", "automotive", "apparel", "consultancy", "advisory", "realty", "functionality", "measurable",
   "online", "offline", "app", "apps", "website", "websites", "webpage", "landing", "homepage", "pagespeed", "mobile",
@@ -25,9 +24,9 @@ export const OWN_VOCABULARY: readonly string[] = [
   "segmentation", "attribution", "recapture", "handoff", "inconsistent", "shoppers", "enquiry", "enquiries", "upsell",
   "rebooking", "walkins", "voicemail", "voicemails", "intake", "noshow", "noshows", "unanswered", "nurture", "ok",
   // Trade words of the industries we pitch (manufacturing, construction, retail, health) the 50k lists lack.
-  "sku", "skus", "mro", "jobsite", "jobsites", "handrail", "handrails", "woodworking", "woodworker", "bandsaw",
-  "tutorial", "tutorials", "oftalmologia", "oftalmologo", "oftalmologica", "storefront", "storefronts", "rfq",
-  "rfqs", "cnc", "hvac", "millwork", "drywall", "sitework", "estimator", "estimators", "subcontractor",
+  "jobsite", "jobsites", "handrail", "handrails", "woodworking", "woodworker", "bandsaw",
+  "tutorial", "tutorials", "oftalmologia", "oftalmologo", "oftalmologica", "storefront", "storefronts",
+  "millwork", "drywall", "sitework", "estimator", "estimators", "subcontractor",
   "subcontractors", "telehealth", "telemedicina", "odontologia", "ortodoncia", "dermatologia", "pediatria",
   "planograma", "omnicanal", "mayorista", "mayoristas", "refaccionaria", "refacciones", "asesor", "asesora",
   "asesores", "asesorar",
@@ -45,12 +44,33 @@ export const OWN_VOCABULARY: readonly string[] = [
   // Publishers in 0037 (and the hotel benchmark source HVS), plus words of their names. Some are surnames
   // (bain, gartner, mckinsey, deloitte, wharton, stanford): those pass even capitalized mid-sentence.
   "center", "centre", "institute", "review", "digital", "research",
-  "bmj", "bain", "brightlocal", "clio", "cloudbeds", "cochrane", "deloitte", "drift", "experian", "forrester", "gartner",
-  "harvard", "hbr", "ipsos", "klaviyo", "litmus", "mckinsey", "datamatics", "nber", "nucleus", "omnisend",
+  "bain", "brightlocal", "clio", "cloudbeds", "cochrane", "deloitte", "drift", "experian", "forrester", "gartner",
+  "harvard", "ipsos", "klaviyo", "litmus", "mckinsey", "datamatics", "nucleus", "omnisend",
   "phocuswright", "phocuswire", "portent", "salesforce", "smartsheet", "spiegel", "northwestern", "sprout", "stanford",
-  "persuasive", "toast", "wyzowl", "wharton", "mit", "hvs", "systematic", "meta", "analysis", "pulse",
+  "persuasive", "toast", "wyzowl", "wharton", "systematic", "meta", "analysis", "pulse",
   // The one place our own templates name (beach clubs); a prospect's own city is still caught by the field check.
   "cancun",
+];
+
+/**
+ * Acronyms we use: they pass written all capitals or all lower case ("SEO",
+ * "seo"), never title case, where they read as a name ("Seo", "Ota").
+ */
+export const OWN_ACRONYMS: readonly string[] = [
+  "cta", "ctas", "url", "urls", "seo", "sem", "ppc", "cpc", "cpa", "roi", "roas", "ltv", "crm", "cms", "ux", "ui", "kpi", "kpis", "ota", "otas", "dtc", "bmj", "hbr", "nber", "mit", "hvs", "sku", "skus", "mro", "rfq", "rfqs", "cnc", "hvac",
+  "ai", "pdf", "faq", "api", "qr", "iva", "pyme", "pymes", "rfc", "cfdi", "saas", "wifi", "nps", "erp", "tpv", "spei",
+];
+
+/**
+ * Places and publishers allowed only as the whole phrase, because a word of
+ * them is a name ("Quintana", "León", "Bain", "Harvard"). Words are folded;
+ * "&" also matches "and" / "y".
+ */
+export const CAPITALIZED_PHRASES: readonly string[] = [
+  "quintana roo", "nuevo leon", "san luis potosi", "prince edward island",
+  "harvard business review", "bain & company", "mckinsey & company", "deloitte digital",
+  "stanford persuasive technology lab", "spiegel research center", "nucleus research", "baymard institute",
+  "sprout social", "experian health", "wharton",
 ];
 
 /**
@@ -62,8 +82,9 @@ export const OWN_VOCABULARY: readonly string[] = [
 export const CAPITALIZED_WORDS: readonly string[] = [
   "january", "february", "march", "april", "may", "june", "july", "august", "september", "october", "november",
   "december", "monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday",
-  "enero", "febrero", "marzo", "abril", "mayo", "junio", "julio", "agosto", "septiembre", "octubre", "noviembre",
-  "diciembre", "lunes", "martes", "miercoles", "jueves", "viernes", "sabado", "domingo",
+  // Not "abril", "mayo", "julio", "agosto", "domingo": Mexican given names ("Abril contesta").
+  "enero", "febrero", "marzo", "junio", "septiembre", "octubre", "noviembre", "diciembre", "lunes", "martes",
+  "miercoles", "jueves", "viernes", "sabado",
   "english", "spanish", "french", "canadian", "canadians", "mexican", "mexicans", "american", "americans", "latin",
   "christmas", "easter", "thanksgiving", "navidad",
   // Countries, regions and directions ("businesses in Canada", "North America").
@@ -72,7 +93,7 @@ export const CAPITALIZED_WORDS: readonly string[] = [
   // Hidalgo, Morelos, León, Prince Edward): those stay names.
   "ontario", "quebec", "british", "columbia", "alberta", "manitoba", "saskatchewan", "nova", "scotia", "brunswick",
   "newfoundland", "labrador", "island", "yukon", "nunavut", "territories", "jalisco", "nuevo",
-  "yucatan", "quintana", "roo", "baja", "california", "sonora", "chihuahua", "coahuila", "tamaulipas",
+  "yucatan", "baja", "california", "sonora", "chihuahua", "coahuila", "tamaulipas",
   "veracruz", "oaxaca", "chiapas", "michoacan", "guanajuato", "queretaro", "puebla",
   "tlaxcala", "sinaloa", "durango", "zacatecas", "nayarit", "colima", "tabasco", "campeche", "aguascalientes",
 ];

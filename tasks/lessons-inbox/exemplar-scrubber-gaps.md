@@ -41,3 +41,13 @@ TAGS: pitches, exemplars, allow-list, measurement
 WHAT HAPPENED: SSA and Census name lists contain Price, Will, Canada, La, More, Re, Legend, Brand. Using them raw as a deny list broke subjects ("Re:") and prose. What held: a name is "also a word" when a Hunspell dictionary has it in lower case (directly or by inflection); such a name is refused only capitalized mid-sentence, and only when it is strong (a given name or a top-10,000 surname) and not among the 300 most frequent words; long-tail given names that are frequent words count only capitalized.
 RULE: When a deny list comes from real-world data, split it by a second independent source (a dictionary) and by position before using it; never deny a common word everywhere because someone is named after it.
 TAGS: pitches, exemplars, names, allow-list
+
+[2026-10-19] An allow-list over our vocabulary must refuse names first, then allow; "ours" is not a free pass
+WHAT HAPPENED: Round 5 of exemplar-scrubber-gaps checked OWN_VOCABULARY and CAPITALIZED_WORDS before the name deny, so "mencionan a Julio", "Abril contesta", "Quintana y Asociados" and title-case "Seo"/"Ota" passed because those strings were on our lists (months, states, acronyms). Round 6 refuses the name first; only the senders, months that are no name, and whole phrases ("Quintana Roo") beat it, and acronyms pass only in all capitals or all lower case.
+RULE: In an allow-list with a deny list on top, order matters: deny first, then allow, with a short, reviewed list of exceptions that are allowed to beat the deny. Store multi-word places and publishers as phrases, never as their words.
+TAGS: pitches, exemplars, allow-list, review
+
+[2026-10-19] Stem-only dictionary checks call real words names; use an affix-aware checker at build time
+WHAT HAPPENED: The round-5 generator read Hunspell .dic stems, so forth, math, fallen (missing or irregular) and haga, vea, vida, debo, cierra (inflected Spanish) were classed as name-only and refused even in lower case. nspell (dev-time only) over en_US/en_GB/en_CA/es_MX/es_ES fixed it, and the generator now prints every top-20k word that ends name-only so a gap shows at build time.
+RULE: When a build step classifies words with a dictionary, check inflected forms with the dictionary's own affix rules, and print the frequent words the step ends up refusing.
+TAGS: pitches, exemplars, generator, dictionaries

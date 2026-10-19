@@ -36,7 +36,9 @@ test("adversarial: scripts, look-alikes, invisible splitters, full-width, handle
       ["quick question", `Hi there,\n\nClinics like ${s} lose calls after hours.\n\nHenry\nRunna Advertising`],
       ["quick question", `Hi there,\n\n${s} loses calls after hours.\n\nHenry\nRunna Advertising`],
     ] as const) {
-      if (toExemplar({ pitch_id: "x", score: 1 }, { subject, body, ...OTHER })) kept.push(`${s} | ${subject} | ${body.split("\n")[2]}`);
+      // Dropped, or kept with the stranger blanked ([site] for a handle or domain).
+      const e = toExemplar({ pitch_id: "x", score: 1 }, { subject, body, ...OTHER });
+      if (e && /pat|金|ив|πα|مح|wei|stra|g\u043em/iu.test(`${e.subject} ${e.body}`.normalize("NFKD"))) kept.push(`${s} | ${e.subject} | ${e.body.split("\n")[2]}`);
     }
   }
   // A capitalized word that is also a name, mid-sentence, is a name.
@@ -344,4 +346,81 @@ test(`held-out names: ${HELD_OUT.length} names capitalized mid-sentence are drop
   console.log(`held-out names: ${HELD_OUT.length - misses.length}/${HELD_OUT.length} caught; misses: ${misses.join(", ") || "none"}`);
   assert.ok(HELD_OUT.length >= 200);
   assert.ok(misses.length / HELD_OUT.length <= 0.02, `misses: ${misses.join(", ")}`);
+});
+
+// ── Round 6: the review's probes ──────────────────────────────────────────────
+
+test("R6.1: handles and bare domains are blanked as [site]; any address left drops the exemplar", () => {
+  const kept: string[] = [];
+  for (const line of ["Escríbeles a @torres o @vega.", "Ver instagram.com/peña.dental para citas.", "Su sitio vega-dental.com no agenda.",
+    "Síguelos en @chan.dental hoy.", "La clínica luna.dental no contesta.", "Pregunta por dr_torres en recepción."]) {
+    const r = keptWith("llamadas", wrap(line), ARBOL, ["torres", "vega", "pena", "chan", "luna"]);
+    if (r) kept.push(r);
+  }
+  assert.deepEqual(kept, []);
+  assert.equal(scrubExemplar("Ver instagram.com/peña.dental.", ARBOL), "Ver [site].");
+  assert.equal(scrubExemplar("Escríbeles a @torres o @vega.", ARBOL), "Escríbeles a [site] o [site].");
+});
+
+test("R6.2: the name deny beats our vocabulary: Spanish month names, Quintana, title-case acronyms", () => {
+  const kept: string[] = [];
+  for (const line of ["Los pacientes mencionan a Julio en las reseñas.", "Hola,\n\nAbril contesta el teléfono.", "Lo dijeron Abril y Domingo ayer.",
+    "Trabajamos con Quintana y Asociados.", "Habla con Seo sobre las citas.", "Pregúntale a Ota por la recepción."]) {
+    if (toExemplar({ pitch_id: "x", score: 1 }, { subject: "llamadas", body: wrap(line), ...ARBOL })) kept.push(line);
+  }
+  assert.deepEqual(kept, []);
+  // The whole phrase, the acronyms in capitals or lower case, and the months that are no name still pass.
+  for (const line of ["Hoteles en Quintana Roo pagan comisión a las OTA.", "El SEO de una clínica en marzo.", "Hoteles en Nuevo León y el seo local."]) {
+    assert.ok(toExemplar({ pitch_id: "x", score: 1 }, { subject: "comisiones de ota", body: wrap(line), ...ARBOL }), line);
+  }
+});
+
+test("R6.3: the scrubber blanks the name the greeting reads from the address; the leak check reads any local part", () => {
+  for (const [email, name] of [["memo@sonrisadental.mx", "Memo"], ["chema@sonrisadental.mx", "Chema"], ["nacho@sonrisadental.mx", "Nacho"], ["toño@sonrisadental.mx", "Toño"]] as const) {
+    const p: ExemplarProspect = { company_name: "Clínica Dental Sonrisa", domain: "sonrisadental.mx", recipient_name: null, recipient_email: email, city: "Puebla" };
+    const body = `Hola ${name},\n\nSoy Nils, de Runna Advertising.\n\nSi quieres, ${name}, lo vemos en una llamada corta.\n\nNils\nRunna Advertising`;
+    assert.equal(keptWith("una llamada corta", body, p, [name]), null, email);
+    assert.equal(scrubExemplar(`Si quieres, ${name}, lo vemos.`, p), "Si quieres, [name], lo vemos.", email);
+  }
+  // An address the greeting would not use ("vfournier@") is still a name to the leak check.
+  const vf: ExemplarProspect = { company_name: null, domain: null, recipient_name: null, recipient_email: "vfournier@julien.ca" };
+  assert.notDeepEqual(exemplarLeaks("ask vfournier about it", vf), []);
+});
+
+test("R6.4: a title or any capitalized word before a dot never opens a sentence for the next capital", () => {
+  const kept: string[] = [];
+  for (const line of ["La recepción la lleva la Profa. Torres desde marzo.", "Lo atiende el Fisio. Torres por la tarde.", "Firmó el Notar. Torres.",
+    "Lo revisa el Contad. Torres cada mes.", "Lo vimos con Runna. Torres dijo que sí."]) {
+    const r = keptWith("llamadas", wrap(line), ARBOL, ["torres"]);
+    if (r) kept.push(r);
+  }
+  assert.deepEqual(kept, []);
+});
+
+test("R6.5: everyday words the old dictionaries missed pass in lower case", () => {
+  const none: ExemplarProspect = { company_name: null, domain: null, recipient_name: null };
+  const words = ["forth", "haga", "vea", "vida", "debo", "cierra", "math", "fallen"];
+  assert.deepEqual(words.filter((w) => exemplarLeaks(`and so ${w} again`, none).length > 0), []);
+});
+
+test("R6.6: Hispanic and Asian surnames count as strong; weak names are exempt only among the 3,000 most frequent words", () => {
+  const names = ["Ding", "Tao", "Kan", "Sen", "Raja", "Pilar", "Serge", "Vega", "Luna", "Mora", "Rivas", "Campos", "Soto", "Toledo", "Parra"];
+  const kept = names.filter((n) => toExemplar({ pitch_id: "x", score: 1 }, { subject: "evening calls", body: wrap(`We spoke with ${n} about the evening calls.`), ...ARBOL }));
+  assert.deepEqual(kept, []);
+});
+
+test("R6.7: lower-case subject words are judged where a name would stand", () => {
+  for (const subject of ["una nota para torres", "lo que vega pierde de noche", "a note for okafor"]) {
+    assert.equal(toExemplar({ pitch_id: "x", score: 1 }, { subject, body: wrap("Calls go unanswered."), ...ARBOL }), null, subject);
+  }
+  // Our own template subjects stay ("book", "brand", "cuesta", "worth" are words there).
+  for (const subject of ["patients who look but never book", "what a scattered brand is costing [company]", "lo que te cuesta el marketing", "what empty nights are worth"]) {
+    assert.ok(toExemplar({ pitch_id: "x", score: 1 }, { subject, body: wrap("Calls go unanswered."), ...ARBOL }), subject);
+  }
+});
+
+test("optional: odd spaces between letters drop the exemplar", () => {
+  for (const s of ["Pa tel", "Pa　tel", "Pa tel"]) {
+    assert.equal(toExemplar({ pitch_id: "x", score: 1 }, { subject: "evening calls", body: wrap(`We spoke with ${s} today.`), ...ARBOL }), null, JSON.stringify(s));
+  }
 });

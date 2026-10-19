@@ -10,21 +10,28 @@
 //   baby-names.csv           US SSA given names, top 1,000 per year 1880-2008 (public domain)
 //     https://raw.githubusercontent.com/hadley/data-baby-names/master/baby-names.csv
 //   ssa-all.csv              US SSA given names, every name given to 5+ babies in a year 1880-2017, as
-//     "name,total" (public domain; hadley/babynames data/babynames.rda, converted with Python's rdata:
-//     https://raw.githubusercontent.com/hadley/babynames/master/data/babynames.rda). Only the names that
-//     are no word at all are taken from it: the long tail is full of words (Legend, Story, Brand).
+//     "name,total" (public domain; hadley/babynames data/babynames.rda). Only the names that are no
+//     word at all are taken from it: the long tail is full of words (Legend, Story, Brand). Convert with
+//     `pip install rdata`, then:
+//       python3 -c "import rdata,collections,sys;d=rdata.read_rda(sys.argv[1])['babynames'];c=collections.Counter()
+//       [c.update({str(n):int(k)}) for n,k in zip(d['name'],d['n'])];open(sys.argv[2],'w').write('name,total\n'+''.join(f'{n},{k}\n' for n,k in c.most_common()))" babynames.rda ssa-all.csv
+//     https://raw.githubusercontent.com/hadley/babynames/master/data/babynames.rda
 //   surnames.csv             US Census 2000 surnames (public domain)
 //     https://raw.githubusercontent.com/fivethirtyeight/data/master/most-common-name/surnames.csv
-//   en_US.dic, es_MX.dic     LibreOffice Hunspell dictionaries, used only to tell
-//     which names are also everyday words; no dictionary word is copied out.
-//     https://raw.githubusercontent.com/LibreOffice/dictionaries/master/en/en_US.dic
-//     https://raw.githubusercontent.com/LibreOffice/dictionaries/master/es/es_MX.dic
+//   {en_US,en_GB,en_CA,es_MX,es_ES}.{aff,dic}   LibreOffice Hunspell dictionaries, used only to tell
+//     which names are also everyday words (affix-aware, through nspell); no dictionary word is copied out.
+//     https://raw.githubusercontent.com/LibreOffice/dictionaries/master/en/en_US.aff (and .dic, en_GB, en_CA,
+//     es/es_MX, es/es_ES)
+//
+// nspell (MIT) is a dev-time tool, never a dependency of the app: install it anywhere and point
+// NSPELL_DIR at that folder (`npm install --prefix /tmp/nsp nspell@2.1.5`, NSPELL_DIR=/tmp/nsp).
 //
 // Frequency words are folded (accents dropped, lower case), split on non-letters,
 // and the first `count` distinct a-z pieces in frequency order are kept (the leak
 // check's strict tier reads the first 20,000 of them, its generous tier all).
 
 import { readFileSync, writeFileSync } from "node:fs";
+import { createRequire } from "node:module";
 import { join } from "node:path";
 
 const [dir, countArg] = process.argv.slice(2);
@@ -32,8 +39,13 @@ if (!dir) throw new Error("usage: node scripts/gen-exemplar-wordlists.mjs <sourc
 const count = Number(countArg ?? 50000);
 /** Census surnames down to this rank: far enough for Okafor, Brar, Chatterjee. */
 const SURNAME_RANK = 40000;
-/** A name that is also a word counts as a name capitalized mid-sentence only when it is this common a surname, or a given name. */
+/**
+ * A name that is also a word counts as a name capitalized mid-sentence only when it is strong: a given
+ * name, a surname this common, or a surname at least STRONG_SHARE % Hispanic or Asian (the prospects we
+ * pitch in Mexico and Canada; the US rank undercounts them).
+ */
 const STRONG_SURNAME_RANK = 10000;
+const STRONG_SHARE = 50;
 /** Long-tail given names (Deepak, Navdeep, Xin) need this many births in all to count. */
 const LONG_TAIL_BIRTHS = 200;
 
@@ -89,32 +101,40 @@ for (const line of read("baby-names.csv").split("\n").slice(1)) {
   strong.add(n);
 }
 const givenCount = names.size;
+// name,rank,count,prop100k,cum_prop100k,pctwhite,pctblack,pctapi,pctaian,pct2prace,pcthispanic ("(S)" = suppressed).
 for (const line of read("surnames.csv").split("\n").slice(1)) {
-  const [n, rank] = line.split(",");
-  const f = fold(n ?? "");
-  if (Number(rank) <= SURNAME_RANK && az(f)) names.add(f);
-  if (Number(rank) <= STRONG_SURNAME_RANK && az(f)) strong.add(f);
+  const cols = line.split(",");
+  const f = fold(cols[0] ?? "");
+  const rank = Number(cols[1]);
+  if (!az(f) || !(rank <= SURNAME_RANK)) continue;
+  names.add(f);
+  const share = Math.max(Number(cols[7]) || 0, Number(cols[10]) || 0);
+  if (rank <= STRONG_SURNAME_RANK || share >= STRONG_SHARE) strong.add(f);
 }
 
-/** Lower-case dictionary entries (stems before Hunspell affixes), folded. */
+// Is a name also a word? Affix-aware Hunspell (nspell) over EN (US, GB, CA) and ES (MX, ES): "forth",
+// "math", "haga", "vea", "cierra" are words. Names come unaccented, so the folded stems of the .dic
+// files are checked as well, with plain inflections: "jazmin" (jazmín), "leon" (león), "flores" (flor).
+const nspell = createRequire(join(process.env.NSPELL_DIR ?? process.cwd(), "noop.js"))("nspell");
+const spellers = ["en_US", "en_GB", "en_CA", "es_MX", "es_ES"].map((d) => nspell(read(`${d}.aff`), read(`${d}.dic`)));
 const dict = new Set();
-for (const file of ["en_US.dic", "es_MX.dic"]) {
+for (const file of ["en_US.dic", "en_GB.dic", "en_CA.dic", "es_MX.dic", "es_ES.dic"]) {
   for (const line of read(file).split("\n").slice(1)) {
     const w = line.split("/")[0]?.trim() ?? "";
     if (w && w === w.toLowerCase() && /^\p{L}+$/u.test(w)) dict.add(fold(w));
   }
 }
-/** A name is also a word when it, or a plain inflection of it, is a lower-case entry: flores → flor, acosta → acostar, fried → fry. */
+const wordCache = new Map();
 function isWord(n) {
+  if (wordCache.has(n)) return wordCache.get(n);
   const c = [n];
   const tail = (end, ...adds) => {
     if (n.endsWith(end) && n.length > end.length + 1) for (const a of adds) c.push(n.slice(0, -end.length) + a);
   };
-  tail("s", ""); tail("es", ""); tail("ies", "y"); tail("ied", "y"); tail("ed", "", "e"); tail("ing", "", "e");
-  tail("er", "", "e"); tail("ers", "", "e"); tail("ly", "");
-  tail("a", "o", "ar"); tail("as", "o", "os", "ar"); tail("o", "ar"); tail("e", "ar", "er", "ir"); tail("an", "ar");
-  tail("en", "er", "ir"); tail("ado", "ar"); tail("ada", "ar"); tail("ido", "er", "ir"); tail("ida", "er", "ir");
-  return c.some((w) => dict.has(w));
+  tail("s", ""); tail("es", ""); tail("ies", "y"); tail("ed", "", "e"); tail("a", "o"); tail("as", "o", "os");
+  const yes = spellers.some((sp) => sp.correct(n)) || c.some((w) => dict.has(w));
+  wordCache.set(n, yes);
+  return yes;
 }
 // The long tail of given names: those that are no dictionary word.
 const frequent = new Set([...read("en_50k.txt").split("\n").slice(0, 20000), ...read("es_50k.txt").split("\n").slice(0, 20000)].map((l) => fold(l.split(" ")[0] ?? "")));
@@ -124,11 +144,13 @@ const capitalOnly = [];
 for (const line of read("ssa-all.csv").split("\n").slice(1)) {
   const [n, total] = line.split(",");
   const f = fold(n ?? "");
-  if (Number(total) < LONG_TAIL_BIRTHS || !az(f) || names.has(f) || isWord(f)) continue;
+  if (Number(total) < LONG_TAIL_BIRTHS || !az(f) || names.has(f)) continue;
+  // A frequent word (Vikram and Divya in subtitles; Serge, Pooja, Brand also dictionary words): a name only capitalized.
   if (frequent.has(f)) {
     capitalOnly.push(f);
     continue;
   }
+  if (isWord(f)) continue;
   names.add(f);
   strong.add(f);
   longTail++;
@@ -136,6 +158,10 @@ for (const line of read("ssa-all.csv").split("\n").slice(1)) {
 const all = [...names].sort();
 const wordlike = all.filter(isWord);
 const weak = wordlike.filter((n) => !strong.has(n));
+// A dictionary gap shows here: frequent words that end up names refused even in lower case.
+const nameOnly = new Set(all.filter((n) => !isWord(n)));
+const gaps = [...frequent].filter((w) => w.length >= 3 && nameOnly.has(w));
+console.log(`top-20k words that are NAME_ONLY (${gaps.length}): ${gaps.join(" ")}`);
 
 writeFileSync(
   "lib/pitches/wordlists/names.ts",
@@ -152,12 +178,13 @@ writeFileSync(
  * - Surnames: the US Census 2000 surname list down to rank ${SURNAME_RANK.toLocaleString("en-US")} (public domain;
  *   via fivethirtyeight/data). It covers Hispanic, Chinese, South Asian and
  *   French-Canadian surnames common in Canada and Mexico as well.
- * NAME_WORDS (${wordlike.length.toLocaleString("en-US")}) is the subset that is also an everyday word (a lower-case
- * entry, or a plain inflection of one, in the LibreOffice en_US or es_MX
- * Hunspell dictionary): "rosa", "price", "will", "flores". Those are allowed in
+ * NAME_WORDS (${wordlike.length.toLocaleString("en-US")}) is the subset that is also an everyday word (correct
+ * for Hunspell, affixes included, in the LibreOffice en_US, en_GB, en_CA, es_MX
+ * or es_ES dictionary): "rosa", "price", "will", "flores". Those are allowed in
  * lower case and at a sentence start; every name is refused capitalized
- * mid-sentence, except NAME_WEAK (${weak.length.toLocaleString("en-US")}): word-like names that are neither a
- * given name nor among the ${STRONG_SURNAME_RANK.toLocaleString("en-US")} most common surnames ("la", "more", "re").
+ * mid-sentence, except the NAME_WEAK ones among the 3,000 most frequent words.
+ * NAME_WEAK (${weak.length.toLocaleString("en-US")}): word-like names that are neither a given name, nor among the
+ * ${STRONG_SURNAME_RANK.toLocaleString("en-US")} most common surnames, nor a surname ${STRONG_SHARE}%+ Hispanic or Asian ("la", "more", "re").
  * Regenerate with scripts/gen-exemplar-wordlists.mjs, do not hand-edit.
  */
 export const NAME_LIST = \`
