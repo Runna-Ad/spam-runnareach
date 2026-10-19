@@ -243,3 +243,53 @@ real leak, kept exemplars carry no capitalized mid-sentence token from a public 
 Stop rule: if the round-6 review finds another BLOCKING leak class, #17 is parked and the
 conductor proposes a different design to Pedro (exemplars written as templates at
 generation time). Say in the PR body what you could not close.
+
+## Round 6b (conductor, 2026-10-19, after the round-6 review: merge, 0 blocking, no new blocking leak class)
+Not a new design round: the base merge this branch needs anyway (GitHub: dirty against
+729b299), plus the optional findings below, in ONE push. The stop rule still holds for the
+review of this push.
+0. **Merge the base first.** `origin/claude/optimistic-tesla-3gceud` is now main 729b299 (+
+   docs). It was restarted from main after PR #27's squash, so the conflicts in
+   lib/discover/bulk-actions.ts, lib/research/deep-research-stage.ts, tasks/board.md,
+   tests/pipeline-status-rule.test.ts and tests/prospect-status.test.ts are #27's: take the
+   BASE side for every file outside the exemplar set. Afterwards
+   `git diff origin/claude/optimistic-tesla-3gceud --name-only` lists only the exemplar files,
+   claude-composer.ts, greeting-name.ts and your lessons-inbox file.
+1. **Places when the city field misses them** (review optional 1; the round-5 must-drop
+   "Monterrey" class). City null, "Vi que son distribuidores Toyota en Querétaro" is kept;
+   23/132 CA/MX cities pass (Toronto, Vancouver, Quebec, Waterloo, Puebla, Querétaro, Oaxaca,
+   Veracruz, Cancún, Ensenada, Los Cabos, Condesa…) because they are on our word lists; city
+   field "San Andrés Cholula" with "Puebla" in the body, "Mississauga" with "Toronto" also pass.
+   (a) Remove from CAPITALIZED_WORDS every state/province name that is also a city
+   (puebla, queretaro, oaxaca, chihuahua, aguascalientes, durango, zacatecas, colima,
+   campeche, tlaxcala, veracruz, guanajuato, quebec, and any other you find).
+   (b) A place deny built by the generator at dev time from GeoNames (free, CC BY 4.0: put
+   the attribution in the generator and the list header; no runtime dependency, no paid
+   service): CA + MX populated places with population ≥ 15,000 (cities15000), multi-word
+   ones as phrases (Los Cabos, Boca del Río, San Andrés Cholula), plus CDMX alcaldías and the
+   best-known colonias if the data is at hand (Condesa, Polanco, Roma, Coyoacán, Santa Fe).
+   Denied in any position and case tier where a strong name is denied, AND at a sentence
+   start (a place opening a sentence identifies as much). Countries and states/provinces
+   that are not also a city stay allowed (México, Canada, Alberta, Ontario, Jalisco).
+   Fail closed; report the false drops it causes on the generator and our 22 templates
+   rather than allow-listing them silently.
+2. **Greeting rule shared whole** (optional 2): "J Torres" + memo.torres@ → composer greets
+   "Memo" → kept. Move firstNameGuess's WHOLE rule (full-name first token ≥ 2 chars, else
+   email local part, else role) into greeting-name.ts; the scrubber uses it; the leak
+   check drops its `!recipient_name` condition (its coarse email rule always applies).
+3. **False drops measured on real pitches:** plural acronyms (SKUs, KPIs, CTAs, URLs,
+   PDFs, FAQs: capitals + lowercase "s"; regression vs round 5's must-pass "skus"); region
+   words (Western, Northern, Southern, Eastern, Central, Atlantic, Prairies, Maritimes);
+   the platforms our pitches name (Wix, Squarespace, Shopify, GoDaddy, Webflow, Tiendanube,
+   Mercado Libre) next to WordPress/WooCommerce.
+4. Tests: one per item above that fails on d425754; tighten
+   tests/pitch-exemplars-allowlist.test.ts:40 (assert null for the non-address adversarial
+   inputs: a kept Cyrillic "Pаtel" must fail the test).
+5. If cheap: scrubber title patterns get the round-6 titles (Profa., Fisio., Lcdo.… scrub
+   instead of drop); cosmetic "[site]]" and "#1 rated" → "[site] rated".
+Not now (carried): brands alone (Toyota, Volvo: not identifying without a place, which 1
+closes); nicknames missing from the names list (third person only); ROLE_LOCALS
+department inboxes (fails closed); lowercase COMMON_NAMES false drops (rojas, ríos).
+Acceptance (6b): 902+ tests green; held-out names ≥ 98%; each item a test failing on
+d425754; the conductor re-runs the 30 real pitches (target: ≥ 21 kept, the SKUs / Western /
+Wix drops gone, no GeoNames place token in any kept exemplar).
