@@ -64,7 +64,12 @@ const cmp = (a: unknown, b: unknown): number => {
 
 function fakeDb(
   tables: Record<string, Row[]>,
-  opts: { fail?: Partial<Record<`${string}.${Op}`, string>>; forbidWrites?: string[] } = {},
+  opts: {
+    fail?: Partial<Record<`${string}.${Op}`, string>>;
+    forbidWrites?: string[];
+    /** Runs just before an update applies: another writer (the send-queue) acting between our read and our write. */
+    beforeUpdate?: (table: string) => void;
+  } = {},
 ) {
   let seq = 0;
   const db = {
@@ -96,6 +101,7 @@ function fakeDb(
           rows.push(...inserted);
           return { data: null, count: null, error: null };
         }
+        if (op === "update") opts.beforeUpdate?.(table);
         let hit = rows.filter((r) => filters.every((f) => f(r)));
         if (op === "update") {
           for (const r of hit) Object.assign(r, patch);
@@ -601,6 +607,22 @@ test("veto → shadow holds only the autopilot's approvals still waiting to send
     entity_id: id,
     metadata: { source: "demotion", stage: "shadow" },
   })));
+});
+
+test("demotion hold never flips a pitch the send-queue claimed between the read and the hold", async () => {
+  const { db: base, parts } = demotionFixture();
+  // The send-queue claims auto-1 (approved → sending) after our read, before our update.
+  const db = fakeDb(base.tables, {
+    beforeUpdate: (table) => {
+      if (table === "pitches" && parts.auto1.pitch.status === "approved") parts.auto1.pitch.status = "sending";
+    },
+  });
+  const result = await holdAutoApprovals(db, TENANT, "shadow");
+  assert.deepEqual(result, { held: 1, error: null });
+  assert.equal(parts.auto1.pitch.status, "sending", "the claimed row keeps its claim");
+  assert.equal(parts.auto1.pitch.sender_inbox_id, INBOX);
+  assert.equal(parts.auto2.pitch.status, "draft");
+  assert.deepEqual(db.tables.audit_log!.map((r) => r.entity_id), ["auto-2"], "audited only what was held");
 });
 
 test("demotion hold is idempotent: a second run (the next tick's sweep) holds nothing", async () => {
