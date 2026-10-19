@@ -12,9 +12,13 @@
  * The db is injected so the logic is tested with a fake (tests/autopilot-hold.test.ts).
  * The route (app/api/autopilot/hold) passes the service-role client, behind a
  * verified token.
+ *
+ * holdAutoApprovals is the autopilot's own version, run by the tick's stage
+ * step when the stage drops to shadow or off: the same fields, the same guard,
+ * its own reason (HELD_BY_AUTOPILOT). Tested in tests/bounce-incident.test.ts.
  */
 
-import { HELD_BY_PERSON } from "./governor.ts";
+import { HELD_BY_AUTOPILOT, HELD_BY_PERSON, type Stage } from "./governor.ts";
 import { holdExpiry, signHoldToken, type HoldPayload } from "./hold-token.ts";
 
 // Untyped like tick.ts: the autopilot columns aren't in every generated type.
@@ -23,6 +27,18 @@ type Db = any;
 
 /** Starts with HELD_BY_PERSON so §4 resolveHeld (heldAction) leaves the draft alone. */
 export const HOLD_REASON = `${HELD_BY_PERSON} from the digest link`;
+
+/** What every hold writes: back to draft, schedule cleared, review lane for good. */
+function heldFields(reason: string) {
+  return {
+    status: "draft",
+    scheduled_send_at: null,
+    queued_at: null,
+    sender_inbox_id: null,
+    autopilot_lane: "review",
+    autopilot_reasons: [reason],
+  };
+}
 
 export type HoldState = "holdable" | "already_sent" | "sending" | "already_held" | "not_scheduled" | "not_found";
 
@@ -86,14 +102,7 @@ export async function loadHoldTarget(db: Db, payload: HoldPayload): Promise<Hold
 export async function holdPitch(db: Db, payload: HoldPayload): Promise<HoldResult> {
   const { data, error } = await db
     .from("pitches")
-    .update({
-      status: "draft",
-      scheduled_send_at: null,
-      queued_at: null,
-      sender_inbox_id: null,
-      autopilot_lane: "review",
-      autopilot_reasons: [HOLD_REASON],
-    })
+    .update(heldFields(HOLD_REASON))
     .eq("id", payload.pitchId)
     .eq("tenant_id", payload.tenantId)
     .eq("status", "approved")
@@ -118,6 +127,117 @@ export async function holdPitch(db: Db, payload: HoldPayload): Promise<HoldResul
   // approved); it isn't held, so say so and ask for another try.
   const target = await loadHoldTarget(db, payload);
   return { state: target.state === "holdable" ? "try_again" : target.state, target };
+}
+
+// ── Demotion: pull back automatic approvals ──────────────────────────────────
+
+/**
+ * Stages that never send automatically. The send-queue sends every approved
+ * pitch whatever the stage, so dropping to one of these must also pull back
+ * the automatic approvals still waiting (2026-10-19: 9 stayed scheduled after
+ * veto → shadow and had to be held by hand).
+ */
+export function pullsBackApprovals(stage: Stage): boolean {
+  return stage === "shadow" || stage === "off";
+}
+
+/** The reason a pulled-back pitch carries. Starts with HELD_BY_AUTOPILOT, never HELD_BY_PERSON. */
+export function demotionHoldReason(stage: Stage): string {
+  return `${HELD_BY_AUTOPILOT}: stage dropped to ${stage}`;
+}
+
+export type PullbackResult = { held: number; error: string | null };
+
+const PULLBACK_CHUNK = 100;
+const detail = (e: { message?: string } | null | undefined) => e?.message || "no detail";
+const chunks = <T,>(xs: T[], n: number): T[][] => Array.from({ length: Math.ceil(xs.length / n) }, (_, i) => xs.slice(i * n, i * n + n));
+
+/** The approval event's payload says the autopilot made it (pitch-stage records `autopilot: actor.system`). */
+function isAutopilotApproval(payload: unknown): boolean {
+  const v = (payload as { autopilot?: unknown } | null)?.autopilot;
+  return v === true || v === "true";
+}
+
+/**
+ * Hold every automatic approval still waiting to send: status 'approved', lane
+ * 'auto', not sent, and the pitch's LATEST approval was the autopilot's. A pitch
+ * a person approved by hand is never touched. Same guarded update as holdPitch
+ * (only rows still 'approved', so never one the send-queue has claimed), one
+ * pitch.held audit row per pitch (source 'demotion'). Idempotent: a second run
+ * finds nothing to hold.
+ */
+export async function holdAutoApprovals(db: Db, tenantId: string, stage: Stage): Promise<PullbackResult> {
+  const { data: rows, error } = await db
+    .from("pitches")
+    .select("id")
+    .eq("tenant_id", tenantId)
+    .eq("status", "approved")
+    .eq("autopilot_lane", "auto")
+    .is("sent_at", null)
+    .limit(1000);
+  if (error) return { held: 0, error: `approved pitches: ${detail(error)}` };
+  const ids = ((rows ?? []) as Array<{ id: string }>).map((r) => r.id);
+
+  let held = 0;
+  for (const part of chunks(ids, PULLBACK_CHUNK)) {
+    const { data: events, error: eventsError } = await db
+      .from("pitch_events")
+      .select("pitch_id, payload, event_at")
+      .eq("tenant_id", tenantId)
+      .eq("event_type", "approved")
+      .in("pitch_id", part)
+      .order("event_at", { ascending: true });
+    if (eventsError) return { held, error: `approval events: ${detail(eventsError)}` };
+    // Oldest first, so the last write per pitch is its latest approval.
+    const latestIsAutopilot = new Map<string, boolean>();
+    for (const e of (events ?? []) as Array<{ pitch_id: string; payload: unknown }>) {
+      latestIsAutopilot.set(e.pitch_id, isAutopilotApproval(e.payload));
+    }
+    const automatic = part.filter((id) => latestIsAutopilot.get(id) === true);
+    if (automatic.length === 0) continue;
+
+    const { data: updated, error: updateError } = await db
+      .from("pitches")
+      .update(heldFields(demotionHoldReason(stage)))
+      .eq("tenant_id", tenantId)
+      .in("id", automatic)
+      .eq("status", "approved")
+      .eq("autopilot_lane", "auto")
+      .is("sent_at", null)
+      .select("id");
+    if (updateError) return { held, error: `hold: ${detail(updateError)}` };
+    const heldIds = ((updated ?? []) as Array<{ id: string }>).map((r) => r.id);
+    held += heldIds.length;
+    if (heldIds.length === 0) continue;
+
+    const { error: auditError } = await db.from("audit_log").insert(
+      heldIds.map((id) => ({
+        tenant_id: tenantId,
+        actor_id: null,
+        action: "pitch.held",
+        entity_type: "pitch",
+        entity_id: id,
+        metadata: { source: "demotion", stage },
+      })),
+    );
+    if (auditError) console.warn("[autopilot-hold] demotion audit not recorded:", detail(auditError));
+  }
+  return { held, error: null };
+}
+
+/** The line the stage-change email carries about the pull-back. */
+export function pullbackSentence(r: PullbackResult): string {
+  const n = r.held;
+  const pulled =
+    n === 0
+      ? "No automatic emails were waiting to send."
+      : `Pulled back ${n} automatic email${n === 1 ? "" : "s"} that ${n === 1 ? "was" : "were"} approved and waiting to send: ` +
+        `${n === 1 ? "it is" : "they are"} back in drafts (review lane) for a person to approve or drop.`;
+  if (!r.error) return pulled;
+  const failed = `(${r.error}): any still approved will send. Check /pitches now.`;
+  return n === 0
+    ? `Could not pull back the automatic emails waiting to send ${failed}`
+    : `${pulled} Could not pull back the rest ${failed}`;
 }
 
 // ── The veto digest ──────────────────────────────────────────────────────────

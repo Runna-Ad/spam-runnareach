@@ -1674,3 +1674,21 @@ TAGS: #autopilot #stages #send-queue #safety
 [2026-10-19] LESSON: a resumed inbox is re-paused by the same bounces 15 minutes later
 ROOT CAUSE: The inbox_bounces breaker counts hard bounces in the inbox's last 50 sends, with no notion of "since a person resumed it". Someone resumed pedro@runnareach.com in Settings between 15:45 and 16:00 UTC (the only code path that sets paused=false; it writes no audit row), and the 16:00 tick tripped on the same 2 bounces and paused it again, with a second email. Until ~48 more sends push those bounces out of the window, a resume cannot stick, and the paused inbox cannot send them.
 RULE: Every breaker that a person can clear must measure from the last clear (store resumed_at; count only events after it), and the resume itself must be audited. Test it: trip, resume, tick, assert still resumed.
+
+
+## Merged from lessons-inbox, bounce-hotfix (2026-10-19)
+
+[2026-10-19] A breaker that a person can reset needs a recorded reset, or the reset is undone by the same evidence
+WHAT HAPPENED: The inbox_bounces breaker (lib/autopilot/tick.ts runBreakers) counted bounces over "the last 50 sends" with no notion of a resume, so a resume in Settings was re-paused 15 minutes later by the same two bounces; a paused inbox never makes the 48 sends that would age them out. Fix: the resume writes audit_log sender_inbox.resumed (lib/autopilot/inbox-resume.ts) and the breaker counts only bounces recorded after it (lib/autopilot/bounce-breaker.ts). If the row can't be written, the save puts the pause back and says so.
+RULE: Any automatic pause a person can lift must count evidence only after the latest lift, and the lift must be a row only the lift writes (never updated_at). Without the row the breaker must still fail toward pausing, and the UI must not show "resumed" when the record is missing.
+TAGS: autopilot, breakers, send-path
+
+[2026-10-19] A cached verdict outlives a rule change: re-check what the new rule would no longer give
+WHAT HAPPENED: Making Anymail/Hunter addresses "review" in verifyEmailPure was not enough on its own: the tick reuses a stored verify_verdict for 7 days (labelDrafts), and drafts already labelled AUTO keep that label until scheduleAuto approves them. Both would have auto-sent finder addresses for up to a week after the deploy. Fix: storedVerdictUsable (lib/research/verify-recipient.ts) refuses a stored "send" for a finder source, and scheduleAuto clears the AUTO label of a finder-address draft so it is labelled again.
+RULE: When a rule tightens a verdict, grep every place that stores or caches that verdict or a decision derived from it (labels, lanes, approvals) and say what happens to rows decided under the old rule. Same family as "say what the OLD code does in the migration gap", applied to cached decisions.
+TAGS: autopilot, verify, caching
+
+[2026-10-19] A guard that only matters in a race needs a race in the fake, or deleting it passes every test
+WHAT HAPPENED: holdAutoApprovals selects approved pitches, then updates them with .eq("status","approved"). The mutation check (remove the guard) passed all tests, because the read already filtered on status. Adding a beforeUpdate hook to the fake (the send-queue claims a row between our read and our write) made the mutation fail.
+RULE: For every WHERE guard on an update that repeats the read's filter, write the test where another writer changes the row between the read and the update; run the mutation (delete the guard) to prove it.
+TAGS: testing, autopilot, races
