@@ -7,6 +7,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   BREAKER_KIND,
+  countVetoes,
   evaluateBreakers,
   heldAction,
   HELD_BY_AUTOPILOT,
@@ -15,6 +16,7 @@ import {
   laneFor,
   nextStage,
   safetyOnly,
+  vetoedByPerson,
   type BreakerMetrics,
   type LaneInput,
   type StageMetrics,
@@ -214,10 +216,11 @@ test("stages: a delivery trip never moves the stage; a quality trip or a factual
   // veto with two dead-mailbox trips arrives as autoQualityTrips 0.
   assert.deepEqual(nextStage("veto", { ...m0, daysInStage: 1, autoScheduled: 19 }), { stage: "veto", reason: "collecting veto data" });
   assert.equal(nextStage("auto", { ...m0 }).stage, "auto");
-  assert.deepEqual(nextStage("veto", { ...m0, autoQualityTrips: 1 }), {
+  assert.deepEqual(nextStage("veto", { ...m0, autoQualityTrips: 2, autoQualityTripCodes: ["opt_out_spike", "opt_out_spike"] }), {
     stage: "shadow",
-    reason: "opt-outs and hard no's spiked (a quality breaker tripped)",
+    reason: "a quality breaker tripped: opt_out_spike",
   });
+  assert.equal(nextStage("veto", { ...m0, autoQualityTrips: 1 }).reason, "a quality breaker tripped");
   assert.equal(nextStage("auto", { ...m0, autoQualityTrips: 1 }).stage, "veto");
   assert.deepEqual(nextStage("veto", { ...m0, autoFactualErrors: 1 }), {
     stage: "shadow",
@@ -236,4 +239,19 @@ test("safetyOnly: kill switch, stage off or no state row run only the safety ste
   assert.equal(safetyOnly({ enabled: true, stage: "shadow" }), false);
   assert.equal(safetyOnly({ enabled: true, stage: "veto" }), false);
   assert.equal(safetyOnly({ enabled: true, stage: "auto" }), false);
+});
+
+test("vetoedByPerson / countVetoes: a pull-back by the autopilot (stage drop, kill switch) is not a person's veto", () => {
+  assert.equal(vetoedByPerson({ status: "draft", autopilot_reasons: ["held by a person from the digest link"] }), true);
+  assert.equal(vetoedByPerson({ status: "reviewer_rejected", autopilot_reasons: null }), true);
+  assert.equal(vetoedByPerson({ status: "draft" }), true, "no reasons read as a person's");
+  assert.equal(vetoedByPerson({ status: "draft", autopilot_reasons: [`${HELD_BY_AUTOPILOT}: stage dropped to shadow`] }), false);
+  assert.equal(vetoedByPerson({ status: "draft", autopilot_reasons: [`${HELD_BY_AUTOPILOT}: autopilot switched off`] }), false);
+  assert.equal(vetoedByPerson({ status: "approved", autopilot_reasons: [] }), false);
+  const approved = new Set(["a", "b", "c"]);
+  assert.equal(countVetoes(approved, [
+    { id: "a", status: "draft", autopilot_reasons: ["held by a person from the digest link"] },
+    { id: "b", status: "draft", autopilot_reasons: [`${HELD_BY_AUTOPILOT}: autopilot switched off`] },
+    { id: "c", status: "sent", autopilot_reasons: [] },
+  ]), 1);
 });

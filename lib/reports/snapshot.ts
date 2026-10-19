@@ -164,12 +164,14 @@ export async function gatherWeeklyRaw(tenantId: string, now: Date): Promise<Week
       ),
       all(
         (a, b) =>
-          db.from("pitch_events").select("event_at, pitches:pitch_id(status, prospect_contacts:contact_id(email))")
+          db.from("pitch_events").select("event_at, pitches:pitch_id(status, autopilot_reasons, prospect_contacts:contact_id(email))")
             .eq("tenant_id", tenantId).eq("event_type", "approved").eq("payload->>autopilot", "true")
             .gte("event_at", since14).order("event_at").range(a, b),
         (r) => {
           const p = one(r.pitches);
-          return { at: r.event_at as string, status: (p?.status as string | undefined) ?? "unknown", email: emailOf(p?.prospect_contacts) };
+          // Reasons tell a person's veto from the autopilot's own pull-back (governor vetoedByPerson).
+          const reasons = Array.isArray(p?.autopilot_reasons) ? (p.autopilot_reasons as string[]) : null;
+          return { at: r.event_at as string, status: (p?.status as string | undefined) ?? "unknown", email: emailOf(p?.prospect_contacts), reasons };
         },
       ),
       db.from("autonomy_state").select("enabled, stage, reason").eq("tenant_id", tenantId).maybeSingle() as Promise<{ data: Db; error: unknown }>,

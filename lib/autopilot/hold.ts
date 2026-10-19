@@ -154,6 +154,9 @@ export function demotionHoldReason(stage: Stage): string {
   return `${HELD_BY_AUTOPILOT}: stage dropped to ${stage}`;
 }
 
+/** The reason a pitch pulled back by the kill switch carries (same prefix: a person's call next). */
+export const KILL_SWITCH_HOLD_REASON = `${HELD_BY_AUTOPILOT}: autopilot switched off`;
+
 export type PullbackResult = { held: number; error: string | null };
 
 const PULLBACK_CHUNK = 100;
@@ -174,7 +177,12 @@ function isAutopilotApproval(payload: unknown): boolean {
  * pitch.held audit row per pitch (source 'demotion'). Idempotent: a second run
  * finds nothing to hold.
  */
-export async function holdAutoApprovals(db: Db, tenantId: string, stage: Stage): Promise<PullbackResult> {
+export async function holdAutoApprovals(
+  db: Db,
+  tenantId: string,
+  stage: Stage,
+  reason: string = demotionHoldReason(stage),
+): Promise<PullbackResult> {
   const { data: rows, error } = await db
     .from("pitches")
     .select("id")
@@ -206,7 +214,7 @@ export async function holdAutoApprovals(db: Db, tenantId: string, stage: Stage):
 
     const { data: updated, error: updateError } = await db
       .from("pitches")
-      .update(heldFields(demotionHoldReason(stage)))
+      .update(heldFields(reason))
       .eq("tenant_id", tenantId)
       .in("id", automatic)
       .eq("status", "approved")
@@ -235,21 +243,25 @@ export async function holdAutoApprovals(db: Db, tenantId: string, stage: Stage):
 
 /**
  * QUALITY breaker trips recorded since `sinceIso` (the stage's start): the
- * breaker insights (kind 'breaker', evidence = the BreakerTrip) whose code
- * governor.isQualityBreaker counts. Delivery trips (bounces, Gmail, DNS,
- * placement) pause sending but never count here. Throws when the insights
- * can't be read, so the stage step skips the tick instead of reading 0.
+ * codes of the breaker insights (kind 'breaker', evidence = the BreakerTrip)
+ * that governor.isQualityBreaker counts, oldest first ("unknown" for evidence
+ * without a code). Delivery trips (bounces, Gmail, DNS, placement) pause
+ * sending but never count here. Throws when the insights can't be read, so the
+ * stage step skips the tick instead of reading 0.
  */
-export async function stageQualityTrips(db: Db, tenantId: string, sinceIso: string): Promise<number> {
+export async function stageQualityTrips(db: Db, tenantId: string, sinceIso: string): Promise<string[]> {
   const { data, error } = await db
     .from("learning_insights")
-    .select("evidence")
+    .select("evidence, created_at")
     .eq("tenant_id", tenantId)
     .eq("kind", "breaker")
     .gte("created_at", sinceIso)
+    .order("created_at", { ascending: true })
     .limit(1000);
   if (error) throw new Error(`breaker insights: ${detail(error)}`);
-  return ((data ?? []) as Array<{ evidence: { code?: unknown } | null }>).filter((r) => isQualityBreaker(r.evidence?.code)).length;
+  return ((data ?? []) as Array<{ evidence: { code?: unknown } | null }>)
+    .filter((r) => isQualityBreaker(r.evidence?.code))
+    .map((r) => (typeof r.evidence?.code === "string" ? r.evidence.code : "unknown"));
 }
 
 /**

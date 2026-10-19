@@ -8,7 +8,10 @@ WHAT HAPPENED: tick.ts imports "server-only" and "@/" aliases, so node --test ca
 RULE: When a guard lives in an unimportable orchestrator, extract the db step into a db-injected function in an importable module (relative .ts imports, no server-only) and test it with the fake. Keep only the call site pinned by a source check.
 TAGS: testing, autopilot, fake-db
 
+[2026-10-19] A fake db that ignores the select list can't catch a column missing from the select
+WHAT HAPPENED: The follow-up added autopilot_reasons to the weekly producer's select (lib/reports/snapshot.ts). Removing it again passed every test, because the fake returned whole rows whatever was selected. Once the fake projected the selected columns, embeds included (tests/autopilot-trust-split.test.ts parseSelect/project), the mutation failed as it should.
+RULE: When a test proves "the producer now reads column X", the fake must return only the selected columns, embeds included, the way PostgREST does. Otherwise run the mutation (drop X from the select) and watch it fail before calling the column covered.
+TAGS: testing, fake-db, reports
+
 ## Out of scope, noticed
-- lib/autopilot/governor.ts countVetoes (and tick.ts evaluateStage autoVetoed): an automatic approval pulled back by the autopilot itself (HELD_BY_AUTOPILOT, now also on the kill switch) counts as a person's veto in the current stage. After kill switch off → on in veto, those pull-backs raise the veto rate and block promotion: delivery/ops events leaking into the quality metric. Fix: countVetoes takes reasons and skips HELD_BY_AUTOPILOT. Not changed (promotion metrics are in the brief's negative set).
-- lib/reports/snapshot.ts (~l.167): the autoScheduled query must also select pitches.autopilot_reasons and map it to `reasons`, or the weekly report's new pull-back exclusion has no data in prod.
-- app/api/autopilot/tick/route.ts header + query: `.eq("enabled", true)` skips kill-switched tenants (see first lesson).
+- none left: the route filter, the snapshot select and countVetoes were folded into this PR on the conductor's review (follow-up push).

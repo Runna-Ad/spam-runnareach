@@ -20,11 +20,12 @@ import "server-only";
  *   6. stage      promote / demote the autonomy stage on measured results;
  *                 only pitch quality demotes (a factual error, an opt-out
  *                 spike), never a delivery breaker
- *
- * With the autopilot off (kill switch, stage off) only the safety steps run:
- * 1 (breakers) and the pull-back of automatic approvals still waiting.
  *   7. learn      re-score writer variants and search cells from outcomes;
  *                 weekly AI review proposes new guidance to test (learn.ts)
+ *
+ * With the autopilot off (kill switch, stage off) only the safety steps run:
+ * the pull-back of automatic approvals still waiting, the veto digest, and
+ * 1 (breakers). The route ticks every tenant with a state row for this.
  *
  * Every autonomous change writes a learning_insights row; breaker trips and
  * stage changes also email the notify address.
@@ -38,7 +39,9 @@ import {
   buildVetoDigest,
   DIGEST_HORIZON_HOURS,
   digestDue,
+  demotionHoldReason,
   holdAutoApprovals,
+  KILL_SWITCH_HOLD_REASON,
   lastDigestSlot,
   pullbackSentence,
   pullsBackApprovals,
@@ -152,17 +155,6 @@ export async function runTick(actor: Actor, now: Date = new Date()): Promise<Tic
     .eq("tenant_id", tenantId)
     .maybeSingle();
   const s = state as AutonomyState | null;
-  // The digest lists approved emails, and the send-queue sends them whatever the
-  // stage, so it runs even when the autopilot is switched off or was demoted.
-  // Only the auto stage (scheduled to send now, no veto window) skips it. First,
-  // so it runs well inside the time budget.
-  if (s && s.stage !== "auto") {
-    try {
-      report.digest = await sendVetoDigest(db, tenantId, now);
-    } catch (err) {
-      report.errors.push(`digest: ${(err as Error).message}`);
-    }
-  }
   const step = async <T>(name: string, fn: () => Promise<T>, fallback: T): Promise<T> => {
     try {
       return await fn();
@@ -172,13 +164,12 @@ export async function runTick(actor: Actor, now: Date = new Date()): Promise<Tic
     }
   };
 
-  // Breakers first, whatever the stage: the send-queue sends approved pitches
-  // (and blocks an inbox on fresh bounces for one run only) even with the
-  // autopilot off, so only this step turns trouble into a pause + email.
-  report.breakers = await step("breakers", () => runBreakers(db, tenantId, now), []);
-  if (!s || safetyOnly(s)) {
-    // Kill switch or stage off: no automatic approval stays waiting to send.
-    const sweep = await step("pullback", () => holdAutoApprovals(db, tenantId, "off"), { held: 0, error: null });
+  // Kill switch or stage off: no automatic approval stays waiting to send (the
+  // send-queue sends approved pitches whatever the stage). Before the digest,
+  // so the digest never lists an approval this same tick holds.
+  if (safetyOnly(s)) {
+    const reason = s && s.enabled ? demotionHoldReason("off") : KILL_SWITCH_HOLD_REASON;
+    const sweep = await step("pullback", () => holdAutoApprovals(db, tenantId, "off", reason), { held: 0, error: null });
     if (sweep.error) report.errors.push(`pullback: ${sweep.error}`);
     if (sweep.held > 0) {
       report.pulledBack = sweep.held;
@@ -189,6 +180,24 @@ export async function runTick(actor: Actor, now: Date = new Date()): Promise<Tic
         evidence: sweep,
       });
     }
+  }
+  // The digest lists approved emails, and the send-queue sends them whatever the
+  // stage, so it runs even when the autopilot is switched off or was demoted.
+  // Only the auto stage (scheduled to send now, no veto window) skips it. Early,
+  // so it runs well inside the time budget.
+  if (s && s.stage !== "auto") {
+    try {
+      report.digest = await sendVetoDigest(db, tenantId, now);
+    } catch (err) {
+      report.errors.push(`digest: ${(err as Error).message}`);
+    }
+  }
+
+  // Breakers whatever the stage: the send-queue sends approved pitches (and
+  // blocks an inbox on fresh bounces for one run only) even with the autopilot
+  // off, so only this step turns trouble into a pause + email.
+  report.breakers = await step("breakers", () => runBreakers(db, tenantId, now), []);
+  if (!s || safetyOnly(s)) {
     report.skipped = "autopilot off for this tenant";
     return report;
   }
@@ -830,14 +839,15 @@ async function evaluateStage(
   // Vetoes by approval event, whatever the lane: a held pitch is moved to the
   // review lane (§5, the digest hold), so `rows` (lane auto) never holds it.
   const approvedIds = [...autopilotApproved];
-  const current: Array<{ id: string; status: string }> = [];
+  // With their reasons: an autopilot pull-back is not a person's veto (governor vetoedByPerson).
+  const current: Array<{ id: string; status: string; autopilot_reasons: string[] | null }> = [];
   for (let k = 0; k < approvedIds.length; k += 200) {
     const { data: chunk } = await db
       .from("pitches")
-      .select("id, status")
+      .select("id, status, autopilot_reasons")
       .eq("tenant_id", tenantId)
       .in("id", approvedIds.slice(k, k + 200));
-    current.push(...((chunk ?? []) as Array<{ id: string; status: string }>));
+    current.push(...((chunk ?? []) as Array<{ id: string; status: string; autopilot_reasons: string[] | null }>));
   }
   const vetoed = countVetoes(autopilotApproved, current);
   const sentAuto = rows.filter((r) => autopilotApproved.has(r.id) && r.sent_at).map((r) => r.id);
@@ -852,7 +862,7 @@ async function evaluateStage(
     bounces = count ?? 0;
   }
   // Only quality breakers count against the stage (governor BREAKER_KIND).
-  const qualityTrips = await stageQualityTrips(db, tenantId, since);
+  const qualityTrips = s.stage === "shadow" ? [] : await stageQualityTrips(db, tenantId, since);
 
   const metrics: StageMetrics = {
     daysInStage: (now.getTime() - new Date(since).getTime()) / DAY,
@@ -862,7 +872,8 @@ async function evaluateStage(
     autoScheduled: autopilotApproved.size,
     autoVetoed: vetoed,
     autoBounceRate: sentAuto.length ? bounces / sentAuto.length : 0,
-    autoQualityTrips: s.stage === "shadow" ? 0 : qualityTrips,
+    autoQualityTrips: qualityTrips.length,
+    autoQualityTripCodes: qualityTrips,
   };
   const next = nextStage(s.stage, metrics);
   await db

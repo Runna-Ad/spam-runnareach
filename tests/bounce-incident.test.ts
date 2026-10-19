@@ -32,7 +32,6 @@ import {
   HELD_BY_AUTOPILOT,
   HELD_BY_PERSON,
   nextStage,
-  safetyOnly,
   type BreakerMetrics,
   type BreakerTrip,
   type StageMetrics,
@@ -729,8 +728,8 @@ function breakerInsight(db: Db, trip: BreakerTrip, createdAt: string, tenant = T
 
 /** What the stage step computes: quality trips since the stage began, into nextStage. */
 async function stageAfter(db: Db, m: Partial<StageMetrics> = {}) {
-  const autoQualityTrips = await stageQualityTrips(db, TENANT, STAGE_SINCE);
-  return nextStage("veto", { ...quietStage, ...m, autoQualityTrips });
+  const codes = await stageQualityTrips(db, TENANT, STAGE_SINCE);
+  return nextStage("veto", { ...quietStage, ...m, autoQualityTrips: codes.length, autoQualityTripCodes: codes });
 }
 
 test("veto + inbox_bounces trip: the inbox pauses, the stage stays veto", async () => {
@@ -745,7 +744,7 @@ test("veto + inbox_bounces trip: the inbox pauses, the stage stays veto", async 
   // Also a bounces_today and a placement trip in the same stage: delivery, all of them.
   breakerInsight(db, { scope: "all", code: "bounces_today", reason: "3 hard bounces today" }, pg("21:50"));
   breakerInsight(db, { scope: "all", code: "placement", reason: "warmup inbox placement 70% (< 80%)" }, pg("21:55"));
-  assert.equal(await stageQualityTrips(db, TENANT, STAGE_SINCE), 0);
+  assert.deepEqual(await stageQualityTrips(db, TENANT, STAGE_SINCE), []);
   assert.deepEqual(await stageAfter(db), { stage: "veto", reason: "collecting veto data" });
 });
 
@@ -755,8 +754,8 @@ test("veto + opt_out_spike trip: the stage drops to shadow", async () => {
   assert.deepEqual(trip.map((t) => t.code), ["opt_out_spike"]);
   breakerInsight(db, trip[0]!, pg("21:45"));
   breakerInsight(db, { scope: "inbox", inboxId: INBOX, code: "inbox_bounces", reason: "2 hard bounces in the last 24 sends" }, pg("21:46"));
-  assert.equal(await stageQualityTrips(db, TENANT, STAGE_SINCE), 1);
-  assert.equal((await stageAfter(db)).stage, "shadow");
+  assert.deepEqual(await stageQualityTrips(db, TENANT, STAGE_SINCE), ["opt_out_spike"]);
+  assert.deepEqual(await stageAfter(db), { stage: "shadow", reason: "a quality breaker tripped: opt_out_spike" });
 });
 
 test("veto + a factual error on an automatic pitch: the stage drops to shadow, with no breaker at all", async () => {
@@ -773,11 +772,11 @@ test("stageQualityTrips counts this tenant's breaker insights since the stage be
   breakerInsight(db, spike, "2026-10-19T19:56:59.000000+00:00"); // before the stage began
   breakerInsight(db, spike, pg("21:00"), OTHER_TENANT);
   db.tables.learning_insights!.push({ id: "x", tenant_id: TENANT, kind: "stage", evidence: { code: "opt_out_spike" }, created_at: pg("21:00") });
-  assert.equal(await stageQualityTrips(db, TENANT, STAGE_SINCE), 0);
+  assert.deepEqual(await stageQualityTrips(db, TENANT, STAGE_SINCE), []);
   breakerInsight(db, spike, pg("21:00"));
   // An insight whose code this version doesn't know counts (fails toward a person).
   db.tables.learning_insights!.push({ id: "y", tenant_id: TENANT, kind: "breaker", evidence: {}, created_at: pg("21:05") });
-  assert.equal(await stageQualityTrips(db, TENANT, STAGE_SINCE), 2);
+  assert.deepEqual(await stageQualityTrips(db, TENANT, STAGE_SINCE), ["opt_out_spike", "unknown"]);
   const unreadable = fakeDb({ learning_insights: [] }, { fail: { "learning_insights.select": "" } });
   await assert.rejects(stageQualityTrips(unreadable, TENANT, STAGE_SINCE), /breaker insights: no detail/);
 });
@@ -785,33 +784,17 @@ test("stageQualityTrips counts this tenant's breaker insights since the stage be
 test("the tick's stage step reads quality trips through stageQualityTrips, not a count of every breaker", () => {
   const s = readFileSync(new URL("../lib/autopilot/tick.ts", import.meta.url), "utf8");
   const body = s.slice(s.indexOf("async function evaluateStage"));
-  assert.match(body, /const qualityTrips = await stageQualityTrips\(db, tenantId, since\);/);
-  assert.match(body, /autoQualityTrips: s\.stage === "shadow" \? 0 : qualityTrips,/);
+  assert.match(body, /const qualityTrips = s\.stage === "shadow" \? \[\] : await stageQualityTrips\(db, tenantId, since\);/);
+  assert.match(body, /autoQualityTrips: qualityTrips\.length,\s*autoQualityTripCodes: qualityTrips,/);
   assert.ok(!body.includes('.from("learning_insights")'), "no private count of breaker insights");
+  // The veto count reads reasons, so a pull-back is not a veto (governor vetoedByPerson).
+  assert.match(body, /\.select\("id, status, autopilot_reasons"\)/);
+  assert.match(body, /const vetoed = countVetoes\(autopilotApproved, current\);/);
 });
 
 // With the autopilot off: breakers and the pull-back still run.
 
-test("enabled=false + 2 fresh bounces: the tick still runs the breakers (pause + email), then only the pull-back", () => {
-  assert.equal(safetyOnly({ enabled: false, stage: "veto" }), true);
-  const s = readFileSync(new URL("../lib/autopilot/tick.ts", import.meta.url), "utf8");
-  const run = s.slice(s.indexOf("export async function runTick"), s.indexOf("// ── Insights and alerts"));
-  const breakers = run.indexOf("report.breakers = await step(\"breakers\", () => runBreakers(db, tenantId, now), []);");
-  const offGate = run.indexOf("if (!s || safetyOnly(s)) {");
-  assert.ok(breakers > 0 && offGate > breakers, "breakers run before the off gate");
-  const offBranch = run.slice(offGate, run.indexOf("report.stage = s.stage;"));
-  assert.match(offBranch, /holdAutoApprovals\(db, tenantId, "off"\)/);
-  assert.match(offBranch, /return report;/);
-  for (const skipped of ["resumeStaleJobs", "maybeStartDiscovery", "labelDrafts", "resolveHeld", "scheduleAuto", "evaluateStage", "learnFromOutcomes"]) {
-    assert.ok(!offBranch.includes(skipped), `${skipped} must not run with the autopilot off`);
-  }
-  // Only one off gate: the old early return before the breakers is gone.
-  assert.equal(run.match(/autopilot off for this tenant/g)?.length, 1);
-  // runBreakers is what pauses and emails (unchanged): the insight + notify per applied trip.
-  const rb = s.slice(s.indexOf("async function runBreakers"), s.indexOf("// ── 2. Watchdog"));
-  assert.match(rb, /update\(\{ paused: true, paused_reason: `Autopilot breaker/);
-  assert.match(rb, /await notify\(/);
-});
+// The route → runTick path with the autopilot off runs for real in tests/autopilot-trust-split.test.ts.
 
 test("enabled=false: 2 fresh bounces still trip the inbox breaker (what the off tick now applies)", async () => {
   const db = fakeDb({ sender_inboxes: [{ ...pausedInbox(), paused: false }], audit_log: [], pitch_events: [], pitches: [] });

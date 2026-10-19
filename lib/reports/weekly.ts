@@ -12,7 +12,7 @@
  *   - Arm rates only from 20 trials up (lib/learning/report.ts); else "too early".
  */
 
-import { HELD_BY_AUTOPILOT } from "../autopilot/governor.ts";
+import { vetoedByPerson } from "../autopilot/governor.ts";
 import { isTestAddress } from "../compliance/test-addresses.ts";
 import { summarizeArms, type ArmRow } from "../learning/report.ts";
 import type { OutcomeEvent } from "../learning/reward.ts";
@@ -152,12 +152,6 @@ function closed(rows: NonNullable<WeeklyRaw["opportunities"]>, stage: "won" | "l
   return { count: hit.length, valueCad: values.length ? values.reduce((a, b) => a + b, 0) : null };
 }
 
-/** An autopilot approval a person sent back: draft or rejected, and not the autopilot's own pull-back. */
-function heldByPerson(a: { status: string; reasons?: string[] | null }): boolean {
-  if (a.status !== "draft" && a.status !== "reviewer_rejected") return false;
-  return !(a.reasons ?? []).some((r) => r.startsWith(HELD_BY_AUTOPILOT));
-}
-
 export function buildWeeklyStats(raw: WeeklyRaw): WeeklyStats {
   const now = new Date(raw.now).getTime();
   const sent = raw.sent?.filter((r) => realEmail(r.email)) ?? null;
@@ -188,10 +182,10 @@ export function buildWeeklyStats(raw: WeeklyRaw): WeeklyStats {
     researched: pair(raw.researched, (r) => r.at, now),
     drafts: pair(drafts, (d) => d.at, now),
     autoScheduled: pair(autos, (a) => a.at, now),
-    // Approved by the autopilot, then moved back to draft or rejected by a person
-    // (the governor's autoVetoed). A pull-back by the autopilot itself (stage
-    // drop or kill switch, reason HELD_BY_AUTOPILOT) is not a person's veto.
-    vetoed: autos ? thisWeek(autos, (a) => a.at, now).filter(heldByPerson).length : null,
+    // Approved by the autopilot, then sent back by a person: the same predicate
+    // as the stage's veto count (governor vetoedByPerson). A pull-back by the
+    // autopilot itself (stage drop or kill switch) is not a person's veto.
+    vetoed: autos ? thisWeek(autos, (a) => a.at, now).filter((a) => vetoedByPerson({ status: a.status, autopilot_reasons: a.reasons })).length : null,
     autoRejected: rejectedThisWeek
       ? { count: rejectedThisWeek.length, topReasons: tally(rejectedThisWeek.map((d) => reasonLabel(d.reason))).slice(0, 3) }
       : null,

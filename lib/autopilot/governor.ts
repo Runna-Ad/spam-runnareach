@@ -84,18 +84,28 @@ export const HELD_BY_PERSON = "held by a person";
 export const HELD_BY_AUTOPILOT = "held by the autopilot";
 
 /**
+ * The one test for "a person sent this autopilot approval back": it is back in
+ * draft or rejected, and NOT because the autopilot pulled it back itself
+ * (HELD_BY_AUTOPILOT: a stage drop or the kill switch). Used by countVetoes
+ * (the stage's veto rate) and by the weekly report's "Held by a person".
+ */
+export function vetoedByPerson(p: { status: string; autopilot_reasons?: readonly string[] | null }): boolean {
+  if (p.status !== "draft" && p.status !== "reviewer_rejected") return false;
+  return !(p.autopilot_reasons ?? []).some((r) => r.startsWith(HELD_BY_AUTOPILOT));
+}
+
+/**
  * Vetoes in the current stage: autopilot-approved pitches a person sent back
- * (current status draft or reviewer_rejected). Counted by the approval event,
- * not the lane: a held pitch is moved to the review lane, so a lane filter
- * would never see it.
+ * (vetoedByPerson). Counted by the approval event, not the lane: a held pitch
+ * is moved to the review lane, so a lane filter would never see it.
  */
 export function countVetoes(
   autopilotApproved: ReadonlySet<string>,
-  current: ReadonlyArray<{ id: string; status: string }>,
+  current: ReadonlyArray<{ id: string; status: string; autopilot_reasons?: readonly string[] | null }>,
 ): number {
   const seen = new Set<string>();
   for (const r of current) {
-    if (autopilotApproved.has(r.id) && (r.status === "draft" || r.status === "reviewer_rejected")) seen.add(r.id);
+    if (autopilotApproved.has(r.id) && vetoedByPerson(r)) seen.add(r.id);
   }
   return seen.size;
 }
@@ -264,12 +274,20 @@ export type StageMetrics = {
   autoBounceRate: number;
   /** QUALITY breakers (BREAKER_KIND) that tripped in this stage. Delivery trips never count. */
   autoQualityTrips: number;
+  /** Their codes, for the demotion reason (lib/autopilot/hold.ts stageQualityTrips). */
+  autoQualityTripCodes?: string[];
 };
 
 export const STAGE_RULES = {
   shadow: { minDays: 7, minDecided: 100, minUneditedRate: 0.9 },
   veto: { minDays: 14, minScheduled: 100, maxVetoRate: 0.05, maxBounceRate: 0.02 },
 } as const;
+
+/** "a quality breaker tripped: opt_out_spike" (each code once, in order of first trip). */
+export function qualityTripReason(codes: readonly string[]): string {
+  const unique = [...new Set(codes)];
+  return unique.length ? `a quality breaker tripped: ${unique.join(", ")}` : "a quality breaker tripped";
+}
 
 export function nextStage(stage: Stage, m: StageMetrics): { stage: Stage; reason: string } {
   // Demotion first: pitches going wrong drops a stage at once. Delivery
@@ -278,7 +296,7 @@ export function nextStage(stage: Stage, m: StageMetrics): { stage: Stage; reason
     const down: Stage = stage === "auto" ? "veto" : "shadow";
     return {
       stage: down,
-      reason: m.autoFactualErrors > 0 ? "an automatic pitch had a factual or recipient error" : "opt-outs and hard no's spiked (a quality breaker tripped)",
+      reason: m.autoFactualErrors > 0 ? "an automatic pitch had a factual or recipient error" : qualityTripReason(m.autoQualityTripCodes ?? []),
     };
   }
 
