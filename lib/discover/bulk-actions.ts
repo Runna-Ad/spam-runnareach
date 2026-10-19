@@ -339,11 +339,14 @@ export async function bulkScoreProspects(
     .eq("tenant_id", user.tenantId)
     .returns<StatusRow[]>();
 
+  // One list for the check and the WHERE: every entry must be a
+  // prospect_status value, or Postgres rejects the whole UPDATE.
+  const SUPPRESSIBLE = ["raw", "researched"] as const;
   const toSuppress: string[] = [];
   for (const row of statusRows ?? []) {
     const score = scoreById.get(row.id);
     if (score === undefined) continue;
-    if (score < 40 && (row.status === "raw" || row.status === "researched")) {
+    if (score < 40 && (SUPPRESSIBLE as readonly string[]).includes(row.status)) {
       toSuppress.push(row.id);
     }
   }
@@ -363,7 +366,7 @@ export async function bulkScoreProspects(
       })
       .in("id", toSuppress)
       .eq("tenant_id", user.tenantId)
-      .in("status", ["raw", "researched"])
+      .in("status", [...SUPPRESSIBLE])
       .not("status", "in", protectedStatusFilter("suppressed", "automation")!)
       .select("id")
       .returns<{ id: string }[]>();

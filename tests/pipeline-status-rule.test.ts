@@ -277,7 +277,7 @@ test("source: bulkScoreProspects and deep research guard their suppress write; n
   assert.match(deep, /status: "suppressed"[\s\S]*?\.not\("status", "in", protectedStatusFilter\("suppressed", "automation"\)!\)/);
 });
 
-test("bulkScore: a parked prospect scoring ≥ 40 stays parked; one booked after the read is not suppressed", async () => {
+test("bulkScore: a parked prospect scoring ≥ 40 stays parked; one booked or pitched after the read is not suppressed", async () => {
   const id = (n: number) => `00000000-0000-4000-8000-00000000000${n}`;
   const rows: Row[] = [
     { id: id(1), tenant_id: "t1", status: "suppressed", suppressed_reason: "Auto: score 30 below 50" },
@@ -285,15 +285,18 @@ test("bulkScore: a parked prospect scoring ≥ 40 stays parked; one booked after
     { id: id(3), tenant_id: "t1", status: "raw", suppressed_reason: null },
     { id: id(4), tenant_id: "t1", status: "raw", suppressed_reason: null },
     { id: id(5), tenant_id: "t1", status: "booked", suppressed_reason: null },
+    { id: id(6), tenant_id: "t1", status: "raw", suppressed_reason: null },
   ];
-  const score: Record<string, number> = { [id(1)]: 55, [id(2)]: 65, [id(3)]: 20, [id(4)]: 20, [id(5)]: 20 };
+  const score: Record<string, number> = { [id(1)]: 55, [id(2)]: 65, [id(3)]: 20, [id(4)]: 20, [id(5)]: 20, [id(6)]: 20 };
   const audits: unknown[] = [];
   const db: Db = {
     tables: { prospects: rows },
     prospectReads: 0,
     statusWrites: [],
-    // id 3 is booked after the status read (a calendar booking mid-request).
-    afterFirstProspectRead: () => { rows[2]!.status = "booked"; },
+    // After the status read: id 3 is booked (a calendar booking mid-request) and
+    // id 6 is pitched by a pipeline run. The rule's guard allows suppressed over
+    // pitched; only the early-funnel WHERE refuses it.
+    afterFirstProspectRead: () => { rows[2]!.status = "booked"; rows[5]!.status = "pitched"; },
   };
   const supabase = { from: (t: string) => new Query(db, t) };
   (globalThis as Record<string, unknown>).__pipelineStubs = {
@@ -306,7 +309,7 @@ test("bulkScore: a parked prospect scoring ≥ 40 stays parked; one booked after
   const { bulkScoreProspects } = await import(BULK_URL.href);
   const res = await bulkScoreProspects({ prospect_ids: rows.map((r) => r.id) });
   assert.equal(res.ok, true);
-  assert.deepEqual(rows.map((r) => r.status), ["suppressed", "no_match", "booked", "suppressed", "booked"]);
+  assert.deepEqual(rows.map((r) => r.status), ["suppressed", "no_match", "booked", "suppressed", "booked", "pitched"]);
   assert.equal(rows[0]!.suppressed_reason, "Auto: score 30 below 50");
   // Only the row that actually moved is audited.
   assert.equal(audits.length, 1);
