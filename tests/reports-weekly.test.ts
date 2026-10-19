@@ -408,3 +408,17 @@ test("the route sends the designed HTML alongside the unchanged text part", asyn
   assert.equal(sent[0]?.body, expected.body, "the text part is formatWeeklyReport, unchanged");
   assert.equal(sent[0]?.html, formatWeeklyReportHtml(buildWeeklyStats(fixture()), "https://app.test"));
 });
+
+test("vetoes: a pull-back by the autopilot (stage drop, kill switch) is not a person's veto", () => {
+  const raw = fixture();
+  raw.autoScheduled = [
+    ...(raw.autoScheduled ?? []),
+    { at: d(1), status: "draft", email: REAL(20), reasons: ["held by the autopilot: stage dropped to shadow"] },
+    { at: d(1), status: "draft", email: REAL(21), reasons: ["held by the autopilot: stage dropped to off"] },
+    { at: d(1), status: "draft", email: REAL(22), reasons: ["held by a person from the digest link"] },
+    { at: d(1), status: "reviewer_rejected", email: REAL(23), reasons: null },
+  ];
+  const s = buildWeeklyStats(raw);
+  assert.equal(s.vetoed, 3, "the fixture's one veto + the digest hold + the rejection; both pull-backs excluded");
+  assert.match(formatWeeklyReport(s, "https://app.test").body, /Held by a person \(vetoes\): 3/);
+});
