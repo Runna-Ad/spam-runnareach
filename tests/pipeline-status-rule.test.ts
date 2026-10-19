@@ -1,6 +1,6 @@
 /**
- * The pipeline never reactivates a parked prospect (Pedro 2026-10-18: the
- * status rule wins). Drives the real processSingleProspectWith and
+ * The pipeline and other automated writers never un-park a prospect (Pedro
+ * 2026-10-18: the status rule wins; a person's direct status change still can). Drives the real processSingleProspectWith and
  * bulkScoreProspects against a fake Supabase client: every dependency they
  * import is stubbed by a loader hook (they use "@/" aliases and next/cache,
  * which node cannot load here), except lib/prospects/status.ts (the real rule)

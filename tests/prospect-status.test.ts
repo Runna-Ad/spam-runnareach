@@ -145,13 +145,14 @@ test("intent-actions: wants_meeting leaves won/lost alone, bounce leaves booked/
   assert.equal(protectedStatusFilter("lost", "person"), null);
 });
 
-test("I5: a parked prospect (suppressed / no_match) is never moved back to a sendable status", () => {
+test("I5: automated writers never un-park a prospect (suppressed / no_match → sendable)", () => {
   // The pipeline, bulk re-score and deep research enforce this through the guard
-  // in each UPDATE's WHERE: tests/pipeline-status-rule.test.ts drives them.
+  // in each UPDATE's WHERE: tests/pipeline-status-rule.test.ts drives them. A
+  // person's direct status change (bulkTransitionStatus, transitionStatus) can
+  // still un-suppress (Pedro 2026-10-18).
   for (const parked of ["suppressed", "no_match"]) {
     for (const next of ["researched", "pitched", "b_list", "raw", "scored"]) {
       assert.equal(mayOverwriteStatus(parked, next, "automation"), false, `${parked} → ${next}`);
-      assert.equal(mayOverwriteStatus(parked, next, "person"), false, `${parked} → ${next}`);
     }
   }
 });
