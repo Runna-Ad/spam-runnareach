@@ -3,7 +3,7 @@
 // be imported as a normal server-side helper without becoming a public action.
 
 import type { createClient } from "@/lib/supabase/server";
-import { anymailFindDecisionMaker } from "@/lib/research/anymail-finder";
+import { ANYMAIL_VERIFIED_SOURCE, anymailFindDecisionMaker } from "@/lib/research/anymail-finder";
 import { hunterDomainSearch } from "@/lib/research/hunter";
 import { snapVerifyEnrich, screenEmailsAgainstSmtp } from "@/lib/research/snap-contact";
 import { isRoleBasedEmail, hasUsableEmail } from "@/lib/research/email-utils";
@@ -70,7 +70,7 @@ export async function enrichContactsForProspect(
     catchAllGuess = snapResult.catchAllGuess ?? null;
   }
 
-  // ── Tier 2: Anymail Finder (verified) ─────────────────────────────────────
+  // ── Tier 2: Anymail Finder (only addresses Anymail marks valid) ───────────
   const anymailResult = await anymailFindDecisionMaker(domain);
   if (anymailResult.ok && hasUsableEmail(anymailResult.contact.email)) {
     const c = anymailResult.contact;
@@ -85,7 +85,7 @@ export async function enrichContactsForProspect(
       email_is_role_based: roleBased,
       // A role inbox (info@, sales@) ranks below any personal address.
       priority_rank: roleBased ? 5 : 1,
-      selected_by: "anymail",
+      selected_by: ANYMAIL_VERIFIED_SOURCE,
       selected_at: new Date().toISOString(),
       source_url: null,
     });

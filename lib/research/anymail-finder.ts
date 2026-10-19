@@ -5,6 +5,13 @@
  * (owner/CEO/buyer/marketing) — verified at 97%+ deliverability.
  * Only charges credits when a valid email is found.
  *
+ * We keep ONLY addresses Anymail itself marks valid (`email_status: "valid"`
+ * with `valid_email` set). Its other answers ("risky" best guesses, a bare
+ * `email` with `valid_email: null`) are reported as "no valid email found", so
+ * the enrichment waterfall moves on. Callers store a kept address as
+ * selected_by = ANYMAIL_VERIFIED_SOURCE, which may send without a person
+ * (lib/research/verify-recipient.ts).
+ *
  * Docs: https://anymailfinder.com/email-finder-api/docs
  */
 
@@ -16,6 +23,9 @@ const AMF_BASE = "https://api.anymailfinder.com/v5.1";
 // For MX SMB retail/e-commerce the owner is usually CEO or buyer.
 const DECISION_MAKER_CATEGORIES = ["ceo", "buyer", "operations", "marketing"] as const;
 
+/** prospect_contacts.selected_by for an address Anymail verified. Legacy rows say "anymail" (status unknown). */
+export const ANYMAIL_VERIFIED_SOURCE = "anymail_verified";
+
 export type AnymailContact = {
   email: string;
   full_name: string | null;
@@ -23,11 +33,36 @@ export type AnymailContact = {
   linkedin_url: string | null;
   category: string;
   credits_charged: number;
+  /** Anymail's email_status for this address; always "valid" for a returned contact. */
+  email_status: "valid";
 };
 
 export type AnymailResult =
   | { ok: true; contact: AnymailContact }
-  | { ok: false; error: string; status?: number };
+  | { ok: false; error: string; status?: number; emailStatus?: string | null };
+
+type AnymailResponse = {
+  email?: string | null;
+  valid_email?: string | null;
+  email_status?: string | null;
+  person_full_name?: string | null;
+  person_job_title?: string | null;
+  person_linkedin_url?: string | null;
+  decision_maker_category?: string;
+  credits_charged?: number;
+};
+
+/**
+ * The address Anymail verified, or null. Pure (tested in
+ * tests/anymail-finder.test.ts): a response counts only when email_status is
+ * "valid" AND valid_email is a non-empty string. `email` alone is Anymail's
+ * best guess and is never used.
+ */
+export function verifiedEmailOf(d: AnymailResponse): string | null {
+  if ((d.email_status ?? "").trim().toLowerCase() !== "valid") return null;
+  const email = typeof d.valid_email === "string" ? d.valid_email.trim().toLowerCase() : "";
+  return email || null;
+}
 
 /**
  * Find a verified decision-maker email at a given domain.
@@ -91,31 +126,22 @@ export async function anymailFindDecisionMaker(domain: string): Promise<AnymailR
     return { ok: false, error: "Anymail Finder returned non-JSON response" };
   }
 
-  const d = json as {
-    email?: string | null;
-    valid_email?: string | null;
-    email_status?: string;
-    person_full_name?: string | null;
-    person_job_title?: string | null;
-    person_linkedin_url?: string | null;
-    decision_maker_category?: string;
-    credits_charged?: number;
-  };
-
-  const email = d.valid_email ?? d.email ?? null;
-  if (!email || d.email_status === "not_found" || d.email_status === "blacklisted") {
-    return { ok: false, error: "No valid email found" };
+  const d = (json ?? {}) as AnymailResponse;
+  const email = verifiedEmailOf(d);
+  if (!email) {
+    return { ok: false, error: "No valid email found", emailStatus: d.email_status ?? null };
   }
 
   return {
     ok: true,
     contact: {
-      email: email.toLowerCase(),
+      email,
       full_name: d.person_full_name ?? null,
       job_title: d.person_job_title ?? null,
       linkedin_url: d.person_linkedin_url ?? null,
       category: d.decision_maker_category ?? "unknown",
       credits_charged: d.credits_charged ?? 0,
+      email_status: "valid",
     },
   };
 }
