@@ -17,19 +17,22 @@ import { readFileSync } from "node:fs";
 import test from "node:test";
 import {
   CLAIM_RESERVE_MS,
-  DOUBTFUL_ADDRESS_HOLD,
   SEND_ROUTE_MAX_MS,
   bumpSendsTodayPayload,
   effectiveSendsToday,
   hasTimeToClaim,
-  holdDoubtfulAutoApproval,
-  latestApprovalByAutopilot,
   releaseSendSlot,
   reserveSendSlot,
-  sendTimeVerdictAction,
   utcToday,
   type SlotClient,
 } from "../lib/pitches/daily-cap.ts";
+import {
+  APPROVAL_EVENT_COLUMNS,
+  DOUBTFUL_ADDRESS_HOLD,
+  holdDoubtfulAutoApproval,
+  latestApproval,
+  sendTimeVerdictAction,
+} from "../lib/pitches/send-time-hold.ts";
 import { heldAction, HELD_BY_AUTOPILOT } from "../lib/autopilot/governor.ts";
 import { BOUNCE_BREAKER, inboxBounceBlock } from "../lib/autopilot/bounce-breaker.ts";
 
@@ -48,33 +51,39 @@ type InboxRow = { sends_today: number; last_reset_date: string; daily_cap: numbe
  * atomic=false: the old read → yield → write, so overlapping callers race.
  * The read snapshots BEFORE it yields, or two runs never overlap.
  */
-function slotDb(row: InboxRow, opts: { atomic: boolean; failReserve?: string; today?: string }): SlotClient & { calls: string[] } {
-  const today = opts.today ?? utcToday();
+function slotDb(
+  row: InboxRow,
+  opts: { atomic: boolean; failReserve?: string; today?: string },
+): SlotClient & { calls: string[]; setToday: (d: string) => void } {
+  let today = opts.today ?? utcToday();
   const calls: string[] = [];
   return {
     calls,
-    async rpc(fn: string) {
+    setToday: (d: string) => {
+      today = d;
+    },
+    async rpc(fn: string, args: Record<string, unknown>) {
       calls.push(fn);
       if (fn === "spam_reserve_send_slot") {
         if (opts.failReserve !== undefined) return { data: null, error: { message: opts.failReserve } };
         if (opts.atomic) {
           const eff = row.last_reset_date === today ? row.sends_today : 0;
-          if (eff >= row.daily_cap) return { data: false, error: null };
+          if (eff >= row.daily_cap) return { data: null, error: null };
           row.sends_today = eff + 1;
           row.last_reset_date = today;
           await yieldNow();
-          return { data: true, error: null };
+          return { data: today, error: null };
         }
         const snap = { ...row };
         await yieldNow();
         const eff = snap.last_reset_date === today ? snap.sends_today : 0;
-        if (eff >= snap.daily_cap) return { data: false, error: null };
+        if (eff >= snap.daily_cap) return { data: null, error: null };
         row.sends_today = eff + 1;
         row.last_reset_date = today;
-        return { data: true, error: null };
+        return { data: today, error: null };
       }
       if (fn === "spam_release_send_slot") {
-        const hit = row.sends_today > 0 && row.last_reset_date === today;
+        const hit = row.sends_today > 0 && row.last_reset_date === args.p_day;
         if (hit) row.sends_today -= 1;
         return { data: hit, error: null };
       }
@@ -97,7 +106,7 @@ async function sendRun(db: SlotClient, pitches: string[], gmail: (id: string) =>
     }
     await yieldNow(); // token + recheck
     if (!gmail(id)) {
-      await releaseSendSlot(db, INBOX);
+      await releaseSendSlot(db, INBOX, slot.day);
       continue;
     }
     sent.push(id);
@@ -132,7 +141,7 @@ test("the overlap test sees the race: the old read-then-write under-counts and o
 test("yesterday's full count resets: the first send today takes slot 1", async () => {
   const row: InboxRow = { sends_today: 6, last_reset_date: "2026-10-18", daily_cap: 6 };
   const db = slotDb(row, { atomic: true, today: "2026-10-19" });
-  assert.deepEqual(await reserveSendSlot(db, INBOX), { ok: true });
+  assert.deepEqual(await reserveSendSlot(db, INBOX), { ok: true, day: "2026-10-19" });
   assert.deepEqual(row, { sends_today: 1, last_reset_date: "2026-10-19", daily_cap: 6 });
 });
 
@@ -145,9 +154,11 @@ test("a full inbox refuses a slot with capReached; an RPC error fails closed, no
     assert.equal(r.ok, false, `error "${message}" must not grant a slot`);
     assert.equal(r.ok ? null : r.capReached, false);
   }
-  // data null / anything but true is no slot.
-  const odd: SlotClient = { rpc: async () => ({ data: null, error: null }) };
-  assert.equal((await reserveSendSlot(odd, INBOX)).ok, false);
+  // null, or anything that isn't a date, is no slot.
+  for (const data of [null, true, false, "", "soon"]) {
+    const odd: SlotClient = { rpc: async () => ({ data, error: null }) };
+    assert.equal((await reserveSendSlot(odd, INBOX)).ok, false, JSON.stringify(data));
+  }
 });
 
 // ── 2. A failed Gmail send releases its slot; an accepted one keeps it ───────
@@ -168,13 +179,38 @@ test("a failed send at the cap frees the slot for the next pitch", async () => {
   assert.equal(row.sends_today, 6);
 });
 
-test("release never goes below 0 and never touches a stale day's count", async () => {
+test("release never goes below 0 and only touches the reserve's day", async () => {
   const zero: InboxRow = { sends_today: 0, last_reset_date: utcToday(), daily_cap: 6 };
-  await releaseSendSlot(slotDb(zero, { atomic: true }), INBOX);
+  await releaseSendSlot(slotDb(zero, { atomic: true }), INBOX, utcToday());
   assert.equal(zero.sends_today, 0);
   const stale: InboxRow = { sends_today: 3, last_reset_date: "2026-10-18", daily_cap: 6 };
-  await releaseSendSlot(slotDb(stale, { atomic: true, today: "2026-10-19" }), INBOX);
+  await releaseSendSlot(slotDb(stale, { atomic: true, today: "2026-10-19" }), INBOX, "2026-10-19");
   assert.equal(stale.sends_today, 3);
+});
+
+test("releaseSendSlot hands the RPC exactly the reserve's day, whatever the clock says", async () => {
+  const seen: Array<Record<string, unknown>> = [];
+  const db: SlotClient = {
+    rpc: async (_fn, args) => {
+      seen.push(args);
+      return { data: true, error: null };
+    },
+  };
+  await releaseSendSlot(db, INBOX, "2001-02-03");
+  assert.deepEqual(seen, [{ p_inbox: INBOX, p_day: "2001-02-03" }]);
+});
+
+test("a release after UTC midnight never takes a slot from the new day", async () => {
+  const row: InboxRow = { sends_today: 4, last_reset_date: "2026-10-19", daily_cap: 6 };
+  const db = slotDb(row, { atomic: true, today: "2026-10-19" });
+  const late = await reserveSendSlot(db, INBOX); // 23:59:58, slot 5 of the 19th
+  assert.deepEqual(late, { ok: true, day: "2026-10-19" });
+  db.setToday("2026-10-20");
+  const early = await reserveSendSlot(db, INBOX); // 00:00:01, another run: slot 1 of the 20th
+  assert.deepEqual(early, { ok: true, day: "2026-10-20" });
+  // the 23:59 send's Gmail call fails after midnight: its release names the 19th
+  await releaseSendSlot(db, INBOX, late.ok ? late.day : "");
+  assert.deepEqual(row, { sends_today: 1, last_reset_date: "2026-10-20", daily_cap: 6 }, "the 20th keeps its one send");
 });
 
 // ── Call sites, from source ──────────────────────────────────────────────────
@@ -227,9 +263,29 @@ for (const [name, p] of Object.entries(PATHS)) {
   });
 }
 
+test("nudge: reserves a slot right before Gmail, gives it back on a refusal, never bumps the counter itself", () => {
+  const s = stripComments(src("app/api/replies/nudge/route.ts"));
+  assert.ok(!/from\("sender_inboxes"\)\s*\.update\(/.test(s), "no direct sender_inboxes update");
+  assert.ok(!s.includes("bumpSendsTodayPayload"), "no client-side bump");
+  const thread = s.indexOf("await threadBlocksSend(");
+  const reserve = s.indexOf("await reserveSendSlot(slots, inbox.id)");
+  const gmail = s.indexOf("await sendGmailMessage(");
+  assert.ok(thread > 0 && reserve > thread && gmail > reserve, `thread ${thread} < reserve ${reserve} < Gmail ${gmail}`);
+  const noSlot = blockAt(s, s.indexOf("if (!slot.ok) {", reserve));
+  assert.match(noSlot, /continue;/, "no slot, no send");
+  const fail = blockAt(s, s.indexOf("if (!sendResult.ok) {", gmail));
+  assert.match(fail, /await releaseSendSlot\(slots, inbox\.id, slot\.day\)/);
+  const afterFail = s.indexOf("if (!sendResult.ok) {", gmail) + fail.length;
+  assert.ok(!s.slice(afterFail).includes("releaseSendSlot("), "an accepted nudge keeps its slot");
+});
+
+test("daily-cap.ts imports nothing (pure)", () => {
+  assert.ok(!/^\s*import\s/m.test(src("lib/pitches/daily-cap.ts")));
+});
+
 test("the shape check catches a release that forgets the slot", () => {
   const s = src(PATHS.sendQueue.file);
-  const broken = s.replace(/await releaseSendSlot\(slots, inboxId\);\s*(\n\s*await releaseClaim\(releaser, \{ pitchId: pitch\.id, \.\.\.queueReleaseFor)/, "$1");
+  const broken = s.replace(/await releaseSendSlot\(slots, inboxId, slot\.day\);\s*(\n\s*await releaseClaim\(releaser, \{ pitchId: pitch\.id, \.\.\.queueReleaseFor)/, "$1");
   assert.notEqual(broken, s);
   const strip = stripComments(broken);
   const i = strip.indexOf("...queueReleaseFor(");
@@ -268,26 +324,48 @@ test("send-queue: the budget is checked at the top of the loop and right before 
 
 // ── 4. Doubtful address after an automatic approval ──────────────────────────
 
-test("sendTimeVerdictAction: drop never sends; review sends for a person, goes back for the autopilot", () => {
-  assert.equal(sendTimeVerdictAction("drop", false), "drop");
-  assert.equal(sendTimeVerdictAction("drop", true), "drop");
-  assert.equal(sendTimeVerdictAction("send", true), "send");
-  assert.equal(sendTimeVerdictAction("review", false), "send", "a person's approval is their call");
-  assert.equal(sendTimeVerdictAction("review", true), "hold");
-  assert.equal(sendTimeVerdictAction("review", null), "skip", "unreadable approval: not sent, stays queued");
+test("sendTimeVerdictAction: drop never sends; review sends for a person, goes back otherwise", () => {
+  for (const a of ["autopilot", "person", "none", "unreadable", null] as const) {
+    assert.equal(sendTimeVerdictAction("drop", a), "drop", `drop/${a}`);
+  }
+  assert.equal(sendTimeVerdictAction("send", null), "send");
+  assert.equal(sendTimeVerdictAction("review", "person"), "send", "a person's approval is their call");
+  assert.equal(sendTimeVerdictAction("review", "autopilot"), "hold");
+  assert.equal(sendTimeVerdictAction("review", "none"), "hold", "no approval on record fails closed: back to a person");
+  assert.equal(sendTimeVerdictAction("review", "unreadable"), "skip", "unreadable approval: not sent, stays queued");
+  assert.equal(sendTimeVerdictAction("review", null), "skip");
 });
 
 type Row = Record<string, unknown>;
 
-/** Minimal chainable postgrest fake: eq/in/not/gt/gte/order/limit, select(count/head), update…select. */
+/** Columns of a table as migration 0001 creates it. */
+function columnsOf(table: string): string[] {
+  const sql = src("supabase/migrations/0001_initial_schema.sql");
+  const m = sql.match(new RegExp(`create table ${table} \\(([\\s\\S]*?)\\n\\);`));
+  assert.ok(m, `create table ${table} not found in 0001`);
+  return m[1]!
+    .split("\n")
+    .map((l) => l.trim().match(/^([a-z_][a-z0-9_]*)\s/)?.[1])
+    .filter((c): c is string => !!c && !["primary", "unique", "constraint", "foreign", "check"].includes(c));
+}
+
+/** Tables whose columns the fake checks, like PostgREST does (42703 on an unknown column). */
+const SCHEMA: Record<string, string[]> = { pitch_events: columnsOf("pitch_events") };
+
+/** Minimal chainable postgrest fake: eq/in/not/gt/gte/order/limit, select(count/head), update…select, insert. */
 function fakeDb(tables: Record<string, Row[]>, opts: { fail?: Record<string, string> } = {}) {
   return {
     tables,
     from(table: string) {
+      const unknown: string[] = [];
+      const use = (col: string) => {
+        if (SCHEMA[table] && !SCHEMA[table]!.includes(col)) unknown.push(col);
+      };
       const rows = (tables[table] ??= []);
       const filters: Array<(r: Row) => boolean> = [];
-      let op: "select" | "update" = "select";
+      let op: "select" | "update" | "insert" = "select";
       let patch: Row = {};
+      let inserted: Row[] = [];
       let count = false;
       let head = false;
       let returning = false;
@@ -295,8 +373,13 @@ function fakeDb(tables: Record<string, Row[]>, opts: { fail?: Record<string, str
       let lim: number | null = null;
       const val = (r: Row, k: string) => r[k] ?? null;
       const run = () => {
+        if (unknown.length) return { data: null, count: null, error: { message: `column ${table}.${unknown[0]} does not exist`, code: "42703" } };
         const f = opts.fail?.[`${table}.${op}`];
         if (f !== undefined) return { data: null, count: null, error: { message: f } };
+        if (op === "insert") {
+          rows.push(...inserted);
+          return { data: null, count: null, error: null };
+        }
         let hit = rows.filter((r) => filters.every((fn) => fn(r)));
         if (op === "update") {
           for (const r of hit) Object.assign(r, patch);
@@ -310,8 +393,9 @@ function fakeDb(tables: Record<string, Row[]>, opts: { fail?: Record<string, str
         return { data: head ? null : hit.map((r) => ({ ...r })), count: count ? hit.length : null, error: null };
       };
       const b = {
-        select(_c?: string, o?: { count?: string; head?: boolean }) {
+        select(c?: string, o?: { count?: string; head?: boolean }) {
           if (op === "update") returning = true;
+          else for (const col of (c ?? "").split(",").map((x) => x.trim()).filter((x) => x && x !== "*")) use(col);
           if (o?.count) count = true;
           if (o?.head) head = true;
           return b;
@@ -321,11 +405,18 @@ function fakeDb(tables: Record<string, Row[]>, opts: { fail?: Record<string, str
           patch = v;
           return b;
         },
+        insert(v: Row | Row[]) {
+          op = "insert";
+          inserted = Array.isArray(v) ? v : [v];
+          return b;
+        },
         eq(k: string, v: unknown) {
+          use(k);
           filters.push((r) => val(r, k) === v);
           return b;
         },
         in(k: string, vs: unknown[]) {
+          use(k);
           filters.push((r) => vs.includes(val(r, k)));
           return b;
         },
@@ -334,14 +425,17 @@ function fakeDb(tables: Record<string, Row[]>, opts: { fail?: Record<string, str
           return b;
         },
         gt(k: string, v: string) {
+          use(k);
           filters.push((r) => Date.parse(String(val(r, k))) > Date.parse(v));
           return b;
         },
         gte(k: string, v: string) {
+          use(k);
           filters.push((r) => Date.parse(String(val(r, k))) >= Date.parse(v));
           return b;
         },
         order(col: string, o?: { ascending?: boolean }) {
+          use(col);
           order = { col, asc: o?.ascending !== false };
           return b;
         },
@@ -362,43 +456,68 @@ function fakeDb(tables: Record<string, Row[]>, opts: { fail?: Record<string, str
   };
 }
 
-const approval = (pitch: string, at: string, autopilot: boolean | undefined) => ({
+const approval = (pitch: string, at: string, autopilot: boolean | string | undefined) => ({
   id: `ev-${pitch}-${at}`,
   tenant_id: TENANT,
   pitch_id: pitch,
   event_type: "approved",
-  created_at: at,
+  event_at: at,
   payload: autopilot === undefined ? { by: "u1", bulk: true } : { by: "u1", autopilot },
 });
 
-test("latestApprovalByAutopilot reads the LATEST approval event; unreadable is null", async () => {
+test("every column latestApproval selects, filters or orders by exists on pitch_events in 0001", () => {
+  const cols = columnsOf("pitch_events");
+  assert.ok(cols.includes("event_at") && !cols.includes("created_at"), JSON.stringify(cols));
+  for (const c of APPROVAL_EVENT_COLUMNS) assert.ok(cols.includes(c), `pitch_events.${c} is not in 0001`);
+  // And the helper uses no column outside that list.
+  const s = stripComments(src("lib/pitches/send-time-hold.ts"));
+  const body = blockAt(s, s.indexOf("export async function latestApproval("));
+  const used = [...body.matchAll(/\.(?:select|eq|order|in|gt|gte|lt|lte|is|not)\("([^"]+)"/g)].flatMap((m) => m[1]!.split(",").map((x) => x.trim()));
+  assert.ok(used.length >= 5, used.join(","));
+  for (const c of used) assert.ok((APPROVAL_EVENT_COLUMNS as readonly string[]).includes(c), `latestApproval uses ${c}, not in APPROVAL_EVENT_COLUMNS`);
+});
+
+test("the fake rejects an unknown pitch_events column the way PostgREST does", async () => {
+  const db = fakeDb({ pitch_events: [] });
+  const r = await db.from("pitch_events").select("payload, created_at").eq("pitch_id", "x");
+  assert.match(r.error?.message ?? "", /created_at does not exist/);
+});
+
+test("latestApproval reads the LATEST approval event; none and unreadable are told apart", async () => {
   const db = fakeDb({
     pitch_events: [
       approval("p-auto", "2026-10-19T10:00:00Z", true),
+      approval("p-auto-str", "2026-10-19T10:00:00Z", "true"),
       approval("p-person", "2026-10-19T09:00:00Z", false),
       approval("p-bulk", "2026-10-19T09:00:00Z", undefined),
       // autopilot approved, a person held it, then a person re-approved: theirs counts
       approval("p-reapproved", "2026-10-18T10:00:00Z", true),
       approval("p-reapproved", "2026-10-19T11:00:00Z", false),
+      // and the other way round: the autopilot's later approval counts
+      approval("p-auto-later", "2026-10-18T10:00:00Z", false),
+      approval("p-auto-later", "2026-10-19T11:00:00Z", true),
       { ...approval("p-other-type", "2026-10-19T12:00:00Z", true), event_type: "sent" },
     ],
   });
-  assert.equal(await latestApprovalByAutopilot(db, TENANT, "p-auto"), true);
-  assert.equal(await latestApprovalByAutopilot(db, TENANT, "p-person"), false);
-  assert.equal(await latestApprovalByAutopilot(db, TENANT, "p-bulk"), false);
-  assert.equal(await latestApprovalByAutopilot(db, TENANT, "p-reapproved"), false);
-  assert.equal(await latestApprovalByAutopilot(db, TENANT, "p-other-type"), false);
-  assert.equal(await latestApprovalByAutopilot(db, TENANT, "p-none"), false);
+  assert.equal(await latestApproval(db, TENANT, "p-auto"), "autopilot");
+  assert.equal(await latestApproval(db, TENANT, "p-auto-str"), "autopilot", 'payload->>autopilot = "true" counts');
+  assert.equal(await latestApproval(db, TENANT, "p-person"), "person");
+  assert.equal(await latestApproval(db, TENANT, "p-bulk"), "person");
+  assert.equal(await latestApproval(db, TENANT, "p-reapproved"), "person");
+  assert.equal(await latestApproval(db, TENANT, "p-auto-later"), "autopilot");
+  assert.equal(await latestApproval(db, TENANT, "p-other-type"), "none");
+  assert.equal(await latestApproval(db, TENANT, "p-none"), "none");
   const broken = fakeDb({ pitch_events: [] }, { fail: { "pitch_events.select": "" } });
-  assert.equal(await latestApprovalByAutopilot(broken, TENANT, "p-auto"), null, 'empty-message error still reads as "couldn\'t read"');
+  assert.equal(await latestApproval(broken, TENANT, "p-auto"), "unreadable", "an empty-message error still reads as unreadable");
 });
 
-test("an autopilot approval with a review verdict goes back to draft in the review lane, and heldAction leaves it alone", async () => {
+test("an autopilot approval with a review verdict goes back to draft in the review lane, audited, and heldAction leaves it alone", async () => {
   const db = fakeDb({
     pitch_events: [approval("p1", "2026-10-19T10:00:00Z", true)],
     pitches: [{ id: "p1", tenant_id: TENANT, status: "approved", scheduled_send_at: "2026-10-19T15:00:00Z", autopilot_lane: "auto", autopilot_reasons: null }],
+    audit_log: [],
   });
-  const action = sendTimeVerdictAction("review", await latestApprovalByAutopilot(db, TENANT, "p1"));
+  const action = sendTimeVerdictAction("review", await latestApproval(db, TENANT, "p1"));
   assert.equal(action, "hold");
   assert.equal(await holdDoubtfulAutoApproval(db, { tenantId: TENANT, pitchId: "p1", why: "SPAM Verify review: catch-all domain" }), true);
   const row = db.tables.pitches![0]!;
@@ -408,10 +527,19 @@ test("an autopilot approval with a review verdict goes back to draft in the revi
   const reasons = row.autopilot_reasons as string[];
   assert.ok(reasons[0]!.startsWith(HELD_BY_AUTOPILOT), reasons[0]);
   assert.ok(reasons[0]!.startsWith(DOUBTFUL_ADDRESS_HOLD));
+  assert.deepEqual(
+    db.tables.audit_log!.map((a) => [a.action, a.entity_id, (a.metadata as { source: string }).source]),
+    [["pitch.held", "p1", "send_time_review"]],
+  );
   // The tick's §4 resolveHeld must not rewrite or drop it: a person decides.
   for (const isRewrite of [false, true]) {
     assert.equal(heldAction({ lane: "review", reasons, isRewrite, editedByPerson: false }, new Set()).action, "leave");
   }
+});
+
+test("no approval event on record + review verdict → back to a person (fails closed)", async () => {
+  const db = fakeDb({ pitch_events: [], pitches: [{ id: "p4", tenant_id: TENANT, status: "approved" }], audit_log: [] });
+  assert.equal(sendTimeVerdictAction("review", await latestApproval(db, TENANT, "p4")), "hold");
 });
 
 test("a person approval with a review verdict sends (negative set)", async () => {
@@ -419,22 +547,23 @@ test("a person approval with a review verdict sends (negative set)", async () =>
     pitch_events: [approval("p2", "2026-10-19T10:00:00Z", false)],
     pitches: [{ id: "p2", tenant_id: TENANT, status: "approved" }],
   });
-  assert.equal(sendTimeVerdictAction("review", await latestApprovalByAutopilot(db, TENANT, "p2")), "send");
+  assert.equal(sendTimeVerdictAction("review", await latestApproval(db, TENANT, "p2")), "send");
   assert.equal(db.tables.pitches![0]!.status, "approved");
 });
 
-test("the hold never flips a pitch that is no longer approved (claimed or sent meanwhile)", async () => {
+test("the hold never flips a pitch that is no longer approved, and writes no audit row then", async () => {
   for (const status of ["sending", "sent", "draft", "auto_rejected"]) {
-    const db = fakeDb({ pitches: [{ id: "p3", tenant_id: TENANT, status }] });
+    const db = fakeDb({ pitches: [{ id: "p3", tenant_id: TENANT, status }], audit_log: [] });
     assert.equal(await holdDoubtfulAutoApproval(db, { tenantId: TENANT, pitchId: "p3", why: "x" }), false, status);
     assert.equal(db.tables.pitches![0]!.status, status);
+    assert.equal(db.tables.audit_log!.length, 0, status);
   }
 });
 
 test("send-queue: the verdict goes through sendTimeVerdictAction before the claim, hold and skip never send", () => {
   const s = stripComments(src(PATHS.sendQueue.file));
   const claim = s.indexOf('update({ status: "sending" })');
-  const decide = s.indexOf("sendTimeVerdictAction(verify.verdict, byAutopilot)");
+  const decide = s.indexOf("sendTimeVerdictAction(verify.verdict, approval)");
   assert.ok(decide > 0 && decide < claim);
   assert.ok(!/verify\.verdict === "drop"/.test(s), "one predicate: the route doesn't branch on the verdict itself");
   for (const k of ['"hold"', '"skip"', '"drop"']) {
@@ -443,7 +572,11 @@ test("send-queue: the verdict goes through sendTimeVerdictAction before the clai
     assert.match(blockAt(s, at), /continue;/, `${k} must not fall through to the send`);
   }
   // Only a review verdict pays for the event read.
-  assert.match(s, /verify\.verdict === "review" \? await latestApprovalByAutopilot\(/);
+  assert.match(s, /verify\.verdict === "review" \? await latestApproval\(/);
+  // "Back to review" only when the guarded update moved the row.
+  const hold = blockAt(s, s.indexOf('if (verdictAction === "hold") {'));
+  assert.match(hold, /const moved = await holdDoubtfulAutoApproval\(/);
+  assert.match(hold, /moved \? `Back to review/);
 });
 
 // ── 5. Follow-ups obey the bounce stop ───────────────────────────────────────
@@ -512,16 +645,19 @@ test("migration 0049: atomic, cap in the WHERE, UTC reset, definer with a tenant
   const sql = src("supabase/migrations/0049_reserve_send_slot.sql");
   const body = sql.replace(/--[^\n]*/g, "");
   assert.ok(!/\bdrop\b/i.test(body), "no DROP");
-  assert.equal((body.match(/create or replace function public\.spam_(reserve|release)_send_slot\(p_inbox uuid\)/g) ?? []).length, 2);
+  assert.match(body, /create or replace function public\.spam_reserve_send_slot\(p_inbox uuid\)\s*returns date/);
+  assert.match(body, /create or replace function public\.spam_release_send_slot\(p_inbox uuid, p_day date\)\s*returns boolean/);
+  assert.match(body, /returning last_reset_date\s*\)\s*select \(select last_reset_date from taken\);/, "reserve returns the day it counted on, null when no slot");
+  assert.match(body, /and last_reset_date = p_day/, "release only touches the reserve's day");
   assert.equal((body.match(/security definer/g) ?? []).length, 2);
   assert.equal((body.match(/set search_path = public/g) ?? []).length, 2);
   assert.equal((body.match(/\(auth\.uid\(\) is null or tenant_id = public\.current_tenant_id\(\)\)/g) ?? []).length, 2);
   assert.match(body, /else 0\s*end\) < daily_cap/, "the cap check is in the UPDATE's WHERE");
   assert.match(body, /\(now\(\) at time zone 'utc'\)::date/);
   assert.match(body, /sends_today > 0/);
-  for (const fn of ["reserve", "release"]) {
-    assert.match(body, new RegExp(`revoke all on function public\\.spam_${fn}_send_slot\\(uuid\\) from public, anon;`));
-    assert.match(body, new RegExp(`grant execute on function public\\.spam_${fn}_send_slot\\(uuid\\) to service_role, authenticated;`));
+  for (const sig of ["spam_reserve_send_slot\\(uuid\\)", "spam_release_send_slot\\(uuid, date\\)"]) {
+    assert.match(body, new RegExp(`revoke all on function public\\.${sig} from public, anon;`));
+    assert.match(body, new RegExp(`grant execute on function public\\.${sig} to service_role, authenticated;`));
   }
   assert.ok(!/\bcron\.schedule\b/.test(body));
 });

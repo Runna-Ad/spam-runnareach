@@ -10,11 +10,14 @@
 --
 -- spam_reserve_send_slot(inbox)  takes one slot BEFORE the Gmail call:
 --   resets to 0 when last_reset_date is not today (UTC), adds 1 only
---   WHERE the effective count < daily_cap, returns whether a slot was taken.
+--   WHERE the effective count < daily_cap. Returns the UTC day the slot was
+--   counted on, or null when no slot was taken (cap reached, unknown inbox).
 --   Concurrent callers serialize on the row lock and re-check the WHERE on the
 --   committed row, so the cap holds under any overlap.
--- spam_release_send_slot(inbox)  gives a slot back when Gmail did not accept
---   the message. Only today's count goes down, never below 0.
+-- spam_release_send_slot(inbox, day)  gives a slot back when Gmail did not
+--   accept the message. `day` is what the reserve returned: only that day's
+--   count goes down, never below 0, so a release after UTC midnight never
+--   takes a slot from the new day.
 --
 -- Callers: the service role (crons) and authenticated users (manual send).
 -- security definer bypasses RLS, so an authenticated caller only reaches an
@@ -25,7 +28,7 @@
 -- changes in that gap. Idempotent: create or replace, no DROP.
 
 create or replace function public.spam_reserve_send_slot(p_inbox uuid)
-returns boolean
+returns date
 language sql
 volatile
 security definer
@@ -45,12 +48,12 @@ as $fn$
               else 0
             end) < daily_cap
        and (auth.uid() is null or tenant_id = public.current_tenant_id())
-    returning 1
+    returning last_reset_date
   )
-  select exists (select 1 from taken);
+  select (select last_reset_date from taken);
 $fn$;
 
-create or replace function public.spam_release_send_slot(p_inbox uuid)
+create or replace function public.spam_release_send_slot(p_inbox uuid, p_day date)
 returns boolean
 language sql
 volatile
@@ -62,7 +65,7 @@ as $fn$
        set sends_today = sends_today - 1
      where id = p_inbox
        and sends_today > 0
-       and last_reset_date = (now() at time zone 'utc')::date
+       and last_reset_date = p_day
        and (auth.uid() is null or tenant_id = public.current_tenant_id())
     returning 1
   )
@@ -70,6 +73,6 @@ as $fn$
 $fn$;
 
 revoke all on function public.spam_reserve_send_slot(uuid) from public, anon;
-revoke all on function public.spam_release_send_slot(uuid) from public, anon;
+revoke all on function public.spam_release_send_slot(uuid, date) from public, anon;
 grant execute on function public.spam_reserve_send_slot(uuid) to service_role, authenticated;
-grant execute on function public.spam_release_send_slot(uuid) to service_role, authenticated;
+grant execute on function public.spam_release_send_slot(uuid, date) to service_role, authenticated;

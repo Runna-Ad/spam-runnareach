@@ -252,7 +252,7 @@ export async function sendPitch(input: {
   const tokenResult = await getAccessToken(inbox.gmail_refresh_token_encrypted);
   if (!tokenResult.ok) {
     // Rollback status so user can retry after fixing creds
-    await releaseSendSlot(slots, inbox_id);
+    await releaseSendSlot(slots, inbox_id, slot.day);
     await releaseClaim(releaser, { pitchId: pitch_id, tenantId: user.tenantId, to: "approved" });
     return { ok: false, error: `Gmail auth failed: ${tokenResult.error}` };
   }
@@ -265,7 +265,7 @@ export async function sendPitch(input: {
     email: toEmail,
   });
   if (lastCheck) {
-    await releaseSendSlot(slots, inbox_id);
+    await releaseSendSlot(slots, inbox_id, slot.day);
     await releaseClaim(releaser, { pitchId: pitch_id, tenantId: user.tenantId, to: "approved" });
     return { ok: false, error: `${lastCheck.reason} — not sending.` };
   }
@@ -287,7 +287,7 @@ export async function sendPitch(input: {
 
   if (!sendResult.ok) {
     // Rollback so user can retry
-    await releaseSendSlot(slots, inbox_id);
+    await releaseSendSlot(slots, inbox_id, slot.day);
     await releaseClaim(releaser, { pitchId: pitch_id, tenantId: user.tenantId, to: "approved" });
     return { ok: false, error: `Send failed: ${sendResult.error}` };
   }

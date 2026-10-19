@@ -27,8 +27,10 @@ import { createServiceRoleClient } from "@/lib/supabase/service-role";
 import { DO_NOT_SEND_STATUSES } from "@/lib/prospects/status";
 import {
   effectiveSendsToday,
-  bumpSendsTodayPayload,
+  releaseSendSlot,
+  reserveSendSlot,
   utcToday,
+  type SlotClient,
 } from "@/lib/pitches/daily-cap";
 import {
   composeNudgeWithClaude,
@@ -171,6 +173,7 @@ export async function GET(req: NextRequest) {
       results.push({ prospect: prospect.company_name, action: "skipped", reason: "inbox unavailable" });
       continue;
     }
+    // Early answer only (saves the compose): the slot RPC before Gmail enforces the cap.
     const sentToday = effectiveSendsToday(inbox.sends_today, inbox.last_reset_date);
     if (sentToday >= inbox.daily_cap) {
       results.push({ prospect: prospect.company_name, action: "skipped", reason: "daily cap" });
@@ -304,6 +307,14 @@ export async function GET(req: NextRequest) {
       results.push({ prospect: prospect.company_name, action: "skipped", reason: threadBlock });
       continue;
     }
+    // Take a daily slot (one SQL statement; a send run at the same time can't
+    // push the inbox past its cap). Untyped: the RPC isn't in types.ts yet.
+    const slots = supabase as unknown as SlotClient;
+    const slot = await reserveSendSlot(slots, inbox.id);
+    if (!slot.ok) {
+      results.push({ prospect: prospect.company_name, action: "skipped", reason: slot.capReached ? "daily cap" : slot.reason });
+      continue;
+    }
     const sendResult = await sendGmailMessage({
       accessToken: tokenResult.accessToken,
       fromEmail: inbox.email,
@@ -318,6 +329,8 @@ export async function GET(req: NextRequest) {
       originalMessageId: (reply.gmail_rfc_message_id as string | null) ?? (pitch.gmail_message_id as string | null) ?? undefined,
     });
     if (!sendResult.ok) {
+      // Gmail refused it, so nothing went out: give the slot back.
+      await releaseSendSlot(slots, inbox.id, slot.day);
       results.push({ prospect: prospect.company_name, action: "skipped", reason: `send failed: ${sendResult.error}` });
       continue;
     }
@@ -327,10 +340,6 @@ export async function GET(req: NextRequest) {
       .update({ reply_attempts: attemptNumber, last_nudge_at: nowIso })
       .eq("id", prospectId)
       .eq("tenant_id", tenantId);
-    await supabase
-      .from("sender_inboxes")
-      .update(bumpSendsTodayPayload(inbox.sends_today, inbox.last_reset_date))
-      .eq("id", inbox.id);
     await writeAuditLog({
       tenantId, actorId: null, action: "reply.nudge_sent", entityType: "prospect",
       entityId: prospectId, metadata: { to: reply.from_email, attempt: attemptNumber, gmail_message_id: sendResult.gmailMessageId },

@@ -18,13 +18,10 @@
  * it back if Gmail did not accept the message. Two overlapping send runs used
  * to read, add one and write back, and clobber each other's count.
  *
- * Also here, because every cron send path asks them: the send-queue's time
- * budget, and what to do with a doubtful address on an automatic approval.
- * The db is injected so all of it is tested with fakes
+ * Also here: the send-queue's time budget. The slot helpers take the db as
+ * an argument, so this module still imports nothing and is tested with fakes
  * (tests/send-path-hardening.test.ts).
  */
-
-import { HELD_BY_AUTOPILOT } from "../autopilot/governor.ts";
 
 /** UTC calendar day as YYYY-MM-DD. */
 export function utcToday(now: Date = new Date()): string {
@@ -72,26 +69,29 @@ export type SlotClient = {
   rpc: (fn: string, args: Record<string, unknown>) => PromiseLike<{ data: unknown; error: { message?: string } | null }>;
 };
 
-export type SlotResult = { ok: true } | { ok: false; capReached: boolean; reason: string };
+/** ok: the slot was taken on `day` (UTC, YYYY-MM-DD, the database's clock); pass it to releaseSendSlot. */
+export type SlotResult = { ok: true; day: string } | { ok: false; capReached: boolean; reason: string };
 
 /**
  * Take one of the inbox's daily slots, atomically, before the Gmail call.
- * Fails closed: an RPC error is "no slot", so nothing is sent uncounted.
+ * The RPC returns the UTC day it counted the slot on, or null when the cap is
+ * reached. Fails closed: an RPC error is "no slot", so nothing is sent uncounted.
  */
 export async function reserveSendSlot(db: SlotClient, inboxId: string): Promise<SlotResult> {
   const { data, error } = await db.rpc("spam_reserve_send_slot", { p_inbox: inboxId });
   if (error) return { ok: false, capReached: false, reason: `Couldn't reserve a send slot: ${error.message || "no detail"}` };
-  if (data !== true) return { ok: false, capReached: true, reason: "Daily cap reached" };
-  return { ok: true };
+  if (typeof data !== "string" || !/^\d{4}-\d{2}-\d{2}/.test(data)) return { ok: false, capReached: true, reason: "Daily cap reached" };
+  return { ok: true, day: data.slice(0, 10) };
 }
 
 /**
  * Give the slot back: only when Gmail did not accept the message. If Gmail
  * accepted it and a later DB write failed, the slot stays (it was sent).
- * Returns the error text, or null.
+ * `day` is the reserve's day: after UTC midnight the release changes nothing,
+ * so it never takes a slot from the new day. Returns the error text, or null.
  */
-export async function releaseSendSlot(db: SlotClient, inboxId: string): Promise<string | null> {
-  const { error } = await db.rpc("spam_release_send_slot", { p_inbox: inboxId });
+export async function releaseSendSlot(db: SlotClient, inboxId: string, day: string): Promise<string | null> {
+  const { error } = await db.rpc("spam_release_send_slot", { p_inbox: inboxId, p_day: day });
   return error ? `Couldn't release the send slot: ${error.message || "no detail"}` : null;
 }
 
@@ -108,73 +108,4 @@ export const CLAIM_RESERVE_MS = 25_000;
 /** May the run still claim a pitch? Never closer than CLAIM_RESERVE_MS to the kill. */
 export function hasTimeToClaim(startMs: number, nowMs: number = Date.now()): boolean {
   return nowMs - startMs < SEND_ROUTE_MAX_MS - CLAIM_RESERVE_MS;
-}
-
-// ── Doubtful address on an automatic approval ────────────────────────────────
-
-/** Start of the hold reason; begins with HELD_BY_AUTOPILOT so heldAction leaves the draft alone. */
-export const DOUBTFUL_ADDRESS_HOLD = `${HELD_BY_AUTOPILOT}: address doubtful at send time`;
-
-// Untyped like lib/autopilot/hold.ts: pitch_events and the autopilot columns aren't in every generated type.
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-type Db = any;
-
-/**
- * Did the autopilot give the pitch's latest approval? Read from the approval
- * event (payload.autopilot). null = couldn't read: the caller must not send.
- */
-export async function latestApprovalByAutopilot(db: Db, tenantId: string, pitchId: string): Promise<boolean | null> {
-  const { data, error } = await db
-    .from("pitch_events")
-    .select("payload, created_at")
-    .eq("tenant_id", tenantId)
-    .eq("pitch_id", pitchId)
-    .eq("event_type", "approved")
-    .order("created_at", { ascending: false })
-    .limit(1);
-  if (error) return null;
-  const row = ((data ?? []) as Array<{ payload: { autopilot?: unknown } | null }>)[0];
-  return row?.payload?.autopilot === true;
-}
-
-/**
- * Send-time SPAM Verify verdict → what the send-queue does. "drop" never
- * sends; "review" sends only when a person approved it (their call), and goes
- * back to a person when the autopilot did. null approval = unreadable: skip.
- */
-export function sendTimeVerdictAction(
-  verdict: "send" | "review" | "drop",
-  approvedByAutopilot: boolean | null,
-): "send" | "drop" | "hold" | "skip" {
-  if (verdict === "drop") return "drop";
-  if (verdict === "send") return "send";
-  if (approvedByAutopilot === null) return "skip";
-  return approvedByAutopilot ? "hold" : "send";
-}
-
-/**
- * Back to draft in the review lane, schedule cleared, guarded on 'approved'
- * (the same fields as lib/autopilot/hold.ts). Returns whether the row moved.
- */
-export async function holdDoubtfulAutoApproval(
-  db: Db,
-  args: { tenantId: string; pitchId: string; why: string },
-): Promise<boolean> {
-  const { data, error } = await db
-    .from("pitches")
-    .update({
-      status: "draft",
-      scheduled_send_at: null,
-      queued_at: null,
-      approved_at: null,
-      sender_inbox_id: null,
-      autopilot_lane: "review",
-      autopilot_reasons: [`${DOUBTFUL_ADDRESS_HOLD} (${args.why})`.slice(0, 300)],
-    })
-    .eq("id", args.pitchId)
-    .eq("tenant_id", args.tenantId)
-    .eq("status", "approved")
-    .select("id");
-  if (error) return false;
-  return Array.isArray(data) && data.length > 0;
 }

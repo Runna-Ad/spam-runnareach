@@ -489,7 +489,7 @@ async function processFollowup(pitch: DuePitchRow, bounceBlocks: BounceBlocks): 
   });
   if (lastCheck) {
     const pause = followupPausesFor(lastCheck);
-    await releaseSendSlot(slots, inbox.id);
+    await releaseSendSlot(slots, inbox.id, slot.day);
     await release(pause);
     return {
       pitch_id: pitch.id,
@@ -517,7 +517,7 @@ async function processFollowup(pitch: DuePitchRow, bounceBlocks: BounceBlocks): 
 
   if (!sendResult.ok) {
     // Gmail refused it, so nothing went out: give back the slot and the claim.
-    await releaseSendSlot(slots, inbox.id);
+    await releaseSendSlot(slots, inbox.id, slot.day);
     await release(false);
     return { pitch_id: pitch.id, prospect: prospect.company_name, step: nextStep, status: "skipped", reason: `Gmail send failed: ${sendResult.error}` };
   }

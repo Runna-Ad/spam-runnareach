@@ -19,13 +19,11 @@ import { bodyWithFooter, getOutboundCompliance } from "@/lib/compliance/outbound
 import {
   effectiveSendsToday,
   hasTimeToClaim,
-  holdDoubtfulAutoApproval,
-  latestApprovalByAutopilot,
   releaseSendSlot,
   reserveSendSlot,
-  sendTimeVerdictAction,
   type SlotClient,
 } from "@/lib/pitches/daily-cap";
+import { holdDoubtfulAutoApproval, latestApproval, sendTimeVerdictAction } from "@/lib/pitches/send-time-hold";
 import { hasUsableEmail } from "@/lib/research/email-utils";
 import { isEmailOnDncList, type DncClient } from "@/lib/discover/dnc-check";
 import { findSentMessage } from "@/lib/gmail/read";
@@ -359,9 +357,8 @@ export async function GET(req: NextRequest) {
           selectedBy: contact?.selected_by ?? null,
           prospectDomain: prospectRow?.domain ?? null,
         });
-        const byAutopilot =
-          verify.verdict === "review" ? await latestApprovalByAutopilot(supabase, pitch.tenant_id, pitch.id) : false;
-        const verdictAction = sendTimeVerdictAction(verify.verdict, byAutopilot);
+        const approval = verify.verdict === "review" ? await latestApproval(supabase, pitch.tenant_id, pitch.id) : null;
+        const verdictAction = sendTimeVerdictAction(verify.verdict, approval);
         if (verdictAction === "drop") {
           const reason = `SPAM Verify: ${verify.reasons.join("; ")}`;
           await dropFromQueue(supabase, pitch.id, reason);
@@ -374,8 +371,12 @@ export async function GET(req: NextRequest) {
         }
         if (verdictAction === "hold") {
           const why = `SPAM Verify review: ${verify.reasons.join("; ")}`;
-          await holdDoubtfulAutoApproval(supabase, { tenantId: pitch.tenant_id, pitchId: pitch.id, why });
-          results.push({ pitch_id: pitch.id, status: "skipped", reason: `Back to review — ${why}` });
+          const moved = await holdDoubtfulAutoApproval(supabase, { tenantId: pitch.tenant_id, pitchId: pitch.id, why });
+          results.push({
+            pitch_id: pitch.id,
+            status: "skipped",
+            reason: moved ? `Back to review — ${why}` : `Not sent (${why}); it was no longer approved, left as is`,
+          });
           continue;
         }
         const body = (pitch.body_edited ?? pitch.body_original ?? "").trim();
@@ -468,7 +469,7 @@ export async function GET(req: NextRequest) {
         // ── Send ─────────────────────────────────────────────────────────────
         const tokenResult = await getAccessToken(inbox.token);
         if (!tokenResult.ok) {
-          await releaseSendSlot(slots, inboxId);
+          await releaseSendSlot(slots, inboxId, slot.day);
           await releaseClaim(releaser, { pitchId: pitch.id, to: "approved" });
           results.push({ pitch_id: pitch.id, status: "error", reason: `Auth: ${tokenResult.error}` });
           continue;
@@ -487,7 +488,7 @@ export async function GET(req: NextRequest) {
           email: toEmail,
         });
         if (lastCheck) {
-          await releaseSendSlot(slots, inboxId);
+          await releaseSendSlot(slots, inboxId, slot.day);
           await releaseClaim(releaser, { pitchId: pitch.id, ...queueReleaseFor(lastCheck) });
           results.push({ pitch_id: pitch.id, status: "skipped", reason: lastCheck.reason });
           continue;
@@ -507,7 +508,7 @@ export async function GET(req: NextRequest) {
         });
 
         if (!sendResult.ok) {
-          await releaseSendSlot(slots, inboxId);
+          await releaseSendSlot(slots, inboxId, slot.day);
           await releaseClaim(releaser, { pitchId: pitch.id, to: "approved" });
           results.push({ pitch_id: pitch.id, status: "error", reason: `Send: ${sendResult.error}` });
           continue;
