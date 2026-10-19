@@ -801,8 +801,8 @@ export function scrubExemplar(text: string, prospect: ExemplarProspect): string 
     return m;
   });
   // Every other handle and tag is someone's address: "@torres", "#VegaDental" (bare domains below).
-  // A tag starts with a letter ("#1 rated" is a number); a handle may start with a digit ("@3amigos").
-  out = out.replace(/(?<![\p{L}\p{N}])(?:@[\p{L}\p{N}_]+|#[\p{L}_][\p{L}\p{N}_]*)(?:\.[\p{L}\p{N}_]+)*/gu, "[site]");
+  // A tag has a letter ("#1 rated" is a number, "#3amigos" a tag); a handle may start with a digit ("@3amigos").
+  out = out.replace(/(?<![\p{L}\p{N}])(?:@[\p{L}\p{N}_]+|#\p{N}*[\p{L}_][\p{L}\p{N}_]*)(?:\.[\p{L}\p{N}_]+)*/gu, "[site]");
 
   // Names the contact row did not know: after an honorific (capitalized, then
   // any case), and the greeting's addressee.
@@ -1130,6 +1130,11 @@ const SENTENCE_END = /[\n.!?¿¡…]/u;
 const ADDRESS_CHUNK = /[@#_]|:\/\/|www|\p{L}\.\p{L}/iu;
 /** An address the scrubber should have blanked ([site]) and did not: the exemplar drops ("Dr.Patel" too). */
 const ADDRESS_LEFT = /[@#][\p{L}\p{N}_]|:\/\/|www\.|_|[\p{L}\p{N}]{2,}\.\p{L}{2,}/iu;
+/** Places written as dotted initials ("D.F.", "C.D.M.X.", "G.D.L.", "T.O."), beyond the places net's own words. */
+const DOTTED_PLACES = new Set(["df", "cdmx", "gdl", "mty", "qro", "slp", "to", "bc", "bcs"]);
+/** A run of dotted single letters: "D.F.", "c.d.m.x", "e.g.", "a.m.". */
+const DOTTED_RUN = /(?<![\p{L}\p{N}])(?:\p{L}\.){2,}\p{L}?(?!\p{L})/gu;
+
 /** Letters drawn as symbols, with no NFKD letter inside: 🅟🅐🅣, 🅿🅰🆃, regional indicators, ⒫⒜⒯ (NFKD "(p)(a)(t)"). */
 const LETTER_SYMBOLS = /[\u2460-\u24ff\u{1f100}-\u{1f1ff}]/u;
 /** Visible marks that split a word without looking like a break: "Wil·son", "Wiŀson", "Pa‧tel", "Pa᠆tel", "Pa⠀tel". */
@@ -1179,6 +1184,11 @@ function allowListLeaks(text: string, subject: boolean): string[] {
     .replace(/(?<!\p{L})([ODLMN])['’](?=\p{Lu})/gu, "$1")
     // Places and publishers allowed as a whole phrase only: "Quintana Roo", "Bain & Company".
     .replace(w.phrases, LEAK_BLANK);
+  // Dotted initials are one token: a place written "D.F." or "c.d.m.x." drops; "e.g.", "a.m." are no place.
+  for (const m of norm.matchAll(DOTTED_RUN)) {
+    const joined = leakFold(m[0]).replace(/[^a-z]/g, "");
+    if (DOTTED_PLACES.has(joined) || w.places.has(joined)) out.push(m[0]);
+  }
   // A multi-word place with any word capitalized (or anywhere in the subject): "Los Cabos", "en los Cabos", "Boca del Río".
   for (const m of norm.matchAll(w.placePhrases)) if (subject || /\p{Lu}/u.test(m[0])) out.push(leakFold(m[0]));
   const split = INWORD_SEPARATOR.exec(norm);

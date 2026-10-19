@@ -525,3 +525,25 @@ test("6c.B2: a particle last name is still checked when the contact has an addre
 test("6c: a handle that starts with a digit is blanked", () => {
   assert.equal(scrubExemplar("Síguelos en @3amigos para citas.", NOCITY), "Síguelos en [site] para citas.");
 });
+
+// ── Round 6d ──────────────────────────────────────────────────────────────────
+
+test("6d: a place written as dotted initials drops the exemplar; e.g., i.e., a.m. and p.m. still pass", () => {
+  const kept: string[] = [];
+  for (const [subject, body] of [
+    ["llamadas", wrap("Atendemos clínicas en el D.F. desde hace años.")],
+    ["llamadas", wrap("Clínicas en la C.D.M.X. pierden llamadas.")],
+    ["clínicas en el d.f.", wrap("Nadie contesta de noche.")],
+    ["llamadas", wrap("Hoteles en G.D.L. y M.T.Y. pagan comisión.")],
+    ["evening calls", wrap("Clinics in T.O. miss evening calls.")],
+  ] as const) {
+    if (toExemplar({ pitch_id: "x", score: 1 }, { subject, body, ...NOCITY })) kept.push(`${subject} | ${body.split("\n")[2]}`);
+  }
+  assert.deepEqual(kept, []);
+  assert.ok(toExemplar({ pitch_id: "x", score: 1 }, { subject: "evening calls", body: wrap("Most clinics, e.g. dental ones, i.e. small teams, close at 6 p.m. and open at 9 a.m."), ...NOCITY }));
+});
+
+test("6d: 'Cd. Victoria' is Ciudad Victoria; '#3amigos' is a tag", () => {
+  assert.equal(toExemplar({ pitch_id: "x", score: 1 }, { subject: "llamadas", body: wrap("Atendemos clínicas en Cd. Obregón y nadie contesta."), ...NOCITY }), null);
+  assert.equal(scrubExemplar("Síguelos en #3amigos y #1 en su zona.", NOCITY), "Síguelos en [site] y #[n] en su zona.");
+});

@@ -221,7 +221,7 @@ console.log(`names: ${all.length} (${givenCount} given, ${longTail} long tail), 
 const HAND_PLACES = [
   "Ciudad de México", "Cd. de México", "Cd. México", "CDMX", "México D.F.", "Distrito Federal",
   "Cumbres", "San Pedro", "Valle Oriente", "Providencia", "Andares", "Chapultepec", "Colonia Americana", "Zapopan Centro",
-  "Cabo", "Playa",
+  "Cabo", "Playa", "León",
   "Álvaro Obregón", "Azcapotzalco", "Benito Juárez", "Coyoacán", "Cuajimalpa", "Cuauhtémoc", "Gustavo A. Madero",
   "Iztacalco", "Iztapalapa", "Magdalena Contreras", "Miguel Hidalgo", "Milpa Alta", "Tláhuac", "Tlalpan",
   "Venustiano Carranza", "Xochimilco", "Condesa", "Roma Norte", "Roma Sur", "Polanco", "Santa Fe", "Del Valle",
@@ -241,9 +241,15 @@ const PLACE_PREFIX = /^(?:santiago de |victoria de |heroica (?:ciudad de )?|ciud
  */
 const PLACE_SUFFIX = / (?:de|del) .+$/;
 const GENERIC_PLACE_HEADS = new Set(["ciudad", "cd", "villa", "san", "santa", "santo", "puerto", "boca", "valle", "nuevo", "nueva",
-  "la", "el", "los", "las", "lomas", "colonia", "fraccionamiento", "pueblo", "heroica", "real", "rancho", "ejido", "barrio"]);
-/** A short form that is an everyday word ("puente", "tres", "ojo") is no place on its own; hand-listed ones are (Playa). */
-const top3000 = new Set([...read("en_50k.txt").split("\n").slice(0, 3000), ...read("es_50k.txt").split("\n").slice(0, 3000)].map((l) => fold(l.split(" ")[0] ?? "")));
+  "la", "el", "los", "las", "lomas", "colonia", "fraccionamiento", "pueblo", "heroica", "real", "rancho", "ejido", "barrio",
+  // Words Mexican subdivisions are named with ("Terrazas del Valle", "Pórticos de San Antonio").
+  "terrazas", "porticos", "residencial", "privadas", "hacienda", "haciendas", "paseos", "jardines", "fuentes", "playas",
+  "bosques", "praderas", "colinas", "campestre", "arboledas", "villas", "misiones", "rinconada", "balcones", "vistas"]);
+/**
+ * A short form that is one of the 20,000 most frequent words ("fuentes", "jardines", "playas", "puente")
+ * is no place on its own; the full name stays, and hand-listed ones are places (Playa, León).
+ */
+const top20k = new Set([...read("en_50k.txt").split("\n").slice(0, 20000), ...read("es_50k.txt").split("\n").slice(0, 20000)].map((l) => fold(l.split(" ")[0] ?? "")));
 const shortForms = [];
 const placeNames = [...placeRows.map((c) => c[0] ?? ""), ...HAND_PLACES].flatMap((raw) => {
   const f = fold(raw).split(/[^\p{L}]+/u).filter(Boolean).join(" ");
@@ -251,8 +257,15 @@ const placeNames = [...placeRows.map((c) => c[0] ?? ""), ...HAND_PLACES].flatMap
   for (const g of [f, f.replace(PLACE_PREFIX, "")]) {
     forms.add(g);
     const head = g.replace(PLACE_SUFFIX, "");
-    const generic = head.split(" ").every((w) => GENERIC_PLACE_HEADS.has(w)) || (!head.includes(" ") && top3000.has(head));
+    const generic = head.split(" ").every((w) => GENERIC_PLACE_HEADS.has(w)) || (!head.includes(" ") && top20k.has(head));
     if (head !== g && !generic) forms.add(head);
+  }
+  // "Ciudad Victoria" is also written "Cd. Victoria"; "Ciudad de X" also "Cd. X".
+  for (const x of [...forms]) {
+    if (!x.startsWith("ciudad ")) continue;
+    const rest = x.slice("ciudad ".length);
+    forms.add(`cd ${rest}`);
+    if (rest.startsWith("de ")) forms.add(`cd ${rest.slice(3)}`);
   }
   for (const x of forms) if (x !== f && x) shortForms.push(`${f} → ${x}`);
   return [...forms].filter(Boolean);

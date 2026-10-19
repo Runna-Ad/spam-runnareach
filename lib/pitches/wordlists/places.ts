@@ -229,7 +229,6 @@ fortin
 fredericton
 fresnillo
 frontera
-fuentes
 garcia
 gatineau
 georgetown
@@ -291,8 +290,6 @@ jalpa
 jaltipan
 jamay
 jaral
-jardines
-jerez
 jiquilpan
 jiutepec
 jocotepec
@@ -316,7 +313,6 @@ kitchener
 kitsilano
 ladner
 lafleche
-lagos
 lakewood
 langford
 langley
@@ -352,7 +348,6 @@ maravatio
 marfil
 markham
 marpole
-martinez
 mascouche
 matamoros
 matehuala
@@ -426,7 +421,6 @@ ottawa
 outremont
 oxkutzkab
 ozumba
-pabellon
 pachuca
 palau
 palenque
@@ -451,9 +445,7 @@ pickering
 pierrefonds
 pijijiapan
 playa
-playas
 polanco
-porticos
 progreso
 providencia
 puebla
@@ -469,7 +461,6 @@ repentigny
 reynosa
 richmond
 rimouski
-rincon
 rioverde
 riverview
 romita
@@ -497,7 +488,6 @@ shawinigan
 sherbrooke
 silao
 snowdon
-soledad
 sombrerete
 sooke
 squamish
@@ -556,7 +546,6 @@ tequila
 tequisquiapan
 tequixquiac
 terrace
-terrazas
 terrebonne
 tetla
 texcoco
@@ -701,17 +690,13 @@ evergreen
 fiddlesticks
 fresnillo
 frontera
-fuentes
 harewood
 hidalgo
 hull
 iguala
 isla
 jaral
-jardines
-jerez
 kitchener
-lagos
 lerdo
 libres
 linares
@@ -737,8 +722,6 @@ parras
 pedregal
 peto
 playa
-playas
-porticos
 progreso
 providencia
 puebla
@@ -747,14 +730,12 @@ rouge
 sabinas
 salinas
 santiago
-soledad
 sombrerete
 sunset
 surrey
 tala
 tequila
 terrace
-terrazas
 valles
 venceremos
 victoria
@@ -805,8 +786,46 @@ cap rouge
 capulhuac de mirafuentes
 carlos a carrillo
 casa blanca
+cd acuna
+cd allende
+cd altamirano
+cd apodaca
+cd armeria
+cd benito juarez
+cd constitucion
+cd de allende
+cd de armeria
+cd de huajuapan de leon
+cd de huitzuco
 cd de mexico
+cd de villa de alvarez
+cd del carmen
+cd delicias
+cd fernandez
+cd general escobedo
+cd guadalupe victoria
+cd guzman
+cd hidalgo
+cd huajuapan de leon
+cd huitzuco
+cd juarez
+cd lazaro cardenas
+cd lopez mateos
+cd madero
+cd mante
+cd melchor muzquiz
+cd mendoza
 cd mexico
+cd miguel aleman
+cd nezahualcoyotl
+cd obregon
+cd rio bravo
+cd sabinas hidalgo
+cd satelite
+cd serdan
+cd valles
+cd victoria
+cd villa de alvarez
 central coquitlam
 central lonsdale
 central saanich
