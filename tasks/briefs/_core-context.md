@@ -101,6 +101,9 @@ cost-tracked, daily-capped wrapper in `lib/anthropic/` · Gmail API · Sentry ·
   effects the new code will repeat) and add the cleanup step to the brief.
 - An overlap/race test proves itself: delete the guard, see the test fail, restore. A fake
   read snapshots its rows BEFORE it yields, or two "concurrent" runs never overlap.
+- A fake db must reject a column the real table does not have: check every selected/ordered
+  column against the migration's `create table` (tests/send-path-hardening.test.ts has a
+  helper). Batch 4: `pitch_events.created_at` (the column is `event_at`) passed every test.
 - Client state (`useState`) survives `router.refresh()`: when a server prop disables a
   control, derive the effective state from both (`hotOnly && !unavailable`), never from
   the raw state alone.

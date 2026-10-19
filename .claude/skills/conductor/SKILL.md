@@ -103,6 +103,11 @@ rework in retros traces to a missing sentence in the brief. Before spawning, che
   says what rows the old code writes in the gap and what the new code then does to them;
   never key a window on `updated_at` (the trigger bumps it on every write).
 - Model/effort copied from `tasks/routing.md`, and the brief says why if it deviates.
+- The Files list is derived by grep: every caller that gates the path, every producer of
+  data the change reads, every writer of a field it protects (batch 4: 3 of 5 blocking
+  findings were files the brief left out: a route filter, a report producer, a 4th writer).
+- A claim about how the code behaves today quotes the line that does it (batch 4: a false
+  premise about the >=70 pitching phase cost a rework round).
 - "Brain lessons": run `tasks/tools/brain-recall-for.sh "<the brief's goal in a sentence>"`
   and paste the RULE of each article that really applies (skip weak matches). Worker
   sessions do not get the brain; the brief is how its lessons reach them.

@@ -73,6 +73,9 @@ Checklist (grown by retros; add a line when a retro records a miss):
   verdict or a decision derived from it (labels, lanes, approvals, a reused stored value) and
   say what happens to rows decided under the old rule. Unhandled → BLOCKING (hotfix: a cached
   `send` would have auto-sent finder addresses for 7 days).
+- A test fake for a table the diff queries: does it reject unknown columns / honour the
+  select list? If not, check every column the new query uses against the migration's
+  `create table` yourself (batch 4: a wrong column passed every test).
 - An automatic pause or block a person can lift: does it count evidence only after the latest
   lift, and is the lift a row only the lift writes (never `updated_at`)? (hotfix: a resume was
   re-paused by the same 2 bounces every 15 min.)
