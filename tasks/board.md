@@ -160,9 +160,10 @@ Integration branch `claude/phase3-batch4-integration` (from main 486746f). Migra
 Parallel: all four run at once. Disjoint files; two shared touch points the conductor merges: `lib/autopilot/governor.ts` (trust-split: stage/breakers; address-trust: the `TRUSTED_SOURCES` line only) and the `heldAction` reason prefix send-path-hardening may add. Merge order: address-trust → trust-split → pipeline-guards → send-path-hardening (send path last).
 | slug | model / effort | mechanism | branch | session | status |
 |---|---|---|---|---|---|
-| autopilot-trust-split | opus-5.5 / high | remote session | claude/autopilot-trust-split | (filled at spawn) | spawning |
-| send-path-hardening | opus-5.5 / high | remote session | claude/send-path-hardening | (filled at spawn) | spawning |
-| pipeline-guards | opus-5.5 / medium | remote session | claude/pipeline-guards | (filled at spawn) | spawning |
-| address-trust | opus-5.5 / high | remote session | claude/address-trust | (filled at spawn) | spawning |
+| autopilot-trust-split | opus-5.5 / high | remote session | claude/autopilot-trust-split | session_01MzUZoh4iM1ZnMAcNqioSJx | running 20:18 |
+| send-path-hardening | opus-5.5 / high | remote session | claude/send-path-hardening | session_01JkH8KkSVcb9hTb2vAvnRCG | running 20:18 |
+| pipeline-guards | opus-5.5 / medium | remote session | claude/pipeline-guards | session_01WgEBv4THu5nUexoNhGTehb | running 20:18 |
+| address-trust | opus-5.5 / high | remote session | claude/address-trust | session_015yodBD4WTKCGbVxkkX7qUY | running 20:18 |
+Check-ins: PR discovery trig_01LnDer7n5DXyW3nBdorGkqx (+8 min, re-arm), worker safety trig_01BfkjBk4gvwwKjBHo9nvbAE (21:10).
 Conductor track: retro 2026-10-19-phase3-hotfix (done in this commit: reviewer checklist +2, conductor skill "after a restart", TEMPLATE verdict-consumer hint, routing evidence); clock-shift CI step and docs-only CI/Vercel skip (conductor, during wave 1); after ship: track `anymail_verified` bounce rate for 2 weeks.
 Parked for batch 5: reply/booking robustness (board "From batch 3 reviews"), exemplar scrubber gaps (#17 carry), /pitches + /learning UI nits, no-op approve race, bounces_today across 2+ inboxes.
