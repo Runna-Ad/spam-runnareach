@@ -39,14 +39,12 @@ import { isUnderDailyCap } from "@/lib/anthropic/cost-tracking";
 import { affordableProspects } from "@/lib/learning/scout";
 import { generatePitchWith } from "@/lib/pitches/pitch-stage";
 import { EMPTY_JOB_STATS, type DiscoveryJobStats } from "@/lib/discover/job-types";
+import { isPastPipeline } from "@/lib/prospects/status";
 
 // A discovering phase that keeps outliving the function cap would be killed and
 // resumed forever, re-running every crawl. Three tries is generous; beyond that
 // the ICP is too broad for one slice.
 const MAX_DISCOVER_ATTEMPTS = 3;
-
-// Prospects in these states are not pitch-eligible in the pitching phase.
-const NON_PITCHABLE = ["suppressed", "no_match", "booked", "won", "lost"];
 
 const PIPELINE_CAP = 50; // matches the prior client-side cap
 
@@ -116,9 +114,19 @@ async function bumpHeartbeat(supabase: AnySupabase, jobId: string) {
 // query can't re-select them forever. Suppressed rows are NOT deleted: they're
 // kept as dedup tombstones so future discovery doesn't re-surface known-bad
 // companies and waste research spend.
-async function suppressUnfinished(supabase: AnySupabase, tenantId: string, ids: string[]) {
+// `from` is the only status swept, and it sits in the WHERE: a row another
+// writer has moved on since (pitched, b_list, booked …) is never touched.
+// 'researched' is swept only for ids whose run errored or timed out: a
+// researched prospect whose run finished (pitch failed → needs_review) waits
+// for the pitching phase, and is no unfinished run.
+async function suppressUnfinished(
+  supabase: AnySupabase,
+  tenantId: string,
+  ids: string[],
+  from: "raw" | "researched" = "raw",
+) {
   if (ids.length === 0) return;
-  await supabase
+  const { error } = await supabase
     .from("prospects")
     .update({
       status: "suppressed",
@@ -128,7 +136,9 @@ async function suppressUnfinished(supabase: AnySupabase, tenantId: string, ids: 
     })
     .in("id", ids)
     .eq("tenant_id", tenantId)
-    .eq("status", "raw");
+    .eq("status", from);
+  // A failed sweep leaves the rows for the next run's sweep; say so, never pass silently.
+  if (error) console.error(`[discover/run] unfinished sweep (${from}) failed for ${ids.length} ids: ${error.message}`);
 }
 
 /** The logged-in user from the forwarded session cookie, or null. */
@@ -365,6 +375,8 @@ export async function POST(req: NextRequest) {
           else if (outcome === "website_pitch") stats.website_pitch += 1;
           else if (outcome === "needs_review") stats.needs_review += 1;
           else if (outcome === "suppressed") stats.suppressed += 1;
+          // Already contacted or parked: nothing ran, nothing to count but the attempt.
+          else if (outcome === "skipped") console.info(`[discover/run] ${error ?? "skipped"}`);
           else {
             stats.error_count += 1;
             // Keep the first few distinct reasons so the UI can show WHY.
@@ -376,6 +388,15 @@ export async function POST(req: NextRequest) {
         }
         stats.processed = (stats.processed ?? 0) + batch.length;
         stats.processed_ids = [...(stats.processed_ids ?? []), ...batch];
+
+        // A prospect the run moved to 'researched' and then errored or timed out
+        // is no longer raw, so the raw sweep misses it and no refill re-selects
+        // it. Sweep it now, while the outcome is in hand. Hand-picked runs
+        // (skip_prune) keep their prospects, as they keep the raw ones.
+        if (!stats.skip_prune) {
+          const errored = batch.filter((_, i) => outcomes[i]?.outcome === "error");
+          await suppressUnfinished(supabase, user.tenantId, errored, "researched");
+        }
 
         await patchJob(supabase, job.id, { stats });
       }
@@ -504,7 +525,8 @@ export async function POST(req: NextRequest) {
         ? await highScorersQuery.eq("icp_id", icpId)
         : await highScorersQuery.in("id", ids);
       const eligible = ((highScorers ?? []) as Array<{ id: string; status: string }>)
-        .filter((p) => !NON_PITCHABLE.includes(p.status))
+        // Forward only: a contacted or parked company is never pitched again here.
+        .filter((p) => !isPastPipeline(p.status))
         .map((p) => p.id);
 
       let pending: string[] = [];

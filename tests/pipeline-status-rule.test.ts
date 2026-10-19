@@ -13,6 +13,8 @@ import { register } from "node:module";
 import test from "node:test";
 import {
   DO_NOT_SEND_STATUSES,
+  PROSPECT_STATUSES,
+  isPastPipeline,
   mayOverwriteStatus,
 } from "../lib/prospects/status.ts";
 
@@ -59,9 +61,13 @@ type Db = {
   afterFirstProspectRead?: (row: Row) => void;
   prospectReads: number;
   statusWrites: Row[];
+  /** When set, every prospects UPDATE fails with this postgrest-shaped error. */
+  failProspectUpdates?: { message: string };
 };
 
-class Query implements PromiseLike<{ data: unknown; error: null }> {
+type Res = { data: unknown; error: { message: string } | null };
+
+class Query implements PromiseLike<Res> {
   private op: "select" | "update" | "insert" = "select";
   private values: Row = {};
   private returning = false;
@@ -88,13 +94,13 @@ class Query implements PromiseLike<{ data: unknown; error: null }> {
   }
   returns() { return this; }
   maybeSingle() { this.single = true; return this; }
-  then<A = { data: unknown; error: null }, B = never>(
-    ok?: ((v: { data: unknown; error: null }) => A | PromiseLike<A>) | null,
+  then<A = Res, B = never>(
+    ok?: ((v: Res) => A | PromiseLike<A>) | null,
     bad?: ((e: unknown) => B | PromiseLike<B>) | null,
   ): PromiseLike<A | B> {
     return Promise.resolve(this.run()).then(ok, bad);
   }
-  private run(): { data: unknown; error: null } {
+  private run(): Res {
     const rows = (this.db.tables[this.table] ??= []);
     if (this.op === "insert") { rows.push({ ...this.values }); return { data: null, error: null }; }
     const hit = rows.filter((r) => this.filters.every((f) => f(r)));
@@ -105,6 +111,7 @@ class Query implements PromiseLike<{ data: unknown; error: null }> {
       }
       return { data: this.single ? (out[0] ?? null) : out, error: null };
     }
+    if (this.table === "prospects" && this.db.failProspectUpdates) return { data: null, error: this.db.failProspectUpdates };
     if (this.table === "prospects" && "status" in this.values) this.db.statusWrites.push({ ...this.values });
     for (const r of hit) Object.assign(r, this.values);
     const out = this.returning ? hit.map((r) => ({ ...r })) : null;
@@ -149,7 +156,7 @@ const SCENARIOS: Scenario[] = [
   { label: "≥ 70, pitched", writes: "pitched", prospect: SITE, contacts: CONTACT, scores: [30, 80], pitchOk: true },
 ];
 
-async function run(s: Scenario, status: string, parkAs?: string) {
+async function run(s: Scenario, status: string, parkAs?: string, failProspectUpdates?: { message: string }) {
   const calls: string[] = [];
   const scores = [...s.scores];
   const impl: Record<string, (...a: unknown[]) => unknown> = {
@@ -183,6 +190,7 @@ async function run(s: Scenario, status: string, parkAs?: string) {
     prospectReads: 0,
     statusWrites: [],
     afterFirstProspectRead: parkAs ? (r) => { r.status = parkAs; } : undefined,
+    failProspectUpdates,
   };
   const supabase = { from: (t: string) => new Query(db, t) };
   const { processSingleProspectWith } = await import(STAGE_URL.href);
@@ -199,16 +207,36 @@ test("PARKED is exactly DO_NOT_SEND_STATUSES", () => {
   assert.deepEqual(new Set(PARKED), DO_NOT_SEND_STATUSES);
 });
 
-test("a do-not-send prospect returns early: no status write, no paid call, outcome suppressed", async () => {
+test("a contacted or parked prospect is skipped: no status write, no paid call, outcome skipped with its status", async () => {
+  const past = PROSPECT_STATUSES.filter(isPastPipeline);
+  for (const must of ["sent", "replied", "pitched", ...PARKED]) assert.ok(past.includes(must as never), must);
   for (const s of SCENARIOS) {
-    for (const status of PARKED) {
+    for (const status of past) {
       const { result, row, db, paid } = await run(s, status);
       const at = `${s.label} / ${status}`;
-      assert.equal(result.outcome, "suppressed", at);
+      assert.equal(result.outcome, "skipped", at);
+      assert.match(result.error ?? "", new RegExp(`\\(${status}\\)$`), at);
       assert.equal(row.status, status, at);
       assert.deepEqual(db.statusWrites, [], at);
       assert.deepEqual(paid, [], at);
     }
+  }
+});
+
+test("b_list and the early funnel are re-run (not skipped)", async () => {
+  for (const status of PROSPECT_STATUSES.filter((x) => !isPastPipeline(x))) {
+    const s = SCENARIOS[6]!; // final score 50–69
+    const { result, paid } = await run(s, status);
+    assert.notEqual(result.outcome, "skipped", status);
+    assert.ok(paid.includes("scoreProspectWith"), status);
+  }
+});
+
+test("a failed status write is reported as an error, never as the lane's outcome", async () => {
+  for (const s of SCENARIOS) {
+    const { result } = await run(s, "raw", undefined, { message: "" });
+    assert.equal(result.outcome, "error", s.label);
+    assert.match(result.error ?? "", new RegExp(`^Status write \\(${s.writes}\\) failed`), s.label);
   }
 });
 
