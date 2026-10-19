@@ -259,7 +259,7 @@ test("probe: hyphenated, ampersand and saint-prefixed company names are scrubbed
   const sj = { company_name: "Smith-Jones Plumbing & Heating Ltd.", domain: null, recipient_name: null };
   const a = scrubExemplar("Smith-Jones runs two vans. Smith Jones Plumbing answers by phone. smith-jones plumbing & heating is busy.", sj);
   assert.deepEqual(present(a, ["smith", "jones"]), [], a);
-  assert.equal(a, "[company] runs two vans. [company] Plumbing answers by phone. [company] is busy.");
+  assert.equal(a, "[company] runs [n] vans. [company] Plumbing answers by phone. [company] is busy.");
   const sb = { company_name: "St Bernard's Group Home Care", domain: null, recipient_name: null };
   const b = scrubExemplar("St. Bernard's has one intake line, and St Bernard’s Group Home Care staff call back.", sb);
   assert.deepEqual(present(b, ["bernard", "bernards"]), [], b);
@@ -453,4 +453,311 @@ test("decision record: exemplars_used is filled for an AI pitch and empty otherw
   assert.deepEqual(decisionExemplarFields("claude", []), { exemplars_used: [], exemplar_prompt_version: null });
   assert.deepEqual(decisionExemplarFields("template", ex), { exemplars_used: [], exemplar_prompt_version: null });
   assert.deepEqual(decisionExemplarFields("website_claude", []), { exemplars_used: [], exemplar_prompt_version: null });
+});
+
+// ── Scrubber gaps closed in exemplar-v2: short tokens, lower-case honorifics, city short forms ──
+
+test("gap: three-letter company and domain words are scrubbed and leak-checked", () => {
+  const abc = { company_name: "ABC Plumbing Ltd.", domain: "abcplumbing.ca", recipient_name: null };
+  assert.equal(scrubExemplar("who answers at abc after hours", abc), "who answers at [company] after hours");
+  assert.deepEqual(exemplarLeaks("who answers at abc after hours", abc), ["abc"]);
+  const bmo = { company_name: "BMO", domain: null, recipient_name: null };
+  assert.equal(scrubExemplar("The BMO branch line rings out.", bmo), "The [company] branch line rings out.");
+  const kpi = { company_name: null, domain: "kpi-law.ca", recipient_name: null };
+  assert.equal(scrubExemplar("kpi takes intake by phone", kpi), "[company] takes intake by phone");
+  assert.deepEqual(exemplarLeaks("kpi takes intake by phone", kpi), ["kpi"]);
+  // Generic short words are neither scrubbed alone nor counted.
+  assert.deepEqual(exemplarLeaks("plumbing and law offices", abc), []);
+});
+
+test("gap: two- and three-letter surnames are scrubbed and leak-checked", () => {
+  for (const [name, short] of [["Priya Ng", "ng"], ["Sean Wu", "wu"], ["Raúl Li", "li"], ["Ana Lee", "lee"]] as const) {
+    const p = { company_name: null, domain: null, recipient_name: name };
+    assert.deepEqual(exemplarLeaks(`thanks, ${short}`, p), [short], name);
+    assert.deepEqual(exemplarLeaks(`thanks, ${short.toUpperCase()}`, p), [short], name);
+    const e = toExemplar({ pitch_id: "x", score: 1 }, { subject: `${short}'s desk after hours`, body: `Hi there,\n\nMs. ${short} picks up.`, ...p });
+    assert.ok(e, name);
+    assert.deepEqual(present(`${e.subject}\n${e.body}`, [short]), [], `${name}: ${e.subject} ${e.body}`);
+  }
+  // A two-letter surname that is also a word stays capital-only, like "Will".
+  const to = { company_name: null, domain: null, recipient_name: "Minh To" };
+  assert.equal(scrubExemplar("Mr. To wants to talk", to), "Mr. [name] wants to talk");
+  assert.deepEqual(exemplarLeaks("a way to book", to), []);
+});
+
+test("gap: a lower-case name after a dotted honorific goes, whoever the contact row names", () => {
+  const other = { company_name: null, domain: null, recipient_name: "John Sipos" };
+  assert.equal(scrubExemplar("dr. patel after hours", other), "dr. [name] after hours");
+  assert.equal(scrubExemplar("¿lic. núñez contesta de noche?", other), "¿lic. [name] contesta de noche?");
+  assert.equal(scrubExemplar("Ask Dr. patel's desk or prof. dr. gómez.", other), "Ask Dr. [name]'s desk or prof. dr. [name].");
+  assert.equal(scrubExemplar("SRA. HERNÁNDEZ books them; ing.ruiz too.", other), "SRA. [name] books them; ing. [name] too.");
+  // The words "marketing." or "dr" without a dot are not honorifics.
+  assert.equal(scrubExemplar("Better marketing. Patients call.", other), "Better marketing. Patients call.");
+  assert.deepEqual(exemplarLeaks("dr. patel after hours", other), ["dr patel", "patel"]);
+  assert.equal(toExemplar({ pitch_id: "x", score: 1 }, { subject: "dr. patel after hours", body: "Hi there,\n\nBody.", ...other })?.subject, "dr. [name] after hours");
+});
+
+test("gap: a city's short forms and nicknames are scrubbed and leak-checked", () => {
+  const city = (c: string) => ({ company_name: null, domain: null, recipient_name: null, city: c });
+  assert.equal(scrubExemplar("clínicas en cdmx, en el D.F. y en la CDMX y el df", city("Ciudad de México")), "clínicas en [city], en el [city] y en la [city] y el [city]");
+  assert.deepEqual(exemplarLeaks("clínicas en cdmx", city("Ciudad de México")), ["cdmx"]);
+  assert.deepEqual(exemplarLeaks("clínicas en la ciudad de méxico", city("Ciudad de México")), ["ciudad de mexico"]);
+  assert.equal(scrubExemplar("dentists in the gta and TO, open to all", city("Toronto")), "dentists in the [city] and [city], open to all");
+  assert.deepEqual(exemplarLeaks("open to all in TO", city("Toronto")), ["TO"]);
+  assert.deepEqual(exemplarLeaks("To book, reply to this", city("Toronto")), []);
+  for (const [c, alias] of [["Guadalajara", "gdl"], ["Monterrey", "MTY"], ["Querétaro", "qro"], ["Vancouver", "YVR"], ["Calgary", "yyc"], ["Edmonton", "YEG"], ["Ottawa", "yow"], ["Montréal", "mtl"], ["Montreal", "YUL"]] as const) {
+    assert.equal(scrubExemplar(`firms in ${alias} after hours`, city(c)), "firms in [city] after hours", c);
+    assert.deepEqual(exemplarLeaks(`firms in ${alias}`, city(c)), [alias.toLowerCase()], c);
+  }
+  // Whichever name the row carries, the others are aliases.
+  assert.equal(scrubExemplar("clinics in mexico city and cdmx", city("CDMX")), "clinics in [city] and [city]");
+});
+
+test("gap: placeholders are never matched by a field word (surname Hunter, company word url)", () => {
+  const p = { company_name: "URL Media", domain: null, recipient_name: "Kate Hunter" };
+  const out = scrubExemplar("Hi Kate,\n\nHunter, URL Media answers by phone.\n\n👉 Run it: https://runna-hunter.vercel.app/?r=x", p);
+  assert.equal(out, "Hi [name],\n\n[name], [company] answers by phone.\n\n👉 Run it: {hunter_url}");
+  assert.deepEqual(exemplarLeaks(out, p), []);
+});
+
+test("negative set: an all-generic past prospect keeps an exemplar of ordinary text", () => {
+  const p = { company_name: "The Art Spa", domain: null, recipient_name: "Will Smith", city: "Toronto" };
+  const subject = "who books spas after hours";
+  const body =
+    "Hi there,\n\nSpas and art studios lose calls at night, and people will go to the next name on the list. It takes a minute to see what a visitor sees.\n\nHenry\nRunna Advertising";
+  const e = toExemplar({ pitch_id: "x", score: 1 }, { subject, body, ...p });
+  assert.deepEqual(e, { pitch_id: "x", score: 1, subject, body });
+});
+
+test("exemplar prompt version is v3", () => {
+  assert.equal(EXEMPLAR_PROMPT_VERSION, "exemplar-v3-2026-10-18");
+});
+
+test("a bounced root is never an exemplar, even when the prospect later booked a meeting", () => {
+  const booked: OutcomeEvent = { type: "meeting_booked", at: daysAgo(20), payload: null };
+  const bouncedThenBooked = cand({ events: [sent(30), { type: "bounce", at: daysAgo(30) }, booked] });
+  const deliveredAndBooked = cand({ events: [sent(30), booked] });
+  assert.deepEqual(pick([bouncedThenBooked]), []);
+  assert.deepEqual(pick([deliveredAndBooked]), [deliveredAndBooked.pitch_id]);
+});
+
+// ── Review round 2: the leak check is a second, independent matcher ───────────
+//
+// Each input below either (a) passed the old leak check after the old scrubber
+// missed it, or (b) was over-dropped. For each leak: the raw text is flagged by
+// exemplarLeaks on its own (the net sees it without the scrubber), and the kept
+// exemplar, if any, carries none of the listed words.
+
+function safe(subject: string, body: string, p: Parameters<typeof toExemplar>[1] extends infer T ? Omit<T & object, "subject" | "body"> : never, words: string[]) {
+  const e = toExemplar({ pitch_id: "x", score: 1 }, { subject, body, ...p });
+  if (e) assert.deepEqual(present(`${e.subject}\n${e.body}`, words), [], `${e.subject}\n${e.body}`);
+  return e;
+}
+
+test("I1: names after an honorific, in any form, are flagged raw and never kept", () => {
+  const other = { company_name: null, domain: null, recipient_name: "John Sipos" };
+  const cases: Array<[string, string[]]> = [
+    ["para la sra. gómez ruiz", ["gomez", "ruiz"]],
+    ["sra. de la peña", ["pena"]],
+    ["dr. j patel", ["patel"]],
+    ["dr patel", ["patel"]],
+    ["lcda. pérez", ["perez"]],
+    ["c.p. ramírez", ["ramirez"]],
+    ["Dra. María José Gómez Ruiz", ["maria", "jose", "gomez", "ruiz"]],
+    ["Dr. J. Patel", ["patel"]],
+    ["Sra. de la Peña", ["pena"]],
+    ["C.P. Ramírez", ["ramirez"]],
+  ];
+  for (const [t, words] of cases) {
+    assert.notDeepEqual(exemplarLeaks(t, other), [], `raw not flagged: ${t}`);
+    safe(t, "Hi there,\n\nBody.", other, words);
+    safe("after hours", `Hi there,\n\nA note for ${t} about intake.`, other, words);
+  }
+  // What the old scrubber left behind is flagged by the net alone.
+  for (const t of ["para la sra. [name] ruiz", "sra. [name] la peña", "dr. [name] patel", "Dra. [name] Ruiz", "Sra. [name] la Peña"]) {
+    assert.notDeepEqual(exemplarLeaks(t, other), [], t);
+  }
+  // The greeting's addressee: "Hi Raj Patel," with recipient "Raj".
+  const raj = { company_name: null, domain: null, recipient_name: "Raj" };
+  assert.notDeepEqual(exemplarLeaks("Hi [name] Patel,\n\nBody.", raj), []);
+  const e = safe("after hours", "Hi Raj Patel,\n\nBody.", raj, ["raj", "patel"]);
+  assert.equal(e?.body, "Hi [name],\n\nBody.");
+  // A chain of titles before a blank is not a leak (it was over-dropped).
+  const prof = toExemplar({ pitch_id: "x", score: 1 }, { subject: "prof. dr. gómez after hours", body: "Hi there,\n\nBody.", ...other });
+  assert.equal(prof?.subject, "prof. dr. [name] after hours");
+  // Ordinary text next to a blank is not a leak.
+  assert.deepEqual(exemplarLeaks("Hi team,\n\nDr. [name] and Dra. [name] see patients; Sra. [name] books them. Mr. and Mrs. [name] too.", other), []);
+  assert.deepEqual(exemplarLeaks("Hola equipo de [company],\n\nLic. [name] lo sabe; dr. [name]'s desk after hours.", other), []);
+});
+
+test("I2: a city's group is found from any member inside the city field, and aliases match with dots", () => {
+  const city = (c: string) => ({ company_name: null, domain: null, recipient_name: null, city: c });
+  const cases: Array<[string, string, string[]]> = [
+    ["Santiago de Querétaro", "clínicas en Qro. y en QRO", ["qro", "queretaro", "santiago"]],
+    ["Querétaro", "clínicas en Q.R.O. de noche", ["qro"]],
+    ["Toronto", "clinics in T.O. and T.O at night", ["toronto"]],
+    ["Ciudad de México", "clínicas en la C.D.M.X. y en Cd. de México", ["cdmx", "cd"]],
+    ["Zapopan", "clínicas en GDL y Guadalajara", ["gdl", "guadalajara", "zapopan"]],
+    ["North York", "clinics in the GTA and Toronto", ["gta", "toronto", "york"]],
+  ];
+  for (const [c, t, words] of cases) {
+    assert.notDeepEqual(exemplarLeaks(t, city(c)), [], `raw not flagged: ${c} / ${t}`);
+    const e = safe(t, "Hi there,\n\nBody.", city(c), words);
+    assert.ok(e, `${c}: should scrub, not drop`);
+    assert.doesNotMatch(e.subject, /T\.O|C\.D|Q\.R/, e.subject);
+  }
+  assert.equal(scrubExemplar("clinics in T.O. and T.O at night", city("Toronto")), "clinics in [city] and [city] at night");
+});
+
+test("I3: the contact's last name piece is always checked, capitals-only when it is a particle or a word", () => {
+  for (const last of ["Le", "Du", "Da"]) {
+    const p = { company_name: null, domain: null, recipient_name: `Minh ${last}` };
+    assert.notDeepEqual(exemplarLeaks(`Thanks, ${last}.`, p), [], last);
+    assert.deepEqual(exemplarLeaks(`la clínica le llama; ${last.toLowerCase()} lado`, p), [], last);
+    const e = safe("after hours", `Hi there,\n\nThanks, ${last}.`, p, []);
+    assert.equal(e?.body, "Hi there,\n\nThanks, [name].");
+  }
+  // A two-letter capitals-only name at a sentence start is not scrubbed ("[name] book" must not happen)...
+  const to = { company_name: null, domain: null, recipient_name: "Minh To" };
+  assert.equal(scrubExemplar("To book a call, reply to this.", to), "To book a call, reply to this.");
+  assert.equal(scrubExemplar("Thanks, To.", to), "Thanks, [name].");
+  // ...and the net still drops a capitalized "To" it cannot tell from the name.
+  assert.notDeepEqual(exemplarLeaks("Thanks, To.", to), []);
+});
+
+test("I4: company identity on a letters-only fold: initials in capitals, long words as substrings", () => {
+  const kp = { company_name: "KP Law", domain: null, recipient_name: null };
+  assert.notDeepEqual(exemplarLeaks("the KP team answers", kp), []);
+  // Initials that are no word count in any case (subjects are lower case); ones that are a word ("IT") only in capitals.
+  assert.equal(scrubExemplar("who answers at kp after hours", kp), "who answers at [company] after hours");
+  const it = { company_name: "I.T. Plumbing", domain: null, recipient_name: null };
+  assert.equal(scrubExemplar("it answers. The I.T. team too", it), "it answers. The [company] team too");
+  assert.equal(scrubExemplar("the KP team answers", kp), "the [company] team answers");
+  const abc = { company_name: "A.B.C. Plumbing", domain: null, recipient_name: null };
+  assert.notDeepEqual(exemplarLeaks("A.B.C. answers by phone", abc), []);
+  assert.equal(scrubExemplar("A.B.C. answers by phone", abc), "[company] answers by phone");
+  const jd = { company_name: "J.D. Irving Dental", domain: null, recipient_name: null };
+  assert.notDeepEqual(exemplarLeaks("the J.D. team answers", jd), []);
+  assert.equal(scrubExemplar("the J.D. team answers", jd), "the [company] team answers");
+  const wag = { company_name: "Wagner Law Group", domain: null, recipient_name: null };
+  for (const t of ["follow @wagnerlaw", "see facebook.com/WagnerLawTO", "the Wagners answer"]) {
+    assert.ok(exemplarLeaks(t, wag).includes("wagner"), t);
+    const e = safe("after hours", `Hi there,\n\n${t}.`, wag, ["wagner"]);
+    assert.ok(e, t);
+  }
+  assert.equal(scrubExemplar("the Wagners answer, @wagnerlaw", wag), "the [company] answer, @[company]");
+});
+
+test("quality: an ordinary three-letter company word is left to the full name", () => {
+  const prose = "Most clinics get calls now, fix it the same day, and más salud is the goal.";
+  for (const company of ["Get Fit Gym", "Fix It Now", "Más Salud", "Same Day Dental"]) {
+    const p = { company_name: company, domain: null, recipient_name: null };
+    assert.equal(scrubExemplar(prose.replace("más salud", "a healthy team"), p), prose.replace("más salud", "a healthy team"), company);
+    assert.equal(scrubExemplar(`Thanks for reading about ${company}.`, p), "Thanks for reading about [company].", company);
+  }
+  // A three-letter word written in capitals is the company's own.
+  const bmo = { company_name: "BMO Dental", domain: null, recipient_name: null };
+  assert.equal(scrubExemplar("bmo answers, BMO too", bmo), "[company] answers, [company] too");
+});
+
+test("fold: ł, đ and ø match their plain letters", () => {
+  const p = { company_name: "Søren Đorđević Studio", domain: null, recipient_name: "Łukasz Nowak" };
+  assert.deepEqual(exemplarLeaks("Hi Lukasz, soren and dordevic", p).sort(), ["dordevic", "greeting lukasz", "lukasz", "soren"]);
+  assert.equal(scrubExemplar("Hi Lukasz,\n\nSoren and ĐORĐEVIĆ answer.", p), "Hi [name],\n\n[company] and [company] answer.");
+});
+
+// ── Review round 3: the round-2 leak classes, now behind an allow-list ────────
+//
+// The allow-list (every word a common EN/ES word, our vocabulary or a blank)
+// is the invariant; the field and span checks stay as a second net. Each input
+// is flagged raw and never kept.
+
+test("round 2 leaks: body greetings, plural honorifics, 'and' spans, lower case after a title, line breaks", () => {
+  const other = { company_name: null, domain: null, recipient_name: "John Sipos" };
+  const cases: Array<[string, string, string[]]> = [
+    ["after hours", "Hi Raj Kumar,\n\nBody.", ["raj", "kumar"]],
+    ["after hours", "\nHello Dr. Okafor,\n\nBody.", ["okafor"]],
+    ["after hours", "Hi there,\n\nThanks.\nHola Sra. Kowalski,\nTexto.", ["kowalski"]],
+    ["Drs. Patel and Wong see patients", "Hi there,\n\nBody.", ["patel", "wong"]],
+    ["after hours", "Hi there,\n\nSres. Gómez y Ruiz atienden; dres. kowalski también.", ["gomez", "ruiz", "kowalski"]],
+    ["after hours", "Hi there,\n\nDr. Smith and Okafor see patients.", ["okafor"]],
+    ["after hours", "Hi there,\n\nDr. Raj kowalski sees patients.", ["kowalski"]],
+    ["after hours", "Hi there,\n\nAsk Dr.\nPatel or Dra. María\nGómez.", ["patel", "maria", "gomez"]],
+  ];
+  for (const [subject, body, words] of cases) {
+    assert.notDeepEqual([...exemplarLeaks(subject, other), ...exemplarLeaks(body, other)], [], `raw not flagged: ${subject} / ${body}`);
+    safe(subject, body, other, words);
+  }
+  // What the round-2 scrubber left behind is flagged by the net alone.
+  for (const t of ["Drs. [name] and Wong", "Dr. [name] kowalski sees", "Hi [name] Kumar,"]) assert.notDeepEqual(exemplarLeaks(t, other), [], t);
+  // And ordinary text after a blank is not.
+  assert.deepEqual(exemplarLeaks("Dr. [name] told us the front desk picks up. Drs. [name] and [name] see patients.", other), []);
+});
+
+test("round 2 leaks: D.F. city fields, demonyms, hashtags and handles", () => {
+  const city = (c: string) => ({ company_name: null, domain: null, recipient_name: null, city: c });
+  const cases: Array<[string, string, string[]]> = [
+    ["México, D.F.", "clínicas en el DF y la CDMX; los chilangos llaman", ["df", "cdmx", "chilangos"]],
+    ["D.F.", "clínicas en el D.F. y en Ciudad de México", ["df", "ciudad de mexico"]],
+    ["Toronto", "Torontonians book online; #TorontoDental", ["torontonians", "toronto"]],
+    ["Calgary", "join #YYCbiz and the Calgarians", ["yycbiz", "calgarians"]],
+    ["Guadalajara", "los tapatíos reservan por WhatsApp", ["tapatios"]],
+  ];
+  for (const [c, t, words] of cases) {
+    assert.notDeepEqual(exemplarLeaks(t, city(c)), [], `raw not flagged: ${c} / ${t}`);
+    safe(t, "Hi there,\n\nBody.", city(c), words);
+  }
+});
+
+test("round 2 leaks: surname plurals and handles", () => {
+  const ng = { company_name: null, domain: null, recipient_name: "Linh Nguyen" };
+  assert.notDeepEqual(exemplarLeaks("The Nguyens run it", ng), []);
+  assert.equal(scrubExemplar("The Nguyens run it", ng), "The [name] run it");
+  const ob = { company_name: null, domain: null, recipient_name: "Sean O'Brien" };
+  assert.notDeepEqual(exemplarLeaks("follow @obrienlaw", ob), []);
+  assert.equal(scrubExemplar("follow @obrienlaw", ob), "follow @[name]");
+  const sm = { company_name: null, domain: null, recipient_name: "Ann Smith" };
+  assert.equal(scrubExemplar("the Smiths answer", sm), "the [name] answer");
+  for (const [p, t] of [[ng, "The Nguyens run it"], [ob, "follow @obrienlaw"], [sm, "the Smiths and @smithlaw"]] as const) {
+    safe(t, "Hi there,\n\nBody.", p, ["nguyen", "nguyens", "brien", "obrienlaw", "smith", "smiths", "smithlaw"]);
+  }
+});
+
+test("allow-list: a word outside the common EN/ES words and our vocabulary drops the exemplar", () => {
+  const none = { company_name: null, domain: null, recipient_name: null };
+  // Names no field knew, common ones included.
+  assert.deepEqual(exemplarLeaks("ask garcia or kowalski", none).sort(), ["garcia", "kowalski"]);
+  // Inflected common words, our senders, tools and placeholders pass.
+  assert.deepEqual(exemplarLeaks("Clinics agendan citas por WhatsApp; [name] at [company] in [city] {hunter_url}\n\nHenry\nRunna Advertising", none), []);
+  assert.deepEqual(exemplarLeaks("Hola,\n\nLas reservas medibles y quedándote con más clientes.\n\nNils\nRunna Advertising", none), []);
+});
+
+test("spelled-out numbers become [n]", () => {
+  const none = { company_name: null, domain: null, recipient_name: null };
+  assert.equal(scrubExemplar("two vans, a dozen calls, twenty-five forms", none), "[n] vans, a [n] calls, [n] forms");
+  assert.equal(scrubExemplar("veinticinco clientes, treinta y cinco citas, cien llamadas, mil pesos", none), "[n] clientes, [n] citas, [n] llamadas, [n] pesos");
+  // Not a number: "one" (pronoun), "una"/"un" (article), "once" (English).
+  assert.equal(scrubExemplar("no one calls once a week; una clínica, un día", none), "no one calls once a week; una clínica, un día");
+});
+
+test("real templates: every industry template, EN and ES, comes through the allow-list", async () => {
+  const { renderIndustryTemplate } = await import("../lib/pitches/industry-templates.ts");
+  const p = { company_name: "Maplecrest Dental", domain: "maplecrest.ca", recipient_name: "Priya Ng", city: "Calgary" };
+  const industries = ["hotel", "beach club", "villa", "ecommerce", "restaurant", "real estate", "law", "retail", "automotive", "dental", "something else"];
+  const dropped: string[] = [];
+  for (const lang of ["en", "es"] as const) {
+    for (const industry of industries) {
+      const input = {
+        prospect: { language: lang, industry, company_name: p.company_name, website: "https://maplecrest.ca", city: p.city },
+        contacts: [{ full_name: p.recipient_name, email: "priya@maplecrest.ca" }],
+        deep_pitch_url: null,
+      } as unknown as Parameters<typeof renderIndustryTemplate>[0];
+      const r = renderIndustryTemplate(input, "test");
+      const e = toExemplar({ pitch_id: "x", score: 1 }, { subject: r.subject, body: r.body, ...p });
+      if (!e) dropped.push(`${lang}/${industry}: ${[...exemplarLeaks(scrubExemplar(r.subject, p), p), ...exemplarLeaks(scrubExemplar(r.body, p), p)].join(",")}`);
+    }
+  }
+  // Round 6b: the beach-club template names Cancún, a place the places net refuses wherever it stands
+  // (fail closed, reported in PR #17 rather than allow-listed).
+  assert.deepEqual(dropped, ["en/beach club: los cabos,cancun", "es/beach club: los cabos,cancun"]);
 });
