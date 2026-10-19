@@ -10,7 +10,9 @@
  *                    a null MX or a missing domain can only bounce)
  *   4. ownership   — the address belongs to the prospect's own domain
  *   5. provenance  — published on their site > verified finder > guess;
- *                    a finder's address (Anymail, Hunter) is never "send"
+ *                    an unverified finder's address ("anymail" legacy rows,
+ *                    Hunter) is never "send"; one Anymail itself marked
+ *                    valid ("anymail_verified") is
  *   6. memory      — a domain that already hard-bounced on us only gets
  *                    addresses the company itself publishes
  *
@@ -73,7 +75,8 @@ export function provenanceOf(selectedBy: string | null): Provenance {
     case "manual": // a person typed it
     case "scraper": // the company publishes it on its own site
       return "high";
-    case "anymail":
+    case "anymail": // legacy rows: Anymail's status was never stored
+    case "anymail_verified": // Anymail marked it valid (lib/research/anymail-finder.ts)
     case "hunter":
       return "medium"; // a finder that verifies against its own data
     case "engine": // Claude's pick from research notes
@@ -89,12 +92,38 @@ export function provenanceOf(selectedBy: string | null): Provenance {
  * Finder services (paid lookups) infer an address from name patterns and their
  * own data; the company never published it. On 2026-10-19, 1 of 9 Anymail
  * sends hard-bounced (1 of 39 scraped ones did), so a finder's address goes
- * to a person and never out automatically.
+ * to a person and never out automatically. "anymail" here means a legacy row
+ * whose status we never stored (it may be one of Anymail's unverified
+ * guesses). "anymail_verified" is NOT a finder source: Anymail marked the
+ * address valid, so it is treated like an address the company publishes,
+ * except that the bounced-domain rule still drops it (provenance "medium").
  */
 const FINDER_SOURCES: ReadonlySet<string> = new Set(["anymail", "hunter"]);
 
 export function isFinderSource(selectedBy: string | null | undefined): boolean {
   return FINDER_SOURCES.has((selectedBy ?? "").trim().toLowerCase());
+}
+
+/**
+ * Sources whose addresses pass the "is this source trusted" check of the
+ * governor's lane (laneFor) and the send gate (unverified_recipient). The ONE
+ * list both read; never copy it. Passing it is necessary, not sufficient: the
+ * verdict above must also be "send", which a finder source never gets.
+ * "anymail" and "hunter" stay here so their lane/gate result is unchanged; the
+ * verifier is what holds them for a person.
+ */
+const AUTO_SEND_SOURCES: ReadonlySet<string> = new Set([
+  "snapverify_smtp",
+  "anymail",
+  "anymail_verified",
+  "hunter",
+  "manual",
+  "scraper", // scraped from the prospect's own site, and SMTP-screened on insert
+]);
+
+/** Exact match, as the governor and the gate always did (no trimming or case folding). */
+export function isTrustedForAutoSend(selectedBy: string | null | undefined): boolean {
+  return AUTO_SEND_SOURCES.has(selectedBy ?? "");
 }
 
 /** How long a stored verdict (prospect_contacts.verify_verdict) is reused before it is checked again. */

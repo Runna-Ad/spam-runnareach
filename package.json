@@ -11,6 +11,7 @@
     "lint": "eslint .",
     "format": "prettier --write .",
     "test": "node --experimental-strip-types --test --test-reporter=spec 'tests/**/*.test.ts'",
+    "test:clock": "node --import ./scripts/clock-shift-preload.mjs --experimental-strip-types --test --test-reporter=dot 'tests/**/*.test.ts'",
     "db:types": "supabase gen types typescript --project-id ybbrpqzbedaxsmotgtkh > lib/supabase/database.types.ts"
   },
   "dependencies": {
