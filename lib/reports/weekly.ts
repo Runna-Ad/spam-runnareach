@@ -265,12 +265,13 @@ function exemplarsCount(e: WeeklyStats["exemplars"]): string {
   return `${q.count} (${exemplarLangs(q)}; top: ${exemplarTop(q)})${worthTurningOn(e) ? ": worth turning on" : ""}`;
 }
 
-/** "2 sent, 2 replies, 1 meetings": the subject line and the HTML header. null when all three are n/a. */
+/** "2 sent, 2 replies, 1 meeting": the subject line and the HTML header. null when all three are n/a. */
 function summaryOf(s: WeeklyStats): string | null {
+  const n = (count: number, one: string, many: string) => `${count} ${count === 1 ? one : many}`;
   const parts = [
     s.firstEmails ? `${s.firstEmails.thisWeek} sent` : null,
-    s.replies ? `${s.replies.thisWeek} replies` : null,
-    s.meetings ? `${s.meetings.thisWeek} meetings` : null,
+    s.replies ? n(s.replies.thisWeek, "reply", "replies") : null,
+    s.meetings ? n(s.meetings.thisWeek, "meeting", "meetings") : null,
   ].filter(Boolean);
   return parts.length ? parts.join(", ") : null;
 }
@@ -471,7 +472,8 @@ export function formatWeeklyReportHtml(s: WeeklyStats, appUrl: string): string {
     pairRow("Drafts written", s.drafts, "upGood"),
     pairRow("AUTO scheduled", s.autoScheduled, "upGood"),
     valueRow("Held by a person (vetoes)", countValue(s.vetoed, "neutral")),
-    valueRow("Auto-rejected", countValue(s.autoRejected?.count ?? null, "upBad")),
+    // Auto-rejects are routine (the gate doing its job): neutral, not red every week.
+    valueRow("Auto-rejected", countValue(s.autoRejected?.count ?? null, "neutral")),
     ...(s.autoRejected?.topReasons ?? []).map(([reason, count]) => detailRow(`${count} × ${reason}`)),
   ];
   const autopilot = [

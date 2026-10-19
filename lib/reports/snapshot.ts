@@ -34,8 +34,11 @@ const MAX_PAGES = 20;
 const DAILY_USD_CAP_DEFAULT = 6;
 /** Values per .in() list: 100 uuids keep the request URL around 4 KB. */
 const IN_CHUNK = 100;
-/** Every exemplar-pool read together, well inside the route's 60s; past it the line reads n/a. */
-const EXEMPLAR_POOL_BUDGET_MS = 20_000;
+/**
+ * Every exemplar-pool read together (normally under 1s); past it the line reads n/a. Small
+ * enough that token refresh + two notification sends still fit the route's 60s.
+ */
+const EXEMPLAR_POOL_BUDGET_MS = 8_000;
 
 export const HEALTH_ALERT_ACTION = "health.alert";
 
@@ -201,7 +204,8 @@ export async function gatherWeeklyRaw(tenantId: string, now: Date): Promise<Week
             .eq("tenant_id", tenantId).eq("action", HEALTH_ALERT_ACTION).gte("created_at", since7).order("created_at").range(a, b),
         (r) => ({ at: r.created_at as string, kind: (r.metadata?.kind as string | undefined) ?? "unknown" }),
       ),
-      exemplarPoolOf(db, tenantId, now),
+      // n/a by construction if anything in it throws, not only through all()'s own catch.
+      exemplarPoolOf(db, tenantId, now).catch(() => null),
     ]);
 
   const s = state.error ? null : (state.data as { enabled: boolean; stage: string; reason: string | null } | null);

@@ -133,7 +133,7 @@ test("counts this week vs last week, test addresses excluded", () => {
 
 test("the rendered report: numbers, too early, value n/a, under 60 lines", () => {
   const { subject, body } = formatWeeklyReport(buildWeeklyStats(fixture()), "https://app.test");
-  assert.equal(subject, "S.P.A.M. weekly: 2 sent, 2 replies, 1 meetings");
+  assert.equal(subject, "S.P.A.M. weekly: 2 sent, 2 replies, 1 meeting");
   assert.match(body, /^First emails sent: 2 \(last week 1\)$/m);
   assert.match(body, /^Won: 1 \(CAD 4,500\)$/m);
   assert.match(body, /^Lost: 1 \(value n\/a\)$/m);
@@ -267,7 +267,7 @@ test("html: every number of the text version appears in the HTML, as often", () 
   if (process.env.WEEKLY_PREVIEW_HTML) writeFileSync(process.env.WEEKLY_PREVIEW_HTML, h);
   const seen = numberCounts(visibleText(h));
   for (const [n, count] of numberCounts(text)) assert.ok((seen.get(n) ?? 0) >= count, `${n}: text ${count}, html ${seen.get(n) ?? 0}`);
-  for (const s of ["Promoted own-only evidence", "unverified claim", "wants_meeting 1", "writer.evidence / own-only", "Open analytics", "S.P.A.M. weekly", "2 sent, 2 replies, 1 meetings", "EN 1; top: legal/ca 1"]) {
+  for (const s of ["Promoted own-only evidence", "unverified claim", "wants_meeting 1", "writer.evidence / own-only", "Open analytics", "S.P.A.M. weekly", "2 sent, 2 replies, 1 meeting", "EN 1; top: legal/ca 1"]) {
     assert.ok(visibleText(h).includes(s), s);
   }
   assert.doesNotMatch(h, /pedrojr22|pedro\.jr22|test only/);
@@ -363,9 +363,11 @@ test("html: delta colours follow what is good for each metric", () => {
   singles.alerts = [{ at: d(1), kind: "emails_stuck" }];
   const s = html(singles);
   assert.match(rowOf(s, "Won"), new RegExp(`color:${GREEN};font-weight:600;">1<`));
-  for (const label of ["Auto-rejected", "Breaker trips this week", "Emergencies raised"]) {
+  for (const label of ["Breaker trips this week", "Emergencies raised"]) {
     assert.match(rowOf(s, label), new RegExp(`color:${RED};font-weight:600;">\\d+<`), label);
   }
+  // Auto-rejects are routine: never red.
+  assert.doesNotMatch(rowOf(s, "Auto-rejected"), new RegExp(RED), "auto-rejected is neutral");
   singles.breakerTrips = [];
   assert.doesNotMatch(rowOf(html(singles), "Breaker trips this week"), new RegExp(RED), "0 is not red");
 });
