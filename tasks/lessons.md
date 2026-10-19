@@ -1,5 +1,47 @@
 # S.P.A.M. — Lessons (newest first)
 
+[2026-10-19] PEDRO_OVERRIDE: A finished worker session is wrapped up first, then archived, every time
+WHAT HAPPENED: After batch 4 shipped, the four worker sessions (address-trust, autopilot-trust-split, pipeline-guards, send-path-hardening) sat idle with their containers still up. conductor/SKILL.md step 5.4 already said to archive a worker after its merge, and the conductor skipped it; Pedro had to ask "are the other sessions done?". Pedro: "everytime one of those sessions are done and finished you should 1st wrap them up and then archive them."
+RULE: When a worker's PR is merged (or the worker is rejected or stuck), the conductor sends it the WRAP UP message (worker/SKILL.md section 8), reads its reply from the transcript with list_events, carries any late lessons and loose ends to lessons.md / the board, and only then calls archive_session. Never archive before reading the wrap-up; never leave a merged worker idle. Record "wrapped + archived" in the board row.
+TAGS: process, conductor, workers, wrap-up, pedro-override
+
+## Merged from worker wrap-ups (batch 4, 2026-10-19 21:31 UTC; lessons learned after each inbox file was written)
+
+[2026-10-19] A mutation script must restore the file in a finally block
+WHAT HAPPENED: (address-trust) During the review-fix mutation runs, a regex bug crashed the script after it had written mutation F1 into lib/research/anymail-finder.ts and before it restored it. The tree held mutated source until the worker grepped and reverted it by hand.
+RULE: In a mutation harness, write the original back in try/finally, and grep for the original line before the next commit.
+TAGS: testing, mutation
+
+[2026-10-19] "Untrusted" at one layer can still be "send" at another
+WHAT HAPPENED: (address-trust) Labels like "Scraper", " manual" and "unknown_xyz" get verifier verdict "send" (default provenance, not a finder); only the lane/gate source check holds them. The conductor's note assumed they were "review" everywhere.
+RULE: A table test asserts every layer separately, plus the end-to-end lane. Never write one expected verdict for all layers.
+TAGS: research, autopilot, provenance
+
+[2026-10-19] "This step runs in state X" is tested from the scheduler's entry point, not from one function's source
+WHAT HAPPENED: (autopilot-trust-split) The first kill-switch test only checked that the breakers came before the "autopilot off" exit in tick.ts. The real gate was `.eq("enabled", true)` in app/api/autopilot/tick/route.ts, which a source check on one function can't see; review caught it. The replacement runs the real route and runTick against a fake db through a loader hook.
+RULE: Load the route and the orchestrator for real through a loader hook, set the state to X, stub only outside services, and check what happened. Source-text checks are for wiring that can't be run.
+TAGS: testing, autopilot, cron, loader-hook
+
+[2026-10-19] A cleanup step must leave alone the rows a later step exists to pick up
+WHAT HAPPENED: (pipeline-guards) The new sweep in app/api/discover/run/route.ts suppressed errored `researched` rows, including ones scoring 70+, exactly the rows the pitching phase catches after a timeout. Fixed with one shared constant, PITCHING_MIN_SCORE, used by both.
+RULE: Before a cleanup deletes or parks rows, find every later step that selects from that status and share its selection constant in the cleanup's exclusion. Write one test where both see the same row.
+TAGS: discover, sweep, pipeline
+
+[2026-10-19] A guard written as `if (row && bad(row))` lets a failed read through
+WHAT HAPPENED: (pipeline-guards) The forward-only check in processSingleProspectWith ignored the read's error, so a failed read on a `replied` company fell into the no-website lane and was suppressed for good. Same fail-open shape _core-context.md warns about for send checks.
+RULE: Every entry check before spending money or writing a status reads `{ data, error }` and stops on `error || !data`. Test it with an empty-message error.
+TAGS: discover, fail-closed
+
+[2026-10-19] A test that calls a route twice needs a new Request each time
+WHAT HAPPENED: (pipeline-guards) Reusing one Request gave "Bad request" on the second slice: a body can be read only once.
+RULE: In route tests, build a fresh Request for each call.
+TAGS: tests
+
+[2026-10-19] A fixture date equal to today hides a missing date argument
+WHAT HAPPENED: (send-path-hardening) Mutation F3b (the slot release passes today's date instead of the reserve's day) passed every test at first, because the midnight test pinned "2026-10-19", the real date. A test asserting the exact day handed to the RPC (2001-02-03) catches it now.
+RULE: Test date-scoped logic with a fixed date far from today, and assert the value where it is passed along, not only through the end result.
+TAGS: tests, dates, mutation
+
 [2026-10-19] PEDRO_OVERRIDE: Build on the existing second brain and wrap-up routine; never design a parallel one
 WHAT HAPPENED: Asked how to make the conductor workflow smarter, the conductor (a cloud session) proposed a new lessons loop and a new /wrap-up command. Pedro already runs both: the second brain (Moisty-Mango/second-brain: recall hook, capture on session end, weekly distill) and the wrap-up routine in his global rules (Moisty-Mango/dotclaude CLAUDE.md). Cloud sessions load neither (the hooks and rules assume /Users/work and $HOME/Brain on his Macs), so the conductor never saw them, skipped the wrap-up, logged no PEDRO_OVERRIDEs and broke the global writing rules all session.
 RULE: At the start of any cloud session, check whether the global rules and the brain are present (~/.claude/CLAUDE.md, $HOME/Brain/brain-starter). If not, say so to Pedro and ask to attach Moisty-Mango/dotclaude and Moisty-Mango/second-brain read-only before proposing any process change. Improve his loop; never replace it.

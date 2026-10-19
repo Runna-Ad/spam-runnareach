@@ -171,8 +171,14 @@ Small bounded jobs (one test file, a lint sweep, a doc) may use `Agent` with the
    verifies it directly (run the suite, reproduce the inputs) instead of a third review.
    `reject` → rework row on the board; rewrite the brief with what was missing; respawn,
    on a stronger model if routing allows.
-4. After merge: delete nothing, close the worker session (`archive_session`) or remove
-   the worktree, move the board row to merged, flip its migration from reserved to used,
+4. After merge: delete nothing. Close the worker in two steps, every time (PEDRO_OVERRIDE
+   2026-10-19): (a) wrap up: `send_message` it the WRAP UP message from
+   `worker/SKILL.md` section 8, then read its reply with `list_events` (kinds
+   assistant/result) and carry late lessons and loose ends to your pending-lessons list
+   and the board; (b) only then `archive_session` (an in-session sub-agent: its final
+   output is the wrap-up; remove the worktree). A worker rejected or stuck gets the same
+   two steps. Board row: "wrapped + archived". Then move the board row to merged, flip
+   its migration from reserved to used,
    merge the inbox lessons file into your pending-lessons list. Before spawning a task
    that depends on this one, confirm the dependency is on the integration branch
    (`git show integration:path`).
