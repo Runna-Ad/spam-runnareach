@@ -7,7 +7,7 @@ for the current phase; move older ones to the retro.
 ## Current phase
 `phase3-batch3` SHIPPED 2026-10-19 00:19 UTC (main 9c98448, PR #25, deploy dpl_EvZj8YDtbvAZunU79Hr3C5t5hTj6 READY). **Owner: session_017nqBxLFFXKbhDwKiPi6xLf.** Integration branch `claude/optimistic-tesla-3gceud` restarted from main 9c98448 for the follow-ups.
 Open:
-- Q1 follow-up (Pedro: default): pipeline reactivation skips do-not-send prospects → small PR into the restarted branch, then its own "ship it".
+- Q1 follow-up (Pedro: default): pipeline reactivation skips do-not-send prospects. b08c324 (conductor) removed the explicit branch; review found 3 more un-park paths + 2 sibling writers → worker task `pipeline-status-rule` (brief committed), then one PR to main and its own "ship it".
 - #17 exemplar allow-list round 5 (worker session_01UKwyaiiw7nmqT9GEFR6ixb, PR #17 → this branch); conductor re-measures on the 30 real pitches; EXEMPLARS_ENABLED stays off.
 - Prod checks (scheduled): first poll + calendar-sync on the new code (00:30 / 01:05), the 01:00 and 13:00 UTC digests, the weekly report Mon 13:10 UTC, the first AUTO sends Mon 15:00 UTC, the first real lead alert, the first hold-link use.
 Previous: `phase3-batch2` CLOSED (main e10a326). Rows, log and hand-off in `tasks/retros/2026-10-18-phase3-batch2.md` (appendix).
@@ -53,6 +53,7 @@ Batch-audit pairs to check (runtime interactions): send-path-safety × autopilot
 | # | From task | Question | Default if unanswered | Answer |
 |---|---|---|---|---|
 | 1 | b2 status rule | pipeline-stage reactivation moves suppressed/no_match back to researched (breaks I5): keep or skip do-not-send prospects? | skip them (status rule wins) | Pedro 20:10: default (skip) → follow-up PR after the ship |
+| 3 | Q1 review | May a PERSON still un-suppress by hand (/companies bulk "researched", prospect page)? The status rule as written says no (I5 + I6); DNC still blocks any opted-out address either way | yes, manual stays possible (a deliberate correction); automated never | |
 | 2 | b3 audit | Vercel daily send-queue backstop also sends on weekends (pg_cron is Mon–Fri): keep? | keep until the atomic sends_today fix | Pedro 20:10: "only monday to friday" → Vercel send-queue/follow-up/nudge backstops 1-5 in this ship (+ digest copy) |
 
 ## Worktrees to clean up (in-session workers only)
@@ -106,3 +107,4 @@ Batch-audit pairs to check (runtime interactions): send-path-safety × autopilot
 - 2026-10-19 00:17 UTC — PR #25 squash-merged → main 9c98448. Deploy dpl_EvZj8YDtbvAZunU79Hr3C5t5hTj6 READY 00:19:14 UTC.
 - 2026-10-19 00:23 UTC — Post-deploy marker step: 0 rows (0 calendar opportunities exist); no spam-calendar-sync run between READY and the update. Branch restarted from main 9c98448 (force-with-lease; it held only merged history). project-state updated. Next: Q1 follow-up PR; first-run checks at 00:30 / 01:00 / 01:05.
 - 2026-10-19 00:27 UTC — #17 round 5 (7bde03b, pushed 19:44): conductor re-measure on the same 30 real pitches → KEPT 20/30 (r4: 6/30). Correct drops (real leaks): Zona Benessere (business name not in the company field), MEC, Monterrey (city, null field), IRT, "Busy Bee" (company phrase the scrubber missed → caught), Bulkley Valley/Fjällräven. False drops: forth ×3, haga, vea. 20 kept exemplars: no identifying token; only generic company fragments (Consultores, Industrial, Spa, Fitness, N'). Held-out names 226/228 (worker). Round-5 review running; the 3-word fix rides with its findings. Q1 follow-up (pipeline reactivation off) written by the conductor (847 tests, build green; pin test fails on the old code), reviewer running.
+- 2026-10-19 00:32 UTC — Q1 review (b08c324): fix-then-merge, 1 blocking: processSingleProspectWith still un-parks a suppressed/no_match prospect via the successful-pitch write (→ pitched, ~612), the no-website lane (~312) and the b_list write (~527), unguarded; also via an autopilot job's stale id list; bulkScoreProspects restore is the twin; deep-research suppress breaks I3. Not small → brief `pipeline-status-rule` (opus/medium): guard every automated status write with protectedStatusFilter + early return for DO_NOT_SEND prospects. New question for Pedro (default given): may a PERSON still un-suppress manually (bulk 'researched' button, prospect page)?
