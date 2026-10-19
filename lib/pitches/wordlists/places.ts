@@ -290,6 +290,7 @@ jalpa
 jaltipan
 jamay
 jaral
+jerez
 jiquilpan
 jiutepec
 jocotepec
@@ -313,6 +314,7 @@ kitchener
 kitsilano
 ladner
 lafleche
+lagos
 lakewood
 langford
 langley
@@ -696,7 +698,9 @@ hull
 iguala
 isla
 jaral
+jerez
 kitchener
+lagos
 lerdo
 libres
 linares

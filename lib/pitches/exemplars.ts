@@ -1130,8 +1130,11 @@ const SENTENCE_END = /[\n.!?¿¡…]/u;
 const ADDRESS_CHUNK = /[@#_]|:\/\/|www|\p{L}\.\p{L}/iu;
 /** An address the scrubber should have blanked ([site]) and did not: the exemplar drops ("Dr.Patel" too). */
 const ADDRESS_LEFT = /[@#][\p{L}\p{N}_]|:\/\/|www\.|_|[\p{L}\p{N}]{2,}\.\p{L}{2,}/iu;
-/** Places written as dotted initials ("D.F.", "C.D.M.X.", "G.D.L.", "T.O."), beyond the places net's own words. */
-const DOTTED_PLACES = new Set(["df", "cdmx", "gdl", "mty", "qro", "slp", "to", "bc", "bcs"]);
+/**
+ * Places written as dotted initials ("D.F.", "C.D.M.X.", "G.D.L.", "T.O."), beyond the places net's own
+ * words. Not "B.C." / "B.C.S.": a province or state, and those pass by design.
+ */
+const DOTTED_PLACES = new Set(["df", "cdmx", "gdl", "mty", "qro", "slp", "to"]);
 /** A run of dotted single letters: "D.F.", "c.d.m.x", "e.g.", "a.m.". */
 const DOTTED_RUN = /(?<![\p{L}\p{N}])(?:\p{L}\.){2,}\p{L}?(?!\p{L})/gu;
 

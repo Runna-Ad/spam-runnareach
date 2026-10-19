@@ -541,6 +541,12 @@ test("6d: a place written as dotted initials drops the exemplar; e.g., i.e., a.m
   }
   assert.deepEqual(kept, []);
   assert.ok(toExemplar({ pitch_id: "x", score: 1 }, { subject: "evening calls", body: wrap("Most clinics, e.g. dental ones, i.e. small teams, close at 6 p.m. and open at 9 a.m."), ...NOCITY }));
+  // A province or state in initials is no city: it stays.
+  assert.ok(toExemplar({ pitch_id: "x", score: 1 }, { subject: "evening calls", body: wrap("Clinics across B.C. miss evening calls."), ...NOCITY }));
+  // Short forms people use for a city with an official suffix.
+  for (const pl of ["Lagos", "Jerez"]) {
+    assert.equal(toExemplar({ pitch_id: "x", score: 1 }, { subject: "llamadas", body: wrap(`Atendemos clínicas en ${pl} y nadie contesta.`), ...NOCITY }), null, pl);
+  }
 });
 
 test("6d: 'Cd. Victoria' is Ciudad Victoria; '#3amigos' is a tag", () => {

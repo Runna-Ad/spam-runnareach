@@ -221,7 +221,7 @@ console.log(`names: ${all.length} (${givenCount} given, ${longTail} long tail), 
 const HAND_PLACES = [
   "Ciudad de México", "Cd. de México", "Cd. México", "CDMX", "México D.F.", "Distrito Federal",
   "Cumbres", "San Pedro", "Valle Oriente", "Providencia", "Andares", "Chapultepec", "Colonia Americana", "Zapopan Centro",
-  "Cabo", "Playa", "León",
+  "Cabo", "Playa", "León", "Lagos", "Jerez",
   "Álvaro Obregón", "Azcapotzalco", "Benito Juárez", "Coyoacán", "Cuajimalpa", "Cuauhtémoc", "Gustavo A. Madero",
   "Iztacalco", "Iztapalapa", "Magdalena Contreras", "Miguel Hidalgo", "Milpa Alta", "Tláhuac", "Tlalpan",
   "Venustiano Carranza", "Xochimilco", "Condesa", "Roma Norte", "Roma Sur", "Polanco", "Santa Fe", "Del Valle",
