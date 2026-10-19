@@ -301,7 +301,8 @@ test("digest: an overdue email (waiting for sending hours) still gets a live hol
   const digest = buildVetoDigest({ items: overdue, tenantId: TENANT, appUrl: "https://x.test", secret: SECRET, now });
   const token = decodeURIComponent(digest.body.match(/hold\?t=(\S+)/)![1]!);
   assert.ok(verifyHoldToken(token, SECRET, new Date("2026-10-19T12:00:00Z")), "valid until 24h after the digest");
-  assert.match(digest.body, /weekdays and once around 15:00 UTC on weekends/);
+  assert.match(digest.body, /Monday to Friday only/);
+  assert.doesNotMatch(digest.body, /weekend/);
 });
 
 test("digest without a key: no hold links, /pitches instructions kept", () => {

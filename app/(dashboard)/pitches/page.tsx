@@ -7,7 +7,7 @@ export const dynamic = "force-dynamic";
 
 export default async function PitchesRoute() {
   const user = await requireUser();
-  const [pitches, counts, inboxes] = await Promise.all([
+  const [{ pitches, hotLeadsUnavailable }, counts, inboxes] = await Promise.all([
     listPitches(user.tenantId),
     getPitchCounts(user.tenantId),
     listSenderInboxes(user.tenantId),
@@ -15,6 +15,7 @@ export default async function PitchesRoute() {
   return (
     <PitchesPage
       pitches={pitches}
+      hotLeadsUnavailable={hotLeadsUnavailable}
       counts={counts}
       canEdit={user.role !== "viewer"}
       inboxes={inboxes}

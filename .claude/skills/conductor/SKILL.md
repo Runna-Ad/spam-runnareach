@@ -85,6 +85,13 @@ rework in retros traces to a missing sentence in the brief. Before spawning, che
 - A scrubber, filter or gate guarded by a fail-closed check: the brief says the check
   and the property test must use their OWN matching, never the guarded code's (batch 1
   and batch 2 both lost a round to a leak check that reused the scrubber's regexes).
+- A privacy filter, scrubber or classifier: acceptance check 1 runs on REAL prod data
+  (the conductor exports a fixture to the worker or measures before review). A metric on
+  a generator built from the same vocabulary the worker then tunes measures nothing
+  (batch 3: 0.8% generated vs 80% real drop rate).
+- A migration the old prod code will run against (applied before the deploy): the brief
+  says what rows the old code writes in the gap and what the new code then does to them;
+  never key a window on `updated_at` (the trigger bumps it on every write).
 - Model/effort copied from `tasks/routing.md`, and the brief says why if it deviates.
 Keep the brief in the repo (commit to the integration branch) so the worker's fresh
 clone has it.
@@ -109,7 +116,9 @@ time on the board. Spawn every parallel-safe task of the current wave in the sam
 subscribed until you subscribe (batch 2 found 6 PRs late, 4 by ~8 min, 2 by ~20 min).
 So arm a `send_later` at +8 min whose only job is `list_pull_requests` with
 `base=<integration>` → `subscribe_pr_activity` each new PR → re-arm at +8 min until every
-spawned task has a PR. After that, PR events (CI, merge) wake you. Never poll with sleep.
+spawned task has a PR. Arm it in the SAME turn as every spawn AND every `send_message`
+that starts a new PR (a follow-up task to a warm worker, a later wave): batch 3 armed it
+for wave 1 only and found both wave-2 PRs ~20 min late. After that, PR events (CI, merge) wake you. Never poll with sleep.
 Keep one 50-minute safety check-in for a worker that dies silently (no PR, no message).
 
 Small bounded jobs (one test file, a lint sweep, a doc) may use `Agent` with the

@@ -1,5 +1,62 @@
 # S.P.A.M. — Lessons (newest first)
 
+## Merged from lessons-inbox, Phase 3 batch 3 (2026-10-18)
+
+### from the conductor (batch 3 retro)
+[2026-10-18] A filter's metric measured on the worker's own generator measures nothing
+WHAT HAPPENED: Exemplar allow-list round 4 (PR #17) reported a 0.8% drop rate on 240 generated pitches whose vocabulary the worker then added to the allow-list; the conductor ran the same code on 30 real prod pitches and 24 dropped (80%), mostly on ordinary words outside the 20k lists. The review also found the strict tier was no name net (given names and O'-surnames passed mid-sentence).
+RULE: For a privacy filter, scrubber or classifier, acceptance check 1 runs on real prod data (a fixture the conductor exports, or a conductor measurement before review). Generated sets test invariants; they do not measure usefulness.
+TAGS: pitches, exemplars, measurement, conductor
+
+[2026-10-18] A migration applied before the deploy runs under the OLD code first
+WHAT HAPPENED: 0047 added alert markers that the new calendar sync sweeps for. Between applying it and the deploy, the old code would create bookings with null markers and alert them from memory; the new code's first sweep would alert them again (caught in review of PR #22). Ship step added: after the deploy, mark rows with meeting_start null as alerted. The same migration first keyed the cancellation window on updated_at, which the 0001 trigger bumps on every claim/release.
+RULE: For every migration, list what the old prod code writes into the new schema during the migration→deploy gap and what the new code then does with those rows; add the cleanup to the ship checklist. Never key a "recent" window on updated_at.
+TAGS: migrations, deploy, supabase, conductor
+
+[2026-10-18] Arm PR discovery with every action that opens a PR, not once per batch
+WHAT HAPPENED: Batch 3 armed the +8 min PR-discovery check-in for wave 1 only. The two wave-2 PRs (#23, #24, opened 18:57 / 19:00) were found ~20 min late, the same miss as batch 2.
+RULE: Arm the discovery check-in in the same turn as every spawn and every send_message that will open a PR.
+TAGS: conductor, process
+
+### from send-path-safety
+[2026-10-18] A "last line of defense" check that runs before the slow steps is not the last line
+WHAT HAPPENED: send-queue and the manual send read the prospect's status first, then ran DNC, first-touch, DNS verify, the gate, the claim, a token exchange and up to 8 s of jitter before `sendGmailMessage`; an opt-out recorded in that window was never seen. Both also treated an unreadable prospect (`if (prospectRow && …)`, `?.status ?? null`) as sendable, and rolled `sending` back to `approved` with no status guard, which re-approved a pitch a person rejected mid-send. Fixed with `recheckBeforeSend` + `releaseClaim` in `lib/pitches/status-transitions.ts`.
+RULE: A send-time permission check runs after the claim and immediately before the external call, reads fresh, and fails closed on "no row" as well as on a query error (`if (row && bad(row))` is fail-open). Every write that releases a claim carries the claimed status in its WHERE. A status transition puts its allowed from-states in the UPDATE's WHERE (`.in("status", from).select("id")`), never only in a prior read.
+TAGS: pitches, send-queue, send-action, fail-closed, races
+
+[2026-10-18] Route files can't be unit-tested under the node runner; test the helper behaviourally and the call site structurally
+WHAT HAPPENED: The routes and the "use server" action import `@/` aliases and Next, so `node --test` can't load them. The behaviour lives in a pure helper tested against an in-memory Supabase stand-in (filters actually applied, so "the guarded update matched 0 rows" is observable); the call sites are pinned by source-order tests (claim < recheck < Gmail, nothing that waits in between, no unguarded rollback). The source tests are what fail on the old code (9 of 64).
+RULE: When a fix is about WHERE a call happens in a route, a helper test alone passes on the old code. Add a source-order test for the call site and show it failing on the base.
+TAGS: tests, routes
+
+### from send-path-safety-2
+[2026-10-18] A fail-open helper can serve a fail-closed caller if the failure is visible
+WHAT HAPPENED: `isEmailOnDncList` fails open on a query error by design (the queue must not stall), but the last-moment recheck before Gmail needs to fail closed. Instead of a second lookup or a mode flag, the unblocked branch of `DncHit` gained an optional `error`; every existing caller still reads only `.blocked` (unchanged), and `recheckBeforeSend` maps `error` to `unreadable`.
+RULE: When one caller of a shared check must fail closed and the others must fail open, return the failure as data (additive optional field) and let each caller decide; never hide it inside the helper's choice.
+TAGS: dnc, send paths, fail-closed
+
+[2026-10-18] "Nothing slow between X and Y" is tested as "no await between X and Y"
+WHAT HAPPENED: PR #21's source-order test banned two named calls (token exchange, jitter) between the recheck and Gmail; any other awaited call (DNS verify, a query) would have passed. The test now brace-matches the blocked branch and asserts no `await` between its end and `await sendGmailMessage(`, plus a self-test that splices an await in.
+RULE: A structural test for "nothing happens in this window" bans the general form (`await`), not a list of known offenders, and proves itself by mutating the source in-test.
+TAGS: tests, routes
+
+### from booking-alert-durability
+[2026-10-18] A start-of-run sweep also takes time away from the route's main work
+WHAT HAPPENED: booking-alert-durability moved the calendar lead alert to a sweep at the START of every run (lib/opportunities/calendar-sync.ts). With the plain "claim while 60s remain" rule the start sweep could send two leftovers (~55s each worst case: 10s token + 3 × 15s Gmail) and leave ~5s for the event list and the batch writes, so a kill could land between createOpportunity and the meeting_booked pitch event / audit row, which are never retried (the next run sees a duplicate). The start sweep now stops 40s earlier than the end sweep (CALENDAR_SYNC_WORK_RESERVE_MS).
+RULE: When you add a sweep at the start of a route, give it a deadline that leaves the route's own non-retryable writes their time, not just the sweep's own reserve. Add up worst-case time for both: sweep items × per-item worst case, plus the main work, under maxDuration.
+TAGS: opportunities, kill-safety, alerts
+
+[2026-10-18] The updated_at trigger moves any window keyed on updated_at
+WHAT HAPPENED: opportunities has the 0001 set_updated_at trigger, so every claim and release of an alert marker bumps updated_at. The cancellation alert is due while updated_at is in the last 48h, so a cancellation whose send keeps reaching nobody keeps retrying hourly past 48h (each release restarts the window). Bookings key on created_at and are not affected.
+RULE: Before you key a "recent" window on updated_at, check for the trigger and list every writer of that row, your own marker writes included. A window that has to stay closed needs a column that only the event itself writes (fixed in review: 0047 now adds `cancelled_at`, set by markCancelled).
+TAGS: supabase, opportunities, windows
+
+### from pitches-list-resilience
+[2026-10-18] Query modules that import the Next server client can't be unit-tested
+WHAT HAPPENED: `lib/pitches/queries.ts` imports `@/lib/supabase/server`, and the node test runner can't resolve the `@/` alias, so the failure path of `listPitches` couldn't be tested in place. The side-query logic moved to `lib/pitches/hot-lead-events.ts` (relative imports, injected client) and is tested with a fake client.
+RULE: Put any branch that needs a failure-path test in a small file with relative imports and an injected client; keep the `createClient()` wrapper thin.
+TAGS: pitches, testing
+
 ## Merged from lessons-inbox, Phase 3 batch 2 (2026-10-18)
 
 ### from the conductor (batch 2 retro)

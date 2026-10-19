@@ -5,7 +5,8 @@
 //
 // For every tenant with a Google-connected inbox, runs one sync as that
 // tenant's system actor (lib/opportunities/calendar-sync.ts): bookings become
-// meeting_booked opportunities, cancellations mark them lost. Until Google is
+// meeting_booked opportunities, cancellations mark them lost, and each one gets
+// one lead alert, driven by the row's alert markers (migration 0047). Until Google is
 // reconnected with calendar.readonly the report says needsReconnect (HTTP 200).
 //
 // Auth: Authorization: Bearer <CRON_SECRET>, or pg_cron's Vault-held token
@@ -34,6 +35,8 @@ async function connectedTenantIds(): Promise<string[]> {
 }
 
 async function handle(req: NextRequest) {
+  // Booking alerts are claimed only while 60s of maxDuration remain, counted from here.
+  const startedAt = Date.now();
   return handleCalendarSync(req, {
     authorize: async (r) => (await isSchedulerAuthorized(r)) || isCronAuthorized(r),
     tenantIds: connectedTenantIds,
@@ -44,6 +47,7 @@ async function handle(req: NextRequest) {
         listEvents: (token) => listRecentEvents(token),
         writeAuditLog,
         notify: (message) => sendNotification(actor.supabase, actor.user.tenantId, message),
+        startedAt,
       }),
   });
 }

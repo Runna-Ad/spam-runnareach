@@ -25,6 +25,7 @@ import {
   type DecisionRecord,
 } from "./decision";
 import { recordPitchEvent } from "./events";
+import { allowedFrom, transitionRefusedMessage, transitionVerdict } from "./status-transitions";
 import { fetchExemplars } from "./exemplar-queries";
 import { decisionExemplarFields } from "./exemplars";
 import { segmentOf } from "@/lib/learning/segments";
@@ -895,6 +896,8 @@ export async function savePitchEditWith(
 
 /**
  * Status transition. Captures who+when on approval/rejection.
+ * The from-state is enforced in the UPDATE's WHERE (status-transitions.ts): a
+ * stale tab can't reject a claimed pitch or send a sent one back to draft.
  */
 export async function transitionPitchStatusWith(
   actor: Actor,
@@ -911,9 +914,25 @@ export async function transitionPitchStatusWith(
   }
 
   const { supabase } = actor;
+  const next = parsed.data.next_status;
+
+  // The current row: same status is a no-op (double-click, autopilot re-run);
+  // a refused move fails before the gate runs. The WHERE below still decides.
+  const { data: current, error: readErr } = await supabase
+    .from("pitches")
+    .select("status, case_study_id, pain_id")
+    .eq("id", parsed.data.pitch_id)
+    .eq("tenant_id", user.tenantId)
+    .maybeSingle<{ status: string; case_study_id: string | null; pain_id: string | null }>();
+  if (readErr) return { ok: false, error: `Could not transition: ${readErr.message}` };
+  if (!current) return { ok: false, error: "Pitch not found." };
+  const verdict = transitionVerdict(current.status, next);
+  if (verdict === "noop") return { ok: true };
+  if (verdict === "refused") return { ok: false, error: transitionRefusedMessage(current.status) };
+
   const nowIso = new Date().toISOString();
   type PitchUpdate = Database["public"]["Tables"]["pitches"]["Update"];
-  const payload: PitchUpdate = { status: parsed.data.next_status };
+  const payload: PitchUpdate = { status: next };
 
   if (parsed.data.next_status === "queued_for_approval") {
     payload.queued_at = nowIso;
@@ -953,24 +972,12 @@ export async function transitionPitchStatusWith(
     payload.rejection_reason = parsed.data.rejection_reason ?? "no reason given";
   }
 
-  // Look up case_study_id + pain_id BEFORE updating so the audit can
-  // record the (case, pain) pair that got rejected. The downrank query
-  // reads from audit_log metadata, not pitches (deletes won't lose data).
-  let pitchContext: { case_study_id: string | null; pain_id: string | null } = {
-    case_study_id: null,
-    pain_id: null,
-  };
-  if (parsed.data.next_status === "reviewer_rejected") {
-    const { data: pitchRow } = await supabase
-      .from("pitches")
-      .select("case_study_id, pain_id")
-      .eq("id", parsed.data.pitch_id)
-      .eq("tenant_id", user.tenantId)
-      .maybeSingle<{ case_study_id: string | null; pain_id: string | null }>();
-    if (pitchRow) pitchContext = pitchRow;
-  }
+  // case_study_id + pain_id read BEFORE updating so the audit can record the
+  // (case, pain) pair that got rejected. The downrank query reads from
+  // audit_log metadata, not pitches (deletes won't lose data).
+  const pitchContext = { case_study_id: current.case_study_id, pain_id: current.pain_id };
 
-  const { error } = await supabase
+  const { data: moved, error } = await supabase
     .from("pitches")
     .update(
       (parsed.data.next_status === "approved"
@@ -978,9 +985,24 @@ export async function transitionPitchStatusWith(
         : payload) as never,
     )
     .eq("id", parsed.data.pitch_id)
-    .eq("tenant_id", user.tenantId);
+    .eq("tenant_id", user.tenantId)
+    .in("status", allowedFrom(next))
+    .select("id");
 
   if (error) return { ok: false, error: `Could not transition: ${error.message}` };
+  if (!moved || moved.length === 0) {
+    // The row moved since the read (the queue claimed it, someone else acted).
+    const { data: now, error: rereadErr } = await supabase
+      .from("pitches")
+      .select("status")
+      .eq("id", parsed.data.pitch_id)
+      .eq("tenant_id", user.tenantId)
+      .maybeSingle<{ status: string }>();
+    if (rereadErr) return { ok: false, error: `Nothing was changed, and the pitch couldn't be re-read: ${rereadErr.message}` };
+    if (!now) return { ok: false, error: "Pitch not found." };
+    if (now.status === next) return { ok: true };
+    return { ok: false, error: transitionRefusedMessage(now.status) };
+  }
 
   if (parsed.data.next_status === "approved") {
     await recordPitchEvent(supabase, {

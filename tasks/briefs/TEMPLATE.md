@@ -39,7 +39,8 @@ Inputs or behaviours whose outcome stays exactly as today. Mandatory for classif
 filters and gates; the reviewer probes these first.
 
 ## Acceptance checks
-Concrete, runnable. The reviewer re-runs these.
+Concrete, runnable. The reviewer re-runs these. A filter/scrubber/classifier: check 1 runs
+on real prod data (fixture from the conductor), never only on a generator the worker wrote.
 1. `npm test` passes and includes a new test for <behaviour>.
 2. <SQL or command> returns <expected>.
 3. <Edge case> is handled: <how to demonstrate>.

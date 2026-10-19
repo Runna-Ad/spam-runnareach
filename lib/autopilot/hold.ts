@@ -5,8 +5,9 @@
  * schedule cleared, and the tick (§5 scheduleAuto) sees "autopilot approved,
  * back in draft" and never re-queues it. It is ONE conditional update guarded
  * on status = 'approved', so it can't flip a row the send-queue has already
- * claimed ('sending') or sent back to draft. (transitionPitchStatusWith is not
- * used: its update has no current-status guard.)
+ * claimed ('sending') or sent back to draft. (It stays separate from
+ * transitionPitchStatusWith, which is guarded too since batch 3, because a hold
+ * also clears the schedule and writes the hold reason in the same update.)
  *
  * The db is injected so the logic is tested with a fake (tests/autopilot-hold.test.ts).
  * The route (app/api/autopilot/hold) passes the service-role client, behind a
@@ -186,7 +187,7 @@ export function buildVetoDigest(opts: {
     subject: `Autopilot: ${items.length} email${items.length === 1 ? "" : "s"} will send in the next ${DIGEST_HORIZON_HOURS}h unless held`,
     body:
       `These passed every check and are scheduled to send in the next ${DIGEST_HORIZON_HOURS} hours. ` +
-      `Sending runs every 10 minutes 15:00–23:00 UTC on weekdays and once around 15:00 UTC on weekends; anything scheduled outside those hours goes out the next time sending runs.\n\n` +
+      `Sending runs every 10 minutes 15:00–23:00 UTC, Monday to Friday only; anything scheduled outside those hours goes out the next time sending runs.\n\n` +
       lines.join("\n") +
       `\n\n${how} Holding one counts as a veto; few vetoes over two weeks lets the autopilot send without the wait.\n\n${appUrl}/pitches`,
   };
