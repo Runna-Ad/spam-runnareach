@@ -22,6 +22,7 @@ import { isEmailOnDncList, type DncClient } from "@/lib/discover/dnc-check";
 import { findSentMessage } from "@/lib/gmail/read";
 import { firstTouchConflict } from "@/lib/pitches/send-guards";
 import { verifyRecipient } from "@/lib/research/verify-recipient";
+import { inboxBounceBlock } from "@/lib/autopilot/bounce-breaker";
 import { reconcileSignOff, senderIdentity } from "@/lib/pitches/sender-identity";
 import { auditGateHold, checkPitchGate } from "@/lib/pitches/gate";
 import { recordPitchEvent } from "@/lib/pitches/events";
@@ -188,6 +189,7 @@ export async function GET(req: NextRequest) {
       paused: boolean;
       sends_today: number; // running count, written back after each send
       remaining: number; // daily_cap - sends_today, decremented as we send
+      bounceBlock?: string | null; // undefined = not checked yet this run; string = skip reason
     }
   >();
 
@@ -256,6 +258,20 @@ export async function GET(req: NextRequest) {
         if (inbox.remaining <= 0) {
           // Cap reached for this inbox today — leave queued for tomorrow.
           results.push({ pitch_id: pitch.id, status: "skipped", reason: "Daily cap reached" });
+          continue;
+        }
+
+        // ── Bounce breaker: the tick's inbox_bounces rule, before the first send ─
+        // On 2026-10-19, 13 emails went out after two bounces were already in
+        // Gmail. The reply poll runs 5 minutes after each send run (0048), so a
+        // fresh bounce stops the rest of the drip. Skip only: the next tick
+        // pauses the inbox and emails. Checked once per inbox per run.
+        if (inbox.bounceBlock === undefined) {
+          const block = await inboxBounceBlock(supabase, pitch.tenant_id, pitch.sender_inbox_id);
+          inbox.bounceBlock = block.blocked ? block.reason : null;
+        }
+        if (inbox.bounceBlock) {
+          results.push({ pitch_id: pitch.id, status: "skipped", reason: inbox.bounceBlock });
           continue;
         }
 

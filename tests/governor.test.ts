@@ -8,6 +8,8 @@ import test from "node:test";
 import {
   evaluateBreakers,
   heldAction,
+  HELD_BY_AUTOPILOT,
+  inboxBouncesTrip,
   laneFor,
   nextStage,
   type BreakerMetrics,
@@ -84,6 +86,26 @@ test("breakers: a few bounces on a tiny sample don't trip the inbox breaker", ()
   assert.equal(evaluateBreakers({ ...quiet, inboxes: [{ id: "i1", recentSends: 5, recentHardBounces: 2, apiErrorsToday: 0 }] }).length, 0);
 });
 
+test("breakers: the inbox_bounces thresholds are unchanged (>= 20 sends, >= 2 bounces, >= 4%)", () => {
+  // Independent oracle: the rule as written before it was shared with the send-queue.
+  for (let sends = 0; sends <= 80; sends++) {
+    for (let bounces = 0; bounces <= Math.min(sends, 6); bounces++) {
+      const expected = sends >= 20 && bounces >= 2 && bounces / sends >= 0.04;
+      const inbox = { id: "i1", recentSends: sends, recentHardBounces: bounces };
+      const shared = inboxBouncesTrip(inbox);
+      assert.equal(shared !== null, expected, `${bounces} of ${sends}`);
+      const viaEvaluate = evaluateBreakers({ ...quiet, inboxes: [{ ...inbox, apiErrorsToday: 0 }] }).filter((t) => t.code === "inbox_bounces");
+      assert.deepEqual(viaEvaluate, shared ? [shared] : [], `${bounces} of ${sends}`);
+    }
+  }
+  assert.deepEqual(inboxBouncesTrip({ id: "i1", recentSends: 48, recentHardBounces: 2 }), {
+    scope: "inbox",
+    inboxId: "i1",
+    code: "inbox_bounces",
+    reason: "2 hard bounces in the last 48 sends",
+  });
+});
+
 test("breakers: global trips pause everything", () => {
   const codes = (m: Partial<BreakerMetrics>) => evaluateBreakers({ ...quiet, ...m }).map((t) => t.code);
   assert.deepEqual(codes({ hardBouncesToday: 3 }), ["bounces_today"]);
@@ -156,4 +178,12 @@ test("held draft: DROP is closed at once; a person's edit or hold is left alone"
   assert.equal(held(["verifier says the address will not deliver"], { lane: "drop" }).action, "drop");
   assert.equal(held(["AI review flagged issues"], { editedByPerson: true }).action, "leave");
   assert.equal(held(["held by a person after the autopilot scheduled it"]).action, "leave");
+});
+
+test("held draft: one the autopilot pulled back on a demotion is left for a person, never rewritten or dropped", () => {
+  for (const over of [{}, { isRewrite: true }, { lane: "drop" as const }]) {
+    assert.equal(held([`${HELD_BY_AUTOPILOT}: stage dropped to shadow`], over).action, "leave");
+  }
+  // A look-alike that doesn't start with the prefix gets no such pass.
+  assert.equal(held(["verifier unsure about the address", `not ${HELD_BY_AUTOPILOT}`]).action, "drop");
 });
