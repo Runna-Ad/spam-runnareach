@@ -293,3 +293,36 @@ department inboxes (fails closed); lowercase COMMON_NAMES false drops (rojas, r�
 Acceptance (6b): 902+ tests green; held-out names ≥ 98%; each item a test failing on
 d425754; the conductor re-runs the 30 real pitches (target: ≥ 21 kept, the SKUs / Western /
 Wix drops gone, no GeoNames place token in any kept exemplar).
+
+## Round 6c (conductor, 2026-10-19, after the 6b review: fix-then-merge, 2 blocking, no new blocking leak class)
+6b measured on the 30 real pitches: 24/30 kept, every drop a real leak, 0 false drops. Fix:
+1. **BLOCKING B1, places the list misses** (item 1's own class). (a) The Spanish name of Mexico
+   City is in no list (GeoNames: "Mexico City"; "ciudad" is a word, "méxico" is allowed):
+   city null or an alcaldía, "Vi que atienden clínicas en Ciudad de México…" is KEPT, also
+   "Cd. de México", "Cd. México", sentence start, lowercase subject. Add Ciudad de México /
+   Cd. de México / Cd. México (and the CA/MX alternate names GeoNames carries for the same
+   rows, if your source has them) as place phrases. (b) The generator strips official
+   PREFIXES but not suffixes: "León de los Aldama" leaves "León" KEPT (sentence start,
+   subject "clínicas en león"); "Iguala" (de la Independencia) KEPT everywhere; "Poza Rica"
+   (de Hidalgo), "La Piedad" (de Cabadas) KEPT in a lowercase subject. Strip " de …" / " del …"
+   suffixes too (keep both forms), and add the result as a build-time print like the
+   name-only one.
+2. **BLOCKING B2, regression in the last-name-piece rule** (exemplars.ts ~1037–1043):
+   appending the email local part moves the `last` index, so a particle surname stops being
+   checked: recipient "Minh Le" + minhle@ → "Le and her team answer every call" KEPT (and
+   "Thanh Do" + thanhdo@). Compute `last` over leakParts(recipient_name) only; add the I3
+   particle test with recipient_email set.
+3. Optional, take: "cabo" (and "Playa" as Playa del Carmen's short form) as places; a place
+   phrase counts when any word after the first is capitalized ("en los Cabos"); "@3amigos"
+   → [site] again (blank digit-led handles, or match [@#] in ADDRESS_LEFT); refresh the
+   exemplars.ts header invariant (PLATFORMS beat the name deny; place positions; the new
+   residuals: lowercase places in a body, placeWords in a lowercase subject); make the
+   "intersect every allow list with places" step real in the generator (a build-time print).
+   If cheap: the best-known MTY/GDL colonias (Cumbres, San Pedro, Valle Oriente, Providencia,
+   Andares, Chapultepec) like the CDMX hand list.
+Not taken: exempting placeWords at a sentence start (the false drops on "Doctores…",
+"Madera…" stay fail-closed: the exemption would also pass "León tiene…", which B1 must
+drop); streets made of everyday words; department inboxes (Not now).
+Acceptance (6c): a test per blocking item that fails on da78f31; all earlier tests green;
+held-out names ≥ 98%; the conductor re-runs the 30 real pitches (target ≥ 24 kept, every
+drop real). Same stop rule.
