@@ -1,5 +1,10 @@
 # S.P.A.M. — Lessons (newest first)
 
+[2026-10-20] The Supabase connector holds DELETE statements for a confirmation that a cloud session never sees; plan ship steps without deletes
+WHAT HAPPENED: At the batch 5 ship the conductor's planned step "delete the stop-gap row" timed out twice after 60 s. Reads worked, pg_stat_activity showed no waiting query, so the delete never reached Postgres: the connector asks the user to confirm destructive statements and the prompt timed out. The row was relabelled instead (learner review → review.stopgap), which had the same effect and kept a record.
+RULE: A ship step that removes a temporary marker is written as a reversible UPDATE (relabel, flag off) or as a step for Pedro, never as a DELETE through the connector. After any write that times out, read the row before retrying.
+TAGS: process, supabase, ship, conductor
+
 [2026-10-20] Commit before a mutation check; `git checkout -- file` also throws away the fix you are testing
 WHAT HAPPENED: The conductor added a filter to lib/reports/snapshot.ts, ran a mutation (sed the filter out), then restored with `git checkout -- lib/reports/snapshot.ts`. The fix was not committed yet, so the checkout restored the OLD file and the fix was gone; caught only because `git diff --stat` came back empty.
 RULE: Commit (or copy the file aside) before mutating; restore from that commit, never from the index. Check `git diff --stat` after every restore.
