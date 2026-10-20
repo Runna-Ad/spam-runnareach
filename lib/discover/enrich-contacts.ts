@@ -5,7 +5,7 @@
 import type { createClient } from "@/lib/supabase/server";
 import { ANYMAIL_VERIFIED_SOURCE, anymailFindDecisionMaker } from "@/lib/research/anymail-finder";
 import { hunterDomainSearch } from "@/lib/research/hunter";
-import { snapVerifyEnrich, screenEmailsAgainstSmtp } from "@/lib/research/snap-contact";
+import { recordSnapVerifyCall, snapVerifyEnrich, screenEmailsAgainstSmtp } from "@/lib/research/snap-contact";
 import { isRoleBasedEmail, hasUsableEmail } from "@/lib/research/email-utils";
 
 /**
@@ -49,6 +49,10 @@ export async function enrichContactsForProspect(
       research?.what_they_do ?? null,
       companyName,
     );
+    // Paid whether or not it found anyone: record before anything can throw.
+    if (snapResult.claudeCall) {
+      await recordSnapVerifyCall(tenantId, prospectId, snapResult.claudeCall);
+    }
 
     if (snapResult.found) {
       // SMTP-verified, real personal email — best possible, short-circuit.

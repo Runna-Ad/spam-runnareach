@@ -66,11 +66,12 @@ const responseSchema = z.object({
     }),
   ),
   decision_maker_email: z.string().email().nullable(),
-  // Lenient default — Sonnet drops it under 0.5%.
+  // Lenient default — Sonnet drops it under 0.5%. Display-only, so a long
+  // answer is clipped instead of failing the whole research call.
   reasoning: z
     .string()
     .trim()
-    .max(800)
+    .transform((s) => s.slice(0, 800))
     .optional()
     .default("(no reasoning provided)"),
 });
@@ -187,7 +188,7 @@ Output as a JSON object EXACTLY matching this shape:
   "pain_points": [
     {
       "pain_id": "<UUID from taxonomy>",
-      "pain_label": "<display name from taxonomy>",
+      "pain_label": "<display name from taxonomy, ≤200 chars>",
       "evidence_quote": "<actual sentence, ≤240 chars>",
       "confidence": <number 0..1>
     }

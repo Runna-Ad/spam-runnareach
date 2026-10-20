@@ -17,6 +17,7 @@
 
 import { z } from "zod";
 import { ANTHROPIC_HAIKU_MODEL, claudeIsAvailable, structuredCall } from "@/lib/anthropic/client";
+import { recordClaudeCall } from "@/lib/anthropic/cost-tracking";
 import { requireUser } from "@/lib/auth";
 import { createClient } from "@/lib/supabase/server";
 import { RUNNA_CAPABILITIES } from "@/lib/runna/capabilities";
@@ -201,7 +202,13 @@ export async function suggestPitchAnglesAction(prospectId: string): Promise<Pitc
 
   // ── Phrase rationales (Haiku) — given resolved combos only, can't hallucinate ─
   if (claudeIsAvailable()) {
-    const phrased = await phraseRationales(prospect.company_name, prospect.industry, ranked, serviceNames);
+    const phrased = await phraseRationales(
+      { tenantId: user.tenantId, prospectId: idParse.data },
+      prospect.company_name,
+      prospect.industry,
+      ranked,
+      serviceNames,
+    );
     if (phrased) {
       return { ok: true, prospectName: prospect.company_name, angles: phrased, note: HYPOTHESIS_NOTE, method: "claude" };
     }
@@ -239,6 +246,7 @@ const rationaleSchema = z.object({
 });
 
 async function phraseRationales(
+  ids: { tenantId: string; prospectId: string },
   company: string,
   industry: string | null,
   angles: PitchAngle[],
@@ -276,6 +284,25 @@ Return JSON { "rationales": [{ "index": n, "rationale": "...", "capability": "..
     max_tokens: 800,
     schema: rationaleSchema,
   });
+
+  // Every Claude call that spent tokens is accounted, ok or failed, so the
+  // daily cap stays honest (usage null: nothing reached the API, no row).
+  // There is no pitch yet (this advises the person composing one).
+  if (result.usage) {
+    await recordClaudeCall({
+      tenantId: ids.tenantId,
+      model: result.ok ? result.model : ANTHROPIC_HAIKU_MODEL,
+      entity_type: "pitch",
+      entity_id: null,
+      usage: result.usage,
+      metadata: {
+        kind: "angle_advice",
+        prospect_id: ids.prospectId,
+        ok: result.ok,
+        ...(result.ok ? {} : { reason: result.reason, error: result.error.slice(0, 500) }),
+      },
+    });
+  }
 
   if (!result.ok) {
     console.error(`[pitch-angles] Claude phrasing failed (${result.reason}): ${result.error}`);

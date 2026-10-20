@@ -13,7 +13,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { type NextRequest, NextResponse } from "next/server";
-import { claudeIsAvailable } from "@/lib/anthropic/client";
+import { ANTHROPIC_DEFAULT_MODEL, claudeIsAvailable } from "@/lib/anthropic/client";
 import { isUnderDailyCap, recordClaudeCall } from "@/lib/anthropic/cost-tracking";
 import { writeAuditLog } from "@/lib/audit/log";
 import { getAccessToken, sendGmailMessage } from "@/lib/gmail/client";
@@ -225,6 +225,15 @@ export async function GET(req: NextRequest) {
           usage: r.usage, metadata: { prospect_id: prospectId, source: "nudge", attempt: attemptNumber },
         }).catch(() => {});
       } else {
+        // Paid even though unusable: record it so the cap sees it. The composer
+        // calls ANTHROPIC_DEFAULT_MODEL; its failure result carries no model.
+        if (r.usage) {
+          await recordClaudeCall({
+            tenantId, model: ANTHROPIC_DEFAULT_MODEL, entity_type: "reply_draft", entity_id: null,
+            usage: r.usage,
+            metadata: { prospect_id: prospectId, source: "nudge", attempt: attemptNumber, fallback_reason: r.reason },
+          }).catch(() => {});
+        }
         const f = composeNudgeHeuristic(composerInput);
         body = f.body; subject = f.subject;
       }

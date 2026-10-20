@@ -42,11 +42,15 @@ const responseSchema = z.object({
   preview_text: z.string().trim().min(20).max(2000).transform((s) => s.slice(0, 150)),
   body: z.string().trim().min(80).max(8000).transform((s) => s.slice(0, 2000)),
   // pain_id can be a text slug like "abandoned_cart_loss" or a UUID — accept both.
-  pain_id: z.string().nullable(),
+  // An absent key reads as null: 4 of 5 composer fallbacks in 30 days of prod
+  // were "pain_id:Required" on an otherwise good pitch, thrown away for a template.
+  // (Normalized to null where it is read.)
+  pain_id: z.string().nullable().optional(),
   // No longer requested (prompt v2 sends no case studies); tolerated if present.
   case_study_id: z.unknown().optional(),
-  // contact_email may be missing from Claude response — coerce null gracefully.
-  contact_email: z.union([z.string().email(), z.literal(""), z.null()]).transform(v => v || null),
+  // contact_email may be missing from Claude response — coerce null gracefully
+  // (an absent key too, like pain_id).
+  contact_email: z.union([z.string().email(), z.literal(""), z.null()]).optional().transform(v => v || null),
   measurable_result_included: z.boolean(),
   quality_self_score: z.number().min(0).max(1),
   reasoning: z.string().trim().max(8000).transform((s) => s.slice(0, 800)).optional().default("(no reasoning provided)"),
@@ -159,10 +163,11 @@ export async function composePitchWithClaude(
   const validPainIds = new Set(
     input.pains.map((p) => p.pain_id).filter(Boolean) as string[],
   );
-  if (call.data.pain_id !== null && !validPainIds.has(call.data.pain_id)) {
+  const painId = call.data.pain_id ?? null;
+  if (painId !== null && !validPainIds.has(painId)) {
     return {
       ok: false,
-      error: `Claude returned unknown pain_id ${call.data.pain_id}`,
+      error: `Claude returned unknown pain_id ${painId}`,
       reason: "hallucinated_pain",
       usage: totalUsage,
     };
@@ -184,12 +189,7 @@ export async function composePitchWithClaude(
     input.contacts.find((c) => !c.email_is_role_based && c.full_name) ??
     input.contacts.find((c) => !c.email_is_role_based) ??
     input.contacts[0];
-  const forwardingLine =
-    primaryContact?.email_is_role_based
-      ? lang === "es"
-        ? "\n\nSi no eres la persona indicada para esto, te agradecería mucho que puedas reenviarle este mensaje a quien corresponda."
-        : "\n\nIf you're not the right person for this, I'd really appreciate it if you could pass this along to whoever handles it."
-      : "";
+  const forwardingLine = primaryContact?.email_is_role_based ? `\n\n${FORWARDING_LINE[lang]}` : "";
   // Hard-strip em dashes regardless of Claude's compliance.
   // Replace "— " with ", " and standalone "—" with " " to preserve flow.
   const cleanBody = (call.data.body + forwardingLine)
@@ -206,11 +206,11 @@ export async function composePitchWithClaude(
         subject: call.data.subject,
         preview_text: call.data.preview_text,
         body: finalBody,
-        pain_id: call.data.pain_id,
+        pain_id: painId,
         // Case studies are no longer sent to the model (see the payload), so a
         // pitch never cites one; anything the model returns here is ignored.
         case_study_id: null,
-        contact_used: call.data.contact_email,
+        contact_used: call.data.contact_email ?? null,
         measurable_result_included: call.data.measurable_result_included,
         quality_self_score: adjustedScore,
         reasoning: call.data.reasoning ?? "(no reasoning provided)",
@@ -220,6 +220,31 @@ export async function composePitchWithClaude(
       raw: call.raw,
     },
   };
+}
+
+/** Appended by the composer when the address is a role inbox (never written by the model). */
+const FORWARDING_LINE = {
+  en: "If you're not the right person for this, I'd really appreciate it if you could pass this along to whoever handles it.",
+  es: "Si no eres la persona indicada para esto, te agradecería mucho que puedas reenviarle este mensaje a quien corresponda.",
+} as const;
+
+/** A resolved Hunter link: what resolveCtaLink puts where {hunter_url} was (HUNTER_URL + its query). */
+const RESOLVED_HUNTER_LINK_RE = new RegExp(`${HUNTER_URL.replace(/[.*+?^${}()|[\]\\/]/g, "\\$&")}\\S*`, "g");
+
+/**
+ * A stored body turned back into what the writer produced, for a revision of
+ * it: every Hunter link back to the {hunter_url} slot (the stored link carries
+ * the OLD pitch's &r= attribution code; kept as is, the rewrite's scans would
+ * be credited to a deleted row) and the composer's forwarding line removed (it
+ * is appended again after the revision).
+ */
+export function heldBodyForRevision(body: string): string {
+  let out = body.replace(RESOLVED_HUNTER_LINK_RE, (url) => {
+    const trail = url.match(/[.,;:!?)\]]+$/)?.[0] ?? "";
+    return `{hunter_url}${trail}`;
+  });
+  for (const line of Object.values(FORWARDING_LINE)) out = out.split(line).join("");
+  return out.replace(/\n{3,}/g, "\n\n").trim();
 }
 
 // ── Pitch prompt ──────────────────────────────────────────────────────────────
@@ -239,8 +264,16 @@ export async function composePitchWithClaude(
  *   - facts (numbers, clients, our work) → FACTS
  *   - order and length                   → THE EMAIL
  *   - wording, per language              → WORDS (+ the language pack)
+ *
+ * v3 (2026-10-20): the writer and the reviewer agree on what is a fact. v2
+ * taught the hook as "the business consequence, not the symptom" and its
+ * examples stated guesses about the prospect as facts ("every visitor after
+ * hours just leaves", "yours wait until morning"); the critic blocks exactly
+ * that, and half the autopilot's rewrites were held again for it. Now the
+ * observed finding is stated plainly and what it costs is framed as what
+ * usually happens.
  */
-export const PITCH_PROMPT_VERSION = "pitch-v2-2026-10-16";
+export const PITCH_PROMPT_VERSION = "pitch-v3-2026-10-20";
 
 /** Everything that differs by language. The rules themselves do not. */
 type LanguagePack = {
@@ -252,7 +285,7 @@ type LanguagePack = {
   hook: { good: string; bad: string };
   mechanism: string;
   proof: string;
-  pain: { wrong: string; right: string };
+  pain: { wrong: string; right: string; guess: string; usually: string };
   benchmark: { ok: string; not: string; attribution: string };
   jargon: string;
   languageRule: string;
@@ -285,9 +318,11 @@ function englishPack(): LanguagePack {
     pain: {
       wrong: 'I saw "Outdated website, no e-commerce functionality".',
       right: "Checked [company]'s site: there's no way to buy anything online.",
+      guess: "Your phone shoppers give up and buy somewhere else.",
+      usually: "Most people who can't buy on the spot from their phone don't come back to finish.",
     },
     benchmark: {
-      ok: "A Harvard Business Review study found firms that reply within the hour are about 7 times more likely to get a real conversation going, and right now yours wait until morning.",
+      ok: "A Harvard Business Review study found firms that reply within the hour are about 7 times more likely to get a real conversation going than firms that wait longer.",
       not: "Businesses like yours see 20-30% more bookings with us.",
       attribution: '"a Harvard Business Review study found", "according to Baymard Institute"',
     },
@@ -309,10 +344,10 @@ function englishPack(): LanguagePack {
       "I'd rather the numbers show you than me tell you. {hunter_url} is a free check of [company]'s own [pain], about 30 seconds, no signup. If you want to talk after, I'm here.",
     ],
     subjects: `    - their business + a quiet loss (the default): "where [company] loses online orders", "what [company]'s website isn't doing"
-    - the leak, stated as fact (only when the pain evidence shows it): "[company]'s checkout is losing phone shoppers"
-    - the reframe, something they think is fine called a cost: "what slow replies cost [company]"
+    - what you saw, said plainly (only when the pain evidence shows it): "no online booking at [company]"
+    - the reframe, something they think is fine called a cost: "what a slow reply costs [company]"
     - the 30-second check: "30 seconds: where [company] leaks customers"`,
-    preview: "no way to book online, so every visitor after hours just leaves",
+    preview: "no way to book online after hours, only a contact form",
   };
 }
 
@@ -323,7 +358,7 @@ function spanishPack(size: SizeSignal): LanguagePack {
     langName: "Spanish (Mexican business register)",
     register: usted
       ? 'Habla de usted en todo el correo, CTA incluido (adapta los ejemplos, que van de tú). Profesional y directo. Si el puesto se ve, "Lic.", "Ing.", "Dr./Dra." con el apellido.'
-      : 'Tutea (tú) en todo el correo. Directo y cálido: "estás perdiendo ventas", no "hay oportunidades de conversión".',
+      : 'Tutea (tú) en todo el correo. Directo y cálido: "tu sitio no tiene forma de agendar", no "hay oportunidades de conversión".',
     verbs: "contestar, llegar, arreglar, perder, agendar, vender",
     salutation: usted
       ? '"Estimado [nombre]," o "Estimada [nombre]," según el nombre (si no estás seguro, "Hola [nombre],") cuando address_contact.first_name existe y parece un nombre real. Si no, "Hola, equipo de [empresa],". Nunca "Hola there,".'
@@ -342,9 +377,11 @@ function spanishPack(size: SizeSignal): LanguagePack {
     pain: {
       wrong: 'Vi "Outdated website, no e-commerce functionality".',
       right: "Revisé el sitio de [empresa]: no hay forma de comprar nada en línea.",
+      guess: "Tus clientes se cansan y le compran a otro.",
+      usually: "Casi nadie que no puede comprar en el momento desde el celular regresa a terminar.",
     },
     benchmark: {
-      ok: "Según un estudio de Harvard Business Review, las empresas que responden en menos de una hora tienen unas 7 veces más probabilidades de lograr una conversación real, y hoy las tuyas esperan hasta el día siguiente.",
+      ok: "Según un estudio de Harvard Business Review, las empresas que responden en menos de una hora tienen unas 7 veces más probabilidades de lograr una conversación real que las que tardan más.",
       not: "Negocios como el tuyo venden 20-30% más con nosotros.",
       attribution: '"según un estudio de Harvard Business Review", "de acuerdo con Baymard Institute"',
     },
@@ -364,10 +401,10 @@ function spanishPack(size: SizeSignal): LanguagePack {
       "Prefiero que te lo muestren los números a decírtelo yo: {hunter_url} revisa gratis [el dolor] de [empresa] en unos 30 segundos, sin registro. Si quieres hablar después, aquí estoy.",
     ],
     subjects: `    - su negocio + una pérdida silenciosa (por defecto): "dónde pierde clientes [empresa]", "lo que el sitio de [empresa] no está haciendo"
-    - la fuga, dicha como hecho (solo si la evidencia la muestra): "los carritos de [empresa] se van sin comprar"
-    - el replanteo, algo que creen que está bien visto como costo: "¿cuánto le cuesta a [empresa] contestar tarde?"
+    - lo que viste, dicho tal cual (solo si la evidencia lo muestra): "[empresa] sin reservas en línea"
+    - el replanteo, algo que creen que está bien visto como costo: "¿cuánto le cuesta a [empresa] una respuesta tarde?"
     - la revisión de 30 segundos: "30 segundos: dónde [empresa] pierde ventas"`,
-    preview: "sin forma de agendar en línea, cada visita fuera de horario se va",
+    preview: "no hay forma de agendar en línea fuera de horario, solo un formulario",
   };
 }
 
@@ -403,17 +440,20 @@ THE EMAIL, IN THIS ORDER (nothing added, nothing reordered)
 2. Intro, one sentence: who is writing. Warm, not a pitch. For example:
    "${p.intro[0]}"
    "${p.intro[1]}"
-3. Hook: one specific observation about THIS business, from the translated pain (below) plus what_they_do, tech_stack or city. "${p.hook.good}" beats "${p.hook.bad}".
+3. Hook: one specific observation about THIS business, from the pain you picked (below) plus what_they_do, tech_stack or city. "${p.hook.good}" beats "${p.hook.bad}".
 4. The fix, one or two sentences, the core of the email: what we would do, described by what it does for them, specific to their business and industry. Start from solution_hint and make it theirs. Describe how it works ("${p.mechanism}"), never a tool name or a result figure.
 5. Proof, one sentence: the kind of work we do for businesses like theirs. No client, no metric, no boast. For example: "${p.proof}"
 6. CTA: one line that starts with 👉 (that marker turns it into the email's button). See CALL TO ACTION.
 7. Sign-off: "${s.firstName}" on one line and "${s.agency}" on the next. Nothing after it.
 Length: 60 to 100 words from the salutation to the CTA. Past 100, replies drop sharply (Gong, 2026); the best emails run 50 to 100.
 
-TRANSLATE THE PAIN FIRST
-pain_candidates are raw audit findings in technical, usually English, language. Before writing, pick the best one (prefer one with both pain_id and evidence_quote) and translate it into how the owner would describe it to a friend: the business consequence, not the symptom. No jargon, never a quote from the audit. That translation is your hook.
+SAY WHAT YOU SAW, THEN WHAT IT TENDS TO COST
+pain_candidates are raw audit findings in technical, usually English, language. Before writing, pick the best one (prefer one with both pain_id and evidence_quote) and say what was found in the plain words the owner would use with a friend. No jargon, never a quote from the audit. That plain observation is your hook, and it may be stated as fact because the payload shows it.
+What it costs them is NOT in the payload: you have not seen their customers, their traffic or their inbox. Say it as what tends to happen to businesses with this gap in general, never as a fact about their own customers, visitors or sales. Word that in your own way each time, not with a stock phrase.
   NOT: ${p.pain.wrong}
   OK:  ${p.pain.right}
+  NOT: ${p.pain.guess}
+  OK:  ${p.pain.usually}
 
 WORDS
 - No em dashes (—) or en dashes (–). Use a comma or a period, or split the sentence.

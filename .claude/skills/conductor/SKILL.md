@@ -118,6 +118,16 @@ rework in retros traces to a missing sentence in the brief. Before spawning, che
 - A brief for a repair/backfill that calls a shared routine lists what that routine writes
   and who counts those rows by time (batch 5: phantom opt-out events would have tripped a
   breaker on the deploy week).
+- A brief that feeds stored output back into a model (a rewrite, a revision, an exemplar)
+  lists every step the code applied AFTER the model answered (filled links and codes,
+  appended lines) and asks for each to be reversed, tested with a fake model that copies
+  its input (batch 6: the held body carried the old pitch's attribution code into the rewrite).
+- A number that drove Pedro's decision is grouped by the field that RECORDS the cause
+  (e.g. `auto_rejected_reason`), not by labels on the content, and re-checked before the
+  brief; if it changed, tell Pedro before spawning (batch 6: "9 polish-only drops" was 0).
+- Every SQL in a brief's Prod verification is run once against prod (or column-checked
+  against the migrations) before spawning; a query that errors is not a check (batch 6:
+  `cost_tracking.created_at`, the column is `incurred_at`).
 - "Brain lessons": run `tasks/tools/brain-recall-for.sh "<the brief's goal in a sentence>"`
   and paste the RULE of each article that really applies (skip weak matches). Worker
   sessions do not get the brain; the brief is how its lessons reach them.

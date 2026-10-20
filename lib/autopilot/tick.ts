@@ -617,9 +617,10 @@ async function resolveHeld(actor: Actor, db: Db, deadline: number): Promise<Tick
       continue;
     }
 
-    // Rewrite: a fresh draft through the same writer and reviewer. It replaces
-    // this one (generatePitch clears the prospect's drafts) and is labelled on
-    // the next tick like any new draft.
+    // Rewrite: the writer revises this draft against the notes that held it
+    // (a Claude draft; a template or unreadable one is written fresh), then
+    // the same reviewer checks it. It replaces this one (generatePitch clears
+    // the prospect's drafts) and is labelled on the next tick like any new draft.
     if (out.rewritten >= REWRITES_PER_TICK || deadline - Date.now() < 60_000) continue;
     if (!budget) {
       const cap = await isUnderDailyCap(tenantId);

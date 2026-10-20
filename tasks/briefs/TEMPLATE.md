@@ -24,7 +24,8 @@ label or lane quotes its consumer (e.g. `governor.heldAction`) and states the ou
 facts are quoted from a query run for this brief. Decisions already made, the public API
 that must stay stable, the data shape in prod, the lesson that applies. A route with a time
 budget: its maxDuration, every deadline inside it, every step between them, and the largest
-load the schedules allow (test at that load). Link a section of
+load the schedules allow (test at that load). Stored text handed back to a model: every
+post-processing step to reverse (links, codes, appended lines). Link a section of
 `tasks/audit-2026-10-16.md` only if it is required reading.
 
 ## Brain lessons
@@ -64,6 +65,8 @@ which the scope alone does not do), an env var in Vercel, a credential, a DNS re
 console toggle. "none" is an answer; "unknown, worker to list in the PR" is not.
 
 ## Prod verification
+<!-- Run each query once against prod (or check its columns against the migrations)
+     before spawning. -->
 One query, URL or log line the conductor runs after the deploy to show the feature is
 live, and what it should return (e.g. the first `net._http_response` row for a new cron
 path showing counts and no error). The batch is not closed until this returns clean.

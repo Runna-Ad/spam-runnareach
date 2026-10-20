@@ -106,6 +106,7 @@ export async function runCrawlWith(
     market,
     pages,
     icp: icpContext,
+    tenantId: user.tenantId,
   });
 
   if (!rawListings.ok) {
@@ -313,6 +314,7 @@ async function fetchFromSource(opts: {
   market: "CA" | "MX" | "US" | "LATAM";
   pages: number;
   icp?: ClaudeSearchIcp | null;
+  tenantId: string;
 }): Promise<FetchSourceResult> {
   if (opts.source === "yellowpages_ca") {
     const loc = opts.location ?? "Canada";
@@ -437,6 +439,7 @@ async function fetchFromSource(opts: {
       : opts.market === "US" ? "US"
       : "CA";
     const result = await searchWithClaude({
+      tenantId: opts.tenantId,
       brief: opts.keyword,
       location: opts.location ?? "Canada",
       country,
