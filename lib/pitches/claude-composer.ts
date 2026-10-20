@@ -189,12 +189,7 @@ export async function composePitchWithClaude(
     input.contacts.find((c) => !c.email_is_role_based && c.full_name) ??
     input.contacts.find((c) => !c.email_is_role_based) ??
     input.contacts[0];
-  const forwardingLine =
-    primaryContact?.email_is_role_based
-      ? lang === "es"
-        ? "\n\nSi no eres la persona indicada para esto, te agradecería mucho que puedas reenviarle este mensaje a quien corresponda."
-        : "\n\nIf you're not the right person for this, I'd really appreciate it if you could pass this along to whoever handles it."
-      : "";
+  const forwardingLine = primaryContact?.email_is_role_based ? `\n\n${FORWARDING_LINE[lang]}` : "";
   // Hard-strip em dashes regardless of Claude's compliance.
   // Replace "— " with ", " and standalone "—" with " " to preserve flow.
   const cleanBody = (call.data.body + forwardingLine)
@@ -225,6 +220,31 @@ export async function composePitchWithClaude(
       raw: call.raw,
     },
   };
+}
+
+/** Appended by the composer when the address is a role inbox (never written by the model). */
+const FORWARDING_LINE = {
+  en: "If you're not the right person for this, I'd really appreciate it if you could pass this along to whoever handles it.",
+  es: "Si no eres la persona indicada para esto, te agradecería mucho que puedas reenviarle este mensaje a quien corresponda.",
+} as const;
+
+/** A resolved Hunter link: what resolveCtaLink puts where {hunter_url} was (HUNTER_URL + its query). */
+const RESOLVED_HUNTER_LINK_RE = new RegExp(`${HUNTER_URL.replace(/[.*+?^${}()|[\]\\/]/g, "\\$&")}\\S*`, "g");
+
+/**
+ * A stored body turned back into what the writer produced, for a revision of
+ * it: every Hunter link back to the {hunter_url} slot (the stored link carries
+ * the OLD pitch's &r= attribution code; kept as is, the rewrite's scans would
+ * be credited to a deleted row) and the composer's forwarding line removed (it
+ * is appended again after the revision).
+ */
+export function heldBodyForRevision(body: string): string {
+  let out = body.replace(RESOLVED_HUNTER_LINK_RE, (url) => {
+    const trail = url.match(/[.,;:!?)\]]+$/)?.[0] ?? "";
+    return `{hunter_url}${trail}`;
+  });
+  for (const line of Object.values(FORWARDING_LINE)) out = out.split(line).join("");
+  return out.replace(/\n{3,}/g, "\n\n").trim();
 }
 
 // ── Pitch prompt ──────────────────────────────────────────────────────────────
@@ -327,7 +347,7 @@ function englishPack(): LanguagePack {
     - what you saw, said plainly (only when the pain evidence shows it): "no online booking at [company]"
     - the reframe, something they think is fine called a cost: "what a slow reply costs [company]"
     - the 30-second check: "30 seconds: where [company] leaks customers"`,
-    preview: "no way to book online after hours, which usually sends people elsewhere",
+    preview: "no way to book online after hours, only a contact form",
   };
 }
 
@@ -338,7 +358,7 @@ function spanishPack(size: SizeSignal): LanguagePack {
     langName: "Spanish (Mexican business register)",
     register: usted
       ? 'Habla de usted en todo el correo, CTA incluido (adapta los ejemplos, que van de tú). Profesional y directo. Si el puesto se ve, "Lic.", "Ing.", "Dr./Dra." con el apellido.'
-      : 'Tutea (tú) en todo el correo. Directo y cálido: "estás perdiendo ventas", no "hay oportunidades de conversión".',
+      : 'Tutea (tú) en todo el correo. Directo y cálido: "tu sitio no tiene forma de agendar", no "hay oportunidades de conversión".',
     verbs: "contestar, llegar, arreglar, perder, agendar, vender",
     salutation: usted
       ? '"Estimado [nombre]," o "Estimada [nombre]," según el nombre (si no estás seguro, "Hola [nombre],") cuando address_contact.first_name existe y parece un nombre real. Si no, "Hola, equipo de [empresa],". Nunca "Hola there,".'
@@ -384,7 +404,7 @@ function spanishPack(size: SizeSignal): LanguagePack {
     - lo que viste, dicho tal cual (solo si la evidencia lo muestra): "[empresa] sin reservas en línea"
     - el replanteo, algo que creen que está bien visto como costo: "¿cuánto le cuesta a [empresa] una respuesta tarde?"
     - la revisión de 30 segundos: "30 segundos: dónde [empresa] pierde ventas"`,
-    preview: "no hay forma de agendar en línea fuera de horario, y eso suele mandar a la gente con otro",
+    preview: "no hay forma de agendar en línea fuera de horario, solo un formulario",
   };
 }
 
@@ -427,9 +447,9 @@ THE EMAIL, IN THIS ORDER (nothing added, nothing reordered)
 7. Sign-off: "${s.firstName}" on one line and "${s.agency}" on the next. Nothing after it.
 Length: 60 to 100 words from the salutation to the CTA. Past 100, replies drop sharply (Gong, 2026); the best emails run 50 to 100.
 
-SAY WHAT YOU SAW, THEN WHAT USUALLY HAPPENS
+SAY WHAT YOU SAW, THEN WHAT IT TENDS TO COST
 pain_candidates are raw audit findings in technical, usually English, language. Before writing, pick the best one (prefer one with both pain_id and evidence_quote) and say what was found in the plain words the owner would use with a friend. No jargon, never a quote from the audit. That plain observation is your hook, and it may be stated as fact because the payload shows it.
-What it costs them is NOT in the payload: you have not seen their customers, their traffic or their inbox. Say it as what usually happens to a business with this gap ("which usually means", "most people who"), never as a fact about them.
+What it costs them is NOT in the payload: you have not seen their customers, their traffic or their inbox. Say it as what tends to happen to businesses with this gap in general, never as a fact about their own customers, visitors or sales. Word that in your own way each time, not with a stock phrase.
   NOT: ${p.pain.wrong}
   OK:  ${p.pain.right}
   NOT: ${p.pain.guess}

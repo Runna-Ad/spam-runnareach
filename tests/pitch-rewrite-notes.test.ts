@@ -10,7 +10,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { __test__ } from "../lib/anthropic/client.ts";
-import { PITCH_PROMPT_VERSION, composePitchWithClaude } from "../lib/pitches/claude-composer.ts";
+import { PITCH_PROMPT_VERSION, composePitchWithClaude, heldBodyForRevision } from "../lib/pitches/claude-composer.ts";
 import { composeWithReview } from "../lib/pitches/review.ts";
 import type { GeneratorInputs } from "../lib/pitches/generator.ts";
 
@@ -77,7 +77,11 @@ const RETIRED = [
   "cada visita fuera de horario se va",
   "y hoy las tuyas esperan hasta el día siguiente",
   "la fuga, dicha como hecho",
+  "estás perdiendo ventas",
 ];
+
+// A fixed cue phrase in the prompt becomes the new verbatim template.
+const CUES = ["which usually means", "usually sends", "eso suele"];
 
 test("prompt v3: the retired guess-as-fact lines are gone in every language and register", async () => {
   assert.notEqual(PITCH_PROMPT_VERSION, "pitch-v2-2026-10-16");
@@ -88,8 +92,9 @@ test("prompt v3: the retired guess-as-fact lines are gone in every language and 
     const sys = sysText(calls[0]!);
     for (const line of RETIRED) assert.ok(!sys.includes(line), `${lang}/${size}: "${line}" is back`);
     // What replaces it: the observation is a fact, the cost is what usually happens.
-    assert.match(sys, /SAY WHAT YOU SAW, THEN WHAT USUALLY HAPPENS/);
-    assert.match(sys, /never as a fact about them/);
+    for (const cue of CUES) assert.ok(!sys.includes(cue), `${lang}/${size}: fixed cue "${cue}" in the prompt`);
+    assert.match(sys, /SAY WHAT YOU SAW, THEN WHAT IT TENDS TO COST/);
+    assert.match(sys, /what tends to happen to businesses with this gap in general, never as a fact about their own customers, visitors or sales\. Word that in your own way each time/);
     // Still exactly one em dash: the rule that bans it.
     assert.equal(sys.split("—").length - 1, 1, `${lang}/${size}: em dash in an example`);
   }
@@ -115,7 +120,9 @@ test("critic prompt: every blocking rule is still there, plus the one framing se
     "6. TONE:",
     "7. More than about 140 words before the sign-off.",
   ]) assert.ok(critic.includes(rule), `blocking rule missing: ${rule}`);
-  assert.match(critic, /is not an inference stated as fact\.\n/);
+  // The added sentence names both halves: in general it is not an inference; said about THEM it still is.
+  assert.match(critic, /what tends to happen to businesses with that gap in general, is not an inference stated as fact; the same consequence said about this prospect's own customers, visitors, patients or sales \("most of your visitors leave", "you're losing patients"\) still is\.\n/);
+  for (const cue of CUES) assert.ok(!critic.includes(cue), `critic carries the cue "${cue}"`);
 });
 
 // ── Missing fields ────────────────────────────────────────────────────────────
@@ -211,4 +218,60 @@ test("deadline: two rewrites in one tick each stay inside their 48 s compose dea
     assert.deepEqual(ends.map((e) => e.kind), ["compose", "critic"], `rewrite ${rewrite}`);
     for (const e of ends) assert.ok(e.at <= deadline, `rewrite ${rewrite}: ${e.kind} ended ${e.at - deadline} ms past the deadline`);
   }
+});
+
+// ── The held body goes back as the writer wrote it ────────────────────────────
+
+const FWD_EN = "If you're not the right person for this, I'd really appreciate it if you could pass this along to whoever handles it.";
+const FWD_ES = "Si no eres la persona indicada para esto, te agradecería mucho que puedas reenviarle este mensaje a quien corresponda.";
+
+test("heldBodyForRevision: the old Hunter link goes back to {hunter_url} (no old r= code), the forwarding line is removed", () => {
+  const stored = `Hi Clinica Sur team,\n\nHenry from Runna Advertising here.\n\n👉 Run Clinica Sur through our free check: https://runna-hunter.vercel.app/?market=ca&industry=clinic&r=OLD123.\n\nHenry\nRunna Advertising\n\n${FWD_EN}`;
+  const out = heldBodyForRevision(stored);
+  assert.ok(out.includes("👉 Run Clinica Sur through our free check: {hunter_url}."), out);
+  assert.doesNotMatch(out, /r=|OLD123|runna-hunter/);
+  assert.ok(!out.includes(FWD_EN));
+  assert.ok(out.endsWith("Henry\nRunna Advertising"));
+  assert.ok(!heldBodyForRevision(`Hola,\n\nNils\n\n${FWD_ES}`).includes(FWD_ES));
+  // A link that is not ours is left alone.
+  assert.ok(heldBodyForRevision("see https://example.com/?r=x").includes("https://example.com/?r=x"));
+});
+
+test("revision of a held body: a writer that keeps the 👉 line ends with the NEW link and the forwarding line once", async () => {
+  const NEW = "https://runna-hunter.vercel.app/?market=ca&r=NEW999";
+  const base = inputs();
+  const role: GeneratorInputs = {
+    ...base,
+    contacts: [{ full_name: null, email: "info@clinicasur.ca", email_is_role_based: true, role_title: null }],
+    deep_pitch_url: NEW,
+  };
+  const held = `Hi Clinica Sur team,\n\nHenry from Runna Advertising here. Right now the only way to reach Clinica Sur online is a contact form.\n\n👉 Run Clinica Sur through our free check, about 30 seconds: https://runna-hunter.vercel.app/?market=ca&r=OLD123\n\nHenry\nRunna Advertising\n\n${FWD_EN}`;
+  // The writer echoes the previous draft verbatim: the worst case for both bugs.
+  install((r) => {
+    const m = /Previous draft:\nSubject: [^\n]*\n([\s\S]*?)\n+```json/.exec(r.messages[0]!.content);
+    return answer({ body: m![1]!.trim() });
+  });
+  const r = await composePitchWithClaude({ ...role, revision: { subject: "s", body: heldBodyForRevision(held), issues: ["fix it"] } });
+  assert.equal(r.ok, true, r.ok ? "" : r.error);
+  if (!r.ok) return;
+  const body = r.result.composed.body;
+  assert.ok(body.includes(NEW), body);
+  assert.doesNotMatch(body, /OLD123/);
+  assert.equal(body.split(FWD_EN).length - 1, 1, "forwarding line exactly once");
+});
+
+test("loop revision: a role-inbox draft sent back by the critic keeps the forwarding line once when the writer echoes it", async () => {
+  const base = inputs();
+  const role: GeneratorInputs = { ...base, contacts: [{ full_name: null, email: "info@clinicasur.ca", email_is_role_based: true, role_title: null }] };
+  let reviews = 0;
+  install((r) => {
+    if (isCritic(r)) return JSON.stringify(reviews++ === 0 ? { score: 0.6, issues: [{ issue: "tighten the hook", blocking: true }] } : { score: 0.95, issues: [] });
+    const m = /Previous draft:\nSubject: [^\n]*\n([\s\S]*?)\n+```json/.exec(r.messages[0]!.content);
+    return answer({ body: m ? m[1]!.trim() : BODY.replace("Hi Sarah,", "Hi Clinica Sur team,") });
+  });
+  const r = await composeWithReview(role, { deadline: Date.now() + 120_000 });
+  assert.equal(r.ok, true);
+  if (!r.ok) return;
+  assert.equal(reviews, 2, "one revision happened");
+  assert.equal(r.composed.body.split(FWD_EN).length - 1, 1, r.composed.body);
 });

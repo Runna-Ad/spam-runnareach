@@ -74,6 +74,12 @@ export type DecisionRecord = {
    * draft's id. A rewrite gets no second one (lib/autopilot/governor.ts).
    */
   retry_of?: string;
+  /**
+   * With retry_of: "revised" when the writer revised the held draft against
+   * its notes, "fresh" when it wrote from scratch (template held draft, no
+   * notes, person-edited, unreadable, or the rewrite fell back to a template).
+   */
+  retry_mode?: "revised" | "fresh";
 };
 
 export type SizeBand = "smb" | "mid_market" | "enterprise" | "unknown";

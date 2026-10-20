@@ -12,7 +12,7 @@ import { isUnderDailyCap, recordClaudeCall } from "@/lib/anthropic/cost-tracking
 import { writeAuditLog } from "@/lib/audit/log";
 import type { Actor } from "@/lib/actor";
 import type { Database } from "@/lib/supabase/types";
-import { PITCH_PROMPT_VERSION } from "./claude-composer";
+import { PITCH_PROMPT_VERSION, heldBodyForRevision } from "./claude-composer";
 import { NOT_REVIEWED_ISSUE, WRITER_FIXABLE, composeWithReview, revisionIssues, type ReviewCall } from "./review";
 import {
   DECISION_VERSION,
@@ -611,7 +611,9 @@ export async function generatePitchWith(
       : {}),
     // A template uses no exemplars, even when some were loaded for the AI path.
     ...decisionExemplarFields(method === "claude" ? "claude" : "template", exemplars),
-    ...(opts.retryOf ? { retry_of: opts.retryOf } : {}),
+    ...(opts.retryOf
+      ? { retry_of: opts.retryOf, retry_mode: reviseFirst && method === "claude" ? ("revised" as const) : ("fresh" as const) }
+      : {}),
   };
   const { error: decisionErr } = await supabase
     .from("pitches")
@@ -1282,14 +1284,18 @@ type HeldDraftRow = {
 /**
  * The revision input for a held draft: its subject, body and the notes that
  * held it (the gate's writing findings first, then the critic's issues, polish
- * included, as stored; at most 8). Null when it is not a Claude draft or has
- * no notes: that rewrite composes fresh.
+ * included, as stored; at most 8). Null when it is not a Claude draft, has
+ * no notes, or a person edited it (the notes describe the original, and a
+ * person's draft stays theirs): that rewrite composes fresh. The body goes
+ * back with its {hunter_url} slot and without the forwarding line, so the new
+ * pitch gets its own attribution code and the line once.
  */
 export function heldDraftRevision(row: HeldDraftRow | null): NonNullable<GeneratorInputs["revision"]> | null {
   if (!row) return null;
   const decision = (row.decision ?? {}) as { path?: unknown; critic?: { issues?: unknown } | null };
   if (decision.path !== "claude") return null;
-  const body = row.body_edited ?? row.body_original;
+  if (row.body_edited !== null) return null;
+  const body = row.body_original ? heldBodyForRevision(row.body_original) : "";
   if (!row.subject || !body) return null;
   const gate = (row.gate_verdict ?? {}) as { failures?: unknown };
   const writing = (Array.isArray(gate.failures) ? gate.failures : []).filter(

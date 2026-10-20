@@ -285,21 +285,24 @@ Return JSON { "rationales": [{ "index": n, "rationale": "...", "capability": "..
     schema: rationaleSchema,
   });
 
-  // Every Claude call is accounted, ok or failed, so the daily cap stays honest.
+  // Every Claude call that spent tokens is accounted, ok or failed, so the
+  // daily cap stays honest (usage null: nothing reached the API, no row).
   // There is no pitch yet (this advises the person composing one).
-  await recordClaudeCall({
-    tenantId: ids.tenantId,
-    model: result.ok ? result.model : ANTHROPIC_HAIKU_MODEL,
-    entity_type: "pitch",
-    entity_id: null,
-    usage: result.usage ?? { input_tokens: 0, output_tokens: 0, cache_read_input_tokens: 0, cache_creation_input_tokens: 0, cost_usd: 0 },
-    metadata: {
-      kind: "angle_advice",
-      prospect_id: ids.prospectId,
-      ok: result.ok,
-      ...(result.ok ? {} : { reason: result.reason, error: result.error.slice(0, 500) }),
-    },
-  });
+  if (result.usage) {
+    await recordClaudeCall({
+      tenantId: ids.tenantId,
+      model: result.ok ? result.model : ANTHROPIC_HAIKU_MODEL,
+      entity_type: "pitch",
+      entity_id: null,
+      usage: result.usage,
+      metadata: {
+        kind: "angle_advice",
+        prospect_id: ids.prospectId,
+        ok: result.ok,
+        ...(result.ok ? {} : { reason: result.reason, error: result.error.slice(0, 500) }),
+      },
+    });
+  }
 
   if (!result.ok) {
     console.error(`[pitch-angles] Claude phrasing failed (${result.reason}): ${result.error}`);

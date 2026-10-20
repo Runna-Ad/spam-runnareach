@@ -18,7 +18,7 @@
 import { z } from "zod";
 import { ANTHROPIC_HAIKU_MODEL, structuredCall, type ClaudeUsage } from "../anthropic/client.ts";
 import { pickAddressContact } from "../research/email-utils.ts";
-import { composePitchWithClaude } from "./claude-composer.ts";
+import { composePitchWithClaude, heldBodyForRevision } from "./claude-composer.ts";
 import type { CriticVerdict } from "./decision.ts";
 import { criticExemplarSection } from "./exemplars.ts";
 import type { ComposedPitch, GeneratorInputs } from "./generator.ts";
@@ -122,7 +122,7 @@ function criticSystem(lang: "en" | "es"): string {
 Judge ONLY against the payload you are given.
 
 BLOCKING issues (a careful person would refuse to send it as is):
-1. A claim about the prospect (what they do, how they work, their customers, their problem) that the payload does not support, or an inference stated as fact. A finding the payload shows, stated plainly and followed by what usually happens to a business with that gap ("which usually means", "most people who"), is not an inference stated as fact.
+1. A claim about the prospect (what they do, how they work, their customers, their problem) that the payload does not support, or an inference stated as fact. A finding the payload shows, stated plainly and followed by what tends to happen to businesses with that gap in general, is not an inference stated as fact; the same consequence said about this prospect's own customers, visitors, patients or sales ("most of your visitors leave", "you're losing patients") still is.
 2. A statistic that is not one of payload.benchmarks, is misquoted, is applied outside its caveat (a clinic figure presented as true of spas, an old figure presented as current), or is framed as the sender's own result. Any client name, or a claimed result for a client.
 3. RELEVANCE: the hook could be sent to any company; the owner of THIS business would not see within 5 seconds why it is about them.
 4. LANGUAGE: not written natively in ${language}
@@ -288,7 +288,9 @@ export async function composeWithReview(
     const next = await composePitchWithClaude(
       {
         ...input,
-        revision: { subject: current.composed.subject, body: current.composed.body, issues: revisionIssues(current) },
+        // As the writer wrote it: the composer appends the forwarding line and
+        // fills the link again, so handing them back would double the line.
+        revision: { subject: current.composed.subject, body: heldBodyForRevision(current.composed.body), issues: revisionIssues(current) },
       },
       { timeoutMs: Math.min(30_000, remaining - 8_000) },
     );
