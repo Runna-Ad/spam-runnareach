@@ -301,14 +301,22 @@ test("source: the deep-research UI action is the thin wrapper over the guarded s
 
 // ── 4. /api/discover/run: the unfinished sweep ───────────────────────────────
 
-// The slice races each prospect against a timer it never clears (harmless in a
-// function that ends; here it would hold the test process ~95s). Unref them.
+// The slice races each prospect (and each catch-up pitch) against a timer. It
+// must clear it: an orphaned timer keeps a serverless function alive, and here
+// would hold the test process ~95s. Track live timers (no unref) so a leak both
+// fails the timer test below and visibly slows this file.
 const realSetTimeout = globalThis.setTimeout;
-globalThis.setTimeout = ((fn: () => void, ms?: number) => {
-  const t = realSetTimeout(fn, ms);
-  t.unref();
+const realClearTimeout = globalThis.clearTimeout;
+const liveTimers = new Map<ReturnType<typeof setTimeout>, number>();
+globalThis.setTimeout = ((fn: (...a: unknown[]) => void, ms?: number, ...args: unknown[]) => {
+  const t = realSetTimeout(() => { liveTimers.delete(t); fn(...args); }, ms);
+  liveTimers.set(t, ms ?? 0);
   return t;
 }) as typeof setTimeout;
+globalThis.clearTimeout = ((t?: ReturnType<typeof setTimeout>) => {
+  if (t !== undefined) liveTimers.delete(t);
+  realClearTimeout(t);
+}) as typeof clearTimeout;
 
 type Run = { leave: string; outcome: string; error?: string; score?: number | null };
 
@@ -376,6 +384,39 @@ test("route: a prospect researched then errored is swept; finished and skipped o
   assert.equal(stats.error_count, 2);
   assert.equal(stats.processed, 4);
   assert.deepEqual((job.stats as { processed_ids: string[] }).processed_ids, ["a", "b", "c", "d"]);
+});
+
+test("route: skipped companies are counted apart; processed and processed_ids stay the researched ones", async () => {
+  const { job } = await slice({
+    a: { leave: "researched", outcome: "needs_review" },
+    s1: { leave: "sent", outcome: "skipped", error: "Skipped: already contacted (sent)" },
+    b: { leave: "b_list", outcome: "needs_review" },
+    s2: { leave: "suppressed", outcome: "skipped", error: "Skipped: parked (suppressed)" },
+  });
+  const stats = job.stats as { skipped?: number; processed?: number; processed_ids?: string[]; error_count: number; errors: string[] };
+  assert.equal(stats.skipped, 2);
+  assert.equal(stats.processed, 2);
+  assert.deepEqual(stats.processed_ids, ["a", "b"]);
+  // A skip is neither an error nor a reason.
+  assert.equal(stats.error_count, 0);
+  assert.deepEqual(stats.errors, []);
+});
+
+test("route: no skip leaves skipped absent (old jobs and clean runs read the same)", async () => {
+  const { job } = await slice({ a: { leave: "researched", outcome: "needs_review" } });
+  assert.equal((job.stats as { skipped?: number }).skipped, undefined);
+});
+
+test("route: no race timer outlives its prospect or its catch-up pitch", async () => {
+  liveTimers.clear();
+  // hi scores 85 and errors, so the pitching phase runs a raced generatePitchWith too.
+  const { pitchedIds } = await slice({
+    a: { leave: "researched", outcome: "needs_review" },
+    hi: { leave: "researched", outcome: "error", error: "x", score: 85 },
+  });
+  assert.deepEqual(pitchedIds, ["hi"]);
+  const pending = [...liveTimers.values()].filter((ms) => ms >= 10_000);
+  assert.deepEqual(pending, [], "a race timer was left running");
 });
 
 test("route: a researched + errored prospect scoring ≥ 70 is left to the pitching phase; < 70 or unscored is swept", async () => {

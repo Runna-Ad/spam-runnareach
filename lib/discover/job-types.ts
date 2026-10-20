@@ -31,6 +31,13 @@ export type DiscoveryJobStats = {
    * overwrite it with the next list to work through.
    */
   processed_ids?: string[];
+  /**
+   * Companies the pipeline phase was given but did not run because they were
+   * already contacted or parked (isPastPipeline). Not part of `processed`.
+   * The pitching phase's high-scorer filter is not counted: it ranges over the
+   * ICP's whole pool (or re-sees ids this field already counted).
+   */
+  skipped?: number;
   pitched_pool?: number;
   // true for a manual "run these specific prospects" job — skip the top-30 prune
   // (the user hand-picked them; don't delete any).

@@ -103,6 +103,23 @@ async function patchJob(supabase: AnySupabase, jobId: string, patch: Record<stri
     .eq("id", jobId);
 }
 
+// Race work against a deadline and clear the timer however it settles: an
+// orphaned timer keeps the function alive (Vercel bills and times out on it).
+// Promise.race is not cancellation; the work itself keeps running past `ms`.
+async function withDeadline<T>(work: Promise<T>, ms: number, label: string): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      work,
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(() => reject(new Error(label)), ms);
+      }),
+    ]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 // Heartbeat-only bump — safe to race (last-write-wins on a timestamp, no stats
 // clobber). Called as each prospect in a concurrent batch settles so a long batch
 // keeps the heartbeat fresh and the watchdog never falsely resumes a live slice.
@@ -354,12 +371,7 @@ export async function POST(req: NextRequest) {
         const outcomes = await Promise.all(
           batch.map(async (id): Promise<{ outcome: ProspectOutcome; error?: string }> => {
             try {
-              const r = await Promise.race([
-                processSingleProspectWith(actor, id),
-                new Promise<never>((_, reject) =>
-                  setTimeout(() => reject(new Error("prospect-timeout")), budget),
-                ),
-              ]);
+              const r = await withDeadline(processSingleProspectWith(actor, id), budget, "prospect-timeout");
               // Keep the REASON, not just the count — a run where everything
               // errors previously reported "0 processed" with nothing to
               // diagnose from.
@@ -382,8 +394,11 @@ export async function POST(req: NextRequest) {
           else if (outcome === "website_pitch") stats.website_pitch += 1;
           else if (outcome === "needs_review") stats.needs_review += 1;
           else if (outcome === "suppressed") stats.suppressed += 1;
-          // Already contacted or parked: nothing ran, nothing to count but the attempt.
-          else if (outcome === "skipped") console.info(`[discover/run] ${error ?? "skipped"}`);
+          // Already contacted or parked: nothing ran. Counted apart from processed.
+          else if (outcome === "skipped") {
+            stats.skipped = (stats.skipped ?? 0) + 1;
+            console.info(`[discover/run] ${error ?? "skipped"}`);
+          }
           else {
             stats.error_count += 1;
             // Keep the first few distinct reasons so the UI can show WHY.
@@ -587,12 +602,7 @@ export async function POST(req: NextRequest) {
         const results = await Promise.all(
           batch.map(async (id): Promise<boolean> => {
             try {
-              const r = await Promise.race([
-                generatePitchWith(actor, id),
-                new Promise<never>((_, reject) =>
-                  setTimeout(() => reject(new Error("pitch-timeout")), budget),
-                ),
-              ]);
+              const r = await withDeadline(generatePitchWith(actor, id), budget, "pitch-timeout");
               return !!(r && r.ok);
             } catch {
               return false; // timed out / failed (e.g. no usable contact) — skipped via advance
