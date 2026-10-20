@@ -5,7 +5,7 @@ file alone. Update it on every spawn, every status change, every merge. Keep clo
 for the current phase; move older ones to the retro.
 
 ## Current phase
-`phase3-batch4` SHIPPED 2026-10-19 21:19 UTC (main aa97013, PR #36, 0049 applied); bounce hotfix SHIPPED 19:05 UTC (main 486746f, PR #31, 0048). Batch 5: proposed to Pedro 2026-10-20 15:2x UTC, waiting on his pick. **Owner: session_017nqBxLFFXKbhDwKiPi6xLf.** Older lines below.
+`phase3-batch4` SHIPPED 2026-10-19 21:19 UTC (main aa97013, PR #36, 0049 applied); bounce hotfix SHIPPED 19:05 UTC (main 486746f, PR #31, 0048). Batch 5: approved by Pedro 2026-10-20 ("go with 1" + "yes on the 2"), five workers running on `claude/phase3-batch5-integration`. **Owner: session_017nqBxLFFXKbhDwKiPi6xLf.** Older lines below.
 `phase3-batch3` SHIPPED 2026-10-19 00:19 UTC (main 9c98448, PR #25); Q1 follow-up SHIPPED 2026-10-19 (merged 01:14 UTC, READY by 01:19; main 729b299, PR #27, deploy dpl_J3tEospxUg8mzz27FkAuGdUTcuPv READY). **Owner: session_017nqBxLFFXKbhDwKiPi6xLf.** #17 SHIPPED switched off 04:24 UTC (main 3808b56, PR #28). Weekly report HTML + exemplar readiness SHIPPED 13:58 UTC (main 45519c8, PR #29). Integration branch = main via merge commits (no force push).
 Open:
 - #17 exemplar allow-list: SHIPPED switched off (PR #28 → main 3808b56, 04:24 UTC). EXEMPLARS_ENABLED absent in Production and Preview (checked 04:23). The flip is Pedro's call; steps in project-state.
