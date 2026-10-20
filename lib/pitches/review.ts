@@ -18,13 +18,15 @@
 import { z } from "zod";
 import { ANTHROPIC_HAIKU_MODEL, structuredCall, type ClaudeUsage } from "../anthropic/client.ts";
 import { pickAddressContact } from "../research/email-utils.ts";
-import { composePitchWithClaude } from "./claude-composer.ts";
+import { composePitchWithClaude, heldBodyForRevision } from "./claude-composer.ts";
 import type { CriticVerdict } from "./decision.ts";
 import { criticExemplarSection } from "./exemplars.ts";
 import type { ComposedPitch, GeneratorInputs } from "./generator.ts";
 import { evaluateSendGate, type GateCode, type GateFailure } from "./send-gate.ts";
 
 export const MAX_REVISIONS = 2;
+/** Stored as the critic's only issue when the kept draft was never reviewed: a note, not a fix. */
+export const NOT_REVIEWED_ISSUE = "Not reviewed: the final revision ran out of time.";
 /** The critic is a fast, cheap judge; the writer stays on the default model. */
 export const CRITIC_MODEL = ANTHROPIC_HAIKU_MODEL;
 
@@ -120,7 +122,7 @@ function criticSystem(lang: "en" | "es"): string {
 Judge ONLY against the payload you are given.
 
 BLOCKING issues (a careful person would refuse to send it as is):
-1. A claim about the prospect (what they do, how they work, their customers, their problem) that the payload does not support, or an inference stated as fact.
+1. A claim about the prospect (what they do, how they work, their customers, their problem) that the payload does not support, or an inference stated as fact. A finding the payload shows, stated plainly and followed by what tends to happen to businesses with that gap in general, is not an inference stated as fact; the same consequence said about this prospect's own customers, visitors, patients or sales ("most of your visitors leave", "you're losing patients") still is.
 2. A statistic that is not one of payload.benchmarks, is misquoted, is applied outside its caveat (a clinic figure presented as true of spas, an old figure presented as current), or is framed as the sender's own result. Any client name, or a claimed result for a client.
 3. RELEVANCE: the hook could be sent to any company; the owner of THIS business would not see within 5 seconds why it is about them.
 4. LANGUAGE: not written natively in ${language}
@@ -232,13 +234,23 @@ export function revisionIssues(c: Pick<Candidate, "writing" | "review">): string
  */
 export async function composeWithReview(
   input: GeneratorInputs,
-  opts: { deadline: number; maxRevisions?: number; now?: () => number },
+  opts: {
+    deadline: number;
+    maxRevisions?: number;
+    now?: () => number;
+    /**
+     * A held draft and the notes that held it (the autopilot's one rewrite):
+     * the first compose revises it instead of starting from a blank page. The
+     * review that follows is the same as for any draft.
+     */
+    reviseFirst?: NonNullable<GeneratorInputs["revision"]>;
+  },
 ): Promise<ReviewedCompose> {
   const now = opts.now ?? Date.now;
   const maxRevisions = opts.maxRevisions ?? MAX_REVISIONS;
   const calls: ReviewCall[] = [];
 
-  const first = await composePitchWithClaude(input);
+  const first = await composePitchWithClaude(opts.reviseFirst ? { ...input, revision: opts.reviseFirst } : input);
   if (!first.ok) {
     if (first.usage) calls.push({ kind: "compose", model: "unknown", usage: first.usage });
     return { ok: false, error: first.error, reason: first.reason, calls };
@@ -276,7 +288,9 @@ export async function composeWithReview(
     const next = await composePitchWithClaude(
       {
         ...input,
-        revision: { subject: current.composed.subject, body: current.composed.body, issues: revisionIssues(current) },
+        // As the writer wrote it: the composer appends the forwarding line and
+        // fills the link again, so handing them back would double the line.
+        revision: { subject: current.composed.subject, body: heldBodyForRevision(current.composed.body), issues: revisionIssues(current) },
       },
       { timeoutMs: Math.min(30_000, remaining - 8_000) },
     );
@@ -301,7 +315,7 @@ export async function composeWithReview(
         model: CRITIC_MODEL,
         pass: best.review?.pass ?? false,
         score: best.review?.score ?? 0,
-        issues: best.review?.issues ?? ["Not reviewed: the final revision ran out of time."],
+        issues: best.review?.issues ?? [NOT_REVIEWED_ISSUE],
         revisions,
         history,
       }
