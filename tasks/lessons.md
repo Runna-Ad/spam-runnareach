@@ -95,6 +95,16 @@ WHAT HAPPENED: (followup-path-hardening) The brief named the 1-3 s release windo
 RULE: List every write the run makes to that row (claim, release, final update); each needs a "still what I read / still what I wrote" guard in its WHERE. Start with the longest read→write window, usually the claim after a slow step.
 TAGS: send-path, follow-up, race, claims
 
+[2026-10-20] With several deadlines in one route, derive each stage's stop time from every later stage's reserve at the maximum load
+WHAT HAPPENED: (warmup-imap-resilience) Round 1 fixed the placement-check budget against the send deadline only; the reply-step deadline added in the same round was then starved at 20+ sends a day, and at 30 the check floor and the reply step conflict outright.
+RULE: Tabulate target × stop × end for every stage at the designed maximum before pushing, and give every later stage a named reserve.
+TAGS: warmup, time-budget, cron
+
+[2026-10-20] A cap covers the whole lifecycle, teardown included; a worst-case sum names every library timeout from the library's source
+WHAT HAPPENED: (warmup-imap-resilience) The per-check timer was cleared before logout(), so a stalled LOGOUT added a full socketTimeout; nodemailer's default 30 s DNS timeout was missing from the first worst-case sum.
+RULE: Clear a cap after teardown; read each library's timeout defaults from its source and list them by name in the worst-case comment.
+TAGS: warmup, imap, smtp, timeouts
+
 [2026-10-20] A mutation must change behaviour the fake can show
 WHAT HAPPENED: (replies-optout-durability) A case-sensitivity mutation survived because the fake's `in` filter was exact-match, so the mutated code path produced the same visible result. Changing the read as well caught it.
 RULE: When a mutation survives, first ask whether the fake could tell the difference; only then call the guard untested.
