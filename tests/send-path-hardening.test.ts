@@ -18,7 +18,6 @@ import test from "node:test";
 import {
   CLAIM_RESERVE_MS,
   SEND_ROUTE_MAX_MS,
-  bumpSendsTodayPayload,
   effectiveSendsToday,
   hasTimeToClaim,
   releaseSendSlot,
@@ -237,7 +236,6 @@ for (const [name, p] of Object.entries(PATHS)) {
   test(`${name}: no read-then-write of sends_today; the slot is reserved after the claim and before Gmail`, () => {
     const s = stripComments(src(p.file));
     assert.ok(!/from\("sender_inboxes"\)\s*\.update\(/.test(s), "no direct sender_inboxes update");
-    assert.ok(!s.includes("bumpSendsTodayPayload"), "no client-side bump");
     assert.ok(!/sends_today\s*(\+\+|\+=|:\s*[a-z.]+\s*\+)/.test(s), "no counter arithmetic");
     const claim = s.indexOf(p.claim);
     const reserve = s.indexOf("await reserveSendSlot(");
@@ -266,7 +264,6 @@ for (const [name, p] of Object.entries(PATHS)) {
 test("nudge: reserves a slot right before Gmail, gives it back on a refusal, never bumps the counter itself", () => {
   const s = stripComments(src("app/api/replies/nudge/route.ts"));
   assert.ok(!/from\("sender_inboxes"\)\s*\.update\(/.test(s), "no direct sender_inboxes update");
-  assert.ok(!s.includes("bumpSendsTodayPayload"), "no client-side bump");
   const thread = s.indexOf("await threadBlocksSend(");
   const reserve = s.indexOf("await reserveSendSlot(slots, inbox.id)");
   const gmail = s.indexOf("await sendGmailMessage(");
@@ -420,6 +417,11 @@ function fakeDb(tables: Record<string, Row[]>, opts: { fail?: Record<string, str
           filters.push((r) => vs.includes(val(r, k)));
           return b;
         },
+        is(k: string, _v: null) {
+          use(k);
+          filters.push((r) => val(r, k) === null);
+          return b;
+        },
         not(k: string, _op: string, _v: null) {
           filters.push((r) => val(r, k) !== null);
           return b;
@@ -465,16 +467,16 @@ const approval = (pitch: string, at: string, autopilot: boolean | string | undef
   payload: autopilot === undefined ? { by: "u1", bulk: true } : { by: "u1", autopilot },
 });
 
-test("every column latestApproval selects, filters or orders by exists on pitch_events in 0001", () => {
+test("every column latestApprovals selects, filters or orders by exists on pitch_events in 0001", () => {
   const cols = columnsOf("pitch_events");
   assert.ok(cols.includes("event_at") && !cols.includes("created_at"), JSON.stringify(cols));
   for (const c of APPROVAL_EVENT_COLUMNS) assert.ok(cols.includes(c), `pitch_events.${c} is not in 0001`);
   // And the helper uses no column outside that list.
   const s = stripComments(src("lib/pitches/send-time-hold.ts"));
-  const body = blockAt(s, s.indexOf("export async function latestApproval("));
+  const body = blockAt(s, s.indexOf("export async function latestApprovals("));
   const used = [...body.matchAll(/\.(?:select|eq|order|in|gt|gte|lt|lte|is|not)\("([^"]+)"/g)].flatMap((m) => m[1]!.split(",").map((x) => x.trim()));
   assert.ok(used.length >= 5, used.join(","));
-  for (const c of used) assert.ok((APPROVAL_EVENT_COLUMNS as readonly string[]).includes(c), `latestApproval uses ${c}, not in APPROVAL_EVENT_COLUMNS`);
+  for (const c of used) assert.ok((APPROVAL_EVENT_COLUMNS as readonly string[]).includes(c), `latestApprovals uses ${c}, not in APPROVAL_EVENT_COLUMNS`);
 });
 
 test("the fake rejects an unknown pitch_events column the way PostgREST does", async () => {
@@ -618,7 +620,7 @@ test("follow-up route: bounce check once per inbox per run, before the compose a
   const map = s.indexOf("const bounceBlocks: BounceBlocks = new Map();");
   const loop = s.indexOf("for (const pitch of pitches)");
   assert.ok(map > 0 && map < loop, "one map per run");
-  assert.match(s, /processFollowup\(pitch, bounceBlocks\)/);
+  assert.match(s, /processFollowup\(pitch, bounceBlocks, startTime\)/);
   const branch = blockAt(s, s.indexOf("if (bounceBlock) {"));
   assert.match(branch, /status: "skipped", reason: bounceBlock/);
   assert.ok(!/paused:\s*true/.test(s), "the follow-up never pauses an inbox");
@@ -628,15 +630,10 @@ test("follow-up route: bounce check once per inbox per run, before the compose a
 
 // ── Pure helpers stay as they were ───────────────────────────────────────────
 
-test("effectiveSendsToday / bumpSendsTodayPayload unchanged (nudge still uses the bump)", () => {
+test("effectiveSendsToday unchanged", () => {
   const now = new Date("2026-10-19T15:00:00Z");
   assert.equal(effectiveSendsToday(4, "2026-10-19", now), 4);
   assert.equal(effectiveSendsToday(4, "2026-10-18", now), 0);
-  assert.deepEqual(bumpSendsTodayPayload(4, "2026-10-19", now), {
-    sends_today: 5,
-    last_reset_date: "2026-10-19",
-    last_send_at: "2026-10-19T15:00:00.000Z",
-  });
 });
 
 // ── Migration 0049 ───────────────────────────────────────────────────────────

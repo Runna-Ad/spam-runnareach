@@ -34,7 +34,15 @@ import {
   type FollowupContext,
 } from "@/lib/pitches/followup-templates";
 import { composeFollowupWithClaude } from "@/lib/pitches/followup-composer";
-import { effectiveSendsToday, releaseSendSlot, reserveSendSlot, type SlotClient } from "@/lib/pitches/daily-cap";
+import {
+  effectiveSendsToday,
+  hasTimeToClaim,
+  hasTimeToCompose,
+  releaseSendSlot,
+  reserveSendSlot,
+  TIME_BUDGET_REASON,
+  type SlotClient,
+} from "@/lib/pitches/daily-cap";
 import { inboxBounceBlock } from "@/lib/autopilot/bounce-breaker";
 import { ANTHROPIC_DEFAULT_MODEL, claudeIsAvailable } from "@/lib/anthropic/client";
 import { isUnderDailyCap, recordClaudeCall } from "@/lib/anthropic/cost-tracking";
@@ -42,9 +50,11 @@ import { hasUsableEmail } from "@/lib/research/email-utils";
 import { isEmailOnDncList, type DncClient } from "@/lib/discover/dnc-check";
 import { DO_NOT_SEND_STATUSES } from "@/lib/prospects/status";
 import {
+  auditFollowupPause,
   followupPausesFor,
   recheckBeforeSend,
   releaseFollowupClaim,
+  type AuditInsertClient,
   type FollowupReleaseClient,
   type SendCheckClient,
 } from "@/lib/pitches/status-transitions";
@@ -86,9 +96,12 @@ type ProspectRow = {
   cooldown_until: string | null;
 };
 
-/** Bounded batch + time budget: each follow-up can take ~20s (Sonnet + Gmail). */
+/**
+ * Bounded batch. Time: a follow-up starts composing only while hasTimeToCompose
+ * (before 70s of the 120s maxDuration) and claims only while hasTimeToClaim
+ * (before 95s); arithmetic in lib/pitches/daily-cap.ts.
+ */
 const MAX_PER_RUN = 30;
-const TIME_BUDGET_MS = 90_000;
 
 // Prospect states that must never receive an automated follow-up
 // (DO_NOT_SEND_STATUSES). Manual/bulk suppression doesn't touch
@@ -142,7 +155,7 @@ function resolveMarket(raw: string): "CA" | "MX" {
  */
 type BounceBlocks = Map<string, string | null>;
 
-async function processFollowup(pitch: DuePitchRow, bounceBlocks: BounceBlocks): Promise<FollowupResult> {
+async function processFollowup(pitch: DuePitchRow, bounceBlocks: BounceBlocks, startTime: number): Promise<FollowupResult> {
   const supabase = createServiceRoleClient();
   const nextStep = pitch.sequence_step + 1; // 2 or 3
 
@@ -345,6 +358,11 @@ async function processFollowup(pitch: DuePitchRow, bounceBlocks: BounceBlocks): 
   const template = nextStep === 2 ? buildFollowup1(ctx) : buildFollowup2(ctx);
 
   // ── 7b. AI composer (smart, personalised) with template fallback ──────────
+  // Only with time for compose + gate + claim + recheck + Gmail: a compose
+  // that can't be sent before maxDuration is money spent for nothing.
+  if (!hasTimeToCompose(startTime)) {
+    return { pitch_id: pitch.id, prospect: prospect.company_name, step: nextStep, status: "skipped", reason: TIME_BUDGET_REASON };
+  }
   let email = template;
   let composedBy: "claude" | "template" = "template";
   if (claudeIsAvailable()) {
@@ -446,6 +464,10 @@ async function processFollowup(pitch: DuePitchRow, bounceBlocks: BounceBlocks): 
   // Advance the sequence BEFORE sending, conditional on it not having moved.
   // A concurrent or retried run then finds nothing to claim, and a crash after
   // this point costs one follow-up rather than sending it twice.
+  // The compose and gate take seconds: re-check the budget at the claim.
+  if (!hasTimeToClaim(startTime)) {
+    return { pitch_id: pitch.id, prospect: prospect.company_name, step: nextStep, status: "skipped", reason: TIME_BUDGET_REASON };
+  }
   const nextFollowupAt = nextStep === 3 ? null : new Date(Date.now() + 5 * 24 * 60 * 60 * 1000).toISOString();
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const { data: claimed } = await (supabase as any)
@@ -460,11 +482,13 @@ async function processFollowup(pitch: DuePitchRow, bounceBlocks: BounceBlocks): 
     return { pitch_id: pitch.id, prospect: prospect.company_name, step: nextStep, status: "skipped", reason: "Already handled by another run" };
   }
 
-  // Releases put the step back, guarded on the step this run claimed.
+  // Releases put the step back, guarded on the step this run claimed, and
+  // never pull back a date another writer (OOO postpone, snooze) set since.
   const release = (pause: boolean) =>
     releaseFollowupClaim(supabase as unknown as FollowupReleaseClient, {
       pitchId: pitch.id,
       claimedStep: nextStep,
+      claimedFollowupAt: nextFollowupAt,
       priorStep: pitch.sequence_step,
       priorFollowupAt: pitch.next_followup_at,
       pause,
@@ -490,7 +514,15 @@ async function processFollowup(pitch: DuePitchRow, bounceBlocks: BounceBlocks): 
   if (lastCheck) {
     const pause = followupPausesFor(lastCheck);
     await releaseSendSlot(slots, inbox.id, slot.day);
-    await release(pause);
+    const released = await release(pause);
+    if (pause && released) {
+      await auditFollowupPause(supabase as unknown as AuditInsertClient, {
+        tenantId: pitch.tenant_id,
+        pitchId: pitch.id,
+        step: nextStep,
+        block: lastCheck,
+      });
+    }
     return {
       pitch_id: pitch.id,
       prospect: prospect.company_name,
@@ -649,14 +681,15 @@ export async function GET(req: NextRequest) {
 
   for (const pitch of pitches) {
     // Stop well inside maxDuration (120s): a kill mid-loop is what turns a
-    // send into a ghost. What's left is picked up by tomorrow's run.
-    if (Date.now() - startTime > TIME_BUDGET_MS) {
-      results.push({ pitch_id: pitch.id, prospect: "", step: pitch.sequence_step + 1, status: "skipped", reason: "Time budget reached — next run" });
-      continue;
+    // send into a ghost. What's left is picked up by the next run.
+    if (!hasTimeToCompose(startTime)) {
+      results.push({ pitch_id: pitch.id, prospect: "", step: pitch.sequence_step + 1, status: "skipped", reason: TIME_BUDGET_REASON });
+      break;
     }
     try {
-      const result = await processFollowup(pitch, bounceBlocks);
+      const result = await processFollowup(pitch, bounceBlocks, startTime);
       results.push(result);
+      if (result.reason === TIME_BUDGET_REASON) break;
     } catch (err) {
       console.error(`[follow-up/cron] Error processing pitch ${pitch.id}:`, err);
       results.push({

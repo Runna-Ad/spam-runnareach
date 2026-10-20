@@ -28,6 +28,7 @@
 import { isFinderSource } from "../research/verify-recipient.ts";
 import { HELD_BY_AUTOPILOT, HELD_BY_PERSON, isQualityBreaker, type Stage } from "./governor.ts";
 import { holdExpiry, signHoldToken, type HoldPayload } from "./hold-token.ts";
+import { latestApprovals } from "../pitches/send-time-hold.ts";
 
 // Untyped like tick.ts: the autopilot columns aren't in every generated type.
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -163,12 +164,6 @@ const PULLBACK_CHUNK = 100;
 const detail = (e: { message?: string } | null | undefined) => e?.message || "no detail";
 const chunks = <T,>(xs: T[], n: number): T[][] => Array.from({ length: Math.ceil(xs.length / n) }, (_, i) => xs.slice(i * n, i * n + n));
 
-/** The approval event's payload says the autopilot made it (pitch-stage records `autopilot: actor.system`). */
-function isAutopilotApproval(payload: unknown): boolean {
-  const v = (payload as { autopilot?: unknown } | null)?.autopilot;
-  return v === true || v === "true";
-}
-
 /**
  * Hold every automatic approval still waiting to send: status 'approved', lane
  * 'auto', not sent, and the pitch's LATEST approval was the autopilot's. A pitch
@@ -196,20 +191,10 @@ export async function holdAutoApprovals(
 
   let held = 0;
   for (const part of chunks(ids, PULLBACK_CHUNK)) {
-    const { data: events, error: eventsError } = await db
-      .from("pitch_events")
-      .select("pitch_id, payload, event_at")
-      .eq("tenant_id", tenantId)
-      .eq("event_type", "approved")
-      .in("pitch_id", part)
-      .order("event_at", { ascending: true });
-    if (eventsError) return { held, error: `approval events: ${detail(eventsError)}` };
-    // Oldest first, so the last write per pitch is its latest approval.
-    const latestIsAutopilot = new Map<string, boolean>();
-    for (const e of (events ?? []) as Array<{ pitch_id: string; payload: unknown }>) {
-      latestIsAutopilot.set(e.pitch_id, isAutopilotApproval(e.payload));
-    }
-    const automatic = part.filter((id) => latestIsAutopilot.get(id) === true);
+    // No approval event → not touched; unreadable → abort the sweep.
+    const latest = await latestApprovals(db, tenantId, part);
+    if (!latest.ok) return { held, error: `approval events: ${latest.error}` };
+    const automatic = part.filter((id) => latest.byPitch.get(id) === "autopilot");
     if (automatic.length === 0) continue;
 
     const { data: updated, error: updateError } = await db
