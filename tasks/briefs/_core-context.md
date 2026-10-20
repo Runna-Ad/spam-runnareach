@@ -134,7 +134,7 @@ lib/prospects/  ( 2)  detail actions + queries (status writers live in several m
 lib/hunter/     ( 3)  hunter_scans → prospects (table shared with runna-hunter)
 lib/warmup/    (10)    deliverability, DMARC, IMAP, placement
 lib/{gmail,compliance,anthropic,supabase,audit,sentry,cron-auth,notify}  shared infra  CONDUCTOR ONLY
-supabase/migrations/0001..0048   numbered; YOUR brief reserves yours (never the next free one)
+supabase/migrations/0001..0049   numbered; YOUR brief reserves yours (never the next free one)
 vercel.json, CLAUDE.md, lib/supabase/types.ts, package.json         CONDUCTOR ONLY
 ```
 Your brief lists the files you may edit. Anything outside it: say so in the PR body under
