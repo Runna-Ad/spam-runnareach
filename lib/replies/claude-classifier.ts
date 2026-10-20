@@ -39,11 +39,12 @@ const responseSchema = z.object({
   // "unclassified" where we can't tell — heuristic does the same.
   urgency: z.enum(["hot", "warm", "cold"]).nullable(),
   sentiment: z.enum(["positive", "neutral", "negative"]).nullable(),
-  // Lenient default — Haiku occasionally drops fields under 0.5%.
+  // Lenient default — Haiku occasionally drops fields under 0.5%. Display-only,
+  // so a long answer is clipped instead of failing the whole classification.
   reasoning: z
     .string()
     .trim()
-    .max(400)
+    .transform((s) => s.slice(0, 400))
     .optional()
     .default("(no reasoning provided)"),
 });
@@ -81,7 +82,9 @@ export async function classifyReplyWithClaude(
     model: ANTHROPIC_HAIKU_MODEL,
     system,
     user,
-    max_tokens: 200,
+    // Room for a ~1,000-char reasoning plus the JSON around it, so a long
+    // answer reaches the clip instead of being truncated into a parse failure.
+    max_tokens: 350,
     schema: responseSchema,
   });
 

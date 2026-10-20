@@ -1,5 +1,73 @@
 # S.P.A.M. — Lessons (newest first)
 
+## Merged from lessons-inbox, batch 6 (2026-10-20)
+
+### conductor
+[2026-10-20] Classify a dropped item by the reason it was dropped, not by the labels on its notes
+WHAT HAPPENED: The batch 6 proposal told Pedro "9 pitches with only polish notes were thrown away" and he approved a polish-rewrite fix on that number. I had counted auto-rejected pitches whose critic issues all carried the "(polish)" label. The stored drop reason (`auto_rejected_reason`) showed all of them were dropped for address/domain checks or a writing gate, so the approved fix would have rescued 0. Caught only while writing the brief, after Pedro's approval.
+RULE: Before proposing a fix for "X items lost to cause Y", group the items by the field that records why they were lost (here `auto_rejected_reason`, then `decision.critic.history`) and quote that grouping in the proposal. Labels on the item's content are a symptom, not the cause. If the number changes after approval, tell Pedro before spawning.
+TAGS: data-honesty, proposals, autopilot
+
+### from claude-calls-accounted
+[2026-10-20] A "usage on failure" return value is only half the fix: the caller must stop gating the record on success
+WHAT HAPPENED: `structuredCall` already returned usage on parse/schema failures, but four call sites still dropped it: the scorer replaced it with ZERO_USAGE (`lib/research/scoring/claude-scorer.ts`), score-stage only recorded when `method === "claude"`, and the reply-draft/nudge/no-meeting paths recorded inside `if (r.ok)`. SnapVerify and both ICP calls never recorded at all because the paid call sat inside a helper with no tenant in scope.
+RULE: Record cost on `usage != null`, never on `ok`. A helper that makes a paid call but has no tenant must return the call (model + usage + fallback reason) to its caller, and when there are several callers, give them one shared recorder (`recordSnapVerifyCall`) so the row shape cannot drift.
+TAGS: anthropic, cost-tracking, daily-cap
+
+[2026-10-20] One loader-hook harness can drive real server actions with the real Claude client
+WHAT HAPPENED: `tests/claude-calls-accounted.test.ts` stubs every value import of each target by parsing its import lines, keeps `lib/anthropic/client.ts` real and swaps only the SDK via `__test__.setClient`. Stubs are Proxies over `globalThis.__stub(name)`, so constants with methods (`NextResponse.json`) and functions both work, and a missing stub throws by name.
+RULE: To test that a call site records cost, keep structuredCall real (so schema failures and pricing are real) and stub the recorder; assert the row count per path, including the zero-row paths (no key, over the cap, API error).
+TAGS: tests, anthropic
+
+[2026-10-20] structuredCall could state the keys itself
+WHAT HAPPENED: Zod 3.24 has no JSON-schema export, so every prompt names its own keys by hand (snap-contact, ICP refine fixed here; the pitch composer's `pain_id:Required` failures are the same class).
+RULE: Worth a conductor decision: a small `describeShape(schema)` in `lib/anthropic/` that walks a ZodObject (keys, required/nullable, `.max` limits) and appends it to the trailing uncached JSON instruction would make "a key the prompt never names" impossible for every caller. Not done here (`structuredCall` is out of scope).
+TAGS: anthropic, prompts
+
+[2026-10-20] A paid call in a "use server" export with no auth is open to anyone, not just a cap gap
+WHAT HAPPENED: I filed `suggestIcpFieldsAction` (direct `messages.create`, no `requireUser`) as a cap gap to route later. Review pointed out that a server action is reachable by a POST to any path, so it was an unauthenticated paid Haiku call; the AI Search source (`lib/discover/sources/claude-search.ts`) also never recorded its multi-turn Sonnet loop. Both fixed in the review push.
+RULE: When auditing cost recording, grep for `messages.create` as well as `structuredCall`, and for each `"use server"` export that spends money, check auth before cost. An unauthenticated paid call is a security finding: fix it in the same PR, don't file it.
+TAGS: anthropic, security, server-actions
+
+## Out of scope, noticed
+- `lib/replies/draft-composer.ts`: the failure results of `composeReplyDraftWithClaude` / `composeNudgeWithClaude` carry no `model`, so callers hard-code `ANTHROPIC_DEFAULT_MODEL` to record a failure. Returning `model` on failure too would remove that coupling.
+
+[2026-10-20] A fake that never enforces a limit cannot show the limit is too low
+WHAT HAPPENED: (wrap-up, claude-calls-accounted) The first AI Search and classifier fakes returned the same fixed reply on every call, so a too-low `max_tokens` or a missed turn could never fail a test. The fixes needed a fake that answers differently per call and cuts the answer at `max_tokens` the way the API does.
+RULE: When a fix depends on a limit (max_tokens, a turn count, a timeout), the fake enforces that limit. Otherwise the test passes on code that is still broken.
+TAGS: tests, anthropic
+
+### from pitch-rewrite-notes
+[2026-10-20] A zod field made optional must stay the same type in and out when the schema goes through structuredCall
+WHAT HAPPENED: `structuredCall` takes `schema: z.ZodType<T>`, i.e. input type = output type. Adding `.optional().transform(v => v ?? null)` to `pain_id` in lib/pitches/claude-composer.ts made T infer as the union of input and output (`string | null | undefined`) and broke three call sites. `.optional()` plus `?? null` where the field is read keeps the types honest with no cast.
+RULE: Through a helper typed `z.ZodType<T>`, a transform that changes the type does not narrow `call.data`. Keep the schema's input and output the same type and normalize at the read site, or give the helper `ZodType<O, Def, I>`.
+TAGS: anthropic, zod, pitches
+
+[2026-10-20] The loader-stub harness proxies constants too; a stubbed string is never === a string
+WHAT HAPPENED: tests/pipeline-guards.test.ts stubs every value import with a callable Proxy. In tests/pitch-rewrite-notes-stage.test.ts the stage compares a critic issue against `NOT_REVIEWED_ISSUE`, and the comparison against the Proxy never matched, so the fallback test failed for the wrong reason. Fixed by having the stub module export real values for a short CONSTS list.
+RULE: When a module under the stub harness compares against or iterates an imported constant (string, Set), export the real value from the stub (a CONSTS list) instead of a Proxy, and check the test fails for the reason you meant.
+TAGS: tests, harness
+
+## Out of scope, noticed
+- lib/pitches/decision.ts (read-only for this task): `DecisionRecord` has no field saying a rewrite revised the held draft or was written fresh (template or unreadable). Prod verification can only tell rewrites apart by `retry_of`. A `retry_mode: "revised" | "fresh"` field would let the conductor split the after-deploy numbers.
+- tests/pitch-exemplars-allowlist.test.ts:110-123 still builds its house-voice pitches from the v2 prompt lines ("yours wait until morning", "the leak, stated as fact" subject). That is fine for the leak check (old pitches exist in the DB), but its comment says it mirrors the composer's prompt, which is no longer true.
+- Exemplars (lib/pitches/exemplars.ts) can still hand the writer past pitches that state guesses as fact, which works against the v3 prompt. Re-scrubbing them was out of scope.
+
+[2026-10-20] Before handing a stored output back to an LLM, undo every step the code did after the model answered
+WHAT HAPPENED: (wrap-up, pitch-rewrite-notes; reviewer blocking on #45) The rewrite gave the writer the held body as stored: the Hunter link already filled in with the OLD pitch's `r=` code, and the composer's appended forwarding line. A writer told to "keep what was good" would keep the old code (attribution lost, the only row with that code deleted) and repeat the line. The review loop's own revisions had the same duplicate-line bug.
+RULE: Reverse every post-processing step with the same constant that applied it (`HUNTER_URL` → `{hunter_url}`, strip `FORWARDING_LINE`) before the text goes back in, and test the full path with a fake model that copies its input word for word.
+TAGS: pitches, attribution, llm-io
+
+[2026-10-20] To allow a pattern in a prompt, describe it in general terms and name the forbidden half next to it; never quote a phrase the writer can copy
+WHAT HAPPENED: (wrap-up, pitch-rewrite-notes) The first v3 critic sentence quoted the writer's cue phrase ("which usually means"). A Haiku critic matching on the phrase could pass "No online booking, which usually means you're losing patients", and the phrase appeared in three places, so it would have become the new stock line.
+RULE: State the principle, name the forbidden half beside it ("the same consequence said about this prospect's own customers still blocks"), and pin with a test that the retired phrases do not come back.
+TAGS: prompts, critic, pitches
+
+[2026-10-20] The Supabase connector holds DELETE statements for a confirmation that a cloud session never sees; plan ship steps without deletes
+WHAT HAPPENED: At the batch 5 ship the conductor's planned step "delete the stop-gap row" timed out twice after 60 s. Reads worked, pg_stat_activity showed no waiting query, so the delete never reached Postgres: the connector asks the user to confirm destructive statements and the prompt timed out. The row was relabelled instead (learner review → review.stopgap), which had the same effect and kept a record.
+RULE: A ship step that removes a temporary marker is written as a reversible UPDATE (relabel, flag off) or as a step for Pedro, never as a DELETE through the connector. After any write that times out, read the row before retrying.
+TAGS: process, supabase, ship, conductor
+
 [2026-10-20] Commit before a mutation check; `git checkout -- file` also throws away the fix you are testing
 WHAT HAPPENED: The conductor added a filter to lib/reports/snapshot.ts, ran a mutation (sed the filter out), then restored with `git checkout -- lib/reports/snapshot.ts`. The fix was not committed yet, so the checkout restored the OLD file and the fix was gone; caught only because `git diff --stat` came back empty.
 RULE: Commit (or copy the file aside) before mutating; restore from that commit, never from the index. Check `git diff --stat` after every restore.

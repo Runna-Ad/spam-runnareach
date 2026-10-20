@@ -31,6 +31,7 @@ import {
   ANTHROPIC_DEFAULT_MODEL,
   computeCostUsd,
 } from "@/lib/anthropic/client";
+import { recordClaudeCall } from "@/lib/anthropic/cost-tracking";
 import { normalizeDomain } from "../fuzzy-dedupe";
 import { searchBrave, braveIsAvailable } from "./brave-search";
 
@@ -56,6 +57,8 @@ export type ClaudeSearchIcp = {
 };
 
 export type ClaudeSearchInput = {
+  /** Tenant the paid turns are recorded against (daily cap). */
+  tenantId: string;
   /** Natural-language brief / keyword from the user (e.g. "boutique fitness studios"). */
   brief: string;
   /** Location hint (e.g. "Calgary, AB" or "Alberta, Canada"). */
@@ -166,6 +169,30 @@ export async function searchWithClaude(
 
       totalInput += response.usage.input_tokens;
       totalOutput += response.usage.output_tokens;
+      // One cost row per paid turn, recorded before anything below can throw
+      // or return, so the daily cap sees every turn of a failed search too.
+      const cacheRead = response.usage.cache_read_input_tokens ?? 0;
+      const cacheWrite = response.usage.cache_creation_input_tokens ?? 0;
+      await recordClaudeCall({
+        tenantId: input.tenantId,
+        model: ANTHROPIC_DEFAULT_MODEL,
+        entity_type: "research",
+        entity_id: null,
+        usage: {
+          input_tokens: response.usage.input_tokens,
+          output_tokens: response.usage.output_tokens,
+          cache_read_input_tokens: cacheRead,
+          cache_creation_input_tokens: cacheWrite,
+          cost_usd: computeCostUsd(
+            ANTHROPIC_DEFAULT_MODEL,
+            response.usage.input_tokens,
+            response.usage.output_tokens,
+            cacheRead,
+            cacheWrite,
+          ),
+        },
+        metadata: { kind: "ai_search", turn },
+      });
 
       // Collect any tool_use blocks this turn.
       const toolUses = response.content.filter(

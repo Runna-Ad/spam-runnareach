@@ -164,6 +164,7 @@ export async function scoreProspectWith(
   let cost_usd = 0;
   let method: "heuristic" | "claude";
   let claudeUsage: ClaudeUsage | null = null;
+  let claudeFallbackReason: string | null = null;
 
   if (process.env.ANTHROPIC_API_KEY) {
     // Daily-cap safety net: once the tenant is over budget, degrade to the
@@ -178,11 +179,29 @@ export async function scoreProspectWith(
       result = claudeResult;
       cost_usd = claudeResult.cost_usd;
       method = claudeResult.model === "heuristic_fallback" ? "heuristic" : "claude";
-      if (method === "claude") claudeUsage = claudeResult.usage;
+      // A failed call that still returned usage was paid: record it too, or the
+      // daily cap undercounts. Null usage means nothing reached Claude.
+      claudeUsage = claudeResult.usage;
+      if (method === "heuristic") claudeFallbackReason = claudeResult.fallback_reason ?? "unknown";
     }
   } else {
     result = scoreWithHeuristic(rubricProspect, rubricResearch, rubricIcp);
     method = "heuristic";
+  }
+
+  // Record Claude spend to cost_tracking so the daily cap can see it. Scoring
+  // fires up to 3× per prospect and was previously invisible to the cap — this
+  // closes that hole. Best-effort; never blocks the score. Recorded before the
+  // scores writes, so a failed insert still leaves the paid call on record.
+  if (claudeUsage) {
+    await recordClaudeCall({
+      tenantId: user.tenantId,
+      model: ANTHROPIC_HAIKU_MODEL,
+      entity_type: "scoring",
+      entity_id: parsed.data.prospect_id,
+      usage: claudeUsage,
+      ...(claudeFallbackReason ? { metadata: { fallback_reason: claudeFallbackReason } } : {}),
+    });
   }
 
   // Mark prior active scores as superseded so the partial index stays clean.
@@ -214,19 +233,6 @@ export async function scoreProspectWith(
   });
 
   if (insertErr) return { ok: false, error: `Could not save score: ${insertErr.message}` };
-
-  // Record Claude spend to cost_tracking so the daily cap can see it. Scoring
-  // fires up to 3× per prospect and was previously invisible to the cap — this
-  // closes that hole. Best-effort; never blocks the score.
-  if (claudeUsage) {
-    await recordClaudeCall({
-      tenantId: user.tenantId,
-      model: ANTHROPIC_HAIKU_MODEL,
-      entity_type: "scoring",
-      entity_id: parsed.data.prospect_id,
-      usage: claudeUsage,
-    });
-  }
 
   // Update prospect snapshot fields used by listing pages.
   const { error: updErr } = await supabase

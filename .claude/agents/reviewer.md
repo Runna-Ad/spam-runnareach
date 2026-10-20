@@ -89,6 +89,14 @@ Checklist (grown by retros; add a line when a retro records a miss):
   written two July opt-outs dated today and tripped opt_out_spike.)
 - A scrubber that masks paired delimiters (quotes, brackets) is not fail-closed: feed it
   unbalanced input from the real source (batch 5: model text leaked past quote pairing).
+- Stored text handed back to a model: list what the code added after the model answered
+  (filled links with attribution codes, appended lines) and check each is reversed; run a
+  fake model that copies its input to the end of the path (batch 6: attribution lost).
+- A prompt that newly ALLOWS a pattern: read it as the cheapest model would. Does a fixed
+  cue phrase let a forbidden claim through, and will the phrase become a template?
+- Every SQL in the PR body: check its columns against the migrations (batch 6:
+  `cost_tracking.created_at` does not exist). A new `"use server"` export or a new
+  `messages.create`: auth before the paid call, cost recorded on usage.
 
 Trace a real path from an input to the failure before calling something blocking. If you
 cannot, it is optional. A finding you are unsure of is optional with "unsure" in front.
