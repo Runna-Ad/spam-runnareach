@@ -1946,3 +1946,8 @@ TAGS: tests, send-path
 WHAT HAPPENED: latestApprovalByAutopilot (first push of #35) ordered pitch_events by `created_at`. The table only has `event_at` (0001), so PostgREST would have returned 42703 in prod and every send-time "review" pitch would have been skipped forever. All tests passed because the fake filtered on whatever key it was given. The conductor's review caught it. The fake in tests/send-path-hardening.test.ts now parses `create table pitch_events` from 0001 and returns an error for unknown columns.
 RULE: A fake for a table a new query reads must check column names against the migration that defines the table, or the test proves nothing about the query. Before writing a select/order on a table, read its create table block.
 TAGS: tests, fakes, schema
+
+[2026-10-20] Classify a dropped item by the reason it was dropped, not by the labels on its notes
+WHAT HAPPENED: The batch 6 proposal told Pedro "9 pitches with only polish notes were thrown away" and he approved a polish-rewrite fix on that number. I had counted auto-rejected pitches whose critic issues all carried the "(polish)" label. The stored drop reason (`auto_rejected_reason`) showed all of them were dropped for address/domain checks or a writing gate, so the approved fix would have rescued 0. Caught only while writing the brief, after Pedro's approval.
+RULE: Before proposing a fix for "X items lost to cause Y", group the items by the field that records why they were lost (here `auto_rejected_reason`, then `decision.critic.history`) and quote that grouping in the proposal. Labels on the item's content are a symptom, not the cause. If the number changes after approval, tell Pedro before spawning.
+TAGS: data-honesty, proposals, autopilot
