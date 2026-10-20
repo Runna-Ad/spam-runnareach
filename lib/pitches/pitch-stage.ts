@@ -13,7 +13,7 @@ import { writeAuditLog } from "@/lib/audit/log";
 import type { Actor } from "@/lib/actor";
 import type { Database } from "@/lib/supabase/types";
 import { PITCH_PROMPT_VERSION } from "./claude-composer";
-import { composeWithReview, type ReviewCall } from "./review";
+import { NOT_REVIEWED_ISSUE, WRITER_FIXABLE, composeWithReview, revisionIssues, type ReviewCall } from "./review";
 import {
   DECISION_VERSION,
   detectCitedBenchmark,
@@ -45,7 +45,7 @@ import {
   type GeneratorInputs,
 } from "./generator";
 import { listNotableClients } from "@/lib/notable-clients/queries";
-import { DO_NOT_SEND_STATUSES } from "@/lib/prospects/status";
+import { isSentOrParked } from "@/lib/prospects/status";
 
 const generateSchema = z.object({
   prospect_id: z.string().uuid(),
@@ -406,12 +406,33 @@ export async function generatePitchWith(
   let reviewCalls: ReviewCall[] = [];
   let critic: CriticVerdict | null = null;
 
-  // ── Do-not-send re-check, immediately before any Claude call ──────────
+  // ── The autopilot's rewrite revises the held draft ─────────────────────
+  // Read BEFORE the draft delete below clears it. A Claude draft held with
+  // notes is revised against those notes; anything else (a template, no
+  // notes, a read error, a row that is gone) composes fresh, as before.
+  let reviseFirst: NonNullable<GeneratorInputs["revision"]> | undefined;
+  if (opts.retryOf) {
+    const { data: held, error: heldErr } = await supabase
+      .from("pitches")
+      .select("subject, body_original, body_edited, decision, gate_verdict")
+      .eq("id", opts.retryOf)
+      .eq("tenant_id", user.tenantId)
+      .eq("prospect_id", parsed.data.prospect_id)
+      .maybeSingle<HeldDraftRow>();
+    if (heldErr) console.warn("[generatePitch] held draft not read, composing fresh:", heldErr.message || "no message");
+    else reviseFirst = heldDraftRevision(held) ?? undefined;
+  }
+
+  // ── Status re-check, immediately before any Claude call ───────────────
   // Everything above took seconds of awaits; a pipeline job works through its
   // ids over many slices, so a company can be suppressed, booked or won in the
   // meantime. The pipeline's status write would then refuse the pitch, after
   // Claude was paid for it and a draft no one may send was left behind. Read
   // fresh and fail closed: an error or a missing row refuses too.
+  // A company already emailed (sent, bounced, replied, ghosted) is refused as
+  // well: a second first-touch pitch to it is never right. The manual button
+  // was the one path that could draft one. A drafted-but-unsent company
+  // (pitched, queued, approved) still may: the autopilot's rewrite needs that.
   const { data: fresh, error: freshErr } = await supabase
     .from("prospects")
     .select("status")
@@ -420,8 +441,8 @@ export async function generatePitchWith(
     .maybeSingle<{ status: string }>();
   if (freshErr) return { ok: false, error: `Status re-check failed: ${freshErr.message || "no message"}` };
   if (!fresh) return { ok: false, error: "Prospect not found." };
-  if (DO_NOT_SEND_STATUSES.has(fresh.status)) {
-    return { ok: false, error: `Not generating: the company is ${fresh.status} (do not send).` };
+  if (isSentOrParked(fresh.status)) {
+    return { ok: false, error: `Not generating: the company is ${fresh.status} (already emailed or do not send).` };
   }
 
   if (dailyCap) {
@@ -429,7 +450,7 @@ export async function generatePitchWith(
     if (!cap.under) {
       claudeFallbackReason = `daily cap hit (spent $${cap.spent_today_usd.toFixed(2)} of $${cap.cap_usd.toFixed(2)})`;
     } else {
-      const reviewed = await composeWithReview(generatorInputs, { deadline: startedAt + 48_000 });
+      const reviewed = await composeWithReview(generatorInputs, { deadline: startedAt + 48_000, reviseFirst });
       reviewCalls = reviewed.calls;
       if (reviewed.ok) {
         composed = reviewed.composed;
@@ -1248,6 +1269,41 @@ function normalizeMeasurableResults(
     if (typeof e.label === "string") out.label = e.label;
     return out.metric || out.label ? [out] : [];
   });
+}
+
+type HeldDraftRow = {
+  subject: string | null;
+  body_original: string | null;
+  body_edited: string | null;
+  decision: unknown;
+  gate_verdict: unknown;
+};
+
+/**
+ * The revision input for a held draft: its subject, body and the notes that
+ * held it (the gate's writing findings first, then the critic's issues, polish
+ * included, as stored; at most 8). Null when it is not a Claude draft or has
+ * no notes: that rewrite composes fresh.
+ */
+export function heldDraftRevision(row: HeldDraftRow | null): NonNullable<GeneratorInputs["revision"]> | null {
+  if (!row) return null;
+  const decision = (row.decision ?? {}) as { path?: unknown; critic?: { issues?: unknown } | null };
+  if (decision.path !== "claude") return null;
+  const body = row.body_edited ?? row.body_original;
+  if (!row.subject || !body) return null;
+  const gate = (row.gate_verdict ?? {}) as { failures?: unknown };
+  const writing = (Array.isArray(gate.failures) ? gate.failures : []).filter(
+    (f): f is GateFailure =>
+      typeof f === "object" && f !== null && WRITER_FIXABLE.has((f as GateFailure).code) &&
+      typeof (f as GateFailure).detail === "string",
+  );
+  const stored = decision.critic?.issues;
+  const criticIssues = (Array.isArray(stored) ? stored : []).filter(
+    (i): i is string => typeof i === "string" && i.trim() !== "" && i !== NOT_REVIEWED_ISSUE,
+  );
+  const issues = revisionIssues({ writing, review: { pass: false, score: 0, issues: criticIssues } });
+  if (issues.length === 0) return null;
+  return { subject: row.subject, body, issues };
 }
 
 function normalizePains(raw: unknown): GeneratorInputResearchPain[] {
