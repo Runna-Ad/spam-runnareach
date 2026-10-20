@@ -112,6 +112,14 @@ cost-tracked, daily-capped wrapper in `lib/anthropic/` · Gmail API · Sentry ·
   schedules and constants, e.g. warm-up ramp and re-warm reach 50 sends a day), and every
   step between two deadlines gets its own reserve (batch 5: a check budget that fit 5 a day
   ate the sends at 50, then the next fix starved the reply step at 20-50).
+- Record a Claude call's cost when `usage` is non-null, never on `ok`: parse and schema
+  failures are paid. A helper that calls Claude without a tenant in scope returns the call
+  (model + usage) to its caller, which records it. A `"use server"` export that spends money
+  checks the login before the call (batch 6: an unauthenticated paid Haiku action).
+- Before handing stored text back to a model (a rewrite, a revision), reverse every step
+  the code applied after the model answered: filled `{hunter_url}` links (they carry the
+  pitch's attribution code), appended lines. Test with a fake model that copies its input
+  (batch 6: a rewrite would have kept the old pitch's code and lost its scans).
 - Client state (`useState`) survives `router.refresh()`: when a server prop disables a
   control, derive the effective state from both (`hotOnly && !unavailable`), never from
   the raw state alone.
