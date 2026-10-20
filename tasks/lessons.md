@@ -99,6 +99,11 @@ TAGS: autopilot, tests, loader-hook
 - lib/autopilot/tick.ts runBreakers: the inbox and DMARC/warmup reads ignore their `error` (a failed read reads as "no data"), same pattern the opt-out count had. Not a trip risk (fails quiet), but a silent blind spot.
 
 ### late lessons from the batch 5 wrap-ups (learned during review fixes, after each inbox file)
+[2026-10-20] A fake db returns errors in the shape production returns them (a failed HEAD count is `{ message: "" }`)
+WHAT HAPPENED: (optout-alarm-people) The fallback used a `head: true` count and checked `if (w.error)`. A HEAD response has no body, so postgrest-js returns every failure as `{ message: "" }`; the empty string read as success, the breaker ran on 0/0, and the only error line said "using the event count". The test passed because the fake gave the failure a non-empty message.
+RULE: Fakes return production-shaped errors (empty message for head/count reads). Check error presence with `!== null` and turn an empty message into "read failed". When a fallback also fails, the error line says so; it never claims the fallback was used.
+TAGS: autopilot, postgrest, error-handling, test-fakes
+
 [2026-10-20] Never scrub untrusted text by masking paired delimiters; cut at the first delimiter
 WHAT HAPPENED: (learning-review-backoff) `reviewFailureText` replaced quoted spans to hide model output in stored error text. Model text with an odd number of quotes broke the pairing and let prospect names through (reproduced through the real structuredCall).
 RULE: A scrubber that must fail closed cuts the text at the first delimiter it cannot trust; test it with unbalanced input built from the real source of the text.
