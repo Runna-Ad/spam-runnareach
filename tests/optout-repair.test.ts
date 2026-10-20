@@ -16,7 +16,7 @@ import { register } from "node:module";
 import test from "node:test";
 import { recordOptOut } from "../lib/compliance/opt-out.ts";
 import {
-  BOUNCE_REPAIR_WINDOW_DAYS,
+  BOUNCE_REPAIR_WINDOW_MS,
   REPAIR_SETTLE_MS,
   REPAIRS_PER_RUN,
   repairMissedOptOuts,
@@ -112,7 +112,10 @@ function fakeDb(tables: Tables, opts: { fail?: Partial<Record<`${string}.${Op}`,
         if (op === "insert") {
           const list = Array.isArray(payload) ? payload : [payload!];
           check(table, list.flatMap((p) => Object.keys(p)));
-          const added = list.map((p) => ({ id: `id-${nextId++}`, ...p }));
+          // Column defaults the code relies on (0001: event_at / created_at default now()).
+          const defaults: Row = {};
+          for (const c of ["event_at", "created_at"]) if (SCHEMA[table]!.has(c)) defaults[c] = new Date().toISOString();
+          const added = list.map((p) => ({ id: `id-${nextId++}`, ...defaults, ...p }));
           rows.push(...added);
           const data = returning ? (single ? (added[0] ?? null) : added) : null;
           return { data, error: null };
@@ -217,7 +220,7 @@ function bounce(id: string, addr: string, over: Row = {}): Row {
     body_text: NDR(addr),
     intent: "bounced",
     received_at: ago(DAY),
-    classified_at: ago(DAY),
+    classified_at: ago(30 * 60_000),
     ...over,
   };
 }
@@ -280,23 +283,33 @@ test("stored hard_no not on the list → recordOptOut once, DNC row present, not
   assert.equal(optOutAudits(t).length, 1);
 });
 
-test("already on the list by address (any case) → no call, no second row, no audit", async () => {
+test("already on the list by address (reply in any case) → no call, no second row, no audit", async () => {
   const t = world({
-    replies: [hardNo("r1", "owner@acme.ca"), hardNo("r2", "Boss@Shop.mx"), hardNo("r3", "Hand@Entered.ca")],
+    replies: [hardNo("r1", "owner@acme.ca"), hardNo("r2", "Boss@Shop.mx")],
     do_not_contact_list: [
       { id: "d1", tenant_id: T, entry_type: "unsubscribed", email: "owner@acme.ca" },
       { id: "d2", tenant_id: T, entry_type: "unsubscribed", email: "boss@shop.mx" },
-      { id: "d3", tenant_id: T, entry_type: "existing_client", email: "Hand@Entered.ca" },
     ],
   });
   const s = spy();
   const db = fakeDb(t);
   const r = await repairMissedOptOuts(db, deps(s));
   assert.equal(s.calls.length, 0);
-  assert.equal(t.do_not_contact_list!.length, 3);
+  assert.equal(t.do_not_contact_list!.length, 2);
   assert.equal(optOutAudits(t).length, 0);
   assert.equal(db.log.filter((l) => l.op !== "select").length, 0, "no writes at all");
   assert.deepEqual(r.optOuts, { repaired: 0, failed: 0, pending: 0 });
+});
+
+test("a legacy mixed-case DNC row does not block a send, so it does not count: the lowercase twin is added", async () => {
+  const t = world({
+    replies: [hardNo("r1", "Hand@Entered.ca")],
+    do_not_contact_list: [{ id: "d1", tenant_id: T, entry_type: "existing_client", email: "Hand@Entered.ca" }],
+  });
+  const s = spy();
+  await repairMissedOptOuts(fakeDb(t), deps(s));
+  assert.deepEqual(s.calls.map((c) => c.email), ["hand@entered.ca"]);
+  assert.equal(dncFor(t, "hand@entered.ca").length, 1);
 });
 
 test("on the list by a domain row → no call, and the sweep never writes a domain row", async () => {
@@ -442,16 +455,83 @@ test("prod shape (2026-10-20): two old hard_no senders off the list, prospects a
       hardNo("caliber", "info@highcaliberproducts.com", { received_at: "2026-07-23T17:00:00Z", classified_at: "2026-07-23T17:01:00Z" }),
     ],
     prospects: [
-      { id: "p-acadian", tenant_id: T, status: "suppressed" },
-      { id: "p-caliber", tenant_id: T, status: "suppressed" },
+      { id: "p-acadian", tenant_id: T, status: "suppressed", suppressed_at: "2026-07-11T16:05:00Z", suppressed_reason: "Opted out (reply)" },
+      { id: "p-caliber", tenant_id: T, status: "suppressed", suppressed_at: "2026-07-23T17:05:00Z", suppressed_reason: "Opted out (reply)" },
+    ],
+    pitches: [
+      { id: "root-acadian", tenant_id: T, prospect_id: "p-acadian", status: "sent", parent_pitch_id: null, sent_at: "2026-07-10T15:00:00Z", sequence_paused_at: "2026-07-11T16:05:00Z" },
+      { id: "root-caliber", tenant_id: T, prospect_id: "p-caliber", status: "sent", parent_pitch_id: null, sent_at: "2026-07-22T15:00:00Z", sequence_paused_at: "2026-07-23T17:05:00Z" },
     ],
   });
-  const r = await repairMissedOptOuts(fakeDb(t), deps(spy()));
+  const before = JSON.stringify({ prospects: t.prospects, pitches: t.pitches });
+  const s = spy();
+  const r = await repairMissedOptOuts(fakeDb(t), deps(s));
   assert.deepEqual(r.optOuts, { repaired: 2, failed: 0, pending: 0 });
+  // No phantom `unsubscribe` events dated now (the autopilot's opt_out_spike counts them), no rewrite of the old suppression.
+  assert.deepEqual(s.calls.map((c) => c.prospectId), [null, null]);
+  assert.equal(t.pitch_events!.length, 0);
+  assert.equal(JSON.stringify({ prospects: t.prospects, pitches: t.pitches }), before);
+  assert.equal(optOutAudits(t).length, 2);
   assert.equal(t.do_not_contact_list!.length, 2);
   assert.ok(t.do_not_contact_list!.every((d) => d.email && !d.domain && d.entry_type === "unsubscribed"), "address rows only");
   const r2 = await repairMissedOptOuts(fakeDb(t), deps(spy()));
   assert.deepEqual(r2.optOuts, { repaired: 0, failed: 0, pending: 0 });
+});
+
+test("a prospect still live gets exactly the writes the live poll path would make (unsubscribe event on the root pitch)", async () => {
+  const live = (): Tables =>
+    world({
+      prospects: [{ id: "p-r1", tenant_id: T, status: "contacted" }],
+      pitches: [
+        { id: "root", tenant_id: T, prospect_id: "p-r1", status: "sent", parent_pitch_id: null, sent_at: ago(3 * DAY), sequence_paused_at: null, next_followup_at: ago(-DAY) },
+        { id: "fu1", tenant_id: T, prospect_id: "p-r1", status: "sent", parent_pitch_id: "root", sent_at: ago(2 * DAY), sequence_paused_at: null, next_followup_at: ago(-DAY) },
+      ],
+    });
+  // What the poll does live: recordOptOut with the prospect id.
+  const direct = live();
+  const dDb = fakeDb(direct);
+  await recordOptOut(dDb, { tenantId: T, prospectId: "p-r1", email: "owner@acme.ca", source: "reply", note: "x" });
+  // What the sweep does for the same stored reply.
+  const swept = live();
+  swept.replies!.push(hardNo("r1", "owner@acme.ca"));
+  const sDb = fakeDb(swept);
+  const s = spy();
+  await repairMissedOptOuts(sDb, deps(s));
+  assert.equal(s.calls[0]!.prospectId, "p-r1");
+  const writes = (db: ReturnType<typeof fakeDb>) => db.log.filter((l) => l.op !== "select").map((l) => `${l.op} ${l.table}`);
+  assert.deepEqual(writes(sDb), writes(dDb));
+  assert.equal(swept.pitch_events!.length, 1);
+  assert.equal(swept.pitch_events![0]!.pitch_id, "root");
+  assert.equal(swept.pitch_events![0]!.event_type, "unsubscribe");
+  assert.ok(swept.pitch_events![0]!.event_at, "event_at default applied");
+  assert.equal(swept.prospects![0]!.status, "suppressed");
+  assert.ok(swept.pitches!.every((p) => p.sequence_paused_at && p.next_followup_at === null));
+});
+
+test("prospect gone, or in any do-not-send status → DNC row + audit only (prospectId null)", async () => {
+  const t = world({
+    replies: [hardNo("r1", "a@acme.ca"), hardNo("r2", "b@acme.ca"), hardNo("r3", "c@acme.ca"), hardNo("r4", "d@acme.ca", { prospect_id: null })],
+    prospects: [
+      { id: "p-r2", tenant_id: T, status: "booked" },
+      { id: "p-r3", tenant_id: T, status: "no_match" },
+    ],
+  });
+  const s = spy();
+  const r = await repairMissedOptOuts(fakeDb(t), deps(s));
+  assert.deepEqual(s.calls.map((c) => c.prospectId), [null, null, null, null]);
+  assert.equal(r.optOuts.repaired, 4);
+  assert.equal(t.prospects![0]!.status, "booked");
+  assert.equal(t.pitch_events!.length, 0);
+});
+
+test("a prospects read error → no opt-out writes, error reported", async () => {
+  const t = world({ replies: [hardNo("r1", "a@acme.ca")] });
+  const s = spy();
+  const db = fakeDb(t, { fail: { "prospects.select": "" } });
+  const r = await repairMissedOptOuts(db, deps(s));
+  assert.equal(s.calls.length, 0);
+  assert.equal(db.log.filter((l) => l.op !== "select").length, 0);
+  assert.match(r.errors.join("\n"), /opt-out repair: prospects read failed/);
 });
 
 // ── Bounces ─────────────────────────────────────────────────────────────────
@@ -477,7 +557,7 @@ test("bounces: never our own address, never a delay notice, never older than the
         subject: "Delivery Status Notification (Delay)",
         body_text: "Message temporarily deferred. The server will retry delivery to slow@acme.ca. Final-Recipient: rfc822; slow@acme.ca\nWill-Retry-Until: tomorrow",
       }),
-      bounce("old", "old@acme.ca", { received_at: ago((BOUNCE_REPAIR_WINDOW_DAYS + 1) * DAY) }),
+      bounce("old", "old@acme.ca", { classified_at: ago(BOUNCE_REPAIR_WINDOW_MS + 60_000) }),
       bounce("orphan", "orphan@acme.ca", { pitch_id: null }),
       bounce("noinbox", "noinbox@acme.ca", { pitch_id: "pitch-x" }),
       bounce("unparsed", "", { body_text: "Something went wrong." }),
@@ -491,6 +571,21 @@ test("bounces: never our own address, never a delay notice, never older than the
   const r = await repairMissedOptOuts(db, deps(spy()));
   assert.deepEqual(r.bounces, { repaired: 0, failed: 0, pending: 0 });
   assert.equal(t.do_not_contact_list!.length, 0);
+});
+
+test("bounces: a bounced row a person removed in /compliance after the window is not put back", async () => {
+  // Live path added it, Pedro deleted it (removeDnc hard-deletes): nothing on the list now.
+  const t = world({ replies: [bounce("b1", "full@acme.ca", { classified_at: ago(BOUNCE_REPAIR_WINDOW_MS + 60_000) })] });
+  const db = fakeDb(t);
+  const r = await repairMissedOptOuts(db, deps(spy()));
+  assert.deepEqual(r.bounces, { repaired: 0, failed: 0, pending: 0 });
+  assert.equal(db.log.filter((l) => l.op !== "select").length, 0);
+});
+
+test("bounces: an NDR imported late (old received_at, fresh classified_at) is still repaired", async () => {
+  const t = world({ replies: [bounce("b1", "dead@clinica.mx", { received_at: ago(20 * DAY), classified_at: ago(30 * 60_000) })] });
+  const r = await repairMissedOptOuts(fakeDb(t), deps(spy()));
+  assert.deepEqual(r.bounces, { repaired: 1, failed: 0, pending: 0 });
 });
 
 test("bounces: a bounced address already listed (address or domain) is not added again; an insert error is counted", async () => {

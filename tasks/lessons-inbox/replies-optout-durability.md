@@ -3,12 +3,12 @@ WHAT HAPPENED: app/api/replies/poll/route.ts inserts the reply row, then calls r
 RULE: When a job stores a record and then performs a side effect from it, and the import dedupe stops it from ever seeing that record again, the side effect needs its own idempotent sweep that compares the stored record with the side effect's result (here: reply intent vs DNC row). Leave a settle window (longer than maxDuration) so the sweep never races the run that is still acting, and fail closed on an unreadable target: a lookup error must not read as "missing".
 TAGS: replies, compliance, durability
 
-[2026-10-20] A PostgREST `in` filter is case-sensitive: lowercasing before the lookup hides hand-entered rows
-WHAT HAPPENED: The first version of the sweep lowercased the reply address before querying `do_not_contact_list.email in (...)`. A mixed-case row typed by hand (dnc-actions lowercases, older rows may not) would never match, and the sweep would add a duplicate row and a second audit. Mutation testing caught it (case mutation survived); fixed by querying both the stored and the lowercased form and comparing lowercased in JS.
-RULE: When matching addresses through `eq`/`in`, query every case form you hold and compare normalised in code; a mutation that removes your normalisation must fail a test.
-TAGS: supabase, dnc, testing
+[2026-10-20] A repair that re-runs a side effect must not re-date it, and must ask "is it there?" with the gate's own predicate
+WHAT HAPPENED: Review of lib/replies/optout-repair.ts caught two things. (1) Calling recordOptOut with the prospect id for the 2 old July opt-outs would insert two `unsubscribe` pitch_events stamped now(); the autopilot's opt_out_spike breaker (tick.ts, governor.ts) counts those over 7 days and trips at 3, pausing every inbox and demoting the stage. Fixed: only a still-live prospect gets the full routine; closed/missing ones get DNC + audit only. (2) My first version counted a mixed-case DNC row as "listed", but the send gate (dnc-check.ts) matches lowercase only, so that row blocks nothing. Fixed: same lowercase-exact predicate as the gate.
+RULE: Before a sweep or backfill calls a routine that writes timeline events, grep who counts those events by time (breakers, learners, reports) and make the repair write only the state that is missing, never a fresh-dated event for an old fact. And "already done?" checks share the predicate of the gate they protect, not a looser one of your own.
+TAGS: replies, compliance, autopilot, durability
 
 ## Out of scope, noticed
 - lib/compliance/opt-out.ts `recordOptOut`: its DNC lookup is `.eq("email", lowercased)`, so a mixed-case existing row is missed and a second row is written. Harmless for blocking (the send check reads lowercase), but it can double the audit row. A `lower(email)` lookup (or a unique index on (tenant_id, lower(email))) would fix it.
-- lib/discover/dnc-check.ts `addEmailToDnc` swallows insert errors, so the live bounce path can never report a failed DNC write. The sweep covers it for 14 days.
+- lib/discover/dnc-check.ts `addEmailToDnc` swallows insert errors, so the live bounce path can never report a failed DNC write. The sweep covers it for 2 hours after the bounce is stored.
 - The live bounce path's prospect suppression and sequence pause are not repaired by the sweep (address only): the DNC row already blocks every send.

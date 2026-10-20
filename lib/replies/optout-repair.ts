@@ -13,12 +13,23 @@
 //   hard_no  → recordOptOut (the one opt-out routine) for every stored hard_no
 //              reply whose sender is not on the tenant's list by address or by
 //              domain. Opt-outs never expire, so every stored one is checked.
+//              Only a prospect still in a live status gets the full routine
+//              (suppress, stop sequences, `unsubscribe` pitch event). One that is
+//              already suppressed/closed, or gone, gets the DNC row and the audit
+//              only: an `unsubscribe` event is stamped now() and the autopilot's
+//              opt_out_spike breaker counts those over 7 days, so a repair of an
+//              old opt-out must not look like a new one.
 //   bounced  → the NDR body is stored, so the dead address is re-parsed with the
 //              same parser the poll uses (lib/replies/bounce-parse.ts) and the
-//              address goes on the list as "bounced". Only bounces from the last
-//              BOUNCE_REPAIR_WINDOW_DAYS: the gap is minutes wide, and a narrow
-//              window keeps a reclassified or hand-cleared old bounce from being
-//              re-blocked by a parser that has since learned new phrasings.
+//              address goes on the list as "bounced". Only bounces STORED in the
+//              last BOUNCE_REPAIR_WINDOW_MS: the gap is minutes wide, and a person
+//              who removes a bounced row in /compliance (a hard delete) must not
+//              see it come back.
+//
+// "On the list" is the send gate's own predicate (lib/discover/dnc-check.ts):
+// the lowercased address or its lowercased domain, exact match. A legacy
+// mixed-case row does not block a send, so it does not count here either: the
+// repair adds the lowercase twin that does.
 //
 // Idempotent and safe to kill at any point: the DNC row is the only state, it
 // is read fresh every run, and each repair is one routine that checks before it
@@ -26,6 +37,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { recordOptOut as realRecordOptOut } from "../compliance/opt-out.ts";
+import { DO_NOT_SEND_STATUSES } from "../prospects/status.ts";
 import { extractBouncedRecipient } from "./bounce-parse.ts";
 import { isTemporaryDeliveryDelay } from "./classify.ts";
 
@@ -47,9 +59,17 @@ export const REPAIR_BUDGET_MS = 20_000;
  * racing to the same DNC row and the same audit entry.
  */
 export const REPAIR_SETTLE_MS = 5 * 60_000;
-/** Most recent stored replies of each kind read per run (newest first). */
+/**
+ * Most recent stored replies of each kind read per run (newest first). Prod has
+ * 2 hard_no replies in four months; past 1000 the oldest stop being re-checked,
+ * and those were checked by every run before they fell off.
+ */
 export const REPAIR_SCAN_LIMIT = 1000;
-export const BOUNCE_REPAIR_WINDOW_DAYS = 14;
+/**
+ * Bounces are repaired only within this long of being stored (classified_at, so
+ * a late-imported NDR still qualifies): ~10 sweep attempts after the settle wait.
+ */
+export const BOUNCE_REPAIR_WINDOW_MS = 2 * 60 * 60_000;
 /** PostgREST puts `in` lists in the URL; keep each one short. */
 const IN_CHUNK = 100;
 
@@ -64,26 +84,25 @@ export type RepairDeps = {
   deadline?: number;
 };
 
-type StoredReply = {
+type HardNoRow = {
   id: string;
   tenant_id: string;
   prospect_id: string | null;
-  pitch_id: string | null;
   from_email: string;
-  subject: string | null;
-  body_text: string | null;
   classified_at: string | null;
 };
+
+type BounceRow = HardNoRow & { pitch_id: string | null; subject: string | null; body_text: string | null };
 
 type Candidate = {
   replyId: string;
   tenantId: string;
   prospectId: string | null;
-  /** Lowercased: what recordOptOut writes and what the send-time check reads. */
+  /** Lowercased: what recordOptOut writes and what the send gate reads. */
   email: string;
-  /** As stored, so a hand-entered row in the same case is found too (`in` is case-sensitive). */
-  rawEmail: string;
 };
+
+type Found = { missing: Candidate[] } | { error: string };
 
 /** Present-not-truthy: postgrest-js reports an empty-body 5xx as { message: "" }. */
 function errText(error: unknown): string {
@@ -101,21 +120,19 @@ const clean = (email: string) => email.trim().toLowerCase();
 const domainOf = (email: string) => clean(email).split("@")[1] ?? "";
 
 /** Settled: stored long enough ago that the run that stored it has ended. */
-function settled(r: StoredReply, now: number): boolean {
+function settled(r: { classified_at: string | null }, now: number): boolean {
   if (!r.classified_at) return true;
   const t = Date.parse(r.classified_at);
   return Number.isNaN(t) || t <= now - REPAIR_SETTLE_MS;
 }
 
 /**
- * The candidates whose address is not on their tenant's list (by address or by
- * domain), one per (tenant, address), in input order. An error when a lookup failed:
- * the caller then writes nothing (an unreadable list must not read as "missing").
+ * The candidates the send gate would NOT block (no lowercase address row, no
+ * lowercase domain row on their tenant's list), one per (tenant, address), in
+ * input order. An error when a lookup failed: the caller then writes nothing
+ * (an unreadable list must not read as "missing").
  */
-async function notOnDnc(
-  db: AnySupabase,
-  candidates: Candidate[],
-): Promise<{ missing: Candidate[] } | { error: string }> {
+async function notOnDnc(db: AnySupabase, candidates: Candidate[]): Promise<Found> {
   const byTenant = new Map<string, Candidate[]>();
   for (const c of candidates) {
     const list = byTenant.get(c.tenantId) ?? [];
@@ -124,23 +141,23 @@ async function notOnDnc(
   }
   const listed = new Set<string>(); // `${tenant}|email:<addr>` / `${tenant}|domain:<d>`
   for (const [tenantId, list] of byTenant) {
-    const emails = [...new Set(list.flatMap((c) => [c.email, c.rawEmail.trim()]))];
+    const emails = [...new Set(list.map((c) => c.email))];
     const domains = [...new Set(list.map((c) => domainOf(c.email)).filter(Boolean))];
     for (const part of chunks(emails)) {
       const { data, error } = await db.from("do_not_contact_list").select("email").eq("tenant_id", tenantId).in("email", part);
       if (error) return { error: `DNC lookup failed: ${errText(error)}` };
-      for (const r of (data ?? []) as Array<{ email: string | null }>) if (r.email) listed.add(`${tenantId}|email:${clean(r.email)}`);
+      for (const r of (data ?? []) as Array<{ email: string | null }>) if (r.email) listed.add(`${tenantId}|email:${r.email}`);
     }
     for (const part of chunks(domains)) {
       const { data, error } = await db.from("do_not_contact_list").select("domain").eq("tenant_id", tenantId).in("domain", part);
       if (error) return { error: `DNC lookup failed: ${errText(error)}` };
-      for (const r of (data ?? []) as Array<{ domain: string | null }>) if (r.domain) listed.add(`${tenantId}|domain:${clean(r.domain)}`);
+      for (const r of (data ?? []) as Array<{ domain: string | null }>) if (r.domain) listed.add(`${tenantId}|domain:${r.domain}`);
     }
   }
   const seen = new Set<string>();
   const missing: Candidate[] = [];
   for (const c of candidates) {
-    const key = `${c.tenantId}|email:${clean(c.email)}`;
+    const key = `${c.tenantId}|email:${c.email}`;
     if (seen.has(key)) continue;
     seen.add(key);
     if (listed.has(key) || listed.has(`${c.tenantId}|domain:${domainOf(c.email)}`)) continue;
@@ -150,33 +167,54 @@ async function notOnDnc(
 }
 
 /** Stored hard_no replies whose sender never reached the list. */
-async function optOutCandidates(db: AnySupabase, now: number): Promise<{ missing: Candidate[] } | { error: string }> {
+async function optOutCandidates(db: AnySupabase, now: number): Promise<Found> {
   const { data, error } = await db
     .from("replies")
-    .select("id, tenant_id, prospect_id, pitch_id, from_email, subject, body_text, classified_at")
+    .select("id, tenant_id, prospect_id, from_email, classified_at, intent")
     .eq("intent", "hard_no")
     .order("received_at", { ascending: false })
     .limit(REPAIR_SCAN_LIMIT);
   if (error) return { error: `hard_no replies read failed: ${errText(error)}` };
-  const candidates = ((data ?? []) as StoredReply[])
+  const candidates = ((data ?? []) as HardNoRow[])
     .filter((r) => settled(r, now) && r.from_email?.includes("@"))
-    .map((r) => ({ replyId: r.id, tenantId: r.tenant_id, prospectId: r.prospect_id, email: clean(r.from_email), rawEmail: r.from_email }));
+    .map((r) => ({ replyId: r.id, tenantId: r.tenant_id, prospectId: r.prospect_id, email: clean(r.from_email) }));
   return candidates.length === 0 ? { missing: [] } : notOnDnc(db, candidates);
 }
 
-/** Recent stored bounces whose NDR names an address that never reached the list. */
-async function bounceCandidates(db: AnySupabase, now: number): Promise<{ missing: Candidate[] } | { error: string }> {
-  const since = new Date(now - BOUNCE_REPAIR_WINDOW_DAYS * 24 * 60 * 60 * 1000).toISOString();
+/**
+ * Keep the prospect id only where the prospect is still live: the full opt-out
+ * (suppress, stop sequences, `unsubscribe` event) is then exactly what the poll
+ * would have done minutes ago. Missing or already closed → null (DNC + audit).
+ */
+async function withLiveProspects(db: AnySupabase, missing: Candidate[]): Promise<Found> {
+  const ids = [...new Set(missing.map((c) => c.prospectId).filter((v): v is string => !!v))];
+  const status = new Map<string, string>();
+  for (const part of chunks(ids)) {
+    const { data, error } = await db.from("prospects").select("id, status").in("id", part);
+    if (error) return { error: `prospects read failed: ${errText(error)}` };
+    for (const p of (data ?? []) as Array<{ id: string; status: string }>) status.set(p.id, p.status);
+  }
+  return {
+    missing: missing.map((c) => {
+      const s = c.prospectId ? status.get(c.prospectId) : undefined;
+      return { ...c, prospectId: s !== undefined && !DO_NOT_SEND_STATUSES.has(s) ? c.prospectId : null };
+    }),
+  };
+}
+
+/** Bounces stored in the last window whose NDR names an address that never reached the list. */
+async function bounceCandidates(db: AnySupabase, now: number): Promise<Found> {
+  const since = new Date(now - BOUNCE_REPAIR_WINDOW_MS).toISOString();
   const { data, error } = await db
     .from("replies")
     .select("id, tenant_id, prospect_id, pitch_id, from_email, subject, body_text, classified_at")
     .eq("intent", "bounced")
-    .gte("received_at", since)
-    .order("received_at", { ascending: false })
+    .gte("classified_at", since)
+    .order("classified_at", { ascending: false })
     .limit(REPAIR_SCAN_LIMIT);
   if (error) return { error: `bounced replies read failed: ${errText(error)}` };
   // A stored "will retry" notice from before the delay check existed is not a bounce.
-  const rows = ((data ?? []) as StoredReply[]).filter(
+  const rows = ((data ?? []) as BounceRow[]).filter(
     (r) =>
       settled(r, now) &&
       r.pitch_id &&
@@ -207,15 +245,15 @@ async function bounceCandidates(db: AnySupabase, now: number): Promise<{ missing
     // Without the sending inbox the parser could name our own address: skip.
     if (!own) continue;
     const dead = extractBouncedRecipient(r.body_text, own);
-    if (dead) candidates.push({ replyId: r.id, tenantId: r.tenant_id, prospectId: r.prospect_id, email: dead, rawEmail: dead });
+    if (dead) candidates.push({ replyId: r.id, tenantId: r.tenant_id, prospectId: r.prospect_id, email: clean(dead) });
   }
   return candidates.length === 0 ? { missing: [] } : notOnDnc(db, candidates);
 }
 
 /**
- * Find stored opt-outs (and recent hard bounces) whose address is not on the
- * do-not-contact list and put it there. Never throws. A read error writes
- * nothing for that kind and is reported; the next run tries again.
+ * Find stored opt-outs (and fresh hard bounces) whose address the send gate
+ * would not block and put it on the do-not-contact list. Never throws. A read
+ * error writes nothing for that kind and is reported; the next run tries again.
  */
 export async function repairMissedOptOuts(db: AnySupabase, deps: RepairDeps = {}): Promise<RepairResult> {
   const recordOptOut = deps.recordOptOut ?? realRecordOptOut;
@@ -233,7 +271,8 @@ export async function repairMissedOptOuts(db: AnySupabase, deps: RepairDeps = {}
 
   // ── Opt-outs first: the compliance promise ──────────────────────────────
   try {
-    const found = await optOutCandidates(db, now());
+    const listed = await optOutCandidates(db, now());
+    const found = "error" in listed || listed.missing.length === 0 ? listed : await withLiveProspects(db, listed.missing);
     if ("error" in found) {
       result.errors.push(`opt-out repair: ${found.error}`);
     } else {
@@ -266,7 +305,7 @@ export async function repairMissedOptOuts(db: AnySupabase, deps: RepairDeps = {}
     result.errors.push(`opt-out repair threw: ${err instanceof Error ? err.message : String(err)}`);
   }
 
-  // ── Recent hard bounces whose DNC insert never landed ───────────────────
+  // ── Fresh hard bounces whose DNC insert never landed ────────────────────
   if (!mayStart()) return result;
   try {
     const found = await bounceCandidates(db, now());
