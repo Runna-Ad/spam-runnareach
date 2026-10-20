@@ -1,6 +1,6 @@
 // ─────────────────────────────────────────────────────────────────────────────
 // app/api/warmup/engine/route.ts
-// Warmup engine — triggered by Vercel Cron every 30 minutes.
+// Warmup engine — triggered once a day by Vercel Cron (`0 14 * * *`).
 //
 // Logic per tick:
 //   1. Load all active warmup_config rows.
@@ -39,13 +39,18 @@ import {
 import {
   analyzeSpamRate,
   isRfcMessageId,
-  placementFromCheck,
+  PLACEMENT_CHECK_BUDGET_MS,
+  runPlacementChecks,
+  type PlacementCheckReport,
   shouldIncrementDay,
   computeDayPlan,
   pickNextBuddyIndex,
 } from "@/lib/warmup/intelligence";
 import { resolveDailyTarget } from "@/lib/warmup/types";
 import type { EngineTickResult, WarmupConfig } from "@/lib/warmup/types";
+
+/** The run's JSON report also says what the placement checks did. */
+type ConfigTickResult = EngineTickResult & { placement?: PlacementCheckReport };
 
 // ── Auth guard ─────────────────────────────────────────────────────────────────
 
@@ -81,7 +86,7 @@ async function getSendingInbox(
 
 // ── Engine tick for a single config ───────────────────────────────────────────
 
-async function processConfig(config: WarmupConfig): Promise<EngineTickResult> {
+async function processConfig(config: WarmupConfig): Promise<ConfigTickResult> {
   const tickStart = Date.now();
   // Fixed wall-clock budget for the send loop. The route's maxDuration is 120s;
   // we stop INITIATING new sends at 105s so the in-flight send (~1s) completes
@@ -94,7 +99,7 @@ async function processConfig(config: WarmupConfig): Promise<EngineTickResult> {
   // worked at ≤20/day where the term stayed positive. See lessons 2026-06-22.
   const SEND_DEADLINE_MS = tickStart + 105_000;
 
-  const result: EngineTickResult = {
+  const result: ConfigTickResult = {
     config_id: config.id,
     sending_email: config.sending_email,
     day: config.current_day,
@@ -136,34 +141,33 @@ async function processConfig(config: WarmupConfig): Promise<EngineTickResult> {
       })());
 
     // ── Step 2: IMAP check of previous sends (landed in inbox vs spam?)
-    // Cap at 4 per tick — each IMAP check takes ~8-12s worst case. 4 checks = ~48s max,
-    // leaving room for sending emails. Newest sends first; the rest are a sample we skip.
-    const pendingChecks = (await getPendingInboxChecks(config.id)).slice(0, 4);
+    // Every pending send from the 72h window, oldest first, until the check
+    // budget is spent: no new check starts after PLACEMENT_CHECK_BUDGET_MS and
+    // each is cut off at PLACEMENT_CHECK_MAX_MS, so the sends below still
+    // start with ~45s before SEND_DEADLINE_MS.
+    const pendingChecks = await getPendingInboxChecks(config.id);
     const buddies = await getActiveBuddies();
 
-    for (const log of pendingChecks) {
-      if (!log.message_id || !log.buddy_id) continue;
-      const buddy = buddies.find((b) => b.id === log.buddy_id);
-      if (!buddy) continue;
-
+    result.placement = await runPlacementChecks(pendingChecks, tickStart + PLACEMENT_CHECK_BUDGET_MS, {
+      buddies,
+      buddyId: (b) => b.id,
+      now: Date.now,
       // The buddy's IMAP search needs the RFC Message-ID. Sends logged before
       // 2026-10-17 (or whose lookup failed at send time) hold Gmail's internal
       // id: read the real header from the sender's mailbox and keep it.
-      let rfcMessageId: string | null = log.message_id;
-      if (!isRfcMessageId(rfcMessageId)) {
+      resolveRfcId: async (log) => {
+        if (isRfcMessageId(log.message_id)) return log.message_id;
+        if (!log.message_id) return null;
         const auth = await getSenderAuth();
-        rfcMessageId = "accessToken" in auth ? await fetchRfcMessageId(auth.accessToken, log.message_id) : null;
-        if (!isRfcMessageId(rfcMessageId)) continue;
+        const rfcMessageId = "accessToken" in auth ? await fetchRfcMessageId(auth.accessToken, log.message_id) : null;
+        if (!isRfcMessageId(rfcMessageId)) return null;
         await updateWarmupLog(log.id, { message_id: rfcMessageId });
-      }
-
-      const check = await checkMessageInbox(buddy, rfcMessageId);
-      const landed = check ? placementFromCheck(check) : null;
-      if (landed !== null) {
-        await updateWarmupLog(log.id, { landed_in_inbox: landed });
-        result.checked++;
-      }
-    }
+        return rfcMessageId;
+      },
+      check: (buddy, rfcMessageId, timeoutMs) => checkMessageInbox(buddy, rfcMessageId, { timeoutMs }),
+      record: (logId, landed) => updateWarmupLog(logId, { landed_in_inbox: landed }),
+    });
+    result.checked = result.placement.checked;
 
     // ── Step 3: Analyze spam rate — auto-pause if over threshold
     const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
@@ -308,7 +312,7 @@ export async function GET(req: NextRequest) {
   }
 
   const startTime = Date.now();
-  const allResults: EngineTickResult[] = [];
+  const allResults: ConfigTickResult[] = [];
 
   try {
     await withCronMonitor(
