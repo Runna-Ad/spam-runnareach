@@ -62,6 +62,7 @@ Checklist (grown by retros; add a line when a retro records a miss):
   BLOCKING.
 - An error field or flag checked with `if (x.error)` / `if (msg)`: what does an empty
   string do? (postgrest-js: empty-body 5xx → `message: ""`). Presence, not truthiness.
+  A postgrest `head: true` count error ALWAYS has `message: ""` (HEAD has no body): batch 5 #42.
 - A race/overlap test: delete the guard it claims to test (the claim check, the WHERE
   guard) and run it. Still green → BLOCKING (the test does not exercise the race).
 - A migration applied before the deploy: what do the OLD prod code's writes look like in

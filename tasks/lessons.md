@@ -84,6 +84,20 @@ TAGS: testing, timers, serverless
 - `app/api/discover/run/route.ts` pitching phase: `stats.pitched` adds ICP-wide catch-up pitches (other runs' high scorers) to this run's tally; for an ICP job the toast's "N pitched" can include companies this run never researched. Meaning left unchanged (brief's negative set).
 - `generatePitchWith` (lib/pitches/pitch-stage.ts) re-checks only DO_NOT_SEND_STATUSES (`:423`), not isPastPipeline; the pitching phase relies on the handoff filter, so a company that moved to sent or replied between the handoff and its pitching slice would still get a new draft (and a Claude call). Not changed (brief: which companies are pitched must not change).
 
+### from optout-alarm-people
+[2026-10-20] A breaker that counts timeline rows counts one human action as many
+WHAT HAPPENED: opt_out_spike summed `unsubscribe` + `reply`/hard_no rows (lib/autopilot/tick.ts countEvents). One "remove me" reply writes both (the poll on the thread's pitch, recordOptOut on the root pitch), so two people tripped a quality breaker that pauses every inbox and demotes the stage. Fixed in lib/autopilot/opt-out-count.ts: distinct prospects via pitch_id → pitches.prospect_id, falling back to the event count on a failed or truncated read.
+RULE: Before a breaker or learner counts pitch_events, list every writer of each event type it counts (grep `event_type: "<type>"` / `recordEvent`) and ask whether one human action writes more than one row. If it does, count the subject (prospect), not rows. A bounded read that hits its limit is a failed read: fall back to the exact count, never to a short one.
+TAGS: autopilot, breakers, pitch_events, counting
+
+[2026-10-20] Adding a module to tick.ts means adding it to the trust-split loader's REAL list
+WHAT HAPPENED: tests/autopilot-trust-split.test.ts stubs every tick.ts import not in its REAL map; a stubbed function throws when called, so a new `./opt-out-count` import made the kill-switch route test report `breakers: stub optOutMetrics called`.
+RULE: A new import in lib/autopilot/tick.ts that the breakers or safety steps call goes into REAL in tests/autopilot-trust-split.test.ts in the same commit.
+TAGS: autopilot, tests, loader-hook
+
+## Out of scope, noticed
+- lib/autopilot/tick.ts runBreakers: the inbox and DMARC/warmup reads ignore their `error` (a failed read reads as "no data"), same pattern the opt-out count had. Not a trip risk (fails quiet), but a silent blind spot.
+
 ### late lessons from the batch 5 wrap-ups (learned during review fixes, after each inbox file)
 [2026-10-20] Never scrub untrusted text by masking paired delimiters; cut at the first delimiter
 WHAT HAPPENED: (learning-review-backoff) `reviewFailureText` replaced quoted spans to hide model output in stored error text. Model text with an odd number of quotes broke the pairing and let prospect names through (reproduced through the real structuredCall).
