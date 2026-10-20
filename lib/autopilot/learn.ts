@@ -392,34 +392,36 @@ const guidanceItem = z.preprocess(
     const o = v as Record<string, unknown>;
     return { ...o, text: field(o, ["text", "instruction", "guidance"]), why: field(o, ["why", "reason", "rationale"]) };
   },
-  z.object({ text: z.string().min(12).transform(clip(GUIDANCE_TEXT_MAX)), why: z.string().min(5).transform(clip(GUIDANCE_WHY_MAX)) }),
+  // The instruction itself is never clipped: a cut-off instruction could go live.
+  z.object({ text: z.string().min(12).max(GUIDANCE_TEXT_MAX), why: z.string().min(5).transform(clip(GUIDANCE_WHY_MAX)) }),
 );
 
 /**
  * A list the model filled: items that break a rule are dropped (and counted),
- * long strings are clipped, extra items cut. Clipped guidance still goes
- * through sanitizeGuidance, which discards anything over its own limit.
+ * long strings are clipped where the rule allows it, extra items cut. A value
+ * that is present but not a list counts as one dropped item.
  */
-function lenientList<T>(item: z.ZodType<T, z.ZodTypeDef, unknown>, max: number) {
-  return z.unknown().transform((v) => {
-    const raw = Array.isArray(v) ? v : [];
-    const items = raw.flatMap((x) => {
-      const r = item.safeParse(x);
-      return r.success ? [r.data] : [];
-    });
-    return { items: items.slice(0, max), dropped: raw.length - items.length };
+function lenientList<T>(item: z.ZodType<T, z.ZodTypeDef, unknown>, v: unknown, max: number): { items: T[]; dropped: number } {
+  if (v === undefined) return { items: [], dropped: 0 };
+  if (!Array.isArray(v)) return { items: [], dropped: 1 };
+  const items = v.flatMap((x) => {
+    const r = item.safeParse(x);
+    return r.success ? [r.data] : [];
   });
+  return { items: items.slice(0, max), dropped: v.length - items.length };
 }
 
-/** `{ "review": { observations, guidance } }` and the like: unwrap one level. */
+const hasReviewKeys = (v: unknown): v is Record<string, unknown> =>
+  Boolean(v) && typeof v === "object" && !Array.isArray(v) && ("observations" in (v as object) || "guidance" in (v as object));
+
+/**
+ * `{ "review": { observations, guidance } }`, with or without sibling keys:
+ * unwrap the one nested object that carries the review's keys.
+ */
 function unwrapReview(v: unknown): unknown {
-  if (!v || typeof v !== "object" || Array.isArray(v)) return v;
-  const o = v as Record<string, unknown>;
-  if ("observations" in o || "guidance" in o) return o;
-  const inner = Object.values(o);
-  const only = inner.length === 1 ? inner[0] : undefined;
-  if (only && typeof only === "object" && !Array.isArray(only) && ("observations" in only || "guidance" in only)) return only;
-  return o;
+  if (!v || typeof v !== "object" || Array.isArray(v) || hasReviewKeys(v)) return v;
+  const inner = Object.values(v as Record<string, unknown>).filter(hasReviewKeys);
+  return inner.length === 1 ? inner[0] : v;
 }
 
 type ReviewOutput = {
@@ -430,12 +432,19 @@ type ReviewOutput = {
 };
 
 // structuredCall types its schema's input as its output; safeParse takes anything.
-export const reviewSchema = z.preprocess(
-  unwrapReview,
-  z
-    .object({ observations: lenientList(observationItem, OBS_MAX), guidance: lenientList(guidanceItem, GUIDANCE_MAX) })
-    .transform((r) => ({ observations: r.observations.items, guidance: r.guidance.items, dropped: r.observations.dropped + r.guidance.dropped })),
-) as unknown as z.ZodType<ReviewOutput>;
+export const reviewSchema = z.unknown().transform((raw, ctx): ReviewOutput => {
+  const v = unwrapReview(raw);
+  if (!v || typeof v !== "object" || Array.isArray(v)) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, message: "expected a JSON object" });
+    return z.NEVER;
+  }
+  const o = v as Record<string, unknown>;
+  const observations = lenientList(observationItem, o.observations, OBS_MAX);
+  const guidance = lenientList(guidanceItem, o.guidance, GUIDANCE_MAX);
+  // An object with neither key is not an empty week: it must not close the week.
+  const missing = hasReviewKeys(o) ? 0 : 1;
+  return { observations: observations.items, guidance: guidance.items, dropped: observations.dropped + guidance.dropped + missing };
+}) as unknown as z.ZodType<ReviewOutput>;
 
 const REVIEW_SYSTEM = `You improve an automated cold-email writer for Rünna (Runna Advertising), a Mexico/Canada agency that helps small and mid-size businesses with marketing and automation. Emails link to a free audit tool (the Inefficiency Hunter).
 
@@ -472,16 +481,17 @@ const REVIEW_DEPS: ReviewDeps = { call: structuredCall, claudeAvailable: claudeI
 
 /**
  * What a failed call says, for a person: the reason and the error's first
- * ~300 characters. A JSON parse error loses the model's raw output and the
- * snippets JSON.parse quotes (the output can quote prospect replies); an API
- * or schema error is kept as is (zod messages carry paths, not values).
+ * ~300 characters. A JSON parse error is cut at its first quote, which drops
+ * the model's raw output and the snippet JSON.parse quotes (the output can
+ * quote prospect replies); an API or schema error is kept as is (zod
+ * messages carry paths, not values).
  */
 export function reviewFailureText(error: string): string {
   if (!error.startsWith("JSON parse failed")) return error.slice(0, 300);
-  return error
-    .replace(/\.?\s*Raw:[\s\S]*$/, "")
-    .replace(/"[^"]*"(\.\.\.)?/g, '"…"')
-    .slice(0, 300);
+  // Fail closed: nothing after the first quote survives (quotes in model text
+  // don't pair, so masking quoted spans let text through).
+  const cut = error.replace(/\.?\s*Raw:[\s\S]*$/, "");
+  return (cut.split('"')[0] ?? "").trimEnd().slice(0, 300);
 }
 
 /**
@@ -495,12 +505,13 @@ export async function weeklyReview(
   deps: ReviewDeps = REVIEW_DEPS,
 ): Promise<{ ran: boolean; reason: string; guidance: string[] }> {
   const weekAgo = new Date(now.getTime() - 7 * DAY).toISOString();
-  const { count: recent } = await db
+  const { count: recent, error: recentError } = await db
     .from("learning_insights")
     .select("id", { count: "exact", head: true })
     .eq("tenant_id", tenantId)
     .eq("learner", "review")
     .gte("created_at", weekAgo);
+  if (recentError) return { ran: false, reason: "could not read this week's reviews", guidance: [] };
   if ((recent ?? 0) > 0) return { ran: false, reason: "reviewed this week", guidance: [] };
 
   const { data: lastAttempt, error: attemptReadError } = await db
@@ -584,7 +595,8 @@ export async function weeklyReview(
     model: ANTHROPIC_DEFAULT_MODEL,
     system: REVIEW_SYSTEM,
     user: `This week's evidence:\n\`\`\`json\n${JSON.stringify(evidence, null, 2)}\n\`\`\``,
-    max_tokens: 1500,
+    // The prompt allows ~6k characters of output; 1500 tokens could truncate it.
+    max_tokens: 2500,
     timeoutMs: 45_000,
     schema: reviewSchema,
   });

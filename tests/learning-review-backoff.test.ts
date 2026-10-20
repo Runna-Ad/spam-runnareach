@@ -60,7 +60,7 @@ const cmp = (a: unknown, b: unknown): number => {
   return String(a) < String(b) ? -1 : String(a) > String(b) ? 1 : 0;
 };
 
-function fakeDb(tables: Record<string, Row[]>, opts: { failInsert?: boolean; failRowRead?: boolean } = {}) {
+function fakeDb(tables: Record<string, Row[]>, opts: { failInsert?: boolean; failRowRead?: boolean; failCountRead?: boolean } = {}) {
   let seq = 0;
   const clock = { now: T0 };
   const checkCols = (table: string, cols: string[]) => {
@@ -91,6 +91,7 @@ function fakeDb(tables: Record<string, Row[]>, opts: { failInsert?: boolean; fai
         return { data: single ? { id: row.id } : null, error: null };
       }
       // postgrest-js reports an empty-body 502 as { message: "" }.
+      if (opts.failCountRead && mode === "select" && head && table === "learning_insights") return { data: null, count: null, error: { message: "" } };
       if (opts.failRowRead && mode === "select" && !head && table === "learning_insights") return { data: null, error: { message: "" } };
       const hit = rows().filter((r) => filters.every((f) => f(r)));
       if (mode === "update") {
@@ -230,11 +231,35 @@ test("the failure says why: reason and error text on the attempt row and in the 
 test("a failure's text keeps no model output (it can quote prospect replies)", () => {
   const err = `JSON parse failed: Unexpected token 'H', "Here is th"... is not valid JSON. Raw: Here is the review: Maria from Clinica Sol said the audit is too long`;
   const t = reviewFailureText(err);
-  assert.equal(t, `JSON parse failed: Unexpected token 'H', "…" is not valid JSON`);
+  assert.equal(t, `JSON parse failed: Unexpected token 'H',`);
   assert.ok(!t.includes("Maria"));
   assert.ok(reviewFailureText("x".repeat(1000)).length <= 300);
   const api = `400 {"type":"error","error":{"type":"invalid_request_error","message":"max_tokens: too large"}}`;
   assert.equal(reviewFailureText(api), api, "an API error keeps its message");
+});
+
+/** The error structuredCall builds from a real JSON.parse failure. */
+function parseError(text: string): string {
+  try {
+    JSON.parse(text);
+  } catch (e) {
+    return `JSON parse failed: ${(e as Error).message}. Raw: ${text.slice(0, 200)}`;
+  }
+  throw new Error("parsed");
+}
+
+test("unpaired quotes in model text cannot leak it: the text is cut at the first quote", () => {
+  const cases: Array<[string, string[]]> = [
+    [`{"observations": [{"title": "x", "evidence": Maria Lopez said no}]}`, ["Maria", "Lope"]],
+    [`{"observations": [{"title": "Pedro", "evidence": "a"}, Clinica Sol wrote "no"]}`, ["Clinica", "Pedro"]],
+    [`No "thanks"`, ["thanks", "No "]],
+  ];
+  for (const [text, secrets] of cases) {
+    const t = reviewFailureText(parseError(text));
+    assert.ok(t.startsWith("JSON parse failed: Unexpected token"), t);
+    assert.ok(!t.includes('"'), t);
+    for (const secret of secrets) assert.ok(!t.includes(secret), `${secret} leaked: ${t}`);
+  }
 });
 
 test("a timeout, a call that never returns usage, also counts: one attempt a day whatever the reason", async () => {
@@ -274,6 +299,14 @@ test("an unreadable attempt log (empty-body 502) fails closed: no paid call", as
   const r = await tick(unreadable, T0, d);
   assert.equal(d.paid.length, 0);
   assert.equal(r.reason, "could not read the last review attempt");
+});
+
+test("an unreadable weekly-review count fails closed: no paid call", async () => {
+  const db = seeded();
+  const d = deps(() => SCHEMA_FAIL);
+  const r = await tick(fakeDb(db.tables, { failCountRead: true }), T0, d);
+  assert.equal(d.paid.length, 0);
+  assert.equal(r.reason, "could not read this week's reviews");
 });
 
 // ── One successful review a week ─────────────────────────────────────────────
@@ -339,29 +372,42 @@ const OLD = z.object({
 });
 
 test("output the old schema accepted parses to the same data", () => {
-  for (const ok of [GOOD, {}, { observations: [] }, { guidance: GOOD.guidance, extra: 1 }]) {
+  for (const ok of [GOOD, { observations: [] }, { guidance: GOOD.guidance, extra: 1 }]) {
     const { dropped, ...rest } = reviewSchema.parse(ok);
     assert.deepEqual(rest, OLD.parse(ok));
     assert.equal(dropped, 0);
   }
+  assert.equal(reviewSchema.parse({}).dropped, 1, "an object with neither key no longer passes as an empty week");
 });
 
-test("800-char evidence and a 450-char guidance text are clipped, not rejected; the guidance check still runs", () => {
+test("800-char evidence is clipped; a 450-char guidance text is dropped and counted, never clipped", () => {
   assert.equal(OLD.safeParse({ observations: [{ title: "Long one", evidence: "e".repeat(800) }] }).success, false);
   const out = reviewSchema.parse({
     observations: [{ title: "Long one", evidence: "e".repeat(800) }],
-    guidance: [{ text: "Keep the email short and plain. ".repeat(15).slice(0, 450), why: "w".repeat(450) }],
+    guidance: [{ text: "Keep the email short and plain. ".repeat(15).slice(0, 450), why: "Short emails get replies" }],
   });
   assert.equal(out.observations[0]!.evidence.length, 600);
-  assert.equal(out.guidance[0]!.text.length, 400);
-  assert.equal(out.guidance[0]!.why.length, 400);
-  const verdict = sanitizeGuidance(out.guidance[0]!.text);
-  assert.equal(verdict.ok, false, "over the guidance limit: discarded by sanitizeGuidance, never bypassing it");
+  assert.deepEqual(out.guidance, []);
+  assert.equal(out.dropped, 1);
+  assert.equal(reviewSchema.parse({ guidance: [{ text: "Say it plainly.", why: "w".repeat(450) }] }).guidance[0]!.why.length, 400, "why is clipped");
 });
 
-test("a clipped over-long guidance is logged as discarded, never becomes an arm", async () => {
+test("a padded instruction is never cut into a live challenger (whitespace collapses after the length check)", async () => {
+  const text = "Open with the question they asked in their reply." + " ".repeat(330) + "Never promise the audit will find savings for them.";
+  assert.ok(text.length > 400);
   const db = seeded();
-  const d = deps(() => okWith({ guidance: [{ text: "Open with the prospect's own words about their booking. ".repeat(10), why: "Replies quote their own words" }] }));
+  const d = deps(() => okWith({ observations: GOOD.observations, guidance: [{ text, why: "Replies ask questions" }] }));
+  const r = await tick(db, T0, d);
+  assert.deepEqual(r.guidance, []);
+  assert.equal(db.tables.learning_arms!.length, 0);
+});
+
+test("guidance within the schema but over the guidance limit is logged as discarded by sanitizeGuidance, never an arm", async () => {
+  const text = "Open with the prospect's own words about their booking. ".repeat(6).trim();
+  assert.ok(text.length > 280 && text.length <= 400);
+  assert.equal(sanitizeGuidance(text).ok, false);
+  const db = seeded();
+  const d = deps(() => okWith({ guidance: [{ text, why: "Replies quote their own words" }] }));
   const r = await tick(db, T0, d);
   assert.deepEqual(r.guidance, []);
   assert.equal(db.tables.learning_arms!.length, 0);
@@ -370,6 +416,9 @@ test("a clipped over-long guidance is logged as discarded, never becomes an arm"
 
 test("shapes that used to fail and now pass: a wrapper object, alias keys, too many items, one bad item among good ones", () => {
   assert.deepEqual(reviewSchema.parse({ review: GOOD }).guidance, GOOD.guidance);
+  const sibling = reviewSchema.parse({ review: GOOD, note: "x" });
+  assert.deepEqual(sibling.guidance, GOOD.guidance, "a wrapper with a sibling key is unwrapped");
+  assert.equal(sibling.dropped, 0);
   const aliased = reviewSchema.parse({
     observations: [{ observation: "Replies ask about cost", evidence: "4 of 6 replies" }],
     guidance: [{ instruction: "Say plainly that the audit is free.", reason: "Cost questions" }],
@@ -387,6 +436,25 @@ test("shapes that used to fail and now pass: a wrapper object, alias keys, too m
 test("shapes that still fail: not an object at all", () => {
   assert.equal(reviewSchema.safeParse([GOOD]).success, false);
   assert.equal(reviewSchema.safeParse("no").success, false);
+});
+
+test("a present observations or guidance that is not a list counts as dropped, and does not close the week", async () => {
+  const out = reviewSchema.parse({ observations: GOOD.observations[0], guidance: "Say it plainly." });
+  assert.equal(out.dropped, 2);
+  const db = seeded();
+  const d = deps(() => okWith({ observations: GOOD.observations[0], guidance: GOOD.guidance[0] }));
+  const r = await tick(db, T0, d);
+  assert.equal(r.ran, false);
+  assert.match(r.reason, /malformed \(2 dropped\)/);
+  assert.equal(db.tables.learning_insights!.filter((x) => x.learner === "review").length, 0);
+});
+
+test("an object with neither key (and nothing to unwrap) is a failure, not an empty week", async () => {
+  const db = seeded();
+  const d = deps(() => okWith({ summary: "nothing to say", items: [] }));
+  const r = await tick(db, T0, d);
+  assert.equal(r.ran, false);
+  assert.equal(db.tables.learning_insights!.filter((x) => x.learner === "review").length, 0);
 });
 
 test("every item malformed is a failure (counted, explained), not an empty week", async () => {
@@ -408,4 +476,5 @@ test("the prompt states the shape and limits the schema checks", async () => {
   assert.match(system, /"observations": \[\{"title": "\.\.\.", "evidence": "\.\.\."\}\]/);
   assert.match(system, /up to 6 observations \(title under 200 characters, evidence under 600\)/);
   assert.match(system, /text one sentence under 280 characters/);
+  assert.equal((d.paid[0] as { max_tokens: number }).max_tokens, 2500);
 });
