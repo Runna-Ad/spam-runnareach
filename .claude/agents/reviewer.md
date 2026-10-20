@@ -80,5 +80,14 @@ Checklist (grown by retros; add a line when a retro records a miss):
   lift, and is the lift a row only the lift writes (never `updated_at`)? (hotfix: a resume was
   re-paused by the same 2 bounces every 15 min.)
 
+- A deadline, budget or cap: recompute it at the largest load the code is designed for, not
+  today's prod load, and check every step between two deadlines still gets time (batch 5:
+  warm-up budget fit 5/day, broke at the designed 40-50/day, then starved the reply step).
+- A repair, sweep or backfill: what does each routine it calls write, with which timestamp,
+  and which breaker, learner or report counts those rows? (batch 5: a DNC repair would have
+  written two July opt-outs dated today and tripped opt_out_spike.)
+- A scrubber that masks paired delimiters (quotes, brackets) is not fail-closed: feed it
+  unbalanced input from the real source (batch 5: model text leaked past quote pairing).
+
 Trace a real path from an input to the failure before calling something blocking. If you
 cannot, it is optional. A finding you are unsure of is optional with "unsure" in front.

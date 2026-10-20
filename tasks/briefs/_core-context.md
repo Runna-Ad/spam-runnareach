@@ -104,6 +104,14 @@ cost-tracked, daily-capped wrapper in `lib/anthropic/` · Gmail API · Sentry ·
 - A fake db must reject a column the real table does not have: check every selected/ordered
   column against the migration's `create table` (tests/send-path-hardening.test.ts has a
   helper). Batch 4: `pitch_events.created_at` (the column is `event_at`) passed every test.
+- A repair or backfill that calls a shared routine writes whatever that routine writes, dated
+  now. Before calling it, grep who counts those rows by time (autopilot breakers, learners,
+  reports) and write only the missing state (batch 5: a DNC repair would have dated two July
+  opt-outs today and tripped the opt_out_spike breaker on the deploy week).
+- A deadline or time budget is checked at the largest load the code is designed for (read the
+  schedules and constants, e.g. warm-up ramp and re-warm reach 50 sends a day), and every
+  step between two deadlines gets its own reserve (batch 5: a check budget that fit 5 a day
+  ate the sends at 50, then the next fix starved the reply step at 20-50).
 - Client state (`useState`) survives `router.refresh()`: when a server prop disables a
   control, derive the effective state from both (`hotOnly && !unavailable`), never from
   the raw state alone.
