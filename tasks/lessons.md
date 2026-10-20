@@ -1,5 +1,10 @@
 # S.P.A.M. — Lessons (newest first)
 
+[2026-10-20] project-state.md is part of the ship, not the wrap-up
+WHAT HAPPENED: conductor/SKILL.md 6.5 says to update tasks/project-state.md before opening the integration PR. For the bounce hotfix (#31) and batch 4 (#36) the conductor updated the board and lessons but not project-state, so "What's deployed" still said main = 45519c8 a day later; a fresh session reading the conductor's state file would have been two ships behind. Caught while proposing batch 5.
+RULE: The integration PR is not opened until `git diff main -- tasks/project-state.md` shows the batch's section and the "What's deployed" line. After "ship it", replace "Prod = main = <sha>" in the same commit as the board's ship entry.
+TAGS: process, conductor, project-state
+
 [2026-10-19] PEDRO_OVERRIDE: A finished worker session is wrapped up first, then archived, every time
 WHAT HAPPENED: After batch 4 shipped, the four worker sessions (address-trust, autopilot-trust-split, pipeline-guards, send-path-hardening) sat idle with their containers still up. conductor/SKILL.md step 5.4 already said to archive a worker after its merge, and the conductor skipped it; Pedro had to ask "are the other sessions done?". Pedro: "everytime one of those sessions are done and finished you should 1st wrap them up and then archive them."
 RULE: When a worker's PR is merged (or the worker is rejected or stuck), the conductor sends it the WRAP UP message (worker/SKILL.md section 8), reads its reply from the transcript with list_events, carries any late lessons and loose ends to lessons.md / the board, and only then calls archive_session. Never archive before reading the wrap-up; never leave a merged worker idle. Record "wrapped + archived" in the board row.
