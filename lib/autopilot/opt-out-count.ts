@@ -50,10 +50,11 @@ async function countOptOutEvents(db: Db, tenantId: string, sinceIso: string): Pr
       .gte("event_at", sinceIso);
     if (intent) q = q.eq("payload->>intent", intent);
     const { count, error } = await q;
-    return { count: (count as number | null) ?? 0, error: error ? String(error.message ?? "read failed") : null };
+    // A count is an HTTP HEAD: a failure has no body, so postgrest-js reports { message: "" }.
+    return { count: (count as number | null) ?? 0, error: error ? String(error.message || "read failed") : null };
   };
   const [unsub, hardNo] = await Promise.all([one("unsubscribe"), one("reply", "hard_no")]);
-  return { count: unsub.count + hardNo.count, error: unsub.error ?? hardNo.error };
+  return { count: unsub.count + hardNo.count, error: unsub.error !== null ? unsub.error : hardNo.error };
 }
 
 /** Distinct prospects with an opt-out event since `monthIso`, split at `weekIso`. Throws on a failed or truncated read. */
@@ -107,10 +108,14 @@ export async function optOutMetrics(db: Db, tenantId: string, now: Date): Promis
   try {
     ({ week, month } = await countOptOutPeople(db, tenantId, monthIso, weekIso));
   } catch (err) {
-    errors.push(`opt-out people count failed (${(err as Error).message}); using the event count`);
     const [w, m] = await Promise.all([countOptOutEvents(db, tenantId, weekIso), countOptOutEvents(db, tenantId, monthIso)]);
-    if (w.error) errors.push(`opt-out event count (7 days) failed: ${w.error}`);
-    if (m.error) errors.push(`opt-out event count (30 days) failed: ${m.error}`);
+    const fallbackFailed = w.error !== null || m.error !== null;
+    errors.push(
+      `opt-out people count failed (${(err as Error).message}); ` +
+        (fallbackFailed ? "the event-count fallback failed too, so the opt-out alarm ran on incomplete counts" : "using the event count"),
+    );
+    if (w.error !== null) errors.push(`opt-out event count (7 days) failed: ${w.error}`);
+    if (m.error !== null) errors.push(`opt-out event count (30 days) failed: ${m.error}`);
     week = w.count;
     month = m.count;
   }

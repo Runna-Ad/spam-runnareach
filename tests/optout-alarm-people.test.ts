@@ -63,7 +63,8 @@ function fakeDb(tables: Record<string, Row[]>, fails: Fail[] = []) {
         reads.push(`${table}:${head ? "count" : "rows"}`);
         if (unknown.length) return { data: null, count: null, error: { message: `column ${table}.${unknown[0]} does not exist`, code: "42703" } };
         const f = fails.find((x) => x.table === table && x.kind === (head ? "count" : "rows"));
-        if (f) return { data: null, count: null, error: { message: f.message } };
+        // A count is an HTTP HEAD: postgrest-js reports a failed one as { message: "" } (no body), whatever the cause.
+        if (f) return { data: null, count: null, error: { message: head ? "" : f.message } };
         let hit = (tables[table] ?? []).filter((r) => filters.every((fn) => fn(r)));
         if (head) return { data: null, count: hit.length, error: null };
         if (lim !== null) hit = hit.slice(0, lim);
@@ -297,16 +298,18 @@ test("a read that hits the limit falls back to the exact event count", async () 
   assert.match(r.errors[0]!, /hit the read limit/);
 });
 
-test("when the fallback count fails too, both failures are reported", async () => {
+test("when the fallback count fails too (empty-body HEAD error), both failures are reported and the first line says so", async () => {
   const w = world();
   w.replyOptOut("p1");
   const r = await run(w, [
     { table: "pitch_events", kind: "rows", message: "boom" },
-    { table: "pitch_events", kind: "count", message: "down" },
+    { table: "pitch_events", kind: "count", message: "db down" },
   ]);
-  assert.equal(r.errors.length, 3);
-  assert.match(r.errors[1]!, /7 days.*down/);
-  assert.match(r.errors[2]!, /30 days.*down/);
+  assert.equal(r.errors.length, 3, JSON.stringify(r.errors));
+  assert.match(r.errors[0]!, /opt-out people count failed \(pitch_events unsubscribe: boom\); the event-count fallback failed too/);
+  assert.doesNotMatch(r.errors[0]!, /using the event count/);
+  assert.equal(r.errors[1], "opt-out event count (7 days) failed: read failed");
+  assert.equal(r.errors[2], "opt-out event count (30 days) failed: read failed");
 });
 
 test("the fake rejects a column 0001 doesn't create (so a wrong select fails the tests)", async () => {
