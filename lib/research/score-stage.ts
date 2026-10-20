@@ -189,6 +189,21 @@ export async function scoreProspectWith(
     method = "heuristic";
   }
 
+  // Record Claude spend to cost_tracking so the daily cap can see it. Scoring
+  // fires up to 3× per prospect and was previously invisible to the cap — this
+  // closes that hole. Best-effort; never blocks the score. Recorded before the
+  // scores writes, so a failed insert still leaves the paid call on record.
+  if (claudeUsage) {
+    await recordClaudeCall({
+      tenantId: user.tenantId,
+      model: ANTHROPIC_HAIKU_MODEL,
+      entity_type: "scoring",
+      entity_id: parsed.data.prospect_id,
+      usage: claudeUsage,
+      ...(claudeFallbackReason ? { metadata: { fallback_reason: claudeFallbackReason } } : {}),
+    });
+  }
+
   // Mark prior active scores as superseded so the partial index stays clean.
   const nowIso = new Date().toISOString();
   await supabase
@@ -218,20 +233,6 @@ export async function scoreProspectWith(
   });
 
   if (insertErr) return { ok: false, error: `Could not save score: ${insertErr.message}` };
-
-  // Record Claude spend to cost_tracking so the daily cap can see it. Scoring
-  // fires up to 3× per prospect and was previously invisible to the cap — this
-  // closes that hole. Best-effort; never blocks the score.
-  if (claudeUsage) {
-    await recordClaudeCall({
-      tenantId: user.tenantId,
-      model: ANTHROPIC_HAIKU_MODEL,
-      entity_type: "scoring",
-      entity_id: parsed.data.prospect_id,
-      usage: claudeUsage,
-      ...(claudeFallbackReason ? { metadata: { fallback_reason: claudeFallbackReason } } : {}),
-    });
-  }
 
   // Update prospect snapshot fields used by listing pages.
   const { error: updErr } = await supabase

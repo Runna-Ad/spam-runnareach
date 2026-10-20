@@ -14,6 +14,7 @@ import { z } from "zod";
 import {
   ANTHROPIC_HAIKU_MODEL,
   claudeIsAvailable,
+  computeCostUsd,
   getClient,
   structuredCall,
 } from "@/lib/anthropic/client";
@@ -37,7 +38,10 @@ import { suggestIcpFields, type SuggestInput, type SuggestOutput } from "./sugge
 export async function suggestIcpFieldsAction(
   input: SuggestInput,
 ): Promise<SuggestOutput> {
-  if (!claudeIsAvailable()) {
+  // A server action is reachable by anyone who can POST to the app: no session,
+  // no paid call. The heuristic is free and writes nothing, so it stays the answer.
+  const user = await requireUser().catch(() => null);
+  if (!user || !claudeIsAvailable()) {
     return suggestIcpFields(input); // graceful fallback
   }
 
@@ -48,6 +52,25 @@ export async function suggestIcpFieldsAction(
       model: ANTHROPIC_HAIKU_MODEL,
       max_tokens: 1000,
       messages: [{ role: "user", content: buildPrompt(input) }],
+    });
+
+    // Paid from here on, whatever parseResponse makes of it: record first.
+    const u = response.usage;
+    const cacheRead = u.cache_read_input_tokens ?? 0;
+    const cacheWrite = u.cache_creation_input_tokens ?? 0;
+    await recordClaudeCall({
+      tenantId: user.tenantId,
+      model: ANTHROPIC_HAIKU_MODEL,
+      entity_type: "icp_suggest",
+      entity_id: null,
+      usage: {
+        input_tokens: u.input_tokens,
+        output_tokens: u.output_tokens,
+        cache_read_input_tokens: cacheRead,
+        cache_creation_input_tokens: cacheWrite,
+        cost_usd: computeCostUsd(ANTHROPIC_HAIKU_MODEL, u.input_tokens, u.output_tokens, cacheRead, cacheWrite),
+      },
+      metadata: { kind: "icp_suggest_fields" },
     });
 
     const raw = response.content
@@ -395,7 +418,8 @@ Return the proposed refined values as JSON matching the schema. Suggest only val
     model: ANTHROPIC_HAIKU_MODEL,
     system,
     user,
-    max_tokens: 900,
+    // Worst case of refineSchema (4 × 12 × 60-char items, 6 rationales, summary) is ~1,300 tokens.
+    max_tokens: 1500,
     schema: refineSchema,
   });
 

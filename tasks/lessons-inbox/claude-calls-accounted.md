@@ -13,7 +13,10 @@ WHAT HAPPENED: Zod 3.24 has no JSON-schema export, so every prompt names its own
 RULE: Worth a conductor decision: a small `describeShape(schema)` in `lib/anthropic/` that walks a ZodObject (keys, required/nullable, `.max` limits) and appends it to the trailing uncached JSON instruction would make "a key the prompt never names" impossible for every caller. Not done here (`structuredCall` is out of scope).
 TAGS: anthropic, prompts
 
+[2026-10-20] A paid call in a "use server" export with no auth is open to anyone, not just a cap gap
+WHAT HAPPENED: I filed `suggestIcpFieldsAction` (direct `messages.create`, no `requireUser`) as a cap gap to route later. Review pointed out that a server action is reachable by a POST to any path, so it was an unauthenticated paid Haiku call; the AI Search source (`lib/discover/sources/claude-search.ts`) also never recorded its multi-turn Sonnet loop. Both fixed in the review push.
+RULE: When auditing cost recording, grep for `messages.create` as well as `structuredCall`, and for each `"use server"` export that spends money, check auth before cost. An unauthenticated paid call is a security finding: fix it in the same PR, don't file it.
+TAGS: anthropic, security, server-actions
+
 ## Out of scope, noticed
-- `lib/icp/suggest-action.ts:36` `suggestIcpFieldsAction` calls `client.messages.create` directly (Haiku) and never records cost; it also has no `requireUser`, so there is no tenant to record against. A cap bypass in the same class as this brief, left because fixing it changes the action's auth.
-- `lib/icp/suggest-action.ts` ICP refine runs with `max_tokens: 900`, but the schema's worst case (4 × 12 × 60-char items, 6 × 240-char rationales, 800-char summary) is ~1,300+ tokens, so a full answer can be truncated into a parse failure.
 - `lib/replies/draft-composer.ts`: the failure results of `composeReplyDraftWithClaude` / `composeNudgeWithClaude` carry no `model`, so callers hard-code `ANTHROPIC_DEFAULT_MODEL` to record a failure. Returning `model` on failure too would remove that coupling.

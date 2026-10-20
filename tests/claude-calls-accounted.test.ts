@@ -24,6 +24,7 @@ import type * as T_suggest_action from "../lib/icp/suggest-action.ts";
 import type * as T_gary_action from "../lib/icp/gary-action.ts";
 import type * as T_send_reply_action from "../lib/replies/send-reply-action.ts";
 import type * as T_route from "../app/api/replies/nudge/route.ts";
+import type * as T_claude_search from "../lib/discover/sources/claude-search.ts";
 
 const at = (p: string) => new URL(`../${p}`, import.meta.url).href;
 
@@ -35,6 +36,7 @@ const TARGET_FILES = [
   "lib/icp/gary-action.ts",
   "lib/replies/send-reply-action.ts",
   "app/api/replies/nudge/route.ts",
+  "lib/discover/sources/claude-search.ts",
 ];
 // Imports that load for real (they have no imports node cannot resolve).
 const REAL_ALIAS: Record<string, string> = {
@@ -47,6 +49,7 @@ const REAL_FILES = new Set([
   at("lib/research/scoring/rubric.ts"),
   at("lib/research/scoring/claude-scorer.ts"),
   at("lib/icp/option-sources.ts"),
+  at("lib/discover/fuzzy-dedupe.ts"),
 ]);
 
 // target href → import spec → value names it imports (type-only names dropped).
@@ -103,7 +106,7 @@ const stubs: Record<string, unknown> = {};
 let costRows: Row[] = [];
 
 /** A permissive Supabase fake: every chain resolves to the table's rows. */
-function fakeSupabase(tables: Record<string, Row[]>, writes: Row[] = []) {
+function fakeSupabase(tables: Record<string, Row[]>, writes: Row[] = [], failInserts: string[] = []) {
   const builder = (table: string) => {
     let single = false;
     let write: Row | null = null;
@@ -118,7 +121,8 @@ function fakeSupabase(tables: Record<string, Row[]>, writes: Row[] = []) {
       if (write) writes.push(write);
       const rows = tables[table] ?? [];
       const data = write ? null : single ? (rows[0] ?? null) : rows;
-      return Promise.resolve({ data, error: null, count: 0 }).then(ok, bad);
+      const error = write?.op === "insert" && failInserts.includes(table) ? { message: "insert failed" } : null;
+      return Promise.resolve({ data, error, count: 0 }).then(ok, bad);
     };
     return b;
   };
@@ -241,12 +245,12 @@ test("snapVerify: the prompt names every key of the answer schema", async () => 
 const { scoreProspectWith } = (await import(at("lib/research/score-stage.ts")) as typeof T_score_stage);
 const PID = "11111111-1111-4111-8111-111111111111";
 
-function scoreActor(writes: Row[] = []) {
+function scoreActor(writes: Row[] = [], failInserts: string[] = []) {
   const supabase = fakeSupabase({
     prospects: [{ id: PID, industry: "fitness", city: null, region: null, country_code: "CA", employee_size_estimate: 10, red_flags: [], icp_id: null, icps: null }],
     prospect_research: [],
     prospect_contacts: [],
-  }, writes);
+  }, writes, failInserts);
   return { supabase, user: { id: "u1", tenantId: "t1", role: "admin" } } as unknown as Actor;
 }
 
@@ -283,6 +287,15 @@ test("score: a successful call records exactly the row it recorded before (no me
   assert.equal(r.method, "claude");
   assert.equal(costRows.length, 1);
   assert.deepEqual(Object.keys(costRows[0]!).sort(), ["entity_id", "entity_type", "model", "tenantId", "usage"]);
+});
+
+test("score: the paid call is recorded even when the scores insert then fails", async () => {
+  reset();
+  answerWith(GOOD_SCORE);
+  const r = await quiet(() => scoreProspectWith(scoreActor([], ["scores"]), PID));
+  assert.equal(r.ok, false);
+  assert.equal(costRows.length, 1);
+  assert.equal(costRows[0]!.entity_type, "scoring");
 });
 
 test("score: heuristic-only runs record nothing (no key, over the cap, API error)", async () => {
@@ -472,10 +485,17 @@ test("nudge: a paid failure records once and the draft is held; no usage records
 
 // ── Classifier and research: display text is clipped, never fatal ────────────
 
-test("classifier: a 600-character reasoning classifies (clipped to 400) instead of failing", async () => {
+test("classifier: a 1,000-character reasoning classifies (clipped to 400) instead of failing", async () => {
   reset();
   const { classifyReplyWithClaude } = await import("../lib/replies/claude-classifier.ts");
-  answerWith({ intent: "wants_meeting", urgency: "hot", sentiment: "positive", reasoning: "x".repeat(600) });
+  const text = JSON.stringify({ intent: "wants_meeting", urgency: "hot", sentiment: "positive", reasoning: "x".repeat(1000) });
+  // Like the API, cut the answer at max_tokens (~4 chars a token for this text).
+  __test__.setClient({
+    messages: {
+      create: async (i: { max_tokens: number }) =>
+        ({ content: [{ type: "text", text: text.slice(0, i.max_tokens * 4) }], usage: USAGE }),
+    },
+  } as never);
   const r = await classifyReplyWithClaude({ subject: "Re", body_text: "Let's talk Tuesday", from_email: "a@b.co" });
   assert.equal(r.ok, true);
   if (r.ok) {
@@ -496,4 +516,93 @@ test("research: a long reasoning is clipped; pain_label's 200 limit is in the pr
   assert.equal(r.ok, true);
   if (r.ok) assert.equal(r.result.reasoning.length, 800);
   assert.match(systemText(calls[0]), /pain_label[^\n]*200/);
+});
+
+// ── ICP "Suggest with AI" (suggestIcpFieldsAction) ───────────────────────────
+
+const { suggestIcpFieldsAction } = (await import(at("lib/icp/suggest-action.ts")) as typeof T_suggest_action);
+const SUGGEST_INPUT = {
+  name: "Gyms", market: "CA" as const, language: "en" as const,
+  existing: { industry_tags: [], business_types: [], geo_regions: [], google_places_types: [], search_keywords: [], excluded_keywords: [] },
+};
+
+test("icp suggest fields: no session → heuristic only, no Claude call, no row", async () => {
+  reset();
+  stubs.requireUser = async () => { throw new Error("Not authenticated"); };
+  stubs.suggestIcpFields = () => ({ heuristic: true });
+  const calls = answerWith({});
+  const r = await quiet(() => suggestIcpFieldsAction(SUGGEST_INPUT as never));
+  assert.deepEqual(r, { heuristic: true });
+  assert.equal(calls.length, 0);
+  assert.equal(costRows.length, 0);
+});
+
+test("icp suggest fields: a logged-in call records one icp_suggest row priced like lib/anthropic, even if unparseable", async () => {
+  reset();
+  stubs.requireUser = async () => ({ id: "u1", tenantId: "t1", role: "viewer" });
+  stubs.suggestIcpFields = () => ({ heuristic: true });
+  const calls = answerWith("not json at all");
+  await quiet(() => suggestIcpFieldsAction(SUGGEST_INPUT as never));
+  assert.equal(calls.length, 1);
+  assert.equal(costRows.length, 1);
+  const row = costRows[0]!;
+  assert.equal(row.entity_type, "icp_suggest");
+  assert.equal(row.tenantId, "t1");
+  assert.equal(row.model, ANTHROPIC_HAIKU_MODEL);
+  assert.deepEqual(row.metadata, { kind: "icp_suggest_fields" });
+  assert.equal((row.usage as { cost_usd: number }).cost_usd, computeCostUsd(ANTHROPIC_HAIKU_MODEL, 1000, 100));
+
+  reset();
+  stubs.requireUser = async () => ({ id: "u1", tenantId: "t1", role: "admin" });
+  stubs.suggestIcpFields = () => ({ heuristic: true });
+  answerWith(new Error("Connection error."));
+  await quiet(() => suggestIcpFieldsAction(SUGGEST_INPUT as never));
+  assert.equal(costRows.length, 0, "API error: nothing was billed");
+});
+
+// ── AI Search discovery source (searchWithClaude) ────────────────────────────
+
+const { searchWithClaude } = (await import(at("lib/discover/sources/claude-search.ts")) as typeof T_claude_search);
+
+/** N tool-use turns, then either a final JSON answer or an API error. */
+function searchTurns(toolTurns: number, end: "answer" | "error") {
+  let n = 0;
+  __test__.setClient({
+    messages: {
+      create: async () => {
+        n++;
+        if (n <= toolTurns) {
+          return {
+            stop_reason: "tool_use",
+            content: [{ type: "tool_use", id: `tu${n}`, name: "brave_search", input: { query: `gyms ${n}` } }],
+            usage: USAGE,
+          };
+        }
+        if (end === "error") throw new Error("Connection error.");
+        return { stop_reason: "end_turn", content: [{ type: "text", text: JSON.stringify({ businesses: [] }) }], usage: USAGE };
+      },
+    },
+  } as never);
+}
+
+test("ai search: every paid turn records one research row (kind ai_search); a turn that errors records none", async () => {
+  for (const [toolTurns, end, rows] of [[2, "answer", 3], [3, "error", 3], [0, "answer", 1]] as const) {
+    reset();
+    stubs.braveIsAvailable = () => true;
+    stubs.searchBrave = async () => ({ ok: true, listings: [] });
+    stubs.normalizeDomain = (d: string) => d;
+    searchTurns(toolTurns, end);
+    const r = await quiet(() => searchWithClaude({ tenantId: "t1", brief: "gyms", location: "Calgary" }));
+    const at_ = `${toolTurns} tool turns, then ${end}`;
+    assert.equal(r.ok, end === "answer", at_);
+    assert.equal(costRows.length, rows, at_);
+    costRows.forEach((row, i) => {
+      assert.equal(row.entity_type, "research", at_);
+      assert.equal(row.entity_id, null, at_);
+      assert.equal(row.tenantId, "t1", at_);
+      assert.equal(row.model, ANTHROPIC_DEFAULT_MODEL, at_);
+      assert.deepEqual(row.metadata, { kind: "ai_search", turn: i }, at_);
+      assert.equal((row.usage as { cost_usd: number }).cost_usd, computeCostUsd(ANTHROPIC_DEFAULT_MODEL, 1000, 100), at_);
+    });
+  }
 });

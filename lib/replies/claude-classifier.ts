@@ -82,7 +82,9 @@ export async function classifyReplyWithClaude(
     model: ANTHROPIC_HAIKU_MODEL,
     system,
     user,
-    max_tokens: 200,
+    // Room for a ~1,000-char reasoning plus the JSON around it, so a long
+    // answer reaches the clip instead of being truncated into a parse failure.
+    max_tokens: 350,
     schema: responseSchema,
   });
 
