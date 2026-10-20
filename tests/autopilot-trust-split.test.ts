@@ -372,3 +372,23 @@ test("snapshot: autoScheduled rows carry autopilot_reasons, so a pull-back is no
   );
   assert.equal(buildWeeklyStats(raw).vetoed, 2, "the digest hold and the rejection; both pull-backs excluded");
 });
+
+test("snapshot: the weekly review's attempt markers are not counted as insights", async () => {
+  const now = new Date("2026-10-26T13:10:00Z");
+  const db = fakeDb({
+    learning_insights: [
+      { id: "i1", tenant_id: "t1", learner: "review", kind: "observation", title: "Replies ask about price", created_at: "2026-10-24T10:00:00Z" },
+      { id: "i2", tenant_id: "t1", learner: "review.attempt", kind: "observation", title: "Weekly AI review ran", created_at: "2026-10-24T09:59:00Z" },
+      { id: "i3", tenant_id: "t1", learner: "review.attempt", kind: "observation", title: "Weekly AI review failed (parse)", created_at: "2026-10-23T10:00:00Z" },
+      { id: "i4", tenant_id: "t1", learner: "governor", kind: "breaker", title: "Paused an inbox", created_at: "2026-10-23T11:00:00Z" },
+    ],
+  });
+  wire(db);
+  answers.exemplarsEnabled = () => false;
+  const { gatherWeeklyRaw } = (await import(SNAPSHOT)) as { gatherWeeklyRaw: (t: string, n: Date) => Promise<WeeklyRaw> };
+  const raw = await gatherWeeklyRaw("t1", now);
+  assert.deepEqual((raw.insights ?? []).map((r) => r.title), ["Replies ask about price"]);
+  // learn.ts imports server-only, so read its constant from source: snapshot.ts filters on this exact value.
+  const learnSrc = readFileSync(new URL("../lib/autopilot/learn.ts", import.meta.url), "utf8");
+  assert.match(learnSrc, /export const REVIEW_ATTEMPT_LEARNER = "review\.attempt";/);
+});
