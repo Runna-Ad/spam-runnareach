@@ -65,6 +65,10 @@ export function protectedStatusFilter(next: string, by: StatusWriter): string | 
   return blocked.length ? `(${blocked.join(",")})` : null;
 }
 
+/** A pitch exists but has not gone out yet. */
+const DRAFTED = ["pitched", "queued", "approved"] as const;
+/** An email went out, or its bounce or reply came back. */
+const EMAILED = ["sent", "bounced", "replied", "ghosted"] as const;
 /**
  * Statuses where the company has been contacted or decided: a pitch exists or went
  * out, a reply or bounce came back, or it is parked (every do-not-send status). The
@@ -72,8 +76,6 @@ export function protectedStatusFilter(next: string, by: StatusWriter): string | 
  * these (Pedro 2026-10-19: a person can still open it and act by hand). b_list is
  * NOT here: it is a scoring outcome before any email and may be re-run.
  */
-const DRAFTED = ["pitched", "queued", "approved"] as const;
-const EMAILED = ["sent", "bounced", "replied", "ghosted"] as const;
 const PAST_PIPELINE: ReadonlySet<string> = new Set([...DRAFTED, ...EMAILED, ...DO_NOT_SEND_STATUSES]);
 
 /**

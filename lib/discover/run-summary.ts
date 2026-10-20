@@ -33,7 +33,7 @@ export function summarizePipelineRun(
     return {
       tone: "warn",
       text:
-        `Pipeline finished but every prospect failed (${errored}).` +
+        `Pipeline finished but every ${skipped > 0 ? "company it ran" : "prospect"} failed (${errored}).` +
         (firstError ? ` First error: ${firstError}` : " Check the prospect's Activity tab for details.") +
         (skippedNote ? ` ${skippedNote}.` : ""),
     };

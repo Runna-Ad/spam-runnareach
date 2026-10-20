@@ -47,10 +47,11 @@ test("toast: all failed keeps its wording (with and without a first error)", () 
   assert.equal(withErr.text, "Pipeline finished but every prospect failed (2). First error: Final score failed: x");
   const noErr = done({ error_count: 1 });
   assert.equal(noErr.text, "Pipeline finished but every prospect failed (1). Check the prospect's Activity tab for details.");
-  // Skips alongside failures are added, the failure wording stays first.
+  // Skips alongside failures are added, the failure wording stays first, and it
+  // says "every company it ran" so the skipped ones are not counted as failed.
   assert.equal(
     done({ error_count: 1, skipped: 2 }).text,
-    "Pipeline finished but every prospect failed (1). Check the prospect's Activity tab for details. 2 skipped: already contacted or parked.",
+    "Pipeline finished but every company it ran failed (1). Check the prospect's Activity tab for details. 2 skipped: already contacted or parked.",
   );
 });
 
