@@ -582,6 +582,16 @@ test("bounces: a bounced row a person removed in /compliance after the window is
   assert.equal(db.log.filter((l) => l.op !== "select").length, 0);
 });
 
+test("bounces: the repair window is about 2 hours, pinned at a fixed age (a lift 3 h after the bounce sticks)", async () => {
+  // Fixed ages, not relative to the constant: setting the window back to 14 days must fail here.
+  assert.ok(BOUNCE_REPAIR_WINDOW_MS <= 3 * 60 * 60_000, "window must stay a few hours, not days");
+  const t = world({ replies: [bounce("b1", "full@acme.ca", { classified_at: ago(3 * 60 * 60_000) })] });
+  const db = fakeDb(t);
+  const r = await repairMissedOptOuts(db, deps(spy()));
+  assert.deepEqual(r.bounces, { repaired: 0, failed: 0, pending: 0 });
+  assert.equal(db.log.filter((l) => l.op !== "select").length, 0);
+});
+
 test("bounces: an NDR imported late (old received_at, fresh classified_at) is still repaired", async () => {
   const t = world({ replies: [bounce("b1", "dead@clinica.mx", { received_at: ago(20 * DAY), classified_at: ago(30 * 60_000) })] });
   const r = await repairMissedOptOuts(fakeDb(t), deps(spy()));
