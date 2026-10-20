@@ -10,8 +10,8 @@
  * route.ts, tick.ts and snapshot.ts import "server-only", "@/" aliases and
  * Next, which node cannot load here, so a loader hook (as in
  * tests/pipeline-status-rule.test.ts) stubs every import of those three files
- * except the autopilot modules under test (governor, hold, bounce-breaker, and
- * tick itself for the route). Each stub records its calls; the db is a fake that
+ * except the autopilot modules under test (governor, hold, bounce-breaker,
+ * opt-out-count, and tick itself for the route). Each stub records its calls; the db is a fake that
  * applies the filters the way Postgres would.
  */
 
@@ -32,6 +32,7 @@ const REAL: Record<string, Record<string, string>> = {
     "./governor": u("../lib/autopilot/governor.ts"),
     "./hold": u("../lib/autopilot/hold.ts"),
     "./bounce-breaker": u("../lib/autopilot/bounce-breaker.ts"),
+    "./opt-out-count": u("../lib/autopilot/opt-out-count.ts"),
   },
   [SNAPSHOT]: {},
 };
