@@ -248,14 +248,21 @@ export async function checkMessageInbox(
 // ── Send a reply from buddy account via SMTP ──────────────────────────────────
 
 /**
- * Worst case of one buddy reply: the SMTP timeouts below added up. nodemailer
- * cannot cancel a non-pooled send, so this is a bound by timeouts, not a timer.
+ * One buddy reply under a single stall: the SMTP timeouts below added up
+ * (DNS, connect, greeting, socket inactivity). A server that trickles bytes
+ * can reset the inactivity timer, so it is a single-stall bound, not a hard
+ * one: nodemailer cannot cancel a non-pooled send.
  */
-export const SMTP_WORST_MS = 8_000 + 5_000 + 10_000;
+export const SMTP_WORST_MS = 3_000 + 8_000 + 5_000 + 10_000;
 /** One IMAP phase of reply processing (read, or mark read) is cut off after this. */
 export const IMAP_PHASE_MAX_MS = 15_000;
 /** What can still run after the reply deadline: one reply in flight, then mark-read. */
 export const REPLY_TAIL_MS = SMTP_WORST_MS + IMAP_PHASE_MAX_MS;
+
+/** No read or reply of step 8 starts after this: the tail still ends before maxDuration, with 5 s spare. */
+export function replyDeadlineFor(tickStart: number, maxDurationMs = 120_000): number {
+  return tickStart + maxDurationMs - REPLY_TAIL_MS - 5_000;
+}
 
 export type ReplyResult = {
   sent: boolean;
@@ -280,8 +287,9 @@ export async function sendBuddyReply(
       user: creds.email,
       pass: creds.appPassword,
     },
-    // nodemailer's defaults (2 min connect, 1 h socket) outlive the route.
-    // Their sum is SMTP_WORST_MS.
+    // nodemailer's defaults (30 s DNS, 2 min connect, 1 h socket) outlive the
+    // route. Their sum is SMTP_WORST_MS.
+    dnsTimeout: 3_000,
     connectionTimeout: 8_000,
     greetingTimeout: 5_000,
     socketTimeout: 10_000,

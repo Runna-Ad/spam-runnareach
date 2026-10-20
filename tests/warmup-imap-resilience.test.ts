@@ -5,6 +5,8 @@ import {
   checkMessageInbox,
   IMAP_PHASE_MAX_MS,
   imapClientOptions,
+  replyDeadlineFor,
+  REPLY_TAIL_MS,
   processIncomingWarmupEmails,
   type ImapClientFactory,
   type ImapClientLike,
@@ -14,7 +16,9 @@ import {
   PLACEMENT_CHECK_BUDGET_MS,
   PLACEMENT_CHECK_MAX_MS,
   PER_SEND_RESERVE_MS,
+  PLACEMENT_CHECK_FLOOR_MS,
   placementCheckStopAt,
+  STEP8_RESERVE_MS,
   runPlacementChecks,
   type PlacementCheckDeps,
 } from "../lib/warmup/intelligence.ts";
@@ -370,23 +374,56 @@ test("caps stay above the IMAP connect + greeting timeouts (close() mid-handshak
 });
 
 const SEND_DEADLINE = 105_000;
+const REPLY_DEADLINE = replyDeadlineFor(0);
 
-test("placement budget at 5 sends/day is unchanged: no new check after 40s", () => {
-  assert.equal(placementCheckStopAt(0, SEND_DEADLINE, 5), PLACEMENT_CHECK_BUDGET_MS);
+/** One engine run on a fake clock: 50 pending rows, every check runs to its cap, then the sends. */
+async function simulateRun(target: number) {
+  const f = placementDeps(PLACEMENT_CHECK_MAX_MS);
+  const rows = Array.from({ length: 50 }, (_, i) => pendingRow(i));
+  const stopAt = placementCheckStopAt(0, SEND_DEADLINE, REPLY_DEADLINE, target);
+  await runPlacementChecks(rows, stopAt, f.deps);
+  const sendsEnd = f.clock() + target * PER_SEND_RESERVE_MS;
+  return { stopAt, checks: f.checkedIds.length, sendsEnd, step8Window: REPLY_DEADLINE - sendsEnd };
+}
+
+test("reply deadline = 120 s minus the bounded tail and 5 s spare (74 s)", () => {
+  assert.equal(REPLY_DEADLINE, 120_000 - REPLY_TAIL_MS - 5_000);
+  assert.equal(REPLY_DEADLINE, 74_000);
 });
 
-for (const target of [40, 50]) {
-  test(`placement budget at ${target} sends/day: 50 pending, slow checks → all ${target} sends fit before the deadline`, async () => {
-    const f = placementDeps(PLACEMENT_CHECK_MAX_MS); // every check runs to its cap
-    const rows = Array.from({ length: 50 }, (_, i) => pendingRow(i));
-    const stopAt = placementCheckStopAt(0, SEND_DEADLINE, target);
-    await runPlacementChecks(rows, stopAt, f.deps);
-    const sendsEnd = f.clock() + target * PER_SEND_RESERVE_MS;
-    assert.ok(sendsEnd <= SEND_DEADLINE, `sends end at ${sendsEnd}ms`);
-    // A re-warm still gets placement data.
-    assert.ok(f.checkedIds.length >= 1);
+test("budget at 5 sends/day (prod today): checks, all sends and step 8's reserve fit", async () => {
+  const r = await simulateRun(5);
+  assert.equal(r.stopAt, 31_500); // was 40 s before step 8 had a reserve
+  assert.ok(r.checks >= 2);
+  assert.ok(r.sendsEnd <= SEND_DEADLINE);
+  assert.ok(r.step8Window >= STEP8_RESERVE_MS, `step 8 window ${r.step8Window}ms`);
+});
+
+test("budget at 19 sends/day: step 8 still starts with its reserve before the reply deadline", async () => {
+  const r = await simulateRun(19);
+  assert.ok(r.checks >= 1);
+  assert.ok(r.step8Window >= STEP8_RESERVE_MS, `step 8 window ${r.step8Window}ms`);
+});
+
+for (const target of [30, 40, 50]) {
+  test(`budget at ${target} sends/day: all sends fit, the check floor holds, step 8 has no window (skipped and reported by the route)`, async () => {
+    const r = await simulateRun(target);
+    assert.equal(r.stopAt, PLACEMENT_CHECK_FLOOR_MS);
+    assert.ok(r.checks >= 1);
+    assert.ok(r.sendsEnd <= SEND_DEADLINE, `sends end at ${r.sendsEnd}ms`);
+    assert.ok(r.step8Window < STEP8_RESERVE_MS);
   });
 }
+
+test("budget, every target 0-50: the sends always fit; step 8 keeps its reserve wherever the floor does not bind", async () => {
+  for (let target = 0; target <= 50; target++) {
+    const r = await simulateRun(target);
+    assert.ok(r.sendsEnd <= SEND_DEADLINE, `target ${target}: sends end at ${r.sendsEnd}ms`);
+    if (r.stopAt > PLACEMENT_CHECK_FLOOR_MS) {
+      assert.ok(r.step8Window >= STEP8_RESERVE_MS, `target ${target}: step 8 window ${r.step8Window}ms`);
+    }
+  }
+});
 
 test("placement: rows past the stop that would be skipped are not counted as deferred", async () => {
   const f = placementDeps(12_000);

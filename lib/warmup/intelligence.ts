@@ -69,25 +69,36 @@ export const PLACEMENT_CHECK_BUDGET_MS = 40_000;
 export const PLACEMENT_CHECK_MAX_MS = 20_000;
 /** What one warm-up send costs: 0-500ms jitter + send + Message-ID lookup + 3 writes. */
 export const PER_SEND_RESERVE_MS = 1_500;
-/** Even at the heaviest send day, checks may run this long (a re-warm needs data). */
-export const PLACEMENT_CHECK_MIN_WINDOW_MS = 30_000;
+/** Step 8 (buddy replies) gets at least this long before its reply deadline, when the day allows. */
+export const STEP8_RESERVE_MS = 15_000;
+/** Checks may always start until this far into the run (a re-warm needs placement data). */
+export const PLACEMENT_CHECK_FLOOR_MS = 10_000;
 
 /**
- * When step 2 must stop starting checks so the day's sends still fit before
- * the send deadline. All checks are over by stopAt + PLACEMENT_CHECK_MAX_MS.
- *   5 sends:  105 - 7.5 = 97.5s, capped at 40 + 20 → stop at 40s (checks over by 60s)
- *   40 sends: 105 - 60  = 45s                        → stop at 25s (over by 45s)
- *   50 sends: 105 - 75  = 30s = the 30s floor        → stop at 10s (over by 30s, 75s for 50 sends)
+ * When step 2 must stop starting checks. Priorities: the day's sends first,
+ * then the check floor, then step 8's window. All checks are over by
+ * stopAt + PLACEMENT_CHECK_MAX_MS (the cap includes LOGOUT, so no separate
+ * logout bound). With a 105s send deadline and a 74s reply deadline:
+ *   5 sends:  min(40, 105-7.5-20, 74-7.5-15-20)   = 31.5s
+ *   19 sends: min(40, 105-28.5-20, 74-28.5-15-20) = 10.5s (step 8 still gets 15s)
+ *   30 sends: 74-45-15-20 = -6 → floor 10s: sends end by 75s, step 8 skipped
+ *   50 sends: floor 10s: checks over by 30s, 75s for 50 sends, step 8 skipped
  */
-export function placementCheckStopAt(tickStart: number, sendDeadline: number, remainingSends: number): number {
-  const checksEnd = Math.max(
-    tickStart + PLACEMENT_CHECK_MIN_WINDOW_MS,
+export function placementCheckStopAt(
+  tickStart: number,
+  sendDeadline: number,
+  replyDeadline: number,
+  remainingSends: number,
+): number {
+  const sends = Math.max(0, remainingSends) * PER_SEND_RESERVE_MS;
+  return Math.max(
+    tickStart + PLACEMENT_CHECK_FLOOR_MS,
     Math.min(
-      tickStart + PLACEMENT_CHECK_BUDGET_MS + PLACEMENT_CHECK_MAX_MS,
-      sendDeadline - Math.max(0, remainingSends) * PER_SEND_RESERVE_MS,
+      tickStart + PLACEMENT_CHECK_BUDGET_MS,
+      sendDeadline - sends - PLACEMENT_CHECK_MAX_MS,
+      replyDeadline - sends - STEP8_RESERVE_MS - PLACEMENT_CHECK_MAX_MS,
     ),
   );
-  return checksEnd - PLACEMENT_CHECK_MAX_MS;
 }
 
 export type PlacementCheckDeps<B> = {
