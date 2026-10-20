@@ -44,7 +44,7 @@ const stripComments = (code: string) => code.replace(/\/\/[^\n]*/g, "").replace(
 
 type Row = Record<string, unknown>;
 
-/** eq/is/or/not/lt/in/order/select/update/insert, with an optional hook before each update runs. */
+/** eq/is/or/not/lt/lte/in/order/select/update/insert, with an optional hook before each update runs. */
 function memDb(tables: Record<string, Row[]>, opts: { fail?: Record<string, string>; beforeUpdate?: (n: number) => void } = {}) {
   let updates = 0;
   const cmp = (a: unknown, b: unknown) =>
@@ -113,6 +113,10 @@ function memDb(tables: Record<string, Row[]>, opts: { fail?: Record<string, stri
           filters.push((r) => (r[k] ?? null) !== null);
           return b;
         },
+        lte(k: string, v: unknown) {
+          filters.push((r) => r[k] !== null && r[k] !== undefined && cmp(r[k], v) <= 0);
+          return b;
+        },
         lt(k: string, v: unknown) {
           filters.push((r) => r[k] !== null && r[k] !== undefined && cmp(r[k], v) < 0);
           return b;
@@ -148,8 +152,8 @@ function rootPitch(step = 1): Row {
   };
 }
 
-/** The route's claim, verbatim in shape (follow-up/route.ts 7c). Returns the date it wrote. */
-async function claim(db: MemDb, priorStep: number): Promise<string | null> {
+/** The route's claim, verbatim in shape (follow-up/route.ts 7c): still due as read, step unmoved, not paused. */
+async function tryClaim(db: MemDb, priorStep: number, readFollowupAt: string = DUE): Promise<{ took: boolean; claimedAt: string | null }> {
   const nextStep = priorStep + 1;
   const nextFollowupAt = nextStep === 3 ? null : new Date(RUN_START + 5 * DAY).toISOString();
   const { data } = await db
@@ -158,10 +162,17 @@ async function claim(db: MemDb, priorStep: number): Promise<string | null> {
     .eq("id", "root-1")
     .eq("sequence_step", priorStep)
     .is("sequence_paused_at", null)
+    .lte("next_followup_at", readFollowupAt)
     .select()
     .maybeSingle();
-  assert.ok(data, "the claim took the row");
-  return nextFollowupAt;
+  return { took: !!data, claimedAt: nextFollowupAt };
+}
+
+/** A claim that must succeed. Returns the date it wrote. */
+async function claim(db: MemDb, priorStep: number): Promise<string | null> {
+  const r = await tryClaim(db, priorStep);
+  assert.ok(r.took, "the claim took the row");
+  return r.claimedAt;
 }
 
 /** app/api/replies/poll/route.ts postponeSequence, same filters (intent auto_reply, 7 days). */
@@ -227,6 +238,42 @@ for (const pause of [false, true]) {
     assert.equal(row.sequence_paused_at, pause ? "2026-10-20T15:21:00.000Z" : null);
   });
 }
+
+for (const [name, writer] of [
+  ["OOO postpone (+7d)", (db: MemDb) => postponeSequence(db, 7)],
+  ["14-day snooze", (db: MemDb) => snooze(db)],
+] as const) {
+  test(`${name} after the due read, before the claim (during pre-work/compose): the claim takes nothing and the date stands`, async () => {
+    const db = memDb({ pitches: [rootPitch()] });
+    // the run read the row as due (DUE); then the reply poll or a person writes
+    const later = await writer(db);
+    const r = await tryClaim(db, 1, DUE);
+    assert.equal(r.took, false, "no claim → the route returns before the slot, the recheck and Gmail");
+    const row = db.tables.pitches![0]!;
+    assert.equal(row.next_followup_at, later, "the OOO/snooze date is not overwritten by the claim's +5d");
+    assert.equal(row.sequence_step, 1);
+  });
+}
+
+test("negative set: a row still due as read is claimed (also when its date moved earlier)", async () => {
+  const db = memDb({ pitches: [rootPitch()] });
+  assert.equal((await tryClaim(db, 1, DUE)).took, true);
+  const earlier = memDb({ pitches: [{ ...rootPitch(), next_followup_at: "2026-10-20T08:00:00.000Z" }] });
+  assert.equal((await tryClaim(earlier, 1, DUE)).took, true);
+});
+
+test("route: the claim is guarded on still-due as the run read it, and a refused claim returns before Gmail", () => {
+  const s = stripComments(src("app/api/pitches/follow-up/route.ts"));
+  const claimAt = s.indexOf(".update({ sequence_step: nextStep, next_followup_at: nextFollowupAt })");
+  const stmt = s.slice(claimAt, s.indexOf(".maybeSingle();", claimAt));
+  assert.match(stmt, /\.lte\("next_followup_at", pitch\.next_followup_at\)/);
+  assert.match(stmt, /\.eq\("sequence_step", pitch\.sequence_step\)/);
+  assert.match(stmt, /\.is\("sequence_paused_at", null\)/);
+  const refused = s.indexOf("if (!claimed) {", claimAt);
+  assert.ok(refused > claimAt && refused < s.indexOf("await reserveSendSlot(", claimAt), "refused claim handled before the slot");
+  const branch = s.slice(refused, s.indexOf("}", refused));
+  assert.match(branch, /return \{/);
+});
 
 test("the OOO write landing while the release itself runs still wins (no window between check and write)", async () => {
   let ooo = "";

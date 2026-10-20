@@ -236,6 +236,7 @@ for (const [name, p] of Object.entries(PATHS)) {
   test(`${name}: no read-then-write of sends_today; the slot is reserved after the claim and before Gmail`, () => {
     const s = stripComments(src(p.file));
     assert.ok(!/from\("sender_inboxes"\)\s*\.update\(/.test(s), "no direct sender_inboxes update");
+    assert.ok(!s.includes("bumpSendsTodayPayload"), "no client-side bump");
     assert.ok(!/sends_today\s*(\+\+|\+=|:\s*[a-z.]+\s*\+)/.test(s), "no counter arithmetic");
     const claim = s.indexOf(p.claim);
     const reserve = s.indexOf("await reserveSendSlot(");
@@ -264,6 +265,7 @@ for (const [name, p] of Object.entries(PATHS)) {
 test("nudge: reserves a slot right before Gmail, gives it back on a refusal, never bumps the counter itself", () => {
   const s = stripComments(src("app/api/replies/nudge/route.ts"));
   assert.ok(!/from\("sender_inboxes"\)\s*\.update\(/.test(s), "no direct sender_inboxes update");
+  assert.ok(!s.includes("bumpSendsTodayPayload"), "no client-side bump");
   const thread = s.indexOf("await threadBlocksSend(");
   const reserve = s.indexOf("await reserveSendSlot(slots, inbox.id)");
   const gmail = s.indexOf("await sendGmailMessage(");

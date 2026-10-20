@@ -468,6 +468,9 @@ async function processFollowup(pitch: DuePitchRow, bounceBlocks: BounceBlocks, s
   if (!hasTimeToClaim(startTime)) {
     return { pitch_id: pitch.id, prospect: prospect.company_name, step: nextStep, status: "skipped", reason: TIME_BUDGET_REASON };
   }
+  // Still due as the run read it: an OOO postpone (+7d) or a snooze (+14d)
+  // written during the pre-work and compose moves next_followup_at past the
+  // date this run read, and the claim then takes nothing.
   const nextFollowupAt = nextStep === 3 ? null : new Date(Date.now() + 5 * 24 * 60 * 60 * 1000).toISOString();
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const { data: claimed } = await (supabase as any)
@@ -476,10 +479,11 @@ async function processFollowup(pitch: DuePitchRow, bounceBlocks: BounceBlocks, s
     .eq("id", pitch.id)
     .eq("sequence_step", pitch.sequence_step)
     .is("sequence_paused_at", null)
+    .lte("next_followup_at", pitch.next_followup_at)
     .select("id")
     .maybeSingle();
   if (!claimed) {
-    return { pitch_id: pitch.id, prospect: prospect.company_name, step: nextStep, status: "skipped", reason: "Already handled by another run" };
+    return { pitch_id: pitch.id, prospect: prospect.company_name, step: nextStep, status: "skipped", reason: "Already handled by another run, or rescheduled since the run read it" };
   }
 
   // Releases put the step back, guarded on the step this run claimed, and
