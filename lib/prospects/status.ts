@@ -65,6 +65,10 @@ export function protectedStatusFilter(next: string, by: StatusWriter): string | 
   return blocked.length ? `(${blocked.join(",")})` : null;
 }
 
+/** A pitch exists but has not gone out yet. */
+const DRAFTED = ["pitched", "queued", "approved"] as const;
+/** An email went out, or its bounce or reply came back. */
+const EMAILED = ["sent", "bounced", "replied", "ghosted"] as const;
 /**
  * Statuses where the company has been contacted or decided: a pitch exists or went
  * out, a reply or bounce came back, or it is parked (every do-not-send status). The
@@ -72,10 +76,20 @@ export function protectedStatusFilter(next: string, by: StatusWriter): string | 
  * these (Pedro 2026-10-19: a person can still open it and act by hand). b_list is
  * NOT here: it is a scoring outcome before any email and may be re-run.
  */
-const PAST_PIPELINE: ReadonlySet<string> = new Set([
-  "pitched", "queued", "approved", "sent", "bounced", "replied", "ghosted",
-  ...DO_NOT_SEND_STATUSES,
-]);
+const PAST_PIPELINE: ReadonlySet<string> = new Set([...DRAFTED, ...EMAILED, ...DO_NOT_SEND_STATUSES]);
+
+/**
+ * Past the pipeline and past drafting: an email went out (or bounced or got a
+ * reply), or the company is parked. Bulk pitch generation skips these ("N already
+ * sent/replied"); a drafted-but-unsent company (pitched, queued, approved) may be
+ * re-drafted by hand. A subset of the past-pipeline set, built from the same parts.
+ */
+const SENT_OR_PARKED: ReadonlySet<string> = new Set([...EMAILED, ...DO_NOT_SEND_STATUSES]);
+
+/** True when a bulk pitch run must skip a company in this status (already emailed or parked). */
+export function isSentOrParked(status: string | null | undefined): boolean {
+  return status != null && SENT_OR_PARKED.has(status);
+}
 
 /** True when the pipeline must not re-process a company in this status. */
 export function isPastPipeline(status: string | null | undefined): boolean {

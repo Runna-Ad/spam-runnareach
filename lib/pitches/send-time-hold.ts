@@ -13,8 +13,9 @@
  * sent this run.
  *
  * The db is injected so this is tested with fakes (tests/send-path-hardening.test.ts).
- * Its own copy of "was the latest approval the autopilot's" for now:
- * lib/autopilot/hold.ts has another; the conductor unifies them later.
+ * "Who approved this pitch last" is latestApprovals, also used by
+ * lib/autopilot/hold.ts (holdAutoApprovals); each caller keeps its own rule for
+ * a missing event and a read error.
  */
 
 import { HELD_BY_AUTOPILOT } from "../autopilot/governor.ts";
@@ -26,30 +27,51 @@ type Db = any;
 /** Start of the hold reason; begins with HELD_BY_AUTOPILOT so heldAction leaves the draft alone. */
 export const DOUBTFUL_ADDRESS_HOLD = `${HELD_BY_AUTOPILOT}: address doubtful at send time`;
 
-/** The pitch_events columns latestApproval reads (checked against migration 0001 by a test). */
+/** The pitch_events columns latestApprovals reads (checked against migration 0001 by a test). */
 export const APPROVAL_EVENT_COLUMNS = ["tenant_id", "pitch_id", "event_type", "event_at", "payload"] as const;
 
 /** Who gave the pitch's latest approval. "none" = no approval event; "unreadable" = the read failed. */
 export type ApprovalSource = "autopilot" | "person" | "none" | "unreadable";
 
+/** The approval event's payload says the autopilot made it (pitch-stage records `autopilot: actor.system`). */
 function isAutopilotApproval(payload: unknown): boolean {
   const v = (payload as { autopilot?: unknown } | null)?.autopilot;
   return v === true || v === "true";
 }
 
-export async function latestApproval(db: Db, tenantId: string, pitchId: string): Promise<ApprovalSource> {
+/** Latest approver per pitch; a pitch with no approval event is absent from the map. */
+export type LatestApprovals =
+  | { ok: true; byPitch: Map<string, "autopilot" | "person"> }
+  | { ok: false; error: string };
+
+/**
+ * Who gave each pitch's latest `approved` event. Reports only: the caller
+ * decides what a missing event or a read error means.
+ */
+export async function latestApprovals(db: Db, tenantId: string, pitchIds: string[]): Promise<LatestApprovals> {
+  if (pitchIds.length === 0) return { ok: true, byPitch: new Map() };
   const { data, error } = await db
     .from("pitch_events")
-    .select("payload, event_at")
+    .select("pitch_id, payload, event_at")
     .eq("tenant_id", tenantId)
-    .eq("pitch_id", pitchId)
     .eq("event_type", "approved")
-    .order("event_at", { ascending: false })
-    .limit(1);
-  if (error) return "unreadable";
-  const row = ((data ?? []) as Array<{ payload: unknown }>)[0];
-  if (!row) return "none";
-  return isAutopilotApproval(row.payload) ? "autopilot" : "person";
+    .in("pitch_id", pitchIds)
+    .order("event_at", { ascending: true });
+  // Presence, not truthiness: an empty-body 5xx comes back as { message: "" }.
+  if (error) return { ok: false, error: (error as { message?: string }).message || "no detail" };
+  // Oldest first, so the last write per pitch is its latest approval.
+  const byPitch = new Map<string, "autopilot" | "person">();
+  for (const e of (data ?? []) as Array<{ pitch_id: string; payload: unknown }>) {
+    byPitch.set(e.pitch_id, isAutopilotApproval(e.payload) ? "autopilot" : "person");
+  }
+  return { ok: true, byPitch };
+}
+
+/** One pitch: "none" = no approval event; "unreadable" = the read failed. */
+export async function latestApproval(db: Db, tenantId: string, pitchId: string): Promise<ApprovalSource> {
+  const r = await latestApprovals(db, tenantId, [pitchId]);
+  if (!r.ok) return "unreadable";
+  return r.byPitch.get(pitchId) ?? "none";
 }
 
 /**
