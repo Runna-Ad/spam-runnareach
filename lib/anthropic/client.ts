@@ -246,7 +246,7 @@ export async function structuredCall<T>(
     } catch {
       return {
         ok: false,
-        error: `JSON parse failed: ${firstErr instanceof Error ? firstErr.message : String(firstErr)}. Raw: ${text.slice(0, 200)}`,
+        error: `JSON parse failed: ${parseErrorWithoutModelText(firstErr)}`,
         usage,
         reason: "parse",
       };
@@ -292,6 +292,20 @@ function classifyErr(err: unknown): "auth" | "rate_limit" | "timeout" | "unknown
 }
 
 // Test seam — restores the ability to inject a fake client in unit tests.
+/**
+ * A JSON.parse error without the model's own words. V8 quotes a snippet of the
+ * input ("Unexpected token 'M', "...": Maria Lope"... is not valid JSON") and the
+ * old message appended `Raw: <first 200 chars>`. Callers store or log this text
+ * (learning_insights, decision records, Vercel logs), and the model's output can
+ * quote prospect replies, so cut at the first quote: what remains names the
+ * failure, never the content. Fail closed: no pairing of quotes.
+ */
+export function parseErrorWithoutModelText(err: unknown): string {
+  const message = err instanceof Error ? err.message : String(err);
+  const cut = message.split('"')[0]!.replace(/[\s,.:;]+$/, "").trim();
+  return cut || "invalid JSON";
+}
+
 // In production _testClient is always null (never set), so getClient() creates
 // a fresh Anthropic instance per call with no stale TCP connections.
 export const __test__ = {
