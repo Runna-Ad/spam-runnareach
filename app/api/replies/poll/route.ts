@@ -24,6 +24,8 @@
 //      their text. Driven by replies.hot_alert_sent_at (lib/replies/lead-alert.ts):
 //      swept at the START of the run (leftovers get the full budget) and at
 //      the END for this run's replies, only with >= 60s left.
+//   0b. Repair opt-outs (and recent hard bounces) a dead run stored without a
+//      do-not-contact entry (lib/replies/optout-repair.ts).
 //
 // Auth: Authorization: Bearer <CRON_SECRET>.
 // ─────────────────────────────────────────────────────────────────────────────
@@ -61,6 +63,7 @@ import { recordPitchEvent } from "@/lib/pitches/events";
 import { isTestAddress } from "@/lib/compliance/test-addresses";
 import { protectedStatusFilter } from "@/lib/prospects/status";
 import { sendPendingLeadAlerts, supabaseLeadAlertStore } from "@/lib/replies/lead-alert";
+import { REPAIR_BUDGET_MS, repairMissedOptOuts } from "@/lib/replies/optout-repair";
 
 /** An out-of-office pushes the next follow-up at least this far out. */
 const OOO_POSTPONE_DAYS = 7;
@@ -81,6 +84,7 @@ const RECENT_INBOUND_DAYS = 2;
 // auto_reply are left for Pedro's intent actions in /inbox — no draft.
 const DRAFTABLE: ReplyIntent[] = ["wants_meeting", "wants_info", "not_now", "unclassified"];
 // Prospect statuses that are terminal for the funnel — skip their threads.
+// Not "no_match": its threads still carry opt-outs that must reach do-not-contact.
 const DEAD_STATUSES = new Set(["booked", "suppressed", "archived_no_meeting", "won", "lost"]);
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -121,6 +125,10 @@ export async function GET(req: NextRequest) {
     sendNotification(supabase, tenantId, message);
   // ── 0. Leftover lead alerts first, while the whole budget is ahead ──────
   const startAlerts = await sendPendingLeadAlerts(alertStore, sendLeadAlert);
+  // ── 0b. Opt-outs (and hard bounces) stored by a run that died before the ──
+  // do-not-contact write. Bounded (10 repairs, none started after 20s) so the
+  // thread polling below and the end-of-run alerts keep their budget.
+  const repair = await repairMissedOptOuts(supabase, { deadline: startTime + REPAIR_BUDGET_MS });
   // Replies inserted by this run, alerted at the end without the settle wait.
   const ownReplyIds = new Set<string>();
 
@@ -172,7 +180,7 @@ export async function GET(req: NextRequest) {
   let threadsRead = 0;
   let imported = 0;
   let drafted = 0;
-  const errors: string[] = [];
+  const errors: string[] = [...repair.errors];
 
   // Rate-limited reads wait and retry, so stop starting threads well inside
   // maxDuration (120s). Threads run newest first; the oldest wait 30 minutes.
@@ -503,6 +511,8 @@ export async function GET(req: NextRequest) {
     imported,
     drafted,
     alerts,
+    opt_out_repair: repair.optOuts,
+    bounce_repair: repair.bounces,
     errors,
   });
 }
