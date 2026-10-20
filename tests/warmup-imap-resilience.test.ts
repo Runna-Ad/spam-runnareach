@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { EventEmitter } from "node:events";
 import {
   checkMessageInbox,
+  IMAP_PHASE_MAX_MS,
   imapClientOptions,
   processIncomingWarmupEmails,
   type ImapClientFactory,
@@ -12,6 +13,8 @@ import {
 import {
   PLACEMENT_CHECK_BUDGET_MS,
   PLACEMENT_CHECK_MAX_MS,
+  PER_SEND_RESERVE_MS,
+  placementCheckStopAt,
   runPlacementChecks,
   type PlacementCheckDeps,
 } from "../lib/warmup/intelligence.ts";
@@ -33,6 +36,7 @@ class FakeImap extends EventEmitter implements ImapClientLike {
   dead = false;
   opened = "";
   calls: string[] = [];
+  paths: string[] = [];
   private hang: (() => void) | null = null;
   private failAt: Step | null;
   private folders: Record<string, number[]>;
@@ -58,6 +62,7 @@ class FakeImap extends EventEmitter implements ImapClientLike {
   }
   connect() { return this.step("connect", () => undefined); }
   mailboxOpen(path: string) {
+    this.paths.push(path);
     return this.step("mailboxOpen", () => {
       if (!(path in this.folders)) throw new Error(`Mailbox doesn't exist: ${path}`);
       this.opened = path;
@@ -333,4 +338,103 @@ test("placement: not found stays null (never written), spam is written false", a
   const spam = placementDeps(1_000, { foundInInbox: false, foundInSpam: true });
   await runPlacementChecks([pendingRow(0)], PLACEMENT_CHECK_BUDGET_MS, spam.deps);
   assert.deepEqual(spam.recorded, [["row0", false]]);
+});
+
+// ── Review round 1 ─────────────────────────────────────────────────────────────
+
+test("checkMessageInbox: the cap covers a LOGOUT the server never answers", async () => {
+  const clients: FakeImap[] = [];
+  const started = Date.now();
+  const result = await checkMessageInbox(buddy, "abc@mail.gmail.com", {
+    timeoutMs: 50,
+    makeClient: factoryFor(clients, () => new FakeImap(null, SPAM_FOLDERS, { hangAt: "logout" })),
+  });
+  // Placement was already found; the stuck goodbye is cut off by the cap.
+  assert.equal(result?.foundInSpam, true);
+  assert.ok(Date.now() - started < 1_000);
+});
+
+test("checkMessageInbox: Spam is searched before All Mail", async () => {
+  const clients: FakeImap[] = [];
+  const result = await checkMessageInbox(buddy, "abc@mail.gmail.com", {
+    makeClient: factoryFor(clients, () => new FakeImap(null, { INBOX: [], "[Gmail]/All Mail": [], "[Gmail]/Spam": [7] })),
+  });
+  assert.equal(result?.foundInSpam, true);
+  assert.equal(clients[0]?.paths.includes("[Gmail]/All Mail"), false);
+});
+
+test("caps stay above the IMAP connect + greeting timeouts (close() mid-handshake leaves connect pending)", () => {
+  const o = imapClientOptions("imap.gmail.com", 993, "a@b.com", "pw");
+  assert.ok(PLACEMENT_CHECK_MAX_MS > o.connectionTimeout + o.greetingTimeout);
+  assert.ok(IMAP_PHASE_MAX_MS > o.connectionTimeout + o.greetingTimeout);
+});
+
+const SEND_DEADLINE = 105_000;
+
+test("placement budget at 5 sends/day is unchanged: no new check after 40s", () => {
+  assert.equal(placementCheckStopAt(0, SEND_DEADLINE, 5), PLACEMENT_CHECK_BUDGET_MS);
+});
+
+for (const target of [40, 50]) {
+  test(`placement budget at ${target} sends/day: 50 pending, slow checks → all ${target} sends fit before the deadline`, async () => {
+    const f = placementDeps(PLACEMENT_CHECK_MAX_MS); // every check runs to its cap
+    const rows = Array.from({ length: 50 }, (_, i) => pendingRow(i));
+    const stopAt = placementCheckStopAt(0, SEND_DEADLINE, target);
+    await runPlacementChecks(rows, stopAt, f.deps);
+    const sendsEnd = f.clock() + target * PER_SEND_RESERVE_MS;
+    assert.ok(sendsEnd <= SEND_DEADLINE, `sends end at ${sendsEnd}ms`);
+    // A re-warm still gets placement data.
+    assert.ok(f.checkedIds.length >= 1);
+  });
+}
+
+test("placement: rows past the stop that would be skipped are not counted as deferred", async () => {
+  const f = placementDeps(12_000);
+  const rows = [0, 1, 2, 3, 4].map((i) => pendingRow(i)).concat([pendingRow(5, "inactive")]);
+  const report = await runPlacementChecks(rows, PLACEMENT_CHECK_BUDGET_MS, f.deps);
+  assert.deepEqual(report, { checked: 4, not_found: 0, skipped: 1, deferred: 1 });
+});
+
+test("processIncomingWarmupEmails: no reply starts after the deadline; the sent one is still marked read", async () => {
+  const clients: FakeImap[] = [];
+  let clock = 0;
+  const sends: string[] = [];
+  const replied = await processIncomingWarmupEmails(buddy, "warm@runna.ca", templates, {
+    makeClient: factoryFor(clients, () => new FakeImap(null, { INBOX: [11, 12, 13] })),
+    now: () => clock,
+    deadline: 10_000,
+    sendReply: async (_b, inReplyTo) => {
+      sends.push(inReplyTo);
+      clock += 15_000;
+      return { sent: true, inReplyToMessageId: inReplyTo };
+    },
+  });
+  assert.equal(sends.length, 1);
+  assert.equal(replied, 1);
+  assert.ok(clients[1]?.calls.includes("messageFlagsAdd"));
+});
+
+test("processIncomingWarmupEmails: past the deadline at start → nothing opened", async () => {
+  const clients: FakeImap[] = [];
+  const replied = await processIncomingWarmupEmails(buddy, "warm@runna.ca", templates, {
+    makeClient: factoryFor(clients, () => new FakeImap(null, INCOMING)),
+    now: () => 20_000,
+    deadline: 10_000,
+  });
+  assert.equal(replied, 0);
+  assert.equal(clients.length, 0);
+});
+
+test("processIncomingWarmupEmails: the first SMTP failure stops the reply loop", async () => {
+  const clients: FakeImap[] = [];
+  let attempts = 0;
+  const replied = await processIncomingWarmupEmails(buddy, "warm@runna.ca", templates, {
+    makeClient: factoryFor(clients, () => new FakeImap(null, { INBOX: [11, 12, 13] })),
+    sendReply: async (_b, inReplyTo) => {
+      attempts++;
+      return { sent: false, inReplyToMessageId: inReplyTo };
+    },
+  });
+  assert.equal(attempts, 1);
+  assert.equal(replied, 0);
 });

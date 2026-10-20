@@ -91,6 +91,19 @@ async function endClient(client: ImapClientLike): Promise<void> {
   }
 }
 
+/**
+ * Close the client after `ms`: imapflow's close() rejects whatever command is
+ * in flight (logout included), so the awaits unwind into their catch. A real
+ * cancel, not a race. Returns the function that disarms it.
+ */
+function capClient(client: ImapClientLike, ms: number, what: string, buddy: WarmupBuddy): () => void {
+  const timer = setTimeout(() => {
+    console.warn(`[warmup/imap] ${what} cut off after ${ms}ms for buddy ${buddy.id}`);
+    try { client.close(); } catch { /* already closed */ }
+  }, ms);
+  return () => clearTimeout(timer);
+}
+
 /** The connection itself is gone: stop, no later command can succeed. */
 function isConnectionLost(err: unknown): boolean {
   const code = (err as { code?: unknown } | null)?.code;
@@ -126,14 +139,9 @@ export async function checkMessageInbox(
   if (!creds) return null;
 
   const client = openClient(options.makeClient ?? makeImapClient, buddy, creds.email, creds.appPassword);
-  // close() rejects whatever command is in flight, so the awaits below unwind
-  // into the catch: a real cancel, not a race.
-  const timer = options.timeoutMs !== undefined
-    ? setTimeout(() => {
-        console.warn(`[warmup/imap] checkMessageInbox timed out after ${options.timeoutMs}ms for buddy ${buddy.id}`);
-        try { client.close(); } catch { /* already closed */ }
-      }, options.timeoutMs)
-    : null;
+  const uncap = options.timeoutMs !== undefined
+    ? capClient(client, options.timeoutMs, "checkMessageInbox", buddy)
+    : () => {};
 
   const result: InboxCheckResult = {
     messageId,
@@ -159,24 +167,15 @@ export async function checkMessageInbox(
       "[Gmail]/Category Updates",
       "[Gmail]/Category Social",
     ];
-    // All Mail = delivered (archived or labelled); Gmail keeps spam out of it.
-    // Never move from here: a MOVE expunges from All Mail, which Gmail treats
-    // as a delete.
-    const allMailFolders = [
-      "[Gmail]/All Mail",
-      "[Gmail]/Todas las conversaciones", // ES
-    ];
-    for (const folder of [...inboxLikeFolders, ...allMailFolders]) {
+    for (const folder of inboxLikeFolders) {
       try {
         await client.mailboxOpen(folder);
         const seqs = await client.search({ header: { "message-id": messageId } });
         if (Array.isArray(seqs) && seqs.length > 0) {
           // Landed in a category tab — counts as inbox-delivered (not spam)
           result.foundInInbox = true;
-          if (inboxLikeFolders.includes(folder)) {
-            // Move to Primary INBOX so future checks are consistent
-            try { await client.messageMove(seqs, "INBOX"); } catch { /* best-effort */ }
-          }
+          // Move to Primary INBOX so future checks are consistent
+          try { await client.messageMove(seqs, "INBOX"); } catch { /* best-effort */ }
           return result;
         }
       } catch (err) {
@@ -185,7 +184,9 @@ export async function checkMessageInbox(
       }
     }
 
-    // Check spam folders
+    // Check spam folders before All Mail: a spam placement is the one the
+    // spam pause and the autopilot's placement breaker need, so it must not
+    // wait behind a slow All Mail search.
     const spamFolders = ["[Gmail]/Spam", "[Gmail]/Correo no deseado"];
     for (const folder of spamFolders) {
       try {
@@ -195,13 +196,34 @@ export async function checkMessageInbox(
           result.foundInSpam = true;
           await client.messageMove(spamSeqs, "INBOX");
           result.movedToInbox = true;
-          break;
+          return result;
         }
       } catch (err) {
         // Found in spam but the rescue failed: still a spam placement.
-        if (result.foundInSpam) break;
+        if (result.foundInSpam) return result;
         if (isConnectionLost(err)) throw err;
         // Folder doesn't exist — try next
+      }
+    }
+
+    // All Mail = delivered (archived or labelled); Gmail keeps spam out of it.
+    // Never move from here: a MOVE expunges from All Mail, which Gmail treats
+    // as a delete.
+    const allMailFolders = [
+      "[Gmail]/All Mail",
+      "[Gmail]/Todas las conversaciones", // ES
+    ];
+    for (const folder of allMailFolders) {
+      try {
+        await client.mailboxOpen(folder);
+        const seqs = await client.search({ header: { "message-id": messageId } });
+        if (Array.isArray(seqs) && seqs.length > 0) {
+          result.foundInInbox = true;
+          return result;
+        }
+      } catch (err) {
+        if (isConnectionLost(err)) throw err;
+        // Folder doesn't exist on this account — try next
       }
     }
 
@@ -214,14 +236,26 @@ export async function checkMessageInbox(
     console.error(`[warmup/imap] checkMessageInbox error for buddy ${buddy.id}:`, err);
     return null;
   } finally {
-    if (timer) clearTimeout(timer);
+    // The cap covers the logout too: a server that never answers LOGOUT
+    // would otherwise add a full socketTimeout.
     await endClient(client);
+    uncap();
   }
 
   return result;
 }
 
 // ── Send a reply from buddy account via SMTP ──────────────────────────────────
+
+/**
+ * Worst case of one buddy reply: the SMTP timeouts below added up. nodemailer
+ * cannot cancel a non-pooled send, so this is a bound by timeouts, not a timer.
+ */
+export const SMTP_WORST_MS = 8_000 + 5_000 + 10_000;
+/** One IMAP phase of reply processing (read, or mark read) is cut off after this. */
+export const IMAP_PHASE_MAX_MS = 15_000;
+/** What can still run after the reply deadline: one reply in flight, then mark-read. */
+export const REPLY_TAIL_MS = SMTP_WORST_MS + IMAP_PHASE_MAX_MS;
 
 export type ReplyResult = {
   sent: boolean;
@@ -247,9 +281,10 @@ export async function sendBuddyReply(
       pass: creds.appPassword,
     },
     // nodemailer's defaults (2 min connect, 1 h socket) outlive the route.
-    connectionTimeout: 10_000,
-    greetingTimeout: 8_000,
-    socketTimeout: 15_000,
+    // Their sum is SMTP_WORST_MS.
+    connectionTimeout: 8_000,
+    greetingTimeout: 5_000,
+    socketTimeout: 10_000,
   });
 
   try {
@@ -275,12 +310,17 @@ export async function sendBuddyReply(
 export type IncomingDeps = {
   makeClient?: ImapClientFactory;
   sendReply?: typeof sendBuddyReply;
+  /** Epoch ms. No read and no reply starts after it; marking sent replies read still runs. */
+  deadline?: number;
+  now?: () => number;
 };
 
 /**
  * Three phases so no IMAP socket sits idle (and times out) during an SMTP send:
  * read the unread warm-up mails and disconnect, reply over SMTP, then reconnect
  * once to mark the replied ones read (by UID, which survives the reconnect).
+ * Each IMAP phase is capped at IMAP_PHASE_MAX_MS; replies stop at the deadline
+ * or at the first SMTP failure (the next one would most likely fail the same way).
  */
 export async function processIncomingWarmupEmails(
   buddy: WarmupBuddy,
@@ -293,10 +333,14 @@ export async function processIncomingWarmupEmails(
 
   const make = deps.makeClient ?? makeImapClient;
   const sendReply = deps.sendReply ?? sendBuddyReply;
+  const now = deps.now ?? Date.now;
+  const pastDeadline = () => deps.deadline !== undefined && now() >= deps.deadline;
+  if (pastDeadline()) return 0;
 
   // ── 1. Read
   const incoming: Array<{ uid: number; subject: string; messageId: string }> = [];
   const reader = openClient(make, buddy, creds.email, creds.appPassword);
+  const uncapReader = capClient(reader, IMAP_PHASE_MAX_MS, "processIncoming read", buddy);
   try {
     await reader.connect();
     await reader.mailboxOpen("INBOX");
@@ -317,6 +361,7 @@ export async function processIncomingWarmupEmails(
     return 0;
   } finally {
     await endClient(reader);
+    uncapReader();
   }
 
   if (incoming.length === 0) return 0;
@@ -324,13 +369,16 @@ export async function processIncomingWarmupEmails(
   // ── 2. Reply (no IMAP connection open)
   const replied: number[] = [];
   for (const msg of incoming) {
+    if (pastDeadline()) break;
     const template = replyTemplates[Math.floor(Math.random() * replyTemplates.length)];
     const replyBody = template?.reply_text ?? "Thanks! Talk soon.";
     try {
       const replyResult = await sendReply(buddy, msg.messageId, warmupSenderEmail, msg.subject, replyBody);
-      if (replyResult.sent) replied.push(msg.uid);
+      if (!replyResult.sent) break;
+      replied.push(msg.uid);
     } catch (err) {
       console.error(`[warmup/imap] processIncoming reply error for buddy ${buddy.id}:`, err);
+      break;
     }
   }
 
@@ -338,6 +386,7 @@ export async function processIncomingWarmupEmails(
 
   // ── 3. Mark replied mail read
   const writer = openClient(make, buddy, creds.email, creds.appPassword);
+  const uncapWriter = capClient(writer, IMAP_PHASE_MAX_MS, "processIncoming mark-read", buddy);
   try {
     await writer.connect();
     await writer.mailboxOpen("INBOX");
@@ -346,6 +395,7 @@ export async function processIncomingWarmupEmails(
     console.error(`[warmup/imap] processIncoming mark-read error for buddy ${buddy.id}:`, err);
   } finally {
     await endClient(writer);
+    uncapWriter();
   }
 
   return replied.length;

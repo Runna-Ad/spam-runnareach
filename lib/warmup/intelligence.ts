@@ -58,12 +58,37 @@ export function placementFromCheck(check: { foundInInbox: boolean; foundInSpam: 
 
 /**
  * Step 2 of the daily engine run starts no new check after this much of the
- * run has passed. With the per-check cap below, the checks are over by 60s,
- * so the sends (deadline 105s) keep 45s: 5 sends take ~10s, 50 take ~40s.
+ * run has passed (the most it gets on a light day).
  */
 export const PLACEMENT_CHECK_BUDGET_MS = 40_000;
-/** One check is cut off (connection closed) after this long. */
+/**
+ * One check is cut off (connection closed, logout included) after this long.
+ * Must stay above the IMAP connect + greeting timeouts: a close() during the
+ * TLS handshake does not end a pending connect.
+ */
 export const PLACEMENT_CHECK_MAX_MS = 20_000;
+/** What one warm-up send costs: 0-500ms jitter + send + Message-ID lookup + 3 writes. */
+export const PER_SEND_RESERVE_MS = 1_500;
+/** Even at the heaviest send day, checks may run this long (a re-warm needs data). */
+export const PLACEMENT_CHECK_MIN_WINDOW_MS = 30_000;
+
+/**
+ * When step 2 must stop starting checks so the day's sends still fit before
+ * the send deadline. All checks are over by stopAt + PLACEMENT_CHECK_MAX_MS.
+ *   5 sends:  105 - 7.5 = 97.5s, capped at 40 + 20 → stop at 40s (checks over by 60s)
+ *   40 sends: 105 - 60  = 45s                        → stop at 25s (over by 45s)
+ *   50 sends: 105 - 75  = 30s = the 30s floor        → stop at 10s (over by 30s, 75s for 50 sends)
+ */
+export function placementCheckStopAt(tickStart: number, sendDeadline: number, remainingSends: number): number {
+  const checksEnd = Math.max(
+    tickStart + PLACEMENT_CHECK_MIN_WINDOW_MS,
+    Math.min(
+      tickStart + PLACEMENT_CHECK_BUDGET_MS + PLACEMENT_CHECK_MAX_MS,
+      sendDeadline - Math.max(0, remainingSends) * PER_SEND_RESERVE_MS,
+    ),
+  );
+  return checksEnd - PLACEMENT_CHECK_MAX_MS;
+}
 
 export type PlacementCheckDeps<B> = {
   buddies: B[];
@@ -100,14 +125,19 @@ export async function runPlacementChecks<B>(
   const report: PlacementCheckReport = { checked: 0, not_found: 0, skipped: 0, deferred: 0 };
   const rows = [...pending].sort((a, b) => a.created_at.localeCompare(b.created_at));
 
+  const buddyFor = (log: WarmupLogEntry) =>
+    log.message_id && log.buddy_id ? deps.buddies.find((b) => deps.buddyId(b) === log.buddy_id) : undefined;
+
   for (const [i, log] of rows.entries()) {
-    const buddy = log.buddy_id ? deps.buddies.find((b) => deps.buddyId(b) === log.buddy_id) : undefined;
-    if (!log.message_id || !buddy) {
+    const buddy = buddyFor(log);
+    if (!buddy) {
       report.skipped++;
       continue;
     }
     if (deps.now() >= stopAt) {
-      report.deferred = rows.length - i;
+      const rest = rows.slice(i);
+      report.deferred = rest.filter((r) => buddyFor(r)).length;
+      report.skipped += rest.length - report.deferred;
       break;
     }
 
