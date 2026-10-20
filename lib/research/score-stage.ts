@@ -164,6 +164,7 @@ export async function scoreProspectWith(
   let cost_usd = 0;
   let method: "heuristic" | "claude";
   let claudeUsage: ClaudeUsage | null = null;
+  let claudeFallbackReason: string | null = null;
 
   if (process.env.ANTHROPIC_API_KEY) {
     // Daily-cap safety net: once the tenant is over budget, degrade to the
@@ -178,7 +179,10 @@ export async function scoreProspectWith(
       result = claudeResult;
       cost_usd = claudeResult.cost_usd;
       method = claudeResult.model === "heuristic_fallback" ? "heuristic" : "claude";
-      if (method === "claude") claudeUsage = claudeResult.usage;
+      // A failed call that still returned usage was paid: record it too, or the
+      // daily cap undercounts. Null usage means nothing reached Claude.
+      claudeUsage = claudeResult.usage;
+      if (method === "heuristic") claudeFallbackReason = claudeResult.fallback_reason ?? "unknown";
     }
   } else {
     result = scoreWithHeuristic(rubricProspect, rubricResearch, rubricIcp);
@@ -225,6 +229,7 @@ export async function scoreProspectWith(
       entity_type: "scoring",
       entity_id: parsed.data.prospect_id,
       usage: claudeUsage,
+      ...(claudeFallbackReason ? { metadata: { fallback_reason: claudeFallbackReason } } : {}),
     });
   }
 

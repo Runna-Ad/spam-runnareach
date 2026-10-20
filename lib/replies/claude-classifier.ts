@@ -39,11 +39,12 @@ const responseSchema = z.object({
   // "unclassified" where we can't tell — heuristic does the same.
   urgency: z.enum(["hot", "warm", "cold"]).nullable(),
   sentiment: z.enum(["positive", "neutral", "negative"]).nullable(),
-  // Lenient default — Haiku occasionally drops fields under 0.5%.
+  // Lenient default — Haiku occasionally drops fields under 0.5%. Display-only,
+  // so a long answer is clipped instead of failing the whole classification.
   reasoning: z
     .string()
     .trim()
-    .max(400)
+    .transform((s) => s.slice(0, 400))
     .optional()
     .default("(no reasoning provided)"),
 });

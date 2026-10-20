@@ -18,6 +18,7 @@
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import {
+  ANTHROPIC_DEFAULT_MODEL,
   ANTHROPIC_HAIKU_MODEL,
   claudeIsAvailable,
   structuredCall,
@@ -356,6 +357,19 @@ export async function regenerateReplyDraft(
         metadata: { reply_id, source: "manual_regenerate" },
       }).catch(() => {});
     } else {
+      // A parse/schema failure was still paid: record it so the cap sees it.
+      // The composer calls ANTHROPIC_DEFAULT_MODEL and its failure result
+      // carries no model name.
+      if (r.usage) {
+        await recordClaudeCall({
+          tenantId: user.tenantId,
+          model: ANTHROPIC_DEFAULT_MODEL,
+          entity_type: "reply_draft",
+          entity_id: null,
+          usage: r.usage,
+          metadata: { reply_id, source: "manual_regenerate", fallback_reason: r.reason },
+        }).catch(() => {});
+      }
       const f = composeReplyDraftHeuristic(draftInput);
       body = f.body;
       subject = f.subject;
@@ -478,14 +492,15 @@ async function summariseNoMeetingReason(
 
   if (!claudeIsAvailable() || replies.length === 0) return heuristic();
 
-  const schema = z.object({ reason: z.string().trim().min(10).max(300) });
+  // reason is shown to people (prospect page, audit log): clip, never fail on length.
+  const schema = z.object({ reason: z.string().trim().min(10).transform((s) => s.slice(0, 300)) });
   const call = await structuredCall({
     model: ANTHROPIC_HAIKU_MODEL,
     system:
       "You analyse a stalled B2B sales conversation. In ONE sentence, state the most likely " +
       "reason no meeting was booked (e.g. price objection, bad timing, wrong person, no budget, " +
       "lost interest, competitor). Be specific and useful for improving future targeting. " +
-      'Output JSON: {"reason": string}',
+      'Output JSON: {"reason": string}. "reason" is required, 10 to 300 characters.',
     user: `Conversation (prospect replies, oldest first):\n${transcript || "(none)"}`,
     max_tokens: 120,
     schema,
@@ -501,6 +516,16 @@ async function summariseNoMeetingReason(
       metadata: { purpose: "no_meeting_reason" },
     }).catch(() => {});
     return call.data.reason;
+  }
+  if (call.usage) {
+    await recordClaudeCall({
+      tenantId,
+      model: ANTHROPIC_HAIKU_MODEL,
+      entity_type: "reply_draft",
+      entity_id: null,
+      usage: call.usage,
+      metadata: { purpose: "no_meeting_reason", fallback_reason: call.reason },
+    }).catch(() => {});
   }
   return heuristic();
 }

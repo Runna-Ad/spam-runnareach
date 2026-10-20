@@ -3,7 +3,7 @@
  *
  * Pass 1 — structural gate (cheap, always runs):
  *   scrapeWebsite (homepage + 4 sub-pages) → scoreProspect on structural signals
- *   → if score < 10: suppress (sanity check — clearly wrong fit, e.g. wrong country)
+ *   → if score < 20: suppress (prod 2026-10: 1 of 26 prospects at 10-19 ever reached 70)
  *
  * Pass 2 — full enrichment (only if structural score ≥ 20):
  *   deepResearchProspect (first-party site scrape + Claude synthesis)
@@ -12,8 +12,8 @@
  *   → final scoreProspect (pain signal + contact signal both present)
  *
  * Triage on final score:
- *   < 40   → suppressed
- *   40–69  → needs_review
+ *   < 50   → suppressed
+ *   50–69  → b_list
  *   ≥ 70   → Anymail/Hunter → pitch auto-generated
  *
  * All steps are try/catch — one failure never blocks the rest of the batch.
@@ -22,7 +22,7 @@
 import { revalidatePath } from "next/cache";
 import { writeAuditLog } from "@/lib/audit/log";
 import type { Actor } from "@/lib/actor";
-import { snapVerifyEnrich } from "@/lib/research/snap-contact";
+import { recordSnapVerifyCall, snapVerifyEnrich } from "@/lib/research/snap-contact";
 import { isRoleBasedEmail, hasUsableEmail } from "@/lib/research/email-utils";
 import { enrichContactsForProspect } from "@/lib/discover/enrich-contacts";
 import { scrapeWebsiteWith } from "@/lib/research/scrape-stage";
@@ -432,11 +432,13 @@ export async function processSingleProspectWith(
   }
   const initialScore = initialScoreResult.composite_score;
 
-  // Sanity-check only — threshold is 10. Only suppresses structurally-wrong
-  // prospects (wrong country, completely off-industry). Everything else gets
-  // full deep research. At $0.023/prospect deep research is cheap enough that
-  // we'd rather over-research than under-research.
-  if (initialScore < 10) {
+  // Pre-check bar is 20. Below it the prospect is a clearly wrong fit, and the
+  // data agrees: in prod, 1 of 26 prospects with a structural score of 10-19
+  // ever reached a final 70 (0 of 25 in the week of 2026-10-13), while that
+  // band cost ~$0.46 a week in research. A bar of 30 would lose 2 of 104 good
+  // companies a week to save another $0.34, so it stops at 20.
+  // A prospect suppressed here still counts toward the daily research budget.
+  if (initialScore < 20) {
     const written = await writeStatus({
       status: "suppressed",
       suppressed_reason: `Auto: structural score ${initialScore} — clearly wrong fit (industry/geo/size)`,
@@ -469,7 +471,7 @@ export async function processSingleProspectWith(
 
   // Step 4: SnapVerify — runs on RICHEST available data:
   // homepage + About/Team/Contact sub-pages (2000 chars each) + Brave intel.
-  // Free: no API credits. Suppressed prospects never reach here.
+  // No finder credits; one Haiku call, recorded below. Suppressed prospects never reach here.
   let snapVerifyFoundContact = false;
   if (effectiveDomain) {
     try {
@@ -488,6 +490,10 @@ export async function processSingleProspectWith(
         research?.what_they_do ?? null,
         p?.company_name ?? name,
       );
+      // Paid whether or not it found anyone: record before anything can throw.
+      if (snapResult.claudeCall) {
+        await recordSnapVerifyCall(user.tenantId, prospectId, snapResult.claudeCall);
+      }
 
       if (snapResult.found) {
         // SMTP-verified personal email (the only thing SnapVerify "finds" now).

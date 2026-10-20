@@ -25,14 +25,6 @@ import {
 
 const MODEL = ANTHROPIC_HAIKU_MODEL; // claude-haiku-4-5
 
-const ZERO_USAGE: ClaudeUsage = {
-  input_tokens: 0,
-  output_tokens: 0,
-  cache_read_input_tokens: 0,
-  cache_creation_input_tokens: 0,
-  cost_usd: 0,
-};
-
 // Loose schema — the API returns numbers; we clamp to rubric ranges afterwards
 // (clampToRubric) so a slightly out-of-range value is corrected, not rejected.
 const scorerSchema = z.object({
@@ -54,8 +46,14 @@ const scorerSchema = z.object({
 export type ClaudeScorerResult = RubricResult & {
   cost_usd: number;
   model: string;
-  /** Token usage for cost_tracking. Zero on the heuristic fallback. */
-  usage: ClaudeUsage;
+  /**
+   * Token usage for cost_tracking. Present whenever the call was paid, so a
+   * heuristic fallback after a parse/schema failure still carries its real
+   * cost. Null only when no call reached Claude (API error, no usage).
+   */
+  usage: ClaudeUsage | null;
+  /** Why Claude's answer was not used; set only on the heuristic fallback. */
+  fallback_reason?: string;
 };
 
 // ── Entry point ───────────────────────────────────────────────────────────────
@@ -83,7 +81,8 @@ export async function scoreWithClaude(
       ...fallback,
       cost_usd: 0,
       model: "heuristic_fallback",
-      usage: ZERO_USAGE,
+      usage: call.usage,
+      fallback_reason: call.reason,
       // Surface why Claude wasn't used so the UI "heuristic" label is debuggable
       reasoning: `[Heuristic — Claude error: ${errMsg}] ${fallback.reasoning}`,
     };
