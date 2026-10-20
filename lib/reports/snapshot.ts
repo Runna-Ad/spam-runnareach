@@ -189,8 +189,10 @@ export async function gatherWeeklyRaw(tenantId: string, now: Date): Promise<Week
       ),
       all(
         (a, b) =>
+          // review.attempt rows (lib/autopilot/learn.ts REVIEW_ATTEMPT_LEARNER) are the weekly
+          // review's daily attempt markers, not insights: up to 7 a week would pad the count.
           db.from("learning_insights").select("created_at, kind, title")
-            .eq("tenant_id", tenantId).neq("kind", "breaker").gte("created_at", since7).order("created_at", { ascending: false }).range(a, b),
+            .eq("tenant_id", tenantId).neq("kind", "breaker").neq("learner", "review.attempt").gte("created_at", since7).order("created_at", { ascending: false }).range(a, b),
         (r) => ({ at: r.created_at as string, kind: r.kind as string, title: r.title as string }),
       ),
       all(

@@ -1,5 +1,10 @@
 # S.P.A.M. — Lessons (newest first)
 
+[2026-10-20] Commit before a mutation check; `git checkout -- file` also throws away the fix you are testing
+WHAT HAPPENED: The conductor added a filter to lib/reports/snapshot.ts, ran a mutation (sed the filter out), then restored with `git checkout -- lib/reports/snapshot.ts`. The fix was not committed yet, so the checkout restored the OLD file and the fix was gone; caught only because `git diff --stat` came back empty.
+RULE: Commit (or copy the file aside) before mutating; restore from that commit, never from the index. Check `git diff --stat` after every restore.
+TAGS: process, git, mutation, conductor
+
 ## Merged from lessons-inbox, batch 5 (2026-10-20)
 
 ### from warmup-imap-resilience
