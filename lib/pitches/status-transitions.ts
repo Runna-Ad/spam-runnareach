@@ -7,6 +7,7 @@
 
 import { DO_NOT_SEND_STATUSES } from "../prospects/status.ts";
 import { isEmailOnDncList, type DncClient } from "../discover/dnc-check.ts";
+import type { AuditAction } from "../audit/log.ts";
 
 /** The prod `pitch_status` enum. */
 export const PITCH_STATUSES = [
@@ -170,43 +171,110 @@ export function queueReleaseFor(block: SendBlock): ReleaseTo {
 // release puts the step back, guarded on the step it claimed, so a run that
 // moved it meanwhile is left alone.
 
+type ReleaseFilter = {
+  eq: (col: string, val: string | number) => ReleaseFilter;
+  is: (col: string, val: null) => ReleaseFilter;
+  select: (cols: string) => PromiseLike<{ data: unknown; error: unknown }>;
+};
+
 /** Narrow update shape for {@link releaseFollowupClaim}. */
 export type FollowupReleaseClient = {
   from: (table: string) => {
-    update: (payload: Record<string, unknown>) => {
-      eq: (col: string, val: string) => {
-        eq: (col: string, val: number) => PromiseLike<{ error: unknown }>;
-      };
-    };
+    update: (payload: Record<string, unknown>) => ReleaseFilter;
   };
 };
+
+const matchedAny = (data: unknown) => Array.isArray(data) && data.length > 0;
 
 /**
  * Undo a claimed follow-up step. `pause` also sets sequence_paused_at, so a
  * prospect that may never be emailed again is not retried every run.
+ *
+ * Invariant: a release never moves next_followup_at earlier than a date
+ * another writer set after the claim. The reply poll's out-of-office postpone
+ * (+7 days) and a person's snooze (+14 days) can write the row while it is
+ * claimed; restoring the due date read at the start of the run would send the
+ * next follow-up during that week. So the old date comes back only while the
+ * row still holds the date the claim wrote (`claimedFollowupAt`); otherwise
+ * the step (and the pause) are released and the newer date stays.
+ *
+ * Returns whether a row was released (false: another run moved the step, or
+ * the write failed and was logged).
  */
 export async function releaseFollowupClaim(
   db: FollowupReleaseClient,
   args: {
     pitchId: string;
     claimedStep: number;
+    /** next_followup_at as the claim wrote it (null for the final step). */
+    claimedFollowupAt: string | null;
     priorStep: number;
     priorFollowupAt: string | null;
     pause: boolean;
     nowIso?: string;
   },
-): Promise<void> {
-  const { error } = await db
+): Promise<boolean> {
+  const step = {
+    sequence_step: args.priorStep,
+    ...(args.pause ? { sequence_paused_at: args.nowIso ?? new Date().toISOString() } : {}),
+  };
+  const claimed = db
     .from("pitches")
-    .update({
-      sequence_step: args.priorStep,
-      next_followup_at: args.priorFollowupAt,
-      ...(args.pause ? { sequence_paused_at: args.nowIso ?? new Date().toISOString() } : {}),
-    })
+    .update({ ...step, next_followup_at: args.priorFollowupAt })
     .eq("id", args.pitchId)
     .eq("sequence_step", args.claimedStep);
+  const { data, error } = await (args.claimedFollowupAt === null
+    ? claimed.is("next_followup_at", null)
+    : claimed.eq("next_followup_at", args.claimedFollowupAt)
+  ).select("id");
   // Otherwise the step stays claimed silently and this follow-up is skipped for good.
-  if (error) console.error(`[follow-up] releasing claimed step ${args.claimedStep} of ${args.pitchId} failed:`, error);
+  if (error) {
+    console.error(`[follow-up] releasing claimed step ${args.claimedStep} of ${args.pitchId} failed:`, error);
+    return false;
+  }
+  if (matchedAny(data)) return true;
+
+  // The date moved after the claim (or the step did): release the step only.
+  const kept = await db
+    .from("pitches")
+    .update(step)
+    .eq("id", args.pitchId)
+    .eq("sequence_step", args.claimedStep)
+    .select("id");
+  if (kept.error) {
+    console.error(`[follow-up] releasing claimed step ${args.claimedStep} of ${args.pitchId} failed:`, kept.error);
+    return false;
+  }
+  return matchedAny(kept.data);
+}
+
+/** Narrow insert shape for {@link auditFollowupPause}. */
+export type AuditInsertClient = {
+  from: (table: string) => {
+    insert: (row: Record<string, unknown>) => PromiseLike<{ error: { message?: string } | null }>;
+  };
+};
+
+/** audit_log action for a follow-up sequence the last-moment recheck paused. */
+export const FOLLOWUP_PAUSED_ACTION: AuditAction = "pitch.sequence_paused";
+
+/**
+ * One audit_log row for a sequence the last-moment recheck paused (do-not-send
+ * or DNC), with the block kind. Best-effort: a failed write is logged, never thrown.
+ */
+export async function auditFollowupPause(
+  db: AuditInsertClient,
+  args: { tenantId: string; pitchId: string; step: number; block: SendBlock },
+): Promise<void> {
+  const { error } = await db.from("audit_log").insert({
+    tenant_id: args.tenantId,
+    actor_id: null,
+    action: FOLLOWUP_PAUSED_ACTION,
+    entity_type: "pitch",
+    entity_id: args.pitchId,
+    metadata: { source: "follow-up recheck", kind: args.block.kind, reason: args.block.reason.slice(0, 300), step: args.step },
+  });
+  if (error) console.warn(`[follow-up] pause audit for ${args.pitchId} not recorded:`, error.message || "no detail");
 }
 
 /** Can never send (do-not-send, DNC) → pause the sequence; else release for a later run. */
