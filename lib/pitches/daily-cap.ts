@@ -18,7 +18,7 @@
  * it back if Gmail did not accept the message. Two overlapping send runs used
  * to read, add one and write back, and clobber each other's count.
  *
- * Also here: the send-queue's time budget. The slot helpers take the db as
+ * Also here: the send routes' time budget (send-queue and follow-up). The slot helpers take the db as
  * an argument, so this module still imports nothing and is tested with fakes
  * (tests/send-path-hardening.test.ts).
  */
@@ -41,25 +41,6 @@ export function effectiveSendsToday(
 ): number {
   if (!lastResetDate) return 0;
   return lastResetDate.slice(0, 10) === utcToday(now) ? sendsToday : 0;
-}
-
-/**
- * The `sender_inboxes` update payload for recording one more send: bump the
- * effective count by one and stamp today so the counter is anchored to this day.
- *
- * Read-then-write: two writers at once lose a count. The pitch send paths use
- * reserveSendSlot instead; app/api/replies/nudge still uses this.
- */
-export function bumpSendsTodayPayload(
-  sendsToday: number,
-  lastResetDate: string | null | undefined,
-  now: Date = new Date(),
-): { sends_today: number; last_reset_date: string; last_send_at: string } {
-  return {
-    sends_today: effectiveSendsToday(sendsToday, lastResetDate, now) + 1,
-    last_reset_date: utcToday(now),
-    last_send_at: now.toISOString(),
-  };
 }
 
 // ── Send slots (migration 0049) ──────────────────────────────────────────────
@@ -95,7 +76,7 @@ export async function releaseSendSlot(db: SlotClient, inboxId: string, day: stri
   return error ? `Couldn't release the send slot: ${error.message || "no detail"}` : null;
 }
 
-// ── Send-queue time budget ───────────────────────────────────────────────────
+// ── Send-route time budget ───────────────────────────────────────────────────
 
 /** vercel.json maxDuration for the send routes. */
 export const SEND_ROUTE_MAX_MS = 120_000;
@@ -109,3 +90,26 @@ export const CLAIM_RESERVE_MS = 25_000;
 export function hasTimeToClaim(startMs: number, nowMs: number = Date.now()): boolean {
   return nowMs - startMs < SEND_ROUTE_MAX_MS - CLAIM_RESERVE_MS;
 }
+
+/**
+ * What a follow-up needs between "start composing" and "claim": the Claude
+ * compose (composeFollowupWithClaude: the 20s default client timeout, no
+ * retries), the daily-cap read and cost write around it, and the gate's
+ * context read (~5s).
+ */
+export const FOLLOWUP_COMPOSE_MS = 25_000;
+/**
+ * Room a follow-up must have before it composes: compose + gate, then the
+ * claim's own reserve (slot, recheck, Gmail, writes).
+ * 25s + 25s = 50s, so no compose starts after 70s of a 120s run, and the
+ * claim check (hasTimeToClaim, 95s) still has 25s of slack for a slow compose.
+ */
+export const FOLLOWUP_COMPOSE_RESERVE_MS = FOLLOWUP_COMPOSE_MS + CLAIM_RESERVE_MS;
+
+/** May a follow-up still start (paid) composing? Never closer than FOLLOWUP_COMPOSE_RESERVE_MS to the kill. */
+export function hasTimeToCompose(startMs: number, nowMs: number = Date.now()): boolean {
+  return nowMs - startMs < SEND_ROUTE_MAX_MS - FOLLOWUP_COMPOSE_RESERVE_MS;
+}
+
+/** The result reason for work left to the next run. Not an error. */
+export const TIME_BUDGET_REASON = "Time budget reached — next run";
