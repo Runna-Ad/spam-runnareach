@@ -215,7 +215,8 @@ PREMISE CORRECTION (conductor, ~20:00): the proposal said 9 pitches with only po
 Research pre-check decision (conductor, on Pedro's "raise only if we rarely lose a 70+"): bar 10 → 20 (7 days: 25 companies at 10-19, 0 reached 70; all time 1 of 258).
 | slug | model / effort | mechanism | branch | session | status |
 |---|---|---|---|---|---|
-| claude-calls-accounted | opus-5.5 / medium | remote session | claude/claude-calls-accounted | session_014ngERDAELJCwPCxLHDzRFN | spawned 20:04 |
-| pitch-rewrite-notes | opus-5.5 / high | remote session | claude/pitch-rewrite-notes | session_015WEsYjrabng2EBbWVEPchU | spawned 20:12 |
+| claude-calls-accounted | opus-5.5 / medium | remote session | claude/claude-calls-accounted | session_014ngERDAELJCwPCxLHDzRFN | PR #44 open 20:19 (head 009e4ca), review running |
+| pitch-rewrite-notes | opus-5.5 / high | remote session | claude/pitch-rewrite-notes | session_015WEsYjrabng2EBbWVEPchU | PR #45 open 20:24 (head 0a2451d), review running |
 Check-ins: PR discovery trig_011AXDgAZiPP2gzkxqgN7LUB (20:17, re-arm +8). Session restarts 17:35-20:00 cost ~2 h of wall clock before the spawn.
 - 2026-10-20 20:10 UTC — Pedro: "i agree with option 1" (rewrite uses the reviewer's notes, writer/critic aligned on guesses stated as fact, missing pain_id no longer forces a template, no new pitch for an emailed company; no polish pass). Brief pitch-rewrite-notes written. Parallel with claude-calls-accounted: disjoint files (lib/pitches vs lib/research, lib/discover, lib/replies, lib/icp, app/api/replies). Merge order: claude-calls-accounted → pitch-rewrite-notes.
+- 2026-10-20 20:30 UTC — both PRs open 15 and 12 min after spawn (#44: 15 files, +966/-62; #45: 8 files, +733/-34). Subscribed; two reviewers running in parallel. #45 touches lib/autopilot/tick.ts (7 lines; brief allows the comment only): reviewer to confirm. Worker #44 out-of-scope note: lib/icp/suggest-action.ts:36 suggestIcpFieldsAction calls the SDK directly with no auth and no cost record (to verify, route as batch 7 or conductor follow-up).
