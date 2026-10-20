@@ -19,12 +19,25 @@
  */
 
 import { z } from "zod";
-import { ANTHROPIC_HAIKU_MODEL, structuredCall } from "@/lib/anthropic/client";
+import { ANTHROPIC_HAIKU_MODEL, structuredCall, type ClaudeUsage } from "@/lib/anthropic/client";
+import { recordClaudeCall } from "@/lib/anthropic/cost-tracking";
 import { isRoleBasedEmail } from "@/lib/research/email-utils";
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
-export type SnapVerifyResult =
+/**
+ * The paid Haiku people-extraction call, success or not. Null when no call
+ * reached Claude (garbage domain, too little text, API error with no usage).
+ * Callers record it to cost_tracking: SnapVerify itself has no tenant.
+ */
+export type SnapVerifyClaudeCall = {
+  model: string;
+  usage: ClaudeUsage;
+  /** Set when the call was paid but its answer was unusable (parse/schema). */
+  fallback_reason: string | null;
+};
+
+export type SnapVerifyResult = (
   | {
       found: true;
       email: string;
@@ -42,7 +55,8 @@ export type SnapVerifyResult =
       // the waterfall may use as a last resort. Catch-all servers accept all
       // mail, so this can't hard-bounce — safe to keep, flagged as a guess.
       catchAllGuess?: { email: string; full_name: string | null; role_title: string | null };
-    };
+    }
+) & { claudeCall: SnapVerifyClaudeCall | null };
 
 type EmailVerifyResult = {
   email: string;
@@ -94,7 +108,7 @@ async function extractPeople(
   notes: string | null,
   whatTheyDo: string | null,
   companyName: string,
-): Promise<ExtractedPerson[]> {
+): Promise<{ people: ExtractedPerson[]; claudeCall: SnapVerifyClaudeCall | null }> {
   // notes carries the scraped About / Team / Contact page bodies, which is where
   // an SMB actually names its owner. The full budget now goes to that text.
   const combined = [whatTheyDo, notes]
@@ -102,7 +116,7 @@ async function extractPeople(
     .join("\n\n")
     .slice(0, 4000);
 
-  if (!combined || combined.trim().length < 20) return [];
+  if (!combined || combined.trim().length < 20) return { people: [], claudeCall: null };
 
   const result = await structuredCall({
     model: ANTHROPIC_HAIKU_MODEL,
@@ -113,7 +127,11 @@ async function extractPeople(
       "Sources include LinkedIn profiles, press mentions, team bios, and website copy. " +
       "Prefer current decision-makers (CEO, GM, Director) over retired founders. " +
       "Return only people with full names (first + last). Skip generic role mentions without names. " +
-      "Skip email addresses and phone numbers. Return max 3 most senior/current people.",
+      "Skip email addresses and phone numbers. Return max 3 most senior/current people.\n\n" +
+      'Answer shape: {"people": [{"full_name": string, "role_title": string | null}]}. ' +
+      '"people" is required: an empty array when nobody is named. "full_name" is the ' +
+      'full name (at least 2 characters). "role_title" is required on every person: ' +
+      "their job title, or null when the text does not give one.",
     // Name the company explicitly: scraped pages often mention partners,
     // suppliers or press contacts, and we only want THIS business's people.
     user:
@@ -122,11 +140,45 @@ async function extractPeople(
       `company (suppliers, partners, journalists).\n\n${combined}`,
   });
 
-  if (!result.ok) return [];
-  return result.data.people.map((p) => ({
-    full_name: p.full_name.trim(),
-    role_title: p.role_title ?? null,
-  }));
+  if (!result.ok) {
+    return {
+      people: [],
+      claudeCall: result.usage
+        ? { model: ANTHROPIC_HAIKU_MODEL, usage: result.usage, fallback_reason: result.reason }
+        : null,
+    };
+  }
+  return {
+    people: result.data.people.map((p) => ({
+      full_name: p.full_name.trim(),
+      role_title: p.role_title ?? null,
+    })),
+    claudeCall: { model: result.model, usage: result.usage, fallback_reason: null },
+  };
+}
+
+/**
+ * Record SnapVerify's Claude call against the daily cap. Both callers (the
+ * pipeline and the enrichment waterfall) use this, once per snapVerifyEnrich
+ * call, so the row shape cannot drift. Best-effort, never throws.
+ */
+export async function recordSnapVerifyCall(
+  tenantId: string,
+  prospectId: string,
+  call: SnapVerifyClaudeCall,
+): Promise<void> {
+  await recordClaudeCall({
+    tenantId,
+    model: call.model,
+    entity_type: "research",
+    entity_id: prospectId,
+    usage: call.usage,
+    metadata: {
+      kind: "snap_verify",
+      prospect_id: prospectId,
+      ...(call.fallback_reason ? { fallback_reason: call.fallback_reason } : {}),
+    },
+  });
 }
 
 // ── Step 2: Generate email format guesses ─────────────────────────────────────
@@ -301,14 +353,16 @@ export async function snapVerifyEnrich(
 ): Promise<SnapVerifyResult> {
   // Guard: skip obvious garbage domains
   if (!domain || domain.length < 4 || domain.startsWith("facebook") || domain.startsWith("instagram")) {
-    return { found: false, reason: "Invalid or social-media domain" };
+    return { found: false, reason: "Invalid or social-media domain", claudeCall: null };
   }
 
   // Step 1: Extract people from the scraped About / Team / Contact page text.
-  const people = await extractPeople(notes, whatTheyDo, companyName).catch(() => []);
+  const { people, claudeCall } = await extractPeople(notes, whatTheyDo, companyName).catch(
+    () => ({ people: [] as ExtractedPerson[], claudeCall: null }),
+  );
 
   if (people.length === 0) {
-    return { found: false, reason: "No named people found in scraped content" };
+    return { found: false, reason: "No named people found in scraped content", claudeCall };
   }
 
   // Step 2: Generate email guesses for each person (de-duped, max 8 total)
@@ -326,7 +380,7 @@ export async function snapVerifyEnrich(
   }
 
   if (allGuesses.length === 0) {
-    return { found: false, reason: "Could not derive email guesses from person names" };
+    return { found: false, reason: "Could not derive email guesses from person names", claudeCall };
   }
 
   // Step 3: Call edge function — up to 3 passes to ride out greylisting and
@@ -361,6 +415,7 @@ export async function snapVerifyEnrich(
         role_title: matchedPerson?.role_title ?? null,
         confidence: best.confidence,
         method: "smtp_verified",
+        claudeCall,
       };
     }
   }
@@ -393,6 +448,7 @@ export async function snapVerifyEnrich(
           full_name: matchedPerson?.full_name ?? null,
           role_title: matchedPerson?.role_title ?? null,
         },
+        claudeCall,
       };
     }
   }
@@ -400,5 +456,6 @@ export async function snapVerifyEnrich(
   return {
     found: false,
     reason: `Provider=${provider}, port25_blocked=${port25Blocked}, catch_all=${edgeResult?.is_catch_all ?? false}, no verified email — deferring to paid verified finders`,
+    claudeCall,
   };
 }

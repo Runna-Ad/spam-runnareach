@@ -19,6 +19,7 @@
 
 import { z } from "zod";
 import { ANTHROPIC_DEFAULT_MODEL, claudeIsAvailable, structuredCall } from "@/lib/anthropic/client";
+import { recordClaudeCall } from "@/lib/anthropic/cost-tracking";
 import { requireUser } from "@/lib/auth";
 import { createClient } from "@/lib/supabase/server";
 import { RUNNA_CAPABILITIES } from "@/lib/runna/capabilities";
@@ -113,8 +114,11 @@ export async function garyBuildIcpAction(answered: GaryAnswer[]): Promise<GaryRe
   const roundsAnswered = safeAnswered.length;
 
   let user;
+  let tenantId: string;
   try {
-    const ctx = await gatherRunnaContext();
+    const sessionUser = await requireUser();
+    tenantId = sessionUser.tenantId;
+    const ctx = await gatherRunnaContext(tenantId);
     user = buildUserPrompt(safeAnswered, ctx, roundsAnswered);
   } catch (err) {
     console.error("[gary] context load failed:", err);
@@ -131,6 +135,23 @@ export async function garyBuildIcpAction(answered: GaryAnswer[]): Promise<GaryRe
     // beyond the 20s default, but stay under the Vercel function maxDuration.
     timeoutMs: 50_000,
   });
+
+  // Every paid call reaches the daily cap, the failed ones too. Null usage
+  // means the call never reached Claude.
+  if (result.usage) {
+    await recordClaudeCall({
+      tenantId,
+      model: result.ok ? result.model : ANTHROPIC_DEFAULT_MODEL,
+      entity_type: "icp_suggest",
+      entity_id: null,
+      usage: result.usage,
+      metadata: {
+        kind: "gary",
+        round: roundsAnswered,
+        ...(result.ok ? {} : { fallback_reason: result.reason }),
+      },
+    });
+  }
 
   if (!result.ok) {
     console.error(`[gary] Claude call failed (${result.reason}): ${result.error}`);
@@ -284,28 +305,27 @@ Respond with your next step as JSON (either "question" or "proposal").`;
 
 // ── Runna context fetch (tenant-scoped) ────────────────────────────────────────
 
-async function gatherRunnaContext(): Promise<RunnaContext> {
-  const user = await requireUser();
+async function gatherRunnaContext(tenantId: string): Promise<RunnaContext> {
   const supabase = await createClient();
 
   const [{ data: services }, { data: cases }, { data: icps }] = await Promise.all([
     supabase
       .from("services")
       .select("display_name_en, description_en")
-      .eq("tenant_id", user.tenantId)
+      .eq("tenant_id", tenantId)
       .eq("is_active", true)
       .order("sort_order", { ascending: true })
       .returns<{ display_name_en: string; description_en: string | null }[]>(),
     supabase
       .from("case_studies")
       .select("client_name, industry, tier, hero_metric_en")
-      .eq("tenant_id", user.tenantId)
+      .eq("tenant_id", tenantId)
       .eq("is_active", true)
       .returns<{ client_name: string; industry: string | null; tier: string | null; hero_metric_en: string | null }[]>(),
     supabase
       .from("icps")
       .select("name, market, industry_tags, geo_regions")
-      .eq("tenant_id", user.tenantId)
+      .eq("tenant_id", tenantId)
       .eq("is_active", true)
       .returns<{ name: string; market: string; industry_tags: string[] | null; geo_regions: string[] | null }[]>(),
   ]);

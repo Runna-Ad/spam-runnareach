@@ -14,9 +14,11 @@ import { z } from "zod";
 import {
   ANTHROPIC_HAIKU_MODEL,
   claudeIsAvailable,
+  computeCostUsd,
   getClient,
   structuredCall,
 } from "@/lib/anthropic/client";
+import { recordClaudeCall } from "@/lib/anthropic/cost-tracking";
 import { requireUser } from "@/lib/auth";
 import {
   BUSINESS_TYPES,
@@ -36,7 +38,10 @@ import { suggestIcpFields, type SuggestInput, type SuggestOutput } from "./sugge
 export async function suggestIcpFieldsAction(
   input: SuggestInput,
 ): Promise<SuggestOutput> {
-  if (!claudeIsAvailable()) {
+  // A server action is reachable by anyone who can POST to the app: no session,
+  // no paid call. The heuristic is free and writes nothing, so it stays the answer.
+  const user = await requireUser().catch(() => null);
+  if (!user || !claudeIsAvailable()) {
     return suggestIcpFields(input); // graceful fallback
   }
 
@@ -47,6 +52,25 @@ export async function suggestIcpFieldsAction(
       model: ANTHROPIC_HAIKU_MODEL,
       max_tokens: 1000,
       messages: [{ role: "user", content: buildPrompt(input) }],
+    });
+
+    // Paid from here on, whatever parseResponse makes of it: record first.
+    const u = response.usage;
+    const cacheRead = u.cache_read_input_tokens ?? 0;
+    const cacheWrite = u.cache_creation_input_tokens ?? 0;
+    await recordClaudeCall({
+      tenantId: user.tenantId,
+      model: ANTHROPIC_HAIKU_MODEL,
+      entity_type: "icp_suggest",
+      entity_id: null,
+      usage: {
+        input_tokens: u.input_tokens,
+        output_tokens: u.output_tokens,
+        cache_read_input_tokens: cacheRead,
+        cache_creation_input_tokens: cacheWrite,
+        cost_usd: computeCostUsd(ANTHROPIC_HAIKU_MODEL, u.input_tokens, u.output_tokens, cacheRead, cacheWrite),
+      },
+      metadata: { kind: "icp_suggest_fields" },
     });
 
     const raw = response.content
@@ -302,12 +326,15 @@ export async function refineIcpFromEvidenceAction(icpId: string): Promise<IcpRef
     return heuristicRefinement(icp, evidence);
   }
 
-  const claudeResult = await claudeRefinement(icp, evidence);
+  const claudeResult = await claudeRefinement(user.tenantId, icp, evidence);
   return claudeResult ?? heuristicRefinement(icp, evidence);
 }
 
 // ── Claude-backed refinement (Haiku — cheap synthesis) ──────────────────────────
 
+// Rationales and summary are only shown to people: clip them. The targeting
+// fields act (they become ICP values), so their limits stay strict.
+const clip = (n: number) => z.string().transform((s) => s.slice(0, n));
 const refineSchema = z.object({
   industry_tags: z.array(z.string().trim().min(1).max(60)).max(12),
   business_types: z.array(z.string().trim().min(1).max(60)).max(12),
@@ -316,17 +343,18 @@ const refineSchema = z.object({
   employee_size_min: z.number().int().min(0).max(1_000_000).nullable(),
   employee_size_max: z.number().int().min(0).max(1_000_000).nullable(),
   field_rationales: z.object({
-    industry_tags: z.string().max(240).optional(),
-    business_types: z.string().max(240).optional(),
-    search_keywords: z.string().max(240).optional(),
-    excluded_keywords: z.string().max(240).optional(),
-    employee_size_min: z.string().max(240).optional(),
-    employee_size_max: z.string().max(240).optional(),
+    industry_tags: clip(240).optional(),
+    business_types: clip(240).optional(),
+    search_keywords: clip(240).optional(),
+    excluded_keywords: clip(240).optional(),
+    employee_size_min: clip(240).optional(),
+    employee_size_max: clip(240).optional(),
   }),
-  summary: z.string().trim().min(1).max(800),
+  summary: z.string().trim().min(1).transform((s) => s.slice(0, 800)),
 });
 
 async function claudeRefinement(
+  tenantId: string,
   icp: IcpRow,
   evidence: IcpEvidence,
 ): Promise<IcpRefinement | null> {
@@ -344,7 +372,20 @@ Principles:
 - Propose excluded_keywords for patterns that clearly waste effort (competitors like agencies, already-served businesses) — never exclude valid customer types just because they sell services.
 - Only suggest an employee-size range when the evidence genuinely points to one; otherwise return null for both.
 - Prefer canonical values from the provided lists; invent new ones only when nothing fits.
-- Keep each field's rationale to ONE sentence grounded in the evidence (e.g. "5 of 8 prospects are on Shopify").`;
+- Keep each field's rationale to ONE sentence grounded in the evidence (e.g. "5 of 8 prospects are on Shopify").
+
+Answer with a JSON object with exactly these keys, all required:
+{
+  "industry_tags": [string],
+  "business_types": [string],
+  "search_keywords": [string],
+  "excluded_keywords": [string],
+  "employee_size_min": integer | null,
+  "employee_size_max": integer | null,
+  "field_rationales": { "industry_tags"?: string, "business_types"?: string, "search_keywords"?: string, "excluded_keywords"?: string, "employee_size_min"?: string, "employee_size_max"?: string },
+  "summary": string
+}
+Limits: each array has at most 12 items, each item 1 to 60 characters; use an empty array when you have nothing to add. Employee sizes are whole numbers from 0 to 1000000, or null. Each rationale is at most 240 characters. "summary" is required, 1 to 800 characters.`;
 
   const user = `EXISTING ICP "${icp.name}" (market ${icp.market}, language ${icp.language})
 Current values:
@@ -377,14 +418,34 @@ Return the proposed refined values as JSON matching the schema. Suggest only val
     model: ANTHROPIC_HAIKU_MODEL,
     system,
     user,
-    max_tokens: 900,
+    // Worst case of refineSchema (4 × 12 × 60-char items, 6 rationales, summary) is ~1,300 tokens.
+    max_tokens: 1500,
     schema: refineSchema,
   });
 
   if (!result.ok) {
     console.error(`[icp-refine] Claude call failed (${result.reason}): ${result.error}`);
+    // Paid even though unusable (parse/schema failure): the cap must see it.
+    if (result.usage) {
+      await recordClaudeCall({
+        tenantId,
+        model: ANTHROPIC_HAIKU_MODEL,
+        entity_type: "icp_suggest",
+        entity_id: icp.id,
+        usage: result.usage,
+        metadata: { kind: "icp_refine", fallback_reason: result.reason },
+      });
+    }
     return null;
   }
+  await recordClaudeCall({
+    tenantId,
+    model: result.model,
+    entity_type: "icp_suggest",
+    entity_id: icp.id,
+    usage: result.usage,
+    metadata: { kind: "icp_refine" },
+  });
 
   const d = result.data;
   // Dedupe proposals against what's already on the ICP — only surface net-new.

@@ -34,7 +34,9 @@ export async function load(url, ctx, next) {
   }
   if (url === "stub:@/lib/research/snap-contact") {
     return { format: "module", shortCircuit: true, source:
-      "export const snapVerifyEnrich = async () => ({ found: false }); export const screenEmailsAgainstSmtp = async (e) => e;" };
+      "export const snapVerifyEnrich = async (...a) => (globalThis.__snapVerify ?? (async () => ({ found: false, claudeCall: null })))(...a);" +
+      "export const recordSnapVerifyCall = async (...a) => { (globalThis.__snapRecords ??= []).push(a); };" +
+      "export const screenEmailsAgainstSmtp = async (e) => e;" };
   }
   return next(url, ctx);
 }`;
@@ -97,4 +99,31 @@ test("enrich: an unverified Anymail guess stores nothing and the waterfall moves
   const { inserts, hunterCalls } = await run({ email: "henry@acme.ca", valid_email: null, email_status: "risky" });
   assert.equal(inserts.length, 0);
   assert.equal(hunterCalls, 1);
+});
+
+test("enrich: SnapVerify's paid call is recorded exactly once, found or not, with tenant and prospect", async () => {
+  const call = { model: "claude-haiku-4-5", usage: { cost_usd: 0.001 }, fallback_reason: null };
+  const g = globalThis as { __snapVerify?: unknown; __snapRecords?: unknown[][] };
+  for (const result of [
+    { found: true, email: "ana@acme.ca", full_name: "Ana", role_title: null, confidence: 90, method: "smtp_verified", claudeCall: call },
+    { found: false, reason: "no verified email", claudeCall: { ...call, fallback_reason: "parse" } },
+    { found: false, reason: "no people", claudeCall: null },
+  ]) {
+    g.__snapVerify = async () => result;
+    g.__snapRecords = [];
+    const inserts: Row[] = [];
+    const realWarn = console.warn;
+    console.warn = () => {};
+    try {
+      const research = { select: () => research, eq: () => research, maybeSingle: async () => ({ data: { notes: "n", what_they_do: null }, error: null }) };
+      const base = fakeSupabase(inserts);
+      const supabase = { from: (t: string) => (t === "prospect_research" ? research : base.from(t)) };
+      await enrichContactsForProspect("t1", "p1", "acme.ca", "Acme", supabase, false);
+    } finally {
+      console.warn = realWarn;
+    }
+    if (result.claudeCall) assert.deepEqual(g.__snapRecords, [["t1", "p1", result.claudeCall]], result.reason ?? "found");
+    else assert.deepEqual(g.__snapRecords, [], "no call → no row");
+  }
+  delete g.__snapVerify;
 });
