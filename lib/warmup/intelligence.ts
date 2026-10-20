@@ -54,6 +54,123 @@ export function placementFromCheck(check: { foundInInbox: boolean; foundInSpam: 
   return null;
 }
 
+// ── Placement checks: time budget ─────────────────────────────────────────────
+
+/**
+ * Step 2 of the daily engine run starts no new check after this much of the
+ * run has passed (the most it gets on a light day).
+ */
+export const PLACEMENT_CHECK_BUDGET_MS = 40_000;
+/**
+ * One check is cut off (connection closed, logout included) after this long.
+ * Must stay above the IMAP connect + greeting timeouts: a close() during the
+ * TLS handshake does not end a pending connect.
+ */
+export const PLACEMENT_CHECK_MAX_MS = 20_000;
+/** What one warm-up send costs: 0-500ms jitter + send + Message-ID lookup + 3 writes. */
+export const PER_SEND_RESERVE_MS = 1_500;
+/** Step 8 (buddy replies) gets at least this long before its reply deadline, when the day allows. */
+export const STEP8_RESERVE_MS = 15_000;
+/** Checks may always start until this far into the run (a re-warm needs placement data). */
+export const PLACEMENT_CHECK_FLOOR_MS = 10_000;
+
+/**
+ * When step 2 must stop starting checks. Priorities: the day's sends first,
+ * then the check floor, then step 8's window. All checks are over by
+ * stopAt + PLACEMENT_CHECK_MAX_MS (the cap includes LOGOUT, so no separate
+ * logout bound). With a 105s send deadline and a 74s reply deadline:
+ *   5 sends:  min(40, 105-7.5-20, 74-7.5-15-20)   = 31.5s
+ *   19 sends: min(40, 105-28.5-20, 74-28.5-15-20) = 10.5s (step 8 still gets 15s)
+ *   30 sends: 74-45-15-20 = -6 → floor 10s: sends end by 75s, step 8 skipped
+ *   50 sends: floor 10s: checks over by 30s, 75s for 50 sends, step 8 skipped
+ */
+export function placementCheckStopAt(
+  tickStart: number,
+  sendDeadline: number,
+  replyDeadline: number,
+  remainingSends: number,
+): number {
+  const sends = Math.max(0, remainingSends) * PER_SEND_RESERVE_MS;
+  return Math.max(
+    tickStart + PLACEMENT_CHECK_FLOOR_MS,
+    Math.min(
+      tickStart + PLACEMENT_CHECK_BUDGET_MS,
+      sendDeadline - sends - PLACEMENT_CHECK_MAX_MS,
+      replyDeadline - sends - STEP8_RESERVE_MS - PLACEMENT_CHECK_MAX_MS,
+    ),
+  );
+}
+
+export type PlacementCheckDeps<B> = {
+  buddies: B[];
+  buddyId: (b: B) => string;
+  now: () => number;
+  /** The RFC Message-ID to search for, resolving a legacy Gmail id; null = can't. */
+  resolveRfcId: (log: WarmupLogEntry) => Promise<string | null>;
+  check: (buddy: B, rfcMessageId: string, timeoutMs: number) => Promise<{ foundInInbox: boolean; foundInSpam: boolean } | null>;
+  record: (logId: string, landedInInbox: boolean) => Promise<void>;
+};
+
+export type PlacementCheckReport = {
+  /** Rows given a placement (true or false). */
+  checked: number;
+  /** Checked but found in no folder, or the connection failed: still pending. */
+  not_found: number;
+  /** No buddy, inactive buddy or no searchable id: no check started. */
+  skipped: number;
+  /** Not reached because the budget ran out: tomorrow's run tries them first. */
+  deferred: number;
+};
+
+/**
+ * Check pending sends, oldest first (a row is retried before it leaves the 72h
+ * window), until `stopAt`: no check starts after it, and each started check is
+ * capped at PLACEMENT_CHECK_MAX_MS. A row that cannot be checked costs nothing.
+ * Only a found placement is written; not found stays null.
+ */
+export async function runPlacementChecks<B>(
+  pending: WarmupLogEntry[],
+  stopAt: number,
+  deps: PlacementCheckDeps<B>,
+): Promise<PlacementCheckReport> {
+  const report: PlacementCheckReport = { checked: 0, not_found: 0, skipped: 0, deferred: 0 };
+  const rows = [...pending].sort((a, b) => a.created_at.localeCompare(b.created_at));
+
+  const buddyFor = (log: WarmupLogEntry) =>
+    log.message_id && log.buddy_id ? deps.buddies.find((b) => deps.buddyId(b) === log.buddy_id) : undefined;
+
+  for (const [i, log] of rows.entries()) {
+    const buddy = buddyFor(log);
+    if (!buddy) {
+      report.skipped++;
+      continue;
+    }
+    if (deps.now() >= stopAt) {
+      const rest = rows.slice(i);
+      report.deferred = rest.filter((r) => buddyFor(r)).length;
+      report.skipped += rest.length - report.deferred;
+      break;
+    }
+
+    const rfcMessageId = await deps.resolveRfcId(log);
+    if (!rfcMessageId) {
+      report.skipped++;
+      continue;
+    }
+
+    const check = await deps.check(buddy, rfcMessageId, PLACEMENT_CHECK_MAX_MS);
+    const landed = check ? placementFromCheck(check) : null;
+    if (landed === null) {
+      report.not_found++;
+      continue;
+    }
+    await deps.record(log.id, landed);
+    report.checked++;
+  }
+
+  return report;
+}
+
 export function analyzeSpamRate(recentLogs: WarmupLogEntry[]): SpamAnalysis {
   const sent = recentLogs.filter((l) => l.direction === "sent");
   const checked = sent.filter((l) => l.landed_in_inbox !== null);
