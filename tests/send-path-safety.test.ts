@@ -66,6 +66,10 @@ function memoryClient(db: Db, failReads: Record<string, string> = {}) {
         filters.push((r) => vals.includes(r[col]));
         return q;
       },
+      is: (col: string, val: null) => {
+        filters.push((r) => (r[col] ?? null) === val);
+        return q;
+      },
       or: (f: string) => {
         const alts = f.split(",").map((part) => {
           const [col, , ...v] = part.split(".");
@@ -218,10 +222,13 @@ test("releaseClaim: the tenant filter applies when given (manual send)", async (
 
 // ── Follow-up: last moment after the step claim ─────────────────────────────
 
+/** The date a step 1 → 2 claim writes (now + 5 days); production never claims step 2 with null. */
+const CLAIMED_AT = "2026-10-24T15:00:00.000Z";
+
 /** A follow-up whose step 1 → 2 this run already claimed (sequence_step = 2). */
 function followupWorld(prospectStatus: string, opts: { dnc?: boolean } = {}): Db {
   const db = world(prospectStatus, opts);
-  db.pitches = [{ id: "pitch-1", tenant_id: T, status: "sent", sequence_step: 2, next_followup_at: null, sequence_paused_at: null }];
+  db.pitches = [{ id: "pitch-1", tenant_id: T, status: "sent", sequence_step: 2, next_followup_at: CLAIMED_AT, sequence_paused_at: null }];
   return db;
 }
 
@@ -239,6 +246,7 @@ async function followupTail(db: Db, fail: Record<string, string> = {}) {
     await releaseFollowupClaim(client as unknown as FollowupReleaseClient, {
       pitchId: "pitch-1",
       claimedStep: 2,
+      claimedFollowupAt: CLAIMED_AT,
       priorStep: 1,
       priorFollowupAt: "2026-10-22T15:00:00.000Z",
       pause: followupPausesFor(lastCheck),
@@ -293,11 +301,11 @@ test("releaseFollowupClaim is guarded on the claimed step", async () => {
   db.pitches![0]!.sequence_step = 3; // another run moved it on
   const { client, updates } = memoryClient(db);
   await releaseFollowupClaim(client as unknown as FollowupReleaseClient, {
-    pitchId: "pitch-1", claimedStep: 2, priorStep: 1, priorFollowupAt: null, pause: true, nowIso: NOW,
+    pitchId: "pitch-1", claimedStep: 2, claimedFollowupAt: CLAIMED_AT, priorStep: 1, priorFollowupAt: null, pause: true, nowIso: NOW,
   });
   assert.equal(db.pitches![0]!.sequence_step, 3);
   assert.equal(db.pitches![0]!.sequence_paused_at, null);
-  assert.equal(updates[0]?.matched, 0);
+  assert.ok(updates.length > 0 && updates.every((u) => u.matched === 0), JSON.stringify(updates));
 });
 
 test("followupPausesFor: only can-never-send pauses", () => {
@@ -532,10 +540,15 @@ test("releaseFollowupClaim logs a failed release instead of dropping it", async 
   const orig = console.error;
   console.error = (...a: unknown[]) => { logged.push(a); };
   try {
-    const failing = { from: () => ({ update: () => ({ eq: () => ({ eq: () => Promise.resolve({ error: { message: "boom" } }) }) }) }) };
-    await releaseFollowupClaim(failing as unknown as FollowupReleaseClient, {
-      pitchId: "pitch-1", claimedStep: 2, priorStep: 1, priorFollowupAt: null, pause: false,
+    const chain: Record<string, unknown> = {};
+    chain.eq = () => chain;
+    chain.is = () => chain;
+    chain.select = () => Promise.resolve({ data: null, error: { message: "boom" } });
+    const failing = { from: () => ({ update: () => chain }) };
+    const released = await releaseFollowupClaim(failing as unknown as FollowupReleaseClient, {
+      pitchId: "pitch-1", claimedStep: 2, claimedFollowupAt: null, priorStep: 1, priorFollowupAt: null, pause: false,
     });
+    assert.equal(released, false);
   } finally {
     console.error = orig;
   }

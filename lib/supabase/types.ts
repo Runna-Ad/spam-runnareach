@@ -1293,7 +1293,13 @@ export type Database = {
     // and the whole Database falls back to `any`, which then collapses
     // every insert/update payload to `never`.
     Views: { [_ in never]: never };
-    Functions: { [_ in never]: never };
+    Functions: {
+      // Migration 0049: one daily send slot per call (lib/pitches/daily-cap.ts).
+      // Returns the UTC day the slot was counted on, or null when the cap is reached.
+      spam_reserve_send_slot: { Args: { p_inbox: string }; Returns: string | null };
+      // Gives a slot back only on the day it was taken; true when one was released.
+      spam_release_send_slot: { Args: { p_inbox: string; p_day: string }; Returns: boolean };
+    };
     Enums: { [_ in never]: never };
     CompositeTypes: { [_ in never]: never };
   };

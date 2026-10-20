@@ -22,7 +22,9 @@ can tell a good solution from a merely passing one.
 Only what the worker cannot infer from the code. A change to a verdict,
 label or lane quotes its consumer (e.g. `governor.heldAction`) and states the outcome. Incident
 facts are quoted from a query run for this brief. Decisions already made, the public API
-that must stay stable, the data shape in prod, the lesson that applies. Link a section of
+that must stay stable, the data shape in prod, the lesson that applies. A route with a time
+budget: its maxDuration, every deadline inside it, every step between them, and the largest
+load the schedules allow (test at that load). Link a section of
 `tasks/audit-2026-10-16.md` only if it is required reading.
 
 ## Brain lessons

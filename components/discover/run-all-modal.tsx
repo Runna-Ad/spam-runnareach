@@ -20,6 +20,7 @@ import {
   Loader2,
   Play,
   ShieldOff,
+  SkipForward,
   Square,
   Trash2,
   TriangleAlert,
@@ -574,6 +575,7 @@ function OutcomeTallies({ stats }: { stats: DiscoveryJob["stats"] }) {
     { label: "Review", value: stats.needs_review, node: <TriangleAlert className="h-3 w-3 text-[var(--color-warning-300)]" /> },
     { label: "Suppressed", value: stats.suppressed, node: <ShieldOff className="h-3 w-3 text-[var(--color-fg-500)]" /> },
     { label: "Errors", value: stats.error_count, node: <XCircle className="h-3 w-3 text-[var(--color-danger-300)]" /> },
+    { label: "Skipped (contacted or parked)", value: stats.skipped ?? 0, node: <SkipForward className="h-3 w-3 text-[var(--color-fg-500)]" /> },
   ].filter((i) => i.value > 0);
 
   if (items.length === 0) return null;
@@ -626,7 +628,7 @@ function DoneStep({ job }: { job: DiscoveryJob | null }) {
         )}
       </div>
 
-      {(stats.pitched + stats.website_pitch + stats.needs_review + stats.suppressed + stats.error_count) > 0 && (
+      {(stats.pitched + stats.website_pitch + stats.needs_review + stats.suppressed + stats.error_count + (stats.skipped ?? 0)) > 0 && (
         <div className="grid grid-cols-2 gap-2">
           {stats.pitched > 0 && (
             <Tile icon={<CheckCircle2 className="h-4 w-4 text-[var(--color-success-300)]" />} label="Pitched" value={stats.pitched} tone="success" />
@@ -642,6 +644,9 @@ function DoneStep({ job }: { job: DiscoveryJob | null }) {
           )}
           {stats.error_count > 0 && (
             <Tile icon={<XCircle className="h-4 w-4 text-[var(--color-danger-300)]" />} label="Errors" value={stats.error_count} tone="danger" />
+          )}
+          {(stats.skipped ?? 0) > 0 && (
+            <Tile icon={<SkipForward className="h-4 w-4 text-[var(--color-fg-500)]" />} label="Skipped: already contacted or parked" value={stats.skipped ?? 0} tone="neutral" />
           )}
         </div>
       )}
