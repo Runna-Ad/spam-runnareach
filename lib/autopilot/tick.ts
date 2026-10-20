@@ -35,6 +35,7 @@ import type { Actor } from "@/lib/actor";
 import { isUnderDailyCap } from "@/lib/anthropic/cost-tracking";
 import { evolveSearchSpace, learnFromOutcomes, weeklyReview } from "./learn";
 import { bouncesTodayAfterResume, inboxBounceStats } from "./bounce-breaker";
+import { optOutMetrics } from "./opt-out-count";
 import {
   buildVetoDigest,
   DIGEST_HORIZON_HOURS,
@@ -196,7 +197,7 @@ export async function runTick(actor: Actor, now: Date = new Date()): Promise<Tic
   // Breakers whatever the stage: the send-queue sends approved pitches (and
   // blocks an inbox on fresh bounces for one run only) even with the autopilot
   // off, so only this step turns trouble into a pause + email.
-  report.breakers = await step("breakers", () => runBreakers(db, tenantId, now), []);
+  report.breakers = await step("breakers", () => runBreakers(db, tenantId, now, report.errors), []);
   if (!s || safetyOnly(s)) {
     report.skipped = "autopilot off for this tenant";
     return report;
@@ -255,19 +256,7 @@ const appUrl = () => process.env.NEXT_PUBLIC_APP_URL || "https://spam-runnareach
 
 // ── 1. Circuit breakers ───────────────────────────────────────────────────────
 
-async function countEvents(db: Db, tenantId: string, type: string, sinceIso: string, intent?: string): Promise<number> {
-  let q = db
-    .from("pitch_events")
-    .select("id", { count: "exact", head: true })
-    .eq("tenant_id", tenantId)
-    .eq("event_type", type)
-    .gte("event_at", sinceIso);
-  if (intent) q = q.eq("payload->>intent", intent);
-  const { count } = await q;
-  return count ?? 0;
-}
-
-async function runBreakers(db: Db, tenantId: string, now: Date): Promise<BreakerTrip[]> {
+async function runBreakers(db: Db, tenantId: string, now: Date, errors: string[]): Promise<BreakerTrip[]> {
   const { data: inboxRows } = await db
     .from("sender_inboxes")
     .select("id, email, paused")
@@ -283,14 +272,12 @@ async function runBreakers(db: Db, tenantId: string, now: Date): Promise<Breaker
   }
 
   const weekAgo = new Date(now.getTime() - 7 * DAY).toISOString();
-  const monthAgo = new Date(now.getTime() - 30 * DAY).toISOString();
-  const [bouncesToday, unsubWeek, hardNoWeek, unsubMonth, hardNoMonth] = await Promise.all([
+  // Opt-outs count people, not events (lib/autopilot/opt-out-count.ts).
+  const [bouncesToday, optOuts] = await Promise.all([
     bouncesTodayAfterResume(db, tenantId, now),
-    countEvents(db, tenantId, "unsubscribe", weekAgo),
-    countEvents(db, tenantId, "reply", weekAgo, "hard_no"),
-    countEvents(db, tenantId, "unsubscribe", monthAgo),
-    countEvents(db, tenantId, "reply", monthAgo, "hard_no"),
+    optOutMetrics(db, tenantId, now),
   ]);
+  errors.push(...optOuts.errors);
 
   // DMARC from the latest Postmaster snapshot (last 3 days), if any.
   const domain = inboxes[0]?.email.split("@")[1] ?? null;
@@ -328,8 +315,8 @@ async function runBreakers(db: Db, tenantId: string, now: Date): Promise<Breaker
   const trips = evaluateBreakers({
     inboxes: inboxStats,
     hardBouncesToday: bouncesToday,
-    optOutsThisWeek: unsubWeek + hardNoWeek,
-    optOutWeeklyBaseline: ((unsubMonth + hardNoMonth) / 30) * 7,
+    optOutsThisWeek: optOuts.optOutsThisWeek,
+    optOutWeeklyBaseline: optOuts.optOutWeeklyBaseline,
     dmarcPassRate,
     blocklisted,
     warmupInboxRate: placement.inboxRate,
