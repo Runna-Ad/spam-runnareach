@@ -185,11 +185,12 @@ Stop-gap (prod data, Pedro yes): learning_insights row 6cd67ba0-1ab0-4514-b421-6
 Parallel: all five at once, disjoint files. Shared touch points: `lib/autopilot/` (learn.ts: learning-review-backoff; hold.ts approval lookup: followup-path-hardening; disjoint files, autopilot lane allowed in parallel for this batch); `app/api/replies/poll/route.ts` edited only by replies-optout-durability (followup-path-hardening reads `postponeSequence`). Merge order: pipeline-run-feedback → warmup-imap-resilience → learning-review-backoff → replies-optout-durability → followup-path-hardening (send path last).
 | slug | model / effort | mechanism | branch | session | status |
 |---|---|---|---|---|---|
-| warmup-imap-resilience | opus-5.5 / medium | remote session | claude/warmup-imap-resilience | (spawning) | |
-| followup-path-hardening | opus-5.5 / high | remote session | claude/followup-path-hardening | (spawning) | |
-| replies-optout-durability | opus-5.5 / high | remote session | claude/replies-optout-durability | (spawning) | |
-| pipeline-run-feedback | opus-5.5 / medium | remote session | claude/pipeline-run-feedback | (spawning) | |
-| learning-review-backoff | opus-5.5 / high | remote session | claude/learning-review-backoff | (spawning) | |
+| warmup-imap-resilience | opus-5.5 / medium | remote session | claude/warmup-imap-resilience | session_01Mby3CCvcYi6H1aSNVZARdz | running 15:32 |
+| followup-path-hardening | opus-5.5 / high | remote session | claude/followup-path-hardening | session_01GfB4wi9z9VBpZWWuULvgSt | running 15:32 |
+| replies-optout-durability | opus-5.5 / high | remote session | claude/replies-optout-durability | session_01MSq5YnD7cUEQWH37fyvnJD | running 15:32 |
+| pipeline-run-feedback | opus-5.5 / medium | remote session | claude/pipeline-run-feedback | session_01DPuZNoFatZzVcSkRnQU8sd | running 15:32 |
+| learning-review-backoff | opus-5.5 / high | remote session | claude/learning-review-backoff | session_01Ed6CFJNrMGhwVfvyWHeMdF | running 15:32 |
 Brief facts gathered by 4 read-only Explore agents (file:line quotes); prod facts by conductor SQL: warm-up placement 4/5 checked per day since 10-16; 2 July hard_no senders not on DNC; learning_review 59 calls / $1.47 in 72 h, output 425-584 tokens (not truncation).
 Decided in briefs: DEAD_STATUSES stays without no_match (adding it would stop importing opt-outs from no_match prospects); booking-alert "unknown attendee" and calendar kill-between-writes dropped from this batch (0 calendar rows in prod).
+Check-ins: PR discovery trig_01VD3henkXd7xRgUhpXx2i4u (+8 min, re-arm), worker safety trig_01F7RGAABZiPGbrXwpXEFa2M (16:23), first-sends check trig_01DnBN2vcW7pRX6FYko6W2Yg (Wed 15:35).
 After ship (each worker): WRAP UP message → read reply → archive (PEDRO_OVERRIDE 2026-10-19).
