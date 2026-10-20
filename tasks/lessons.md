@@ -1,5 +1,186 @@
 # S.P.A.M. — Lessons (newest first)
 
+[2026-10-20] Commit before a mutation check; `git checkout -- file` also throws away the fix you are testing
+WHAT HAPPENED: The conductor added a filter to lib/reports/snapshot.ts, ran a mutation (sed the filter out), then restored with `git checkout -- lib/reports/snapshot.ts`. The fix was not committed yet, so the checkout restored the OLD file and the fix was gone; caught only because `git diff --stat` came back empty.
+RULE: Commit (or copy the file aside) before mutating; restore from that commit, never from the index. Check `git diff --stat` after every restore.
+TAGS: process, git, mutation, conductor
+
+## Merged from lessons-inbox, batch 5 (2026-10-20)
+
+### from warmup-imap-resilience
+[2026-10-20] A library EventEmitter with no 'error' listener is a process crash, not a rejected promise
+WHAT HAPPENED: `lib/warmup/imap.ts` built ImapFlow clients with no `.on("error")`. On a socket timeout imapflow calls `emitError` (emit 'error' + closeAfter), so Node threw an uncaught exception (Sentry SPAM-6) even though every command was awaited in a try; `close()` then rejected the queued work (SPAM-7). The hidden auto-IDLE (15s after any command) and an IMAP socket held idle across an SMTP send made the timeout likely.
+RULE: Every client object that extends EventEmitter (imapflow, nodemailer pools, sockets, streams) gets an 'error' listener at construction, in the shared helper that builds it, not in the factory a test can replace. Turn off library timers we do not use (auto-IDLE, keep-alives), and do not hold a connection open across an unrelated slow call: read, disconnect, act, reconnect. Test with a fake that emits 'error' on a later tick and assert no uncaughtException/unhandledRejection fired.
+TAGS: warmup, imap, reliability, events
+
+[2026-10-20] A count cap with "skip" rows inside it starves the work; slice by time and let skips cost nothing
+WHAT HAPPENED: The warm-up engine took `.slice(0, 4)` of pending placement checks newest first, once a day, 5 sends a day; skips used a slot and rows aged out of the 72h window unchecked (10-19: 3 of 5 checked). Replaced with `runPlacementChecks` (lib/warmup/intelligence.ts): oldest first, no new check after a 40s budget, each check hard-capped at 20s by closing the connection.
+RULE: For a daily batch with a tail deadline, process oldest-first by wall-clock budget, put the per-item cap inside the item (a real cancel such as `client.close()`, not Promise.race), and assert in a test that budget + one capped item leaves the next step its reserve.
+TAGS: warmup, time-budget, cron
+
+## Out of scope, noticed
+- `app/api/warmup/engine/route.ts` step 8 comment says "60s timeout" (maxDuration is 120s) and runs with no deadline check; bounded now by IMAP/SMTP timeouts, not by the route clock.
+- Gmail folder names are locale-specific. `client.list()` + `specialUse` (`\All`, `\Junk`) would find All Mail/Spam in any language (FR `[Gmail]/Tous les messages`, PT `[Gmail]/Todos os e-mails` are the likely next ones for buddies in Canada/Mexico).
+- Before this change the ES `[Gmail]/Todas las conversaciones` hit was MOVEd to INBOX; a MOVE out of All Mail expunges there, which Gmail treats as delete. Now it is counted without moving.
+
+### from followup-path-hardening
+[2026-10-20] A rollback that restores a value it read earlier must be guarded on the value it wrote
+WHAT HAPPENED: releaseFollowupClaim (lib/pitches/status-transitions.ts) put back the next_followup_at read at the start of the run, guarded only on sequence_step. The reply poll's OOO postpone and the manual snooze write next_followup_at on a claimed row (their filters still match it), so the release pulled the due date back over the OOO week and the next run would send during it. Fixed by restoring the old date only while the row still holds the date the claim wrote (`eq("next_followup_at", claimedFollowupAt)`), else releasing the step alone.
+RULE: Every column a release writes back needs its own "still what I wrote" guard in the WHERE, not just the claim column. If another writer can change that column while the row is claimed, release in two steps: a guarded full restore, then a fallback that restores only the claim column. Test it with the other writer's exact filters running between the claim and the release, and with a fake that runs the concurrent write right before the release's own UPDATE.
+TAGS: send-path, follow-up, race, claims
+
+[2026-10-20] A per-item budget check belongs right before the expensive step, not only at the loop top
+WHAT HAPPENED: The follow-up route checked a 90s budget only at the loop top, then did pre-work (token, thread read), a paid 20s compose, the gate, the claim and Gmail. A follow-up started at 89s could finish past 110s. Now hasTimeToCompose (cutoff 70s = 120 - (25 compose + 25 claim reserve)) runs right before the compose, hasTimeToClaim (95s) right before the claim, and out of time breaks the loop.
+RULE: Put a budget check in front of each step that spends money or takes a claim, sized for everything after it (show the sum in a comment). When a check fails, break the loop instead of continuing, because every later item is in the same position.
+TAGS: send-path, time-budget, serverless
+
+## Out of scope, noticed
+- lib/replies/intent-actions.ts:189-196: the manual auto_reply snooze sets `sequence_paused_at: null`, so it also un-pauses a sequence the recheck paused for do-not-send/DNC. The follow-up cron re-checks status and DNC before sending, so nothing goes out, but the pause and its new audit row stop meaning "stopped for good".
+- app/api/pitches/follow-up/route.ts gate-fail pause (7b'): `update({ sequence_paused_at })` has no tenant or step guard. It runs before the claim, so nothing breaks today. Noting it for whoever next reshapes that block.
+
+### from replies-optout-durability
+[2026-10-20] A "stored, then acted on" pipeline needs a sweep keyed on the stored state, not on the import
+WHAT HAPPENED: app/api/replies/poll/route.ts inserts the reply row, then calls recordOptOut. The next run skips every stored gmail_message_id, so a run that died (or got ok:false) between the two left the opt-out off do_not_contact_list for good. Prod had 2 such senders. lib/replies/optout-repair.ts now reads stored hard_no / recent bounced replies against the DNC list each run and repairs the gap.
+RULE: When a job stores a record and then performs a side effect from it, and the import dedupe stops it from ever seeing that record again, the side effect needs its own idempotent sweep that compares the stored record with the side effect's result (here: reply intent vs DNC row). Leave a settle window (longer than maxDuration) so the sweep never races the run that is still acting, and fail closed on an unreadable target: a lookup error must not read as "missing".
+TAGS: replies, compliance, durability
+
+[2026-10-20] A repair that re-runs a side effect must not re-date it, and must ask "is it there?" with the gate's own predicate
+WHAT HAPPENED: Review of lib/replies/optout-repair.ts caught two things. (1) Calling recordOptOut with the prospect id for the 2 old July opt-outs would insert two `unsubscribe` pitch_events stamped now(); the autopilot's opt_out_spike breaker (tick.ts, governor.ts) counts those over 7 days and trips at 3, pausing every inbox and demoting the stage. Fixed: only a still-live prospect gets the full routine; closed/missing ones get DNC + audit only. (2) My first version counted a mixed-case DNC row as "listed", but the send gate (dnc-check.ts) matches lowercase only, so that row blocks nothing. Fixed: same lowercase-exact predicate as the gate.
+RULE: Before a sweep or backfill calls a routine that writes timeline events, grep who counts those events by time (breakers, learners, reports) and make the repair write only the state that is missing, never a fresh-dated event for an old fact. And "already done?" checks share the predicate of the gate they protect, not a looser one of your own.
+TAGS: replies, compliance, autopilot, durability
+
+## Out of scope, noticed
+- lib/compliance/opt-out.ts `recordOptOut`: its DNC lookup is `.eq("email", lowercased)`, so a mixed-case existing row is missed and a second row is written. Harmless for blocking (the send check reads lowercase), but it can double the audit row. A `lower(email)` lookup (or a unique index on (tenant_id, lower(email))) would fix it.
+- lib/discover/dnc-check.ts `addEmailToDnc` swallows insert errors, so the live bounce path can never report a failed DNC write. The sweep covers it for 2 hours after the bounce is stored.
+- The live bounce path's prospect suppression and sequence pause are not repaired by the sweep (address only): the DNC row already blocks every send.
+
+### from learning-review-backoff
+[2026-10-20] A structuredCall prompt must state the JSON field names; "matching the requested schema" sends no schema
+WHAT HAPPENED: `REVIEW_SYSTEM` in `lib/autopilot/learn.ts` described observations and guidance in prose but never named the keys (`title`/`evidence`, `text`/`why`). `structuredCall` (`lib/anthropic/client.ts`) only appends "Respond ONLY with valid JSON matching the requested schema"; the zod schema itself never reaches the model. The weekly review then failed every tick with output far under max_tokens (59 paid calls in 72 h). The prompt now states the exact shape and limits, and the schema accepts the common alias keys.
+RULE: Every prompt passed to structuredCall spells out the exact JSON shape (key names, list sizes, string limits) in its own text, taken from the same constants the zod schema uses. A test asserts the prompt contains the shape. Never rely on "the requested schema": the model never sees it.
+TAGS: anthropic, prompts, zod, learning
+
+[2026-10-20] A paid retry loop needs a mark written before the call, read by its own guard
+WHAT HAPPENED: `weeklyReview` guarded on "a `review` insight in 7 days", but only a success wrote one, so a failed call left no trace and the 15-minute tick paid again (about 18% of the $3/day cap). Fix: a `review.attempt` row is inserted BEFORE the call (no row, no call), updated with the reason after, and a 24 h guard reads it. A run killed mid-call still counts.
+RULE: For any paid or non-resumable call on a schedule, write the attempt mark before the call and fail closed if the mark cannot be written or read; record the outcome on the same row. A guard that only counts successes is an unbounded retry loop.
+TAGS: autopilot, cost, retries
+
+## Out of scope, noticed
+- `lib/anthropic/client.ts` `structuredCall`: the JSON parse error embeds `Raw: <first 200 chars of model output>`, which for prompts built from replies can carry prospect text into any caller that logs or stores `call.error`. I did not check whether other callers store it; worth a scrub at the source (conductor-only file). Twelve files call structuredCall.
+- Other structuredCall prompts may share the missing-shape problem; a grep for callers whose system text never names their schema keys would find them.
+
+### from pipeline-run-feedback
+[2026-10-20] A counter added to a multi-phase job counts each company once, in the phase that decides it
+WHAT HAPPENED: The brief asked for `stats.skipped` "counted by the route for both phases". The pitching phase's isPastPipeline filter (`app/api/discover/run/route.ts`, pruning → pitching handoff) runs over the ICP's whole ≥70 pool for an ICP job, and over the same ids the pipeline phase already saw for a hand-picked job. Counting there would report dozens of skips for a one-company run, or count the same company twice, and the prod check (`stats->'skipped'` = 1) would fail. Only the pipeline phase counts.
+RULE: Before adding a counter at a filter, ask what set the filter ranges over. If it is wider than "the companies this run was asked to process", or overlaps a set already counted, the count is not the run's; count where each company's outcome is decided, once.
+TAGS: discover, job-stats, honesty
+
+[2026-10-20] Prove a timer fix by removing the test's workaround, not by adding one
+WHAT HAPPENED: tests/pipeline-guards.test.ts unref'd every setTimeout so the route's never-cleared race timers did not hold the process. Replacing the unref with a live-timer tracker (no unref) made the old route fail the new timer test and take 1m35s; the fixed route (`withDeadline`, clear in `finally`) runs the file in 0.6s.
+RULE: A test shim that hides a leak (unref, fake timers advanced past it) also hides the regression. Track the resource instead and assert it is released; the slow suite on the old code is extra proof.
+TAGS: testing, timers, serverless
+
+## Out of scope, noticed
+- `app/api/discover/run/route.ts` pitching phase: `stats.pitched` adds ICP-wide catch-up pitches (other runs' high scorers) to this run's tally; for an ICP job the toast's "N pitched" can include companies this run never researched. Meaning left unchanged (brief's negative set).
+- `generatePitchWith` (lib/pitches/pitch-stage.ts) re-checks only DO_NOT_SEND_STATUSES (`:423`), not isPastPipeline; the pitching phase relies on the handoff filter, so a company that moved to sent or replied between the handoff and its pitching slice would still get a new draft (and a Claude call). Not changed (brief: which companies are pitched must not change).
+
+### from optout-alarm-people
+[2026-10-20] A breaker that counts timeline rows counts one human action as many
+WHAT HAPPENED: opt_out_spike summed `unsubscribe` + `reply`/hard_no rows (lib/autopilot/tick.ts countEvents). One "remove me" reply writes both (the poll on the thread's pitch, recordOptOut on the root pitch), so two people tripped a quality breaker that pauses every inbox and demotes the stage. Fixed in lib/autopilot/opt-out-count.ts: distinct prospects via pitch_id → pitches.prospect_id, falling back to the event count on a failed or truncated read.
+RULE: Before a breaker or learner counts pitch_events, list every writer of each event type it counts (grep `event_type: "<type>"` / `recordEvent`) and ask whether one human action writes more than one row. If it does, count the subject (prospect), not rows. A bounded read that hits its limit is a failed read: fall back to the exact count, never to a short one.
+TAGS: autopilot, breakers, pitch_events, counting
+
+[2026-10-20] Adding a module to tick.ts means adding it to the trust-split loader's REAL list
+WHAT HAPPENED: tests/autopilot-trust-split.test.ts stubs every tick.ts import not in its REAL map; a stubbed function throws when called, so a new `./opt-out-count` import made the kill-switch route test report `breakers: stub optOutMetrics called`.
+RULE: A new import in lib/autopilot/tick.ts that the breakers or safety steps call goes into REAL in tests/autopilot-trust-split.test.ts in the same commit.
+TAGS: autopilot, tests, loader-hook
+
+## Out of scope, noticed
+- lib/autopilot/tick.ts runBreakers: the inbox and DMARC/warmup reads ignore their `error` (a failed read reads as "no data"), same pattern the opt-out count had. Not a trip risk (fails quiet), but a silent blind spot.
+
+### late lessons from the batch 5 wrap-ups (learned during review fixes, after each inbox file)
+[2026-10-20] A fake db returns errors in the shape production returns them (a failed HEAD count is `{ message: "" }`)
+WHAT HAPPENED: (optout-alarm-people) The fallback used a `head: true` count and checked `if (w.error)`. A HEAD response has no body, so postgrest-js returns every failure as `{ message: "" }`; the empty string read as success, the breaker ran on 0/0, and the only error line said "using the event count". The test passed because the fake gave the failure a non-empty message.
+RULE: Fakes return production-shaped errors (empty message for head/count reads). Check error presence with `!== null` and turn an empty message into "read failed". When a fallback also fails, the error line says so; it never claims the fallback was used.
+TAGS: autopilot, postgrest, error-handling, test-fakes
+
+[2026-10-20] Never scrub untrusted text by masking paired delimiters; cut at the first delimiter
+WHAT HAPPENED: (learning-review-backoff) `reviewFailureText` replaced quoted spans to hide model output in stored error text. Model text with an odd number of quotes broke the pairing and let prospect names through (reproduced through the real structuredCall).
+RULE: A scrubber that must fail closed cuts the text at the first delimiter it cannot trust; test it with unbalanced input built from the real source of the text.
+TAGS: privacy, scrubbing, anthropic
+
+[2026-10-20] Clip only text that is shown to people, never text that acts; a lenient parser counts every unexpected value as dropped
+WHAT HAPPENED: (learning-review-backoff) Clipping guidance text to 400 chars let a sentence cut mid-word pass sanitizeGuidance (it collapses whitespace first) and go live as a challenger arm; a non-list value counted as 0 dropped and silently closed the week.
+RULE: Text that becomes an instruction, prompt or config is dropped and counted when too long, never clipped. Any value a lenient parser did not expect counts as dropped, so "nothing usable" reads as a failure.
+TAGS: zod, llm-output, learning
+
+[2026-10-20] Guard every write a run makes to a row another writer can change, widest window first
+WHAT HAPPENED: (followup-path-hardening) The brief named the 1-3 s release window after the claim; the real race was the 20-95 s between the due read and the claim, where an OOO postpone was overwritten and the follow-up sent at once. The reviewer found it.
+RULE: List every write the run makes to that row (claim, release, final update); each needs a "still what I read / still what I wrote" guard in its WHERE. Start with the longest read→write window, usually the claim after a slow step.
+TAGS: send-path, follow-up, race, claims
+
+[2026-10-20] With several deadlines in one route, derive each stage's stop time from every later stage's reserve at the maximum load
+WHAT HAPPENED: (warmup-imap-resilience) Round 1 fixed the placement-check budget against the send deadline only; the reply-step deadline added in the same round was then starved at 20+ sends a day, and at 30 the check floor and the reply step conflict outright.
+RULE: Tabulate target × stop × end for every stage at the designed maximum before pushing, and give every later stage a named reserve.
+TAGS: warmup, time-budget, cron
+
+[2026-10-20] A cap covers the whole lifecycle, teardown included; a worst-case sum names every library timeout from the library's source
+WHAT HAPPENED: (warmup-imap-resilience) The per-check timer was cleared before logout(), so a stalled LOGOUT added a full socketTimeout; nodemailer's default 30 s DNS timeout was missing from the first worst-case sum.
+RULE: Clear a cap after teardown; read each library's timeout defaults from its source and list them by name in the worst-case comment.
+TAGS: warmup, imap, smtp, timeouts
+
+[2026-10-20] A mutation must change behaviour the fake can show
+WHAT HAPPENED: (replies-optout-durability) A case-sensitivity mutation survived because the fake's `in` filter was exact-match, so the mutated code path produced the same visible result. Changing the read as well caught it.
+RULE: When a mutation survives, first ask whether the fake could tell the difference; only then call the guard untested.
+TAGS: testing, mutation, fake-db
+
+[2026-10-20] project-state.md is part of the ship, not the wrap-up
+WHAT HAPPENED: conductor/SKILL.md 6.5 says to update tasks/project-state.md before opening the integration PR. For the bounce hotfix (#31) and batch 4 (#36) the conductor updated the board and lessons but not project-state, so "What's deployed" still said main = 45519c8 a day later; a fresh session reading the conductor's state file would have been two ships behind. Caught while proposing batch 5.
+RULE: The integration PR is not opened until `git diff main -- tasks/project-state.md` shows the batch's section and the "What's deployed" line. After "ship it", replace "Prod = main = <sha>" in the same commit as the board's ship entry.
+TAGS: process, conductor, project-state
+
+[2026-10-19] PEDRO_OVERRIDE: A finished worker session is wrapped up first, then archived, every time
+WHAT HAPPENED: After batch 4 shipped, the four worker sessions (address-trust, autopilot-trust-split, pipeline-guards, send-path-hardening) sat idle with their containers still up. conductor/SKILL.md step 5.4 already said to archive a worker after its merge, and the conductor skipped it; Pedro had to ask "are the other sessions done?". Pedro: "everytime one of those sessions are done and finished you should 1st wrap them up and then archive them."
+RULE: When a worker's PR is merged (or the worker is rejected or stuck), the conductor sends it the WRAP UP message (worker/SKILL.md section 8), reads its reply from the transcript with list_events, carries any late lessons and loose ends to lessons.md / the board, and only then calls archive_session. Never archive before reading the wrap-up; never leave a merged worker idle. Record "wrapped + archived" in the board row.
+TAGS: process, conductor, workers, wrap-up, pedro-override
+
+## Merged from worker wrap-ups (batch 4, 2026-10-19 21:31 UTC; lessons learned after each inbox file was written)
+
+[2026-10-19] A mutation script must restore the file in a finally block
+WHAT HAPPENED: (address-trust) During the review-fix mutation runs, a regex bug crashed the script after it had written mutation F1 into lib/research/anymail-finder.ts and before it restored it. The tree held mutated source until the worker grepped and reverted it by hand.
+RULE: In a mutation harness, write the original back in try/finally, and grep for the original line before the next commit.
+TAGS: testing, mutation
+
+[2026-10-19] "Untrusted" at one layer can still be "send" at another
+WHAT HAPPENED: (address-trust) Labels like "Scraper", " manual" and "unknown_xyz" get verifier verdict "send" (default provenance, not a finder); only the lane/gate source check holds them. The conductor's note assumed they were "review" everywhere.
+RULE: A table test asserts every layer separately, plus the end-to-end lane. Never write one expected verdict for all layers.
+TAGS: research, autopilot, provenance
+
+[2026-10-19] "This step runs in state X" is tested from the scheduler's entry point, not from one function's source
+WHAT HAPPENED: (autopilot-trust-split) The first kill-switch test only checked that the breakers came before the "autopilot off" exit in tick.ts. The real gate was `.eq("enabled", true)` in app/api/autopilot/tick/route.ts, which a source check on one function can't see; review caught it. The replacement runs the real route and runTick against a fake db through a loader hook.
+RULE: Load the route and the orchestrator for real through a loader hook, set the state to X, stub only outside services, and check what happened. Source-text checks are for wiring that can't be run.
+TAGS: testing, autopilot, cron, loader-hook
+
+[2026-10-19] A cleanup step must leave alone the rows a later step exists to pick up
+WHAT HAPPENED: (pipeline-guards) The new sweep in app/api/discover/run/route.ts suppressed errored `researched` rows, including ones scoring 70+, exactly the rows the pitching phase catches after a timeout. Fixed with one shared constant, PITCHING_MIN_SCORE, used by both.
+RULE: Before a cleanup deletes or parks rows, find every later step that selects from that status and share its selection constant in the cleanup's exclusion. Write one test where both see the same row.
+TAGS: discover, sweep, pipeline
+
+[2026-10-19] A guard written as `if (row && bad(row))` lets a failed read through
+WHAT HAPPENED: (pipeline-guards) The forward-only check in processSingleProspectWith ignored the read's error, so a failed read on a `replied` company fell into the no-website lane and was suppressed for good. Same fail-open shape _core-context.md warns about for send checks.
+RULE: Every entry check before spending money or writing a status reads `{ data, error }` and stops on `error || !data`. Test it with an empty-message error.
+TAGS: discover, fail-closed
+
+[2026-10-19] A test that calls a route twice needs a new Request each time
+WHAT HAPPENED: (pipeline-guards) Reusing one Request gave "Bad request" on the second slice: a body can be read only once.
+RULE: In route tests, build a fresh Request for each call.
+TAGS: tests
+
+[2026-10-19] A fixture date equal to today hides a missing date argument
+WHAT HAPPENED: (send-path-hardening) Mutation F3b (the slot release passes today's date instead of the reserve's day) passed every test at first, because the midnight test pinned "2026-10-19", the real date. A test asserting the exact day handed to the RPC (2001-02-03) catches it now.
+RULE: Test date-scoped logic with a fixed date far from today, and assert the value where it is passed along, not only through the end result.
+TAGS: tests, dates, mutation
+
 [2026-10-19] PEDRO_OVERRIDE: Build on the existing second brain and wrap-up routine; never design a parallel one
 WHAT HAPPENED: Asked how to make the conductor workflow smarter, the conductor (a cloud session) proposed a new lessons loop and a new /wrap-up command. Pedro already runs both: the second brain (Moisty-Mango/second-brain: recall hook, capture on session end, weekly distill) and the wrap-up routine in his global rules (Moisty-Mango/dotclaude CLAUDE.md). Cloud sessions load neither (the hooks and rules assume /Users/work and $HOME/Brain on his Macs), so the conductor never saw them, skipped the wrap-up, logged no PEDRO_OVERRIDEs and broke the global writing rules all session.
 RULE: At the start of any cloud session, check whether the global rules and the brain are present (~/.claude/CLAUDE.md, $HOME/Brain/brain-starter). If not, say so to Pedro and ask to attach Moisty-Mango/dotclaude and Moisty-Mango/second-brain read-only before proposing any process change. Improve his loop; never replace it.

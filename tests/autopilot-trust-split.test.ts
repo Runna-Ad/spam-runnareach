@@ -10,8 +10,8 @@
  * route.ts, tick.ts and snapshot.ts import "server-only", "@/" aliases and
  * Next, which node cannot load here, so a loader hook (as in
  * tests/pipeline-status-rule.test.ts) stubs every import of those three files
- * except the autopilot modules under test (governor, hold, bounce-breaker, and
- * tick itself for the route). Each stub records its calls; the db is a fake that
+ * except the autopilot modules under test (governor, hold, bounce-breaker,
+ * opt-out-count, and tick itself for the route). Each stub records its calls; the db is a fake that
  * applies the filters the way Postgres would.
  */
 
@@ -32,6 +32,7 @@ const REAL: Record<string, Record<string, string>> = {
     "./governor": u("../lib/autopilot/governor.ts"),
     "./hold": u("../lib/autopilot/hold.ts"),
     "./bounce-breaker": u("../lib/autopilot/bounce-breaker.ts"),
+    "./opt-out-count": u("../lib/autopilot/opt-out-count.ts"),
   },
   [SNAPSHOT]: {},
 };
@@ -371,4 +372,24 @@ test("snapshot: autoScheduled rows carry autopilot_reasons, so a pull-back is no
     [["held by the autopilot: autopilot switched off"], null, ["held by the autopilot: stage dropped to shadow"], [], ["held by a person from the digest link"]],
   );
   assert.equal(buildWeeklyStats(raw).vetoed, 2, "the digest hold and the rejection; both pull-backs excluded");
+});
+
+test("snapshot: the weekly review's attempt markers are not counted as insights", async () => {
+  const now = new Date("2026-10-26T13:10:00Z");
+  const db = fakeDb({
+    learning_insights: [
+      { id: "i1", tenant_id: "t1", learner: "review", kind: "observation", title: "Replies ask about price", created_at: "2026-10-24T10:00:00Z" },
+      { id: "i2", tenant_id: "t1", learner: "review.attempt", kind: "observation", title: "Weekly AI review ran", created_at: "2026-10-24T09:59:00Z" },
+      { id: "i3", tenant_id: "t1", learner: "review.attempt", kind: "observation", title: "Weekly AI review failed (parse)", created_at: "2026-10-23T10:00:00Z" },
+      { id: "i4", tenant_id: "t1", learner: "governor", kind: "breaker", title: "Paused an inbox", created_at: "2026-10-23T11:00:00Z" },
+    ],
+  });
+  wire(db);
+  answers.exemplarsEnabled = () => false;
+  const { gatherWeeklyRaw } = (await import(SNAPSHOT)) as { gatherWeeklyRaw: (t: string, n: Date) => Promise<WeeklyRaw> };
+  const raw = await gatherWeeklyRaw("t1", now);
+  assert.deepEqual((raw.insights ?? []).map((r) => r.title), ["Replies ask about price"]);
+  // learn.ts imports server-only, so read its constant from source: snapshot.ts filters on this exact value.
+  const learnSrc = readFileSync(new URL("../lib/autopilot/learn.ts", import.meta.url), "utf8");
+  assert.match(learnSrc, /export const REVIEW_ATTEMPT_LEARNER = "review\.attempt";/);
 });

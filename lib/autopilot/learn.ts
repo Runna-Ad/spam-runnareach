@@ -26,7 +26,7 @@ import { z } from "zod";
 import { ANTHROPIC_DEFAULT_MODEL, claudeIsAvailable, structuredCall } from "@/lib/anthropic/client";
 import { isUnderDailyCap, recordClaudeCall } from "@/lib/anthropic/cost-tracking";
 import { chooseArm, meanReward, reviewArms, type Arm, type ArmAction } from "@/lib/learning/bandit";
-import { armStats, funnelForProspect, sanitizeGuidance, type PitchOutcomeInput } from "@/lib/learning/outcomes";
+import { armStats, funnelForProspect, GUIDANCE_MAX_CHARS, sanitizeGuidance, type PitchOutcomeInput } from "@/lib/learning/outcomes";
 import { hunterDemand, industryScore, proposeCells, type IcpForCells, type IndustryEvidence } from "@/lib/learning/icp";
 import type { OutcomeEvent } from "@/lib/learning/reward";
 import { cellArm, cellKey, prospectReward, scoutCredits } from "@/lib/learning/scout";
@@ -371,16 +371,80 @@ export async function evolveSearchSpace(db: Db, tenantId: string, now: Date = ne
 
 // ── Weekly AI review ──────────────────────────────────────────────────────────
 
-const reviewSchema = z.object({
-  observations: z
-    .array(z.object({ title: z.string().min(5).max(200), evidence: z.string().min(5).max(600) }))
-    .max(6)
-    .default([]),
-  guidance: z
-    .array(z.object({ text: z.string().min(12).max(400), why: z.string().min(5).max(400) }))
-    .max(2)
-    .default([]),
-});
+const OBS_TITLE_MAX = 200;
+const OBS_EVIDENCE_MAX = 600;
+const OBS_MAX = 6;
+const GUIDANCE_TEXT_MAX = 400;
+const GUIDANCE_WHY_MAX = 400;
+const GUIDANCE_MAX = 2;
+
+const clip = (max: number) => (s: string) => s.slice(0, max);
+/** The first string among the keys a model tends to use for the same field. */
+const field = (o: Record<string, unknown>, keys: string[]): unknown => keys.map((k) => o[k]).find((v) => typeof v === "string");
+
+const observationItem = z.preprocess(
+  (v) => (v && typeof v === "object" ? { ...v, title: field(v as Record<string, unknown>, ["title", "observation", "finding", "summary"]) } : v),
+  z.object({ title: z.string().min(5).transform(clip(OBS_TITLE_MAX)), evidence: z.string().min(5).transform(clip(OBS_EVIDENCE_MAX)) }),
+);
+const guidanceItem = z.preprocess(
+  (v) => {
+    if (!v || typeof v !== "object") return v;
+    const o = v as Record<string, unknown>;
+    return { ...o, text: field(o, ["text", "instruction", "guidance"]), why: field(o, ["why", "reason", "rationale"]) };
+  },
+  // The instruction itself is never clipped: a cut-off instruction could go live.
+  z.object({ text: z.string().min(12).max(GUIDANCE_TEXT_MAX), why: z.string().min(5).transform(clip(GUIDANCE_WHY_MAX)) }),
+);
+
+/**
+ * A list the model filled: items that break a rule are dropped (and counted),
+ * long strings are clipped where the rule allows it, extra items cut. A value
+ * that is present but not a list counts as one dropped item.
+ */
+function lenientList<T>(item: z.ZodType<T, z.ZodTypeDef, unknown>, v: unknown, max: number): { items: T[]; dropped: number } {
+  if (v === undefined) return { items: [], dropped: 0 };
+  if (!Array.isArray(v)) return { items: [], dropped: 1 };
+  const items = v.flatMap((x) => {
+    const r = item.safeParse(x);
+    return r.success ? [r.data] : [];
+  });
+  return { items: items.slice(0, max), dropped: v.length - items.length };
+}
+
+const hasReviewKeys = (v: unknown): v is Record<string, unknown> =>
+  Boolean(v) && typeof v === "object" && !Array.isArray(v) && ("observations" in (v as object) || "guidance" in (v as object));
+
+/**
+ * `{ "review": { observations, guidance } }`, with or without sibling keys:
+ * unwrap the one nested object that carries the review's keys.
+ */
+function unwrapReview(v: unknown): unknown {
+  if (!v || typeof v !== "object" || Array.isArray(v) || hasReviewKeys(v)) return v;
+  const inner = Object.values(v as Record<string, unknown>).filter(hasReviewKeys);
+  return inner.length === 1 ? inner[0] : v;
+}
+
+type ReviewOutput = {
+  observations: Array<{ title: string; evidence: string }>;
+  guidance: Array<{ text: string; why: string }>;
+  /** Items the model returned that broke a rule and were left out. */
+  dropped: number;
+};
+
+// structuredCall types its schema's input as its output; safeParse takes anything.
+export const reviewSchema = z.unknown().transform((raw, ctx): ReviewOutput => {
+  const v = unwrapReview(raw);
+  if (!v || typeof v !== "object" || Array.isArray(v)) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, message: "expected a JSON object" });
+    return z.NEVER;
+  }
+  const o = v as Record<string, unknown>;
+  const observations = lenientList(observationItem, o.observations, OBS_MAX);
+  const guidance = lenientList(guidanceItem, o.guidance, GUIDANCE_MAX);
+  // An object with neither key is not an empty week: it must not close the week.
+  const missing = hasReviewKeys(o) ? 0 : 1;
+  return { observations: observations.items, guidance: guidance.items, dropped: observations.dropped + guidance.dropped + missing };
+}) as unknown as z.ZodType<ReviewOutput>;
 
 const REVIEW_SYSTEM = `You improve an automated cold-email writer for Rünna (Runna Advertising), a Mexico/Canada agency that helps small and mid-size businesses with marketing and automation. Emails link to a free audit tool (the Inefficiency Hunter).
 
@@ -393,18 +457,77 @@ Hard limits (an instruction that breaks one is discarded):
 - never relax or contradict the writer's rules (no client names, no invented facts, plain words, short emails, one link to the free audit);
 - plain language, no marketing jargon;
 - an instruction about HOW to write, not about a specific prospect.
-If the evidence is too thin to support a new instruction, return an empty guidance list.`;
+If the evidence is too thin to support a new instruction, return an empty guidance list.
 
-/** At most once a week, and only with something to learn from. Returns what was created. */
-export async function weeklyReview(db: Db, tenantId: string, now: Date = new Date()): Promise<{ ran: boolean; reason: string; guidance: string[] }> {
+Return exactly this JSON shape:
+{"observations": [{"title": "...", "evidence": "..."}], "guidance": [{"text": "...", "why": "..."}]}
+Limits: up to ${OBS_MAX} observations (title under ${OBS_TITLE_MAX} characters, evidence under ${OBS_EVIDENCE_MAX}); up to ${GUIDANCE_MAX} guidance items (text one sentence under ${GUIDANCE_MAX_CHARS} characters, why under ${GUIDANCE_WHY_MAX}).`;
+
+/**
+ * Each paid review attempt leaves this row BEFORE the call, so a call that
+ * fails (or a function killed mid-call) still counts: at most one paid attempt
+ * per 24 h whatever goes wrong. Its own learner, so a failure does not count as
+ * "reviewed this week"; a success writes `review` rows as before.
+ */
+export const REVIEW_ATTEMPT_LEARNER = "review.attempt";
+
+type ReviewDeps = {
+  call: typeof structuredCall;
+  claudeAvailable: typeof claudeIsAvailable;
+  underCap: typeof isUnderDailyCap;
+  record: typeof recordClaudeCall;
+};
+const REVIEW_DEPS: ReviewDeps = { call: structuredCall, claudeAvailable: claudeIsAvailable, underCap: isUnderDailyCap, record: recordClaudeCall };
+
+/**
+ * What a failed call says, for a person: the reason and the error's first
+ * ~300 characters. A JSON parse error is cut at its first quote, which drops
+ * the model's raw output and the snippet JSON.parse quotes (the output can
+ * quote prospect replies); an API or schema error is kept as is (zod
+ * messages carry paths, not values).
+ */
+export function reviewFailureText(error: string): string {
+  if (!error.startsWith("JSON parse failed")) return error.slice(0, 300);
+  // Fail closed: nothing after the first quote survives (quotes in model text
+  // don't pair, so masking quoted spans let text through).
+  const cut = error.replace(/\.?\s*Raw:[\s\S]*$/, "");
+  return (cut.split('"')[0] ?? "").trimEnd().slice(0, 300);
+}
+
+/**
+ * At most one successful review a week and one paid attempt a day, and only
+ * with something to learn from. Returns what was created.
+ */
+export async function weeklyReview(
+  db: Db,
+  tenantId: string,
+  now: Date = new Date(),
+  deps: ReviewDeps = REVIEW_DEPS,
+): Promise<{ ran: boolean; reason: string; guidance: string[] }> {
   const weekAgo = new Date(now.getTime() - 7 * DAY).toISOString();
-  const { count: recent } = await db
+  const { count: recent, error: recentError } = await db
     .from("learning_insights")
     .select("id", { count: "exact", head: true })
     .eq("tenant_id", tenantId)
     .eq("learner", "review")
     .gte("created_at", weekAgo);
+  if (recentError) return { ran: false, reason: "could not read this week's reviews", guidance: [] };
   if ((recent ?? 0) > 0) return { ran: false, reason: "reviewed this week", guidance: [] };
+
+  const { data: lastAttempt, error: attemptReadError } = await db
+    .from("learning_insights")
+    .select("created_at")
+    .eq("tenant_id", tenantId)
+    .eq("learner", REVIEW_ATTEMPT_LEARNER)
+    .gte("created_at", new Date(now.getTime() - DAY).toISOString())
+    .order("created_at", { ascending: false })
+    .limit(1);
+  if (attemptReadError) return { ran: false, reason: "could not read the last review attempt", guidance: [] };
+  const last = ((lastAttempt ?? []) as Array<{ created_at: string }>)[0];
+  if (last) {
+    const next = new Date(new Date(last.created_at).getTime() + DAY).toISOString();
+    return { ran: false, reason: `review attempted in the last 24 h; next try after ${next}`, guidance: [] };
+  }
 
   const since = new Date(now.getTime() - 14 * DAY).toISOString();
   const { count: sent } = await db
@@ -414,8 +537,8 @@ export async function weeklyReview(db: Db, tenantId: string, now: Date = new Dat
     .is("parent_pitch_id", null)
     .gte("sent_at", since);
   if ((sent ?? 0) < 10) return { ran: false, reason: `only ${sent ?? 0} emails sent in 14 days`, guidance: [] };
-  if (!claudeIsAvailable()) return { ran: false, reason: "Claude unavailable", guidance: [] };
-  const cap = await isUnderDailyCap(tenantId);
+  if (!deps.claudeAvailable()) return { ran: false, reason: "Claude unavailable", guidance: [] };
+  const cap = await deps.underCap(tenantId);
   if (!cap.under) return { ran: false, reason: "daily AI cap reached", guidance: [] };
 
   const [{ data: replies }, { data: held }, { data: edited }, { data: drafts }, { data: arms }] = await Promise.all([
@@ -449,16 +572,36 @@ export async function weeklyReview(db: Db, tenantId: string, now: Date = new Dat
       .map((a) => ({ learner: a.learner, key: a.key, status: a.status, trials: a.trials, mean_reward: Number(meanReward(toArm(a)).toFixed(3)), text: a.config?.text ?? a.config?.description ?? null })),
   };
 
-  const call = await structuredCall({
+  const { data: attempt, error: attemptError } = await db
+    .from("learning_insights")
+    .insert({
+      tenant_id: tenantId,
+      learner: REVIEW_ATTEMPT_LEARNER,
+      kind: "observation",
+      title: "Weekly AI review: attempt started",
+      detail: null,
+      evidence: {},
+      applied: true,
+    })
+    .select("id")
+    .single();
+  // No mark, no paid call: an unmarked failure is what retried every tick.
+  if (attemptError || !attempt) return { ran: false, reason: "could not record the review attempt; skipped", guidance: [] };
+  const markAttempt = async (title: string, detail: string | null, evidence: Record<string, unknown>) => {
+    await db.from("learning_insights").update({ title, detail, evidence }).eq("id", (attempt as { id: string }).id);
+  };
+
+  const call = await deps.call({
     model: ANTHROPIC_DEFAULT_MODEL,
     system: REVIEW_SYSTEM,
     user: `This week's evidence:\n\`\`\`json\n${JSON.stringify(evidence, null, 2)}\n\`\`\``,
-    max_tokens: 1500,
+    // The prompt allows ~6k characters of output; 1500 tokens could truncate it.
+    max_tokens: 2500,
     timeoutMs: 45_000,
     schema: reviewSchema,
   });
   if (call.usage) {
-    await recordClaudeCall({
+    await deps.record({
       tenantId,
       model: ANTHROPIC_DEFAULT_MODEL,
       entity_type: "pitch",
@@ -467,7 +610,19 @@ export async function weeklyReview(db: Db, tenantId: string, now: Date = new Dat
       metadata: { kind: "learning_review" },
     });
   }
-  if (!call.ok) return { ran: false, reason: "review call failed", guidance: [] };
+  const nextTry = new Date(now.getTime() + DAY).toISOString().slice(0, 16).replace("T", " ");
+  if (!call.ok) {
+    const why = reviewFailureText(call.error);
+    await markAttempt(`Weekly AI review failed (${call.reason}); next try after ${nextTry} UTC`, why, { reason: call.reason });
+    return { ran: false, reason: `review call failed (${call.reason}): ${why}`, guidance: [] };
+  }
+  const { dropped } = call.data;
+  if (dropped > 0 && call.data.observations.length === 0 && call.data.guidance.length === 0) {
+    const why = `every item the model returned was malformed (${dropped} dropped)`;
+    await markAttempt(`Weekly AI review failed (parse); next try after ${nextTry} UTC`, why, { reason: "parse", dropped });
+    return { ran: false, reason: `review call failed (parse): ${why}`, guidance: [] };
+  }
+  await markAttempt(`Weekly AI review ran${dropped ? ` (${dropped} malformed item${dropped === 1 ? "" : "s"} dropped)` : ""}`, null, { dropped });
 
   for (const o of call.data.observations ?? []) {
     await insight(db, tenantId, { learner: "review", kind: "observation", title: o.title, detail: o.evidence });

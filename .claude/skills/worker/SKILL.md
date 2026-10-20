@@ -126,3 +126,21 @@ Then stop. Do not keep working, polling, or improving. If the conductor sends re
 findings, fix the blocking ones, push to the same branch (new commits, never amend), and
 update the Report block at the top of the PR body. Optional findings ride along only if
 you are already pushing.
+
+## 8. Wrap up (when the conductor sends "WRAP UP <slug>")
+Your PR is merged (or the task is closed). The conductor reads your reply from your
+transcript and then archives this session. Do this, then stop:
+1. `git status --short` and `git log --oneline origin/<branch>..HEAD`: list uncommitted
+   or unpushed work. Commit and push nothing new (the branch is merged; a new commit is
+   orphaned). Describe anything real that is left.
+2. Lessons learned after you wrote `tasks/lessons-inbox/<slug>.md` (e.g. during review
+   fixes): put them in the reply as WHAT HAPPENED / RULE / TAGS. Do not edit the file.
+3. Noticed but not done: one line each, or "none".
+4. End with this block, filled in:
+   ```
+   Fully done?               Yes / No / Not checked
+   Anything needed from you? No / one specific action
+   New unfinished work?      No / how many + where it's written down
+   Safe to close?            Yes / No: reason in five words
+   ```
+Do not `send_message` the conductor. Under 25 lines.

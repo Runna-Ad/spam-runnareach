@@ -106,8 +106,18 @@ rework in retros traces to a missing sentence in the brief. Before spawning, che
 - The Files list is derived by grep: every caller that gates the path, every producer of
   data the change reads, every writer of a field it protects (batch 4: 3 of 5 blocking
   findings were files the brief left out: a route filter, a report producer, a 4th writer).
-- A claim about how the code behaves today quotes the line that does it (batch 4: a false
-  premise about the >=70 pitching phase cost a rework round).
+- A claim about how the code behaves today quotes the line that does it, checked against its
+  file:line before spawning (batch 4: a false premise about the >=70 pitching phase cost a
+  rework round; batch 5: "the /learning page lists insights" was false).
+- A brief that names a race lists EVERY write the run makes to the contested row (claim,
+  release, final update) and starts from the widest read→write window (batch 5: the brief
+  named the 1-3 s release window; the real one was the 20-95 s before the claim).
+- A brief with a time budget names the largest load the code is designed for (schedules,
+  ramp constants) and asks for a test at that load, plus a reserve for every step between
+  two deadlines (batch 5: warm-up took 3 review rounds on budget math at 40-50/day).
+- A brief for a repair/backfill that calls a shared routine lists what that routine writes
+  and who counts those rows by time (batch 5: phantom opt-out events would have tripped a
+  breaker on the deploy week).
 - "Brain lessons": run `tasks/tools/brain-recall-for.sh "<the brief's goal in a sentence>"`
   and paste the RULE of each article that really applies (skip weak matches). Worker
   sessions do not get the brain; the brief is how its lessons reach them.
@@ -171,8 +181,14 @@ Small bounded jobs (one test file, a lint sweep, a doc) may use `Agent` with the
    verifies it directly (run the suite, reproduce the inputs) instead of a third review.
    `reject` → rework row on the board; rewrite the brief with what was missing; respawn,
    on a stronger model if routing allows.
-4. After merge: delete nothing, close the worker session (`archive_session`) or remove
-   the worktree, move the board row to merged, flip its migration from reserved to used,
+4. After merge: delete nothing. Close the worker in two steps, every time (PEDRO_OVERRIDE
+   2026-10-19): (a) wrap up: `send_message` it the WRAP UP message from
+   `worker/SKILL.md` section 8, then read its reply with `list_events` (kinds
+   assistant/result) and carry late lessons and loose ends to your pending-lessons list
+   and the board; (b) only then `archive_session` (an in-session sub-agent: its final
+   output is the wrap-up; remove the worktree). A worker rejected or stuck gets the same
+   two steps. Board row: "wrapped + archived". Then move the board row to merged, flip
+   its migration from reserved to used,
    merge the inbox lessons file into your pending-lessons list. Before spawning a task
    that depends on this one, confirm the dependency is on the integration branch
    (`git show integration:path`).

@@ -20,6 +20,7 @@ import {
   resumeDiscoveryJob,
 } from "@/lib/discover/job-actions";
 import type { Prospect } from "@/lib/discover/prospects-queries";
+import { summarizePipelineRun } from "@/lib/discover/run-summary";
 import { useDebounce } from "@/lib/hooks";
 import { cn, relativeTime } from "@/lib/utils";
 
@@ -181,33 +182,9 @@ export function CompaniesPage({ prospects, icps, initialFilters }: CompaniesPage
       if (!active) return;
       if (j) {
         if (j.status !== "running") {
-          const errored = j.stats.error_count ?? 0;
-          const done =
-            j.stats.pitched + j.stats.website_pitch + j.stats.needs_review + j.stats.suppressed;
-          // error_count was previously left OUT of this summary, so a run where
-          // every prospect errored reported "done — 0 processed" with no reason
-          // shown. Surface failures, and don't call it "done" when nothing
-          // actually succeeded.
-          const detail = [
-            `${j.stats.pitched} pitched`,
-            `${j.stats.needs_review} review`,
-            `${j.stats.suppressed} suppressed`,
-            ...(errored > 0 ? [`${errored} failed`] : []),
-          ].join(" · ");
-          const firstError = j.stats.errors?.[0] ?? j.error_message ?? null;
-          setBulkToast(
-            j.status === "failed"
-              ? { tone: "warn", text: j.error_message ?? "Pipeline run failed — try again." }
-              : done === 0 && errored > 0
-                ? {
-                    tone: "warn",
-                    text: `Pipeline finished but every prospect failed (${errored}).${firstError ? ` First error: ${firstError}` : " Check the prospect's Activity tab for details."}`,
-                  }
-                : {
-                    tone: "ok",
-                    text: `Pipeline done — ${detail} (${done + errored} processed).`,
-                  },
-          );
+          // Skipped (already contacted or parked), website pitches and failures
+          // all show: a run that skipped everything must not read as "0 processed".
+          setBulkToast(summarizePipelineRun(j));
           setBulkJobId(null);
           router.refresh();
           window.setTimeout(() => setBulkToast(null), 8000);

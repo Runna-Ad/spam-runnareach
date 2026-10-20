@@ -1,6 +1,6 @@
 // ─────────────────────────────────────────────────────────────────────────────
 // app/api/warmup/engine/route.ts
-// Warmup engine — triggered by Vercel Cron every 30 minutes.
+// Warmup engine — triggered once a day by Vercel Cron (`0 14 * * *`).
 //
 // Logic per tick:
 //   1. Load all active warmup_config rows.
@@ -35,17 +35,28 @@ import {
 import {
   checkMessageInbox,
   processIncomingWarmupEmails,
+  replyDeadlineFor,
 } from "@/lib/warmup/imap";
 import {
   analyzeSpamRate,
   isRfcMessageId,
-  placementFromCheck,
+  placementCheckStopAt,
+  runPlacementChecks,
+  type PlacementCheckReport,
   shouldIncrementDay,
   computeDayPlan,
   pickNextBuddyIndex,
 } from "@/lib/warmup/intelligence";
 import { resolveDailyTarget } from "@/lib/warmup/types";
 import type { EngineTickResult, WarmupConfig } from "@/lib/warmup/types";
+
+/** The run's JSON report also says what the placement checks did. */
+type ConfigTickResult = EngineTickResult & {
+  placement?: PlacementCheckReport;
+  /** Wall time of the send loop, to calibrate PER_SEND_RESERVE_MS from the logs. */
+  send_ms?: number;
+  replies?: { buddies: number; replied: number; replies_skipped?: "no time" };
+};
 
 // ── Auth guard ─────────────────────────────────────────────────────────────────
 
@@ -81,7 +92,7 @@ async function getSendingInbox(
 
 // ── Engine tick for a single config ───────────────────────────────────────────
 
-async function processConfig(config: WarmupConfig): Promise<EngineTickResult> {
+async function processConfig(config: WarmupConfig): Promise<ConfigTickResult> {
   const tickStart = Date.now();
   // Fixed wall-clock budget for the send loop. The route's maxDuration is 120s;
   // we stop INITIATING new sends at 105s so the in-flight send (~1s) completes
@@ -93,8 +104,10 @@ async function processConfig(config: WarmupConfig): Promise<EngineTickResult> {
   // broke before the first send ("deadline reached after 0/50 sends"). It only
   // worked at ≤20/day where the term stayed positive. See lessons 2026-06-22.
   const SEND_DEADLINE_MS = tickStart + 105_000;
+  // Step 8 starts no read or reply after this (its tail ends before 120 s).
+  const REPLY_DEADLINE_MS = replyDeadlineFor(tickStart);
 
-  const result: EngineTickResult = {
+  const result: ConfigTickResult = {
     config_id: config.id,
     sending_email: config.sending_email,
     day: config.current_day,
@@ -135,35 +148,40 @@ async function processConfig(config: WarmupConfig): Promise<EngineTickResult> {
         return { inbox, accessToken: token.accessToken };
       })());
 
+    // Today's send plan first: step 2's budget is whatever the sends leave.
+    // Use log-derived count as the source of truth — immune to counter race conditions.
+    const sentTodayFromLog = await getSentTodayFromLog(config.id);
+    const dayPlan = computeDayPlan({ ...config, emails_sent_today: sentTodayFromLog });
+
     // ── Step 2: IMAP check of previous sends (landed in inbox vs spam?)
-    // Cap at 4 per tick — each IMAP check takes ~8-12s worst case. 4 checks = ~48s max,
-    // leaving room for sending emails. Newest sends first; the rest are a sample we skip.
-    const pendingChecks = (await getPendingInboxChecks(config.id)).slice(0, 4);
+    // Every pending send from the 72h window, oldest first, until the check
+    // budget is spent. The budget shrinks with today's send count
+    // (placementCheckStopAt), so the sends below always fit before
+    // SEND_DEADLINE_MS; each check is cut off at PLACEMENT_CHECK_MAX_MS.
+    const pendingChecks = await getPendingInboxChecks(config.id);
     const buddies = await getActiveBuddies();
+    const checkStopAt = placementCheckStopAt(tickStart, SEND_DEADLINE_MS, REPLY_DEADLINE_MS, dayPlan.remainingToday);
 
-    for (const log of pendingChecks) {
-      if (!log.message_id || !log.buddy_id) continue;
-      const buddy = buddies.find((b) => b.id === log.buddy_id);
-      if (!buddy) continue;
-
+    result.placement = await runPlacementChecks(pendingChecks, checkStopAt, {
+      buddies,
+      buddyId: (b) => b.id,
+      now: Date.now,
       // The buddy's IMAP search needs the RFC Message-ID. Sends logged before
       // 2026-10-17 (or whose lookup failed at send time) hold Gmail's internal
       // id: read the real header from the sender's mailbox and keep it.
-      let rfcMessageId: string | null = log.message_id;
-      if (!isRfcMessageId(rfcMessageId)) {
+      resolveRfcId: async (log) => {
+        if (isRfcMessageId(log.message_id)) return log.message_id;
+        if (!log.message_id) return null;
         const auth = await getSenderAuth();
-        rfcMessageId = "accessToken" in auth ? await fetchRfcMessageId(auth.accessToken, log.message_id) : null;
-        if (!isRfcMessageId(rfcMessageId)) continue;
+        const rfcMessageId = "accessToken" in auth ? await fetchRfcMessageId(auth.accessToken, log.message_id) : null;
+        if (!isRfcMessageId(rfcMessageId)) return null;
         await updateWarmupLog(log.id, { message_id: rfcMessageId });
-      }
-
-      const check = await checkMessageInbox(buddy, rfcMessageId);
-      const landed = check ? placementFromCheck(check) : null;
-      if (landed !== null) {
-        await updateWarmupLog(log.id, { landed_in_inbox: landed });
-        result.checked++;
-      }
-    }
+        return rfcMessageId;
+      },
+      check: (buddy, rfcMessageId, timeoutMs) => checkMessageInbox(buddy, rfcMessageId, { timeoutMs }),
+      record: (logId, landed) => updateWarmupLog(logId, { landed_in_inbox: landed }),
+    });
+    result.checked = result.placement.checked;
 
     // ── Step 3: Analyze spam rate — auto-pause if over threshold
     const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
@@ -180,10 +198,7 @@ async function processConfig(config: WarmupConfig): Promise<EngineTickResult> {
       return result;
     }
 
-    // ── Step 4: Compute how many to send this tick
-    // Use log-derived count as the source of truth — immune to counter race conditions.
-    const sentTodayFromLog = await getSentTodayFromLog(config.id);
-    const dayPlan = computeDayPlan({ ...config, emails_sent_today: sentTodayFromLog });
+    // ── Step 4: Anything left to send today? (plan computed before step 2)
     if (!dayPlan.shouldSend) {
       result.skipped_reason = `Daily target (${dayPlan.targetForToday}) already reached`;
       return result;
@@ -202,6 +217,7 @@ async function processConfig(config: WarmupConfig): Promise<EngineTickResult> {
     const sendThisTick = dayPlan.remainingToday;
     const deadline = SEND_DEADLINE_MS;
     let buddyIndex = config.last_buddy_index;
+    const sendStart = Date.now();
 
     for (let i = 0; i < sendThisTick; i++) {
       if (buddies.length === 0) break;
@@ -267,6 +283,8 @@ async function processConfig(config: WarmupConfig): Promise<EngineTickResult> {
       }
     }
 
+    result.send_ms = Date.now() - sendStart;
+
     // ── Step 7: Update config counters (atomic increment — avoids race with concurrent runs)
     // We use a SQL-level increment instead of read-modify-write so that a concurrent
     // "Run now" click or cron duplicate-fire can't overwrite a valid count with 0.
@@ -276,7 +294,11 @@ async function processConfig(config: WarmupConfig): Promise<EngineTickResult> {
 
     // ── Step 8: Process incoming replies from buddies
     // We look for unread warmup emails in each buddy's inbox and auto-reply.
-    // Process at most 2 buddies per tick to stay within the 60s timeout.
+    // At most 2 buddies. No read or reply starts after REPLY_DEADLINE_MS, so
+    // the one reply in flight plus its mark-read (REPLY_TAIL_MS) end before
+    // the 120s maxDuration; what is left waits for tomorrow, still unread.
+    // On a heavy send day the sends win and step 8 is skipped on purpose:
+    // the run's log line says so.
     const replyTemplates = [
       { subject: "Re:", reply_text: "Thanks for reaching out! Talk soon." },
       { subject: "Re:", reply_text: "Got it! I'll get back to you shortly." },
@@ -284,9 +306,15 @@ async function processConfig(config: WarmupConfig): Promise<EngineTickResult> {
       { subject: "Re:", reply_text: "Sounds good! Let me take a look and follow up." },
     ];
 
+    result.replies = { buddies: 0, replied: 0 };
     for (const buddy of buddies.slice(0, 2)) {
+      if (Date.now() >= REPLY_DEADLINE_MS) {
+        result.replies.replies_skipped = "no time";
+        break;
+      }
       try {
-        await processIncomingWarmupEmails(buddy, config.sending_email, replyTemplates);
+        result.replies.replied += await processIncomingWarmupEmails(buddy, config.sending_email, replyTemplates, { deadline: REPLY_DEADLINE_MS });
+        result.replies.buddies++;
       } catch (err) {
         console.warn(`[warmup/engine] processIncoming for buddy ${buddy.id} failed:`, err);
       }
@@ -308,7 +336,7 @@ export async function GET(req: NextRequest) {
   }
 
   const startTime = Date.now();
-  const allResults: EngineTickResult[] = [];
+  const allResults: ConfigTickResult[] = [];
 
   try {
     await withCronMonitor(
@@ -318,6 +346,11 @@ export async function GET(req: NextRequest) {
         for (const config of configs) {
           const result = await processConfig(config);
           allResults.push(result);
+          // The cron's response body is not logged anywhere; this line is what prod is checked by.
+          console.info(
+            `[warmup/engine] run ${config.id}: ` +
+              JSON.stringify({ sent: result.sent, send_ms: result.send_ms, placement: result.placement, replies: result.replies, skipped_reason: result.skipped_reason }),
+          );
         }
       },
       {
