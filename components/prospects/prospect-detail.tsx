@@ -718,9 +718,11 @@ function ResearchTab({
           result.contact_insert_errors.length > 0
             ? `⚠ contact save failed: ${result.contact_insert_errors[0]}`
             : null,
+          // The scrape saved but the status did not: say so, or it reads as success.
+          result.status_write_error !== undefined ? `⚠ ${result.status_write_error}` : null,
         ].filter(Boolean);
         setScrapeMessage({
-          tone: result.contact_insert_errors.length > 0 ? "warn" : "ok",
+          tone: result.contact_insert_errors.length > 0 || result.status_write_error !== undefined ? "warn" : "ok",
           text: parts.length > 0 ? `Scraped: ${parts.join(", ")}.` : "Scraped (no new fields).",
         });
         router.refresh();
@@ -745,9 +747,11 @@ function ResearchTab({
           result.contact_found ? `contact: ${result.contact_found}` : null,
           `$${result.cost_usd.toFixed(3)}`,
         ].filter(Boolean);
+        // The research saved but the status did not: show it beside the result.
+        const statusWarning = result.status_write_error !== undefined ? ` · ⚠ ${result.status_write_error}` : "";
         setDeepResearchMessage({
-          tone: "ok",
-          text: `Score: ${result.score}/100 — ${parts.join(" · ")}`,
+          tone: statusWarning ? "warn" : "ok",
+          text: `Score: ${result.score}/100 — ${parts.join(" · ")}${statusWarning}`,
           score: result.score,
           showPitchButton: result.score >= 70,
         });
