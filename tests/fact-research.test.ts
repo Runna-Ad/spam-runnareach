@@ -13,8 +13,12 @@ import test from "node:test";
 import type Anthropic from "@anthropic-ai/sdk";
 import { __test__, ANTHROPIC_DEFAULT_MODEL, computeCostUsd } from "../lib/anthropic/client.ts";
 import type { CostRecordInput } from "../lib/anthropic/cost-tracking.ts";
+import { industryFamily } from "../lib/benchmarks/industry-families.ts";
 import {
   checkCandidate,
+  INDUSTRY_TERMS,
+  RESEARCH_SYSTEM,
+  scopeToFamilies,
   containsDigitGroup,
   digitGroups,
   handleFactResearch,
@@ -219,9 +223,9 @@ test("checkCandidate: each of the three checks rejects on its own", () => {
   const ev = readEvidence(RESPONSE.content);
   assert.equal(ev.results.length, 4);
   assert.equal(ev.citations.length, 2);
-  assert.equal(checkCandidate({ source_url: `${BAYMARD}/`, figure: "70.22%" }, ev, []).keep, true);
-  const r = (c: { source_url: string; figure: string }, ex: Parameters<typeof checkCandidate>[2] = []) => {
-    const x = checkCandidate(c, ev, ex);
+  assert.equal(checkCandidate({ source_url: `${BAYMARD}/`, figure: "70.22%", statistic: "70.22% of carts are abandoned." }, ev, []).keep, true);
+  const r = (c: { source_url: string; figure: string; statistic?: string }, ex: Parameters<typeof checkCandidate>[2] = []) => {
+    const x = checkCandidate({ statistic: c.figure, ...c }, ev, ex);
     return x.keep ? "keep" : x.reason;
   };
   assert.equal(r({ source_url: "https://www.invented-source.com/stats", figure: "45%" }), "url_not_in_search_results");
@@ -238,7 +242,7 @@ test("property: a kept candidate always has its url in results and every figure 
   let kept = 0;
   for (const source_url of urls) {
     for (const figure of figures) {
-      const c = checkCandidate({ source_url, figure }, ev, []);
+      const c = checkCandidate({ source_url, figure, statistic: `About ${figure} of shoppers, across 49 studies.` }, ev, []);
       if (!c.keep) continue;
       kept++;
       // Independent third matcher: strip everything but digits and dots from both sides.
@@ -246,10 +250,75 @@ test("property: a kept candidate always has its url in results and every figure 
       const host = new URL(source_url).host;
       assert.ok(ev.results.some((r) => new URL(r.url).host === host && r.url.replace(/\/$/, "") === source_url.replace(/\/$/, "")));
       const cites = ev.citations.filter((x) => x.url.replace(/\/$/, "") === source_url.replace(/\/$/, ""));
-      assert.ok(cites.some((x) => onlyNum(figure).every((g) => onlyNum(x.cited_text).includes(g))), `${figure} @ ${source_url}`);
+      const stat = `About ${figure} of shoppers, across 49 studies.`;
+      assert.ok(cites.some((x) => [...onlyNum(figure), ...onlyNum(stat)].every((g) => onlyNum(x.cited_text).includes(g))), `${figure} @ ${source_url}`);
     }
   }
   assert.ok(kept >= 4, `expected some keeps, got ${kept}`);
+});
+
+// ── The statistic sentence feeds the send-gate: its numbers must be cited too ─
+const URL_X = "https://stats.example.org/report";
+const evOf = (cited: string) => ({ results: [{ url: URL_X, title: "t" }], citations: [{ url: URL_X, cited_text: cited }] });
+const verdict = (figure: string, statistic: string, cited: string) => {
+  const c = checkCandidate({ source_url: URL_X, figure, statistic }, evOf(cited), []);
+  return c.keep ? "keep" : c.reason;
+};
+
+test("a statistic carrying a number the citation lacks is dropped (it would become sendable after approval)", () => {
+  const cited = "The average documented online shopping cart abandonment rate is 70.22%.";
+  assert.equal(verdict("70.22%", "70.22% of carts are abandoned, costing retailers $18 billion.", cited), "statistic_number_not_in_citation");
+  assert.equal(verdict("70.22%", "In 2024, 70.22% of carts were abandoned.", cited), "statistic_number_not_in_citation");
+  assert.equal(verdict("70.22%", "70.22% of carts are abandoned before checkout.", cited), "keep");
+});
+
+test("a statistic that does not contain the figure is dropped", () => {
+  const cited = "Abandonment is 70.22% on average across 49 studies.";
+  assert.equal(verdict("70.22%", "Roughly 7 in 10 carts are abandoned.", cited), "statistic_missing_figure");
+  assert.equal(verdict("70.22%", "Most carts, across 49 studies, are abandoned.", cited), "statistic_missing_figure");
+  assert.equal(verdict("$6.77 trillion", "Sales reached $6.77 billion.", "Sales reached $6.77 trillion."), "statistic_missing_figure");
+});
+
+test("figure digit groups must appear in order, and its scale word must be in the citation", () => {
+  assert.equal(verdict("7 in 10", "7 in 10 shoppers leave.", "We surveyed 10 stores in 7 regions."), "figure_not_in_citation_from_url");
+  assert.equal(verdict("7 in 10", "7 in 10 shoppers leave.", "Roughly 7 out of 10 shoppers leave."), "keep");
+  assert.equal(verdict("$6.77 trillion", "Sales hit $6.77 trillion.", "Sales reached $6.77 billion in 2025."), "figure_not_in_citation_from_url");
+  assert.equal(verdict("$6.77 trillion", "Sales hit $6.77 trillion.", "Sales reached $6.77 trillion."), "keep");
+  assert.equal(verdict("3 mil millones", "Se pierden 3 mil millones.", "se pierden 3 millones al año"), "figure_not_in_citation_from_url");
+  assert.equal(verdict("3 mil millones", "Se pierden 3 mil millones.", "Se pierden 3 mil millones al año."), "keep");
+});
+
+test("end to end: a proposal whose statistic adds an uncited number is never written", async () => {
+  const r = clone(RESPONSE);
+  const last = r.content.at(-1)!;
+  last.text = (last.text as string).replace("across 49 studies.\"", "costing retailers $18 billion.\"");
+  assert.ok((last.text as string).includes("$18 billion"));
+  const h = harness({ facts: [fact()], respond: () => r });
+  await runFactResearch(h.deps, { dry: false });
+  assert.equal(h.db.inserts.length, 0);
+  assert.match(h.db.tables.wanted_facts![0]!.research_note as string, /70\.22% \([^)]*\): statistic_number_not_in_citation/);
+});
+
+// ── industry_scope is constrained to the benchmark families ─────────────────
+test("industry_scope keeps only terms industry-families knows; e-commerce and ecommerce map to retail", () => {
+  assert.equal(industryFamily("e-commerce"), "retail");
+  assert.equal(industryFamily("ecommerce"), "retail");
+  const { kept, unknown } = scopeToFamilies(["e-commerce", "ecommerce", "online shops", "e-commerce", "law firm"]);
+  assert.deepEqual(kept, ["e-commerce", "ecommerce", "law firm"]);
+  assert.deepEqual(unknown, ["online shops"]);
+  for (const t of INDUSTRY_TERMS) assert.notEqual(industryFamily(t), null, `prompt term ${t} is in no family`);
+  for (const t of INDUSTRY_TERMS) assert.ok(RESEARCH_SYSTEM.includes(t), t);
+});
+
+test("unknown industry terms are dropped from the row but the proposal is kept, with a note", async () => {
+  const r = clone(RESPONSE);
+  const last = r.content.at(-1)!;
+  last.text = (last.text as string).replace('["E-commerce", "online store"]', '["E-commerce", "Online Shops"]');
+  const h = harness({ facts: [fact()], respond: () => r });
+  await runFactResearch(h.deps, { dry: false });
+  const row = h.db.inserts[0]!.rows[0]!;
+  assert.deepEqual(row.industry_scope, ["e-commerce"]);
+  assert.match(row.proposal_note as string, /Industry terms dropped \(not in the benchmark families\): online shops/);
 });
 
 // ── Acceptance 1: the realistic response end to end ─────────────────────────

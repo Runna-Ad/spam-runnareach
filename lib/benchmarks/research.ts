@@ -26,6 +26,7 @@ import { z } from "zod";
 import { ANTHROPIC_DEFAULT_MODEL, computeCostUsd, getClient, repairJsonStrings, type ClaudeUsage } from "../anthropic/client.ts";
 import type { CostRecordInput } from "../anthropic/cost-tracking.ts";
 import type { Database } from "../supabase/types.ts";
+import { industryFamily } from "./industry-families.ts";
 
 type FactRow = Database["public"]["Tables"]["wanted_facts"]["Row"];
 export type WantedFact = Pick<
@@ -148,11 +149,54 @@ export function containsDigitGroup(text: string, group: string): boolean {
   return digitGroups(text).includes(group);
 }
 
+/** Every group of `wanted` occurs in `text`, in the same order ("7 in 10" is not "10 stores in 7 regions"). */
+export function digitGroupsInOrder(text: string, wanted: string[]): boolean {
+  const have = digitGroups(text);
+  let i = 0;
+  for (const g of wanted) {
+    while (i < have.length && have[i] !== g) i++;
+    if (i >= have.length) return false;
+    i++;
+  }
+  return true;
+}
+
+const isLetter = (ch: string): boolean => ch.toLowerCase() !== ch.toUpperCase();
+
+/** Lower-case letter-only words by a character scan ("$6.77 trillion." → ["trillion"]). */
+function letterWords(text: string): string[] {
+  const words: string[] = [];
+  let cur = "";
+  for (const ch of text) {
+    if (isLetter(ch)) cur += ch.toLowerCase();
+    else if (cur) {
+      words.push(cur);
+      cur = "";
+    }
+  }
+  if (cur) words.push(cur);
+  return words;
+}
+
+/** Words that change a number's size. "6.77 billion" and "6.77 trillion" share every digit. */
+const SCALE_WORDS = new Set([
+  "thousand", "thousands", "million", "millions", "billion", "billions", "trillion", "trillions",
+  "mil", "millón", "millon", "millones", "billón", "billon", "billones",
+]);
+
+/** Every scale word in `claim` also appears as a word in `source`. */
+export function scaleWordsCovered(claim: string, source: string): boolean {
+  const have = new Set(letterWords(source));
+  return letterWords(claim).every((w) => !SCALE_WORDS.has(w) || have.has(w));
+}
+
 export type DropReason =
   | "malformed"
   | "url_not_in_search_results"
   | "figure_has_no_digits"
   | "figure_not_in_citation_from_url"
+  | "statistic_missing_figure"
+  | "statistic_number_not_in_citation"
   | "duplicate_source_and_figure"
   | "over_limit";
 
@@ -168,9 +212,14 @@ export type CandidateCheck =
   | { keep: true; resultUrl: string; citedText: string }
   | { keep: false; reason: DropReason; existing?: ExistingBenchmark };
 
-/** Checks 1–3 of the brief. Every branch that cannot confirm returns keep: false. */
+/**
+ * Checks 1–3 of the brief, plus the statistic sentence: an APPROVED row's
+ * `statistic` feeds the send-gate's allowed numbers (lib/pitches/gate.ts
+ * benchmarkSources), so every number in it must come from the same citation as
+ * the figure. Every branch that cannot confirm returns keep: false.
+ */
 export function checkCandidate(
-  candidate: { source_url: string; figure: string },
+  candidate: { source_url: string; figure: string; statistic: string },
   evidence: Pick<ResponseEvidence, "results" | "citations">,
   existing: ExistingBenchmark[],
 ): CandidateCheck {
@@ -181,10 +230,18 @@ export function checkCandidate(
 
   const groups = digitGroups(candidate.figure);
   if (groups.length === 0) return { keep: false, reason: "figure_has_no_digits" };
-  const citation = evidence.citations.find(
-    (c) => normalizeUrl(c.url) === url && groups.every((g) => containsDigitGroup(c.cited_text, g)),
+  if (!digitGroupsInOrder(candidate.statistic, groups) || !scaleWordsCovered(candidate.figure, candidate.statistic)) {
+    return { keep: false, reason: "statistic_missing_figure" };
+  }
+  const forFigure = evidence.citations.filter(
+    (c) => normalizeUrl(c.url) === url && digitGroupsInOrder(c.cited_text, groups) && scaleWordsCovered(candidate.figure, c.cited_text),
   );
-  if (!citation) return { keep: false, reason: "figure_not_in_citation_from_url" };
+  if (forFigure.length === 0) return { keep: false, reason: "figure_not_in_citation_from_url" };
+  const statGroups = digitGroups(candidate.statistic);
+  const citation = forFigure.find(
+    (c) => statGroups.every((g) => containsDigitGroup(c.cited_text, g)) && scaleWordsCovered(candidate.statistic, c.cited_text),
+  );
+  if (!citation) return { keep: false, reason: "statistic_number_not_in_citation" };
 
   const dup = existing.find((b) => normalizeUrl(b.source_url) === url && sameFigure(b.figure, candidate.figure));
   if (dup) return { keep: false, reason: "duplicate_source_and_figure", existing: dup };
@@ -274,6 +331,34 @@ export function parseAnswer(finalText: string): ParsedAnswer {
 
 // ── Prompt ──────────────────────────────────────────────────────────────────
 
+/**
+ * The industry vocabulary the model may scope a proposal to: the members of
+ * lib/benchmarks/industry-families.ts (not exported there; a test checks every
+ * term here maps to a family). Code drops any other term (scopeToFamilies).
+ */
+export const INDUSTRY_TERMS: readonly string[] = [
+  "online store", "retail", "boutique", "direct to consumer", "tienda", "ecommerce", "e-commerce",
+  "manufacturer", "manufacturing", "industrial supplier", "distribution", "distributor", "wholesale",
+  "wholesale distributor", "supply chain", "logistics",
+  "accounting firm", "chartered accountant", "despacho contable", "asesoría fiscal", "law firm",
+  "despacho de abogados", "consultoría", "consulting firm", "agencia de seguros",
+  "hospital", "clínica", "consultorio dental", "fisioterapia",
+  "spa", "salón de belleza", "estética", "fitness studio", "gimnasio",
+  "restaurant", "restaurante", "restaurant group", "bar", "panadería",
+  "hotel", "hotel chain", "boutique hotel",
+];
+
+/** Keeps only terms the benchmark matcher knows (industryFamily), deduped, in order. */
+export function scopeToFamilies(scope: string[]): { kept: string[]; unknown: string[] } {
+  const kept: string[] = [];
+  const unknown: string[] = [];
+  for (const term of scope) {
+    if (industryFamily(term) === null) unknown.push(term);
+    else if (!kept.includes(term)) kept.push(term);
+  }
+  return { kept, unknown };
+}
+
 export const RESEARCH_SYSTEM = `You research statistics for a small agency's sales emails. A human reviews everything you return before it is used, and a number that the source does not state is worse than no number.
 
 TASK: find up to ${MAX_PROPOSALS_PER_FACT} solid, citable statistics for the wanted fact the user gives you, best first. Use web search.
@@ -281,7 +366,8 @@ TASK: find up to ${MAX_PROPOSALS_PER_FACT} solid, citable statistics for the wan
 WHAT COUNTS AS SOLID
 - Prefer government statistics offices, academic studies, large independent surveys and established research firms. State the sample, geography and year.
 - A figure published by a company that sells a product related to the claim (an email, cart or software vendor, an agency) is VENDOR-SOURCED: you may return it, but set is_vendor_sourced true and say so in the caveat.
-- Never estimate, combine, round or convert numbers. The figure must appear in the source text exactly as you write it (same digits).
+- Never estimate, combine, round or convert numbers. The figure must appear in the source text exactly as you write it (same digits, same order, same scale word such as million or billion).
+- The statistic sentence may only use numbers that appear in the sentence you cited for it: no extra years, totals or second figures.
 - If nothing solid exists, return no proposals and say why. That is a good, useful answer.
 
 HOW TO ANSWER (two parts, in this order)
@@ -296,12 +382,14 @@ HOW TO ANSWER (two parts, in this order)
   "published_date": "YYYY-MM-DD or null",
   "is_vendor_sourced": false,
   "caveat": "sample, geography, year, who published; anything a careful reader must know",
-  "industry_scope": ["industries it legitimately applies to, lower case; [] only if truly universal"],
+  "industry_scope": ["industries it legitimately applies to, ONLY from the list below; [] only if the source is truly cross-industry, and then say so in the caveat"],
   "market": "CA | MX | US | GLOBAL | null",
   "why_solid": "one sentence on why this source is credible"
 }], "no_source_reason": null}
 \`\`\`
-Use only URLs that your searches returned. Do not use em dashes.`;
+Use only URLs that your searches returned. Do not use em dashes.
+
+INDUSTRY TERMS (industry_scope may only use these, exactly as written): ${INDUSTRY_TERMS.join(", ")}.`;
 
 export function researchUserPrompt(fact: WantedFact): string {
   const lines = [`Wanted fact: ${fact.fact}`];
@@ -529,7 +617,7 @@ export async function researchFact(fact: WantedFact, deps: FactDeps): Promise<Fa
     }
     // A second copy of the same source + figure in this answer is a duplicate of the first.
     seen.push({ source_url: check.resultUrl, figure: v.figure, wanted_fact_id: null, rejected_at: null });
-    const statNumbers = digitGroups(v.statistic).filter((g) => !containsDigitGroup(check.citedText, g));
+    const scope = scopeToFamilies(v.industry_scope);
     kept.push({
       tenant_id: fact.tenant_id,
       wanted_fact_id: fact.id,
@@ -540,7 +628,7 @@ export async function researchFact(fact: WantedFact, deps: FactDeps): Promise<Fa
       statistic: v.statistic,
       figure: v.figure,
       pain_codes: fact.pain_code ? [fact.pain_code] : [],
-      industry_scope: v.industry_scope,
+      industry_scope: scope.kept,
       market: v.market,
       source_url: check.resultUrl,
       publisher: v.publisher,
@@ -550,7 +638,8 @@ export async function researchFact(fact: WantedFact, deps: FactDeps): Promise<Fa
       proposal_note: noteOf([
         `Cited: "${check.citedText.trim().slice(0, 600)}"`,
         v.why_solid ? `Why solid: ${v.why_solid}` : null,
-        statNumbers.length ? `Check the wording: the statistic also says ${statNumbers.join(", ")}, which the cited text does not.` : null,
+        scope.unknown.length ? `Industry terms dropped (not in the benchmark families): ${scope.unknown.join(", ")}.` : null,
+        scope.kept.length === 0 ? "No industry scope: this would match every prospect; check the caveat says the source is cross-industry." : null,
       ]),
     });
   }
@@ -717,6 +806,8 @@ export async function runFactResearch(deps: RunDeps, opts: { dry: boolean }): Pr
   }
 
   // Last step: may be cut off at maxDuration. Rows and statuses are already written.
+  // Proposals inserted by a run killed before this point are never emailed later;
+  // they still show on /benchmarks.
   for (const [tenantId, written] of toEmail) {
     const remaining = NOTIFY_DEADLINE_MS - (clock() - started);
     if (remaining <= 0) {
