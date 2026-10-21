@@ -31,7 +31,7 @@ Previous: `phase3-batch2` CLOSED (main e10a326). Rows, log and hand-off in `task
 | 0047 | booking-alert-durability: `0047_opportunities_alert_markers.sql` (booked/cancelled alert markers + meeting_start/time zone + cancelled_at; backfill). Written by the conductor in wave 0 | APPLIED 2026-10-18 20:16 UTC via connector, version normalised to `0047`, 5 columns verified |
 | 0048 | bounce hotfix | APPLIED (version 20261019190301) |
 | 0049 | batch 4 send slot | APPLIED (version 20261019211644) |
-| 0050 | batch 7 wave 0 (conductor): `0050_wanted_facts.sql` (wanted_facts + record_wanted_fact RPC, benchmarks proposal columns + rejected_at, cron spam-fact-research Wed 14:20 UTC) | USED (written + tested on local Postgres 16); apply before the deploy |
+| 0050 | batch 7: `0050_wanted_facts.sql` | APPLIED 2026-10-21 21:56 UTC via connector before the merge, verified, version normalised to 0050 |
 | 0051 | — | free |
 
 ## Active and queued tasks
@@ -310,3 +310,4 @@ Log:
 - 2026-10-21 21:43 UTC — Batch audit (Fable): fix-before-ship, 2 blocking (US market never offered; pain-less wanted fact → unofferable proposals whose numbers still become gate sources) + 7 optional. Conductor fixed both (2a039db; 1352 tests, build; new tests fail without the fix). Friday trigger prompt updated to count v3 and v3.2. project-state batch 7 section written; retro + reviewer checklist updated.
 - 2026-10-21 21:47 UTC — Integration → main PR #51 opened (head 6bf072b; 1352 tests, build green); subscribed. Waiting for Pedro's "ship it". Ship order: apply 0050 via connector (verify columns + cron row), then merge, then prod verification per project-state batch 7.
 - 2026-10-21 21:52 UTC — Pedro answered the 3 questions (web search on; outdoor = retail; cap checks not now). Conductor added "outdoor" to the retail family (industry-families.ts + test); 1352 tests, build green. Coverage line unchanged at 243/259 (outdoor first pains are mostly website/mobile, already covered); it widens cart/retention matching for outdoor shops.
+- 2026-10-21 21:57 UTC — Pedro "ship it" (21:55). 0050 applied via connector 21:56:58, verified (wanted_facts + RLS + 1 policy, record_wanted_fact, 4 benchmark columns, CHECK benchmarks_rejected_not_active, cron spam-fact-research '20 14 * * 3', 48 active benchmarks unchanged); version normalised to 0050. PR #51 squash-merged → main 4418e8d. Prod deploy check armed (trig_016ipvpT5eTpvvi6SR96kNxD).
