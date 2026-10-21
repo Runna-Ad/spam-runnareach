@@ -272,8 +272,13 @@ export function heldBodyForRevision(body: string): string {
  * that, and half the autopilot's rewrites were held again for it. Now the
  * observed finding is stated plainly and what it costs is framed as what
  * usually happens.
+ *
+ * v3.1 (2026-10-22): every benchmark says which of the prospect's pains it is
+ * about (for_pains). A prod rewrite led with "no cart recovery" and was offered
+ * only retention and video figures; the writer may now cite a benchmark only
+ * when one of its for_pains is the pain it leads with.
  */
-export const PITCH_PROMPT_VERSION = "pitch-v3-2026-10-20";
+export const PITCH_PROMPT_VERSION = "pitch-v3.1-2026-10-22";
 
 /** Everything that differs by language. The rules themselves do not. */
 type LanguagePack = {
@@ -427,7 +432,7 @@ FACTS: EVERYTHING COMES FROM THE PAYLOAD
 2. Numbers. A real number makes a cold email more believable; an invented one kills it. Allowed:
    - "about 30 seconds" for the free check;
    - facts about THEM that are in the payload (what_they_do, evidence_quote), e.g. how many locations they run;
-   - statistics from payload.benchmarks: real, sourced research on what businesses that make this kind of change typically see (more enquiries won, hours saved, sales recovered, fewer no-shows). We don't need numbers of our own; this is how the outcome gets a size. When one matches the pain you lead with, USE it: it is usually the line that makes the reader stop. Keep the figure exactly as given, say where it comes from in a few words (${p.benchmark.attribution}), and frame it as what businesses like theirs experience, saying exactly what the source measured ("get a real conversation" is not "win the client"). Each benchmark carries a caveat: follow it. One per email; two only if they make the same point.
+   - statistics from payload.benchmarks: real, sourced research on what businesses that make this kind of change typically see (more enquiries won, hours saved, sales recovered, fewer no-shows). We don't need numbers of our own; this is how the outcome gets a size. Each benchmark lists for_pains, the pains it is about: cite a benchmark ONLY if one of its for_pains is the pain you lead with (the same pain_id), otherwise use no number at all, because a figure about a different problem is worse than none. When one matches, USE it: it is usually the line that makes the reader stop. Keep the figure exactly as given, say where it comes from in a few words (${p.benchmark.attribution}), and frame it as what businesses like theirs experience, saying exactly what the source measured ("get a real conversation" is not "win the client"). Each benchmark carries a caveat: follow it. One per email; two only if they make the same point.
    How to frame it matters: in cold-email data, percentage and ROI claims made by the sender LOWER replies (Gong: -15%), while a number that describes the reader's world reads as insight. So a statistic describes what happens out there or sizes their problem ("most firms never reply to a web enquiry at all"); it never promises the reader a result ("you'll get 30% more").
    Never: a figure you remember, estimate, round or combine; a benchmark presented as OUR result; a percentage promised to the reader; any number in the subject line. benchmarks may be empty, and then the email has no statistic: the pain and the fix carry it.
      OK (only when that figure is in benchmarks): "${p.benchmark.ok}"
@@ -567,6 +572,9 @@ function buildStage2UserPrompt(input: GeneratorInputs): string {
       // What it does and doesn't measure ("qualify ≠ convert", "say 'in
       // clinics'"), so the paraphrase stays true to the source.
       caveat: b.caveat ?? null,
+      // The pains (same pain_id as pain_candidates) this figure is about. Cite
+      // it only when leading with one of them (FACTS 2).
+      for_pains: b.for_pains.map((f) => ({ pain_id: f.pain_id ?? f.code, pain: f.label ?? f.code })),
     })),
     // Deliberately NOT sent: case studies and notable clients. Pedro's override
     // (2026-07-22): never name a client, never quote a client's metric — named
@@ -617,7 +625,7 @@ Using the payload:
 - prospect.city: mention it only if it fits naturally, and never claim anything about their city or market that is not in the payload.
 - address_contact.role_title: use it if it fits naturally ("As the owner of [company]...").
 - solution_hint: the starting point for the fix. Make it specific to them.
-- benchmarks: real, sourced research for this pain and industry. Use one if it fits the pain you lead with (see FACTS).${writerExemplarSection(input.exemplars)}`;
+- benchmarks: real, sourced research for this prospect's pains and industry. Use one only if one of its for_pains has the pain_id you lead with (see FACTS); if none does, the email has no statistic.${writerExemplarSection(input.exemplars)}`;
 }
 
 // ── Violation detector ────────────────────────────────────────────────────────
