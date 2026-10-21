@@ -1,4 +1,4 @@
-# S.P.A.M. core context for workers (refreshed 2026-10-18 for Phase 3 batch 3)
+# S.P.A.M. core context for workers (refreshed 2026-10-21 for Phase 3 batch 7)
 
 This is the ONLY project history a worker loads. Do not open `tasks/lessons.md`,
 `tasks/session-log.md`, `tasks/todo.md`, `tasks/project-state.md` or
@@ -24,7 +24,7 @@ SHARED with runna-hunter: never assume a table is SPAM-only) · Anthropic SDK th
 cost-tracked, daily-capped wrapper in `lib/anthropic/` · Gmail API · Sentry · Vercel Hobby.
 
 - `npm ci` once on a fresh clone, then `npm run typecheck` · `npm run lint` · `npm test`
-  (node test runner, `tests/**/*.test.ts`, 726 tests at batch 3 start)
+  (node test runner, `tests/**/*.test.ts`, 1258 tests at batch 7 start)
 - `npm run build` before claiming a UI change works. `npm run db:types` is conductor-only;
   `lib/supabase/types.ts` is hand-maintained and conductor-only.
 - Pre-commit (lefthook) runs tsc + eslint; CI runs all three on every PR.
@@ -148,9 +148,10 @@ lib/replies/   ( 8)    classify, bounce parse, draft, send-reply, intent-actions
 lib/opportunities/ (5) calendar-sync (hourly), google-calendar, outcome, actions, queries
 lib/prospects/  ( 2)  detail actions + queries (status writers live in several modules)
 lib/hunter/     ( 3)  hunter_scans → prospects (table shared with runna-hunter)
+lib/benchmarks/ ( 2)  sourced statistics: lookup for the writer (queries), approve action; wanted_facts (0050)
 lib/warmup/    (10)    deliverability, DMARC, IMAP, placement
 lib/{gmail,compliance,anthropic,supabase,audit,sentry,cron-auth,notify}  shared infra  CONDUCTOR ONLY
-supabase/migrations/0001..0049   numbered; YOUR brief reserves yours (never the next free one)
+supabase/migrations/0001..0050   numbered; YOUR brief reserves yours (never the next free one)
 vercel.json, CLAUDE.md, lib/supabase/types.ts, package.json         CONDUCTOR ONLY
 ```
 Your brief lists the files you may edit. Anything outside it: say so in the PR body under

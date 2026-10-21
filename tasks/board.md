@@ -5,7 +5,7 @@ file alone. Update it on every spawn, every status change, every merge. Keep clo
 for the current phase; move older ones to the retro.
 
 ## Current phase
-`phase3-batch6` SHIPPED 2026-10-20 21:24 UTC (main c548bc0, PR #46, no migrations). **Batch 7 APPROVED by Pedro 2026-10-21 ("go with 1 and 3"), not started: see "Hand-off 2026-10-21" at the end of this file.** `phase3-batch5` SHIPPED 2026-10-20 17:08 UTC (main 6ab2d62, PR #43). **Owner until hand-off: session_017nqBxLFFXKbhDwKiPi6xLf.** Older lines below.
+`phase3-batch7` ACTIVE since 2026-10-21 20:17 UTC on `claude/phase3-batch7-integration` (cut from main c548bc0 + batch 6 notes/vercel-ignore fix). **Owner: session_01HtEg7XG4MPQU4omrd2BX69.** Rows and log: "Batch 7" section at the end. `phase3-batch6` SHIPPED 2026-10-20 21:24 UTC (main c548bc0, PR #46, no migrations). `phase3-batch5` SHIPPED 2026-10-20 17:08 UTC (main 6ab2d62, PR #43). Previous owner session_017nqBxLFFXKbhDwKiPi6xLf (handed off 2026-10-21 20:16). Older lines below.
 `phase3-batch3` SHIPPED 2026-10-19 00:19 UTC (main 9c98448, PR #25); Q1 follow-up SHIPPED 2026-10-19 (merged 01:14 UTC, READY by 01:19; main 729b299, PR #27, deploy dpl_J3tEospxUg8mzz27FkAuGdUTcuPv READY). **Owner: session_017nqBxLFFXKbhDwKiPi6xLf.** #17 SHIPPED switched off 04:24 UTC (main 3808b56, PR #28). Weekly report HTML + exemplar readiness SHIPPED 13:58 UTC (main 45519c8, PR #29). Integration branch = main via merge commits (no force push).
 Open:
 - #17 exemplar allow-list: SHIPPED switched off (PR #28 → main 3808b56, 04:24 UTC). EXEMPLARS_ENABLED absent in Production and Preview (checked 04:23). The flip is Pedro's call; steps in project-state.
@@ -28,7 +28,10 @@ Previous: `phase3-batch2` CLOSED (main e10a326). Rows, log and hand-off in `task
 | 0045 | platform-reports: `0045_reports_cron.sql` (spam-health-check hourly :25, spam-weekly-report Mon 13:10 UTC) | APPLIED 2026-10-18 16:23 UTC via connector after dry runs were clean; version normalised to `0045` |
 | 0046 | conductor wave 0: `0046_replies_gmail_message_unique.sql` (unique (tenant_id, gmail_message_id) where not null; poll skips 23505) | APPLIED 2026-10-18 20:15 UTC via connector (0 dup pairs just before), version normalised to `0046`, index verified |
 | 0047 | booking-alert-durability: `0047_opportunities_alert_markers.sql` (booked/cancelled alert markers + meeting_start/time zone + cancelled_at; backfill). Written by the conductor in wave 0 | APPLIED 2026-10-18 20:16 UTC via connector, version normalised to `0047`, 5 columns verified |
-| 0048 | — | free |
+| 0048 | bounce hotfix | APPLIED (version 20261019190301) |
+| 0049 | batch 4 send slot | APPLIED (version 20261019211644) |
+| 0050 | batch 7 wave 0 (conductor): `0050_wanted_facts.sql` (wanted_facts + record_wanted_fact RPC, benchmarks proposal columns + rejected_at, cron spam-fact-research Wed 14:20 UTC) | USED (written + tested on local Postgres 16); apply before the deploy |
+| 0051 | — | free |
 
 ## Active and queued tasks
 | Slug | Module | Model/effort | Branch | Session | PR | Depends on | Status | Blocked on | Turns | Review findings | CI reds | Rework |
@@ -261,3 +264,27 @@ State: prod = main = c548bc0 (batch 6). Integration `claude/phase3-batch6-integr
 - 2026-10-21 20:20 UTC — Pedro: "why do i keep getting failed emails?" (Vercel preview failures). Cause: the conductor's notes-only skip (vercel.json ignoreCommand, ad51e4c) runs `git diff $VERCEL_GIT_PREVIOUS_SHA HEAD`; Vercel's shallow clone lacks the previous built commit once >~10 notes commits follow it (here 33313ed), git exits 128, and Vercel treats any exit other than 0/1 as a failed deployment. 5 failures since 10-19 (4 today on the integration branch, 1 on the working branch 10-19). Fix (conductor-only file): wrap in `if …; then exit 0; else exit 1; fi` with a `git cat-file -e` guard, so a missing commit BUILDS instead of failing; production path unchanged (always builds). Tested locally: missing/unknown sha → 1, notes-only → 0, code change → 1, production → 1, empty → 1; old command → 128. Reaches main with the next batch.
 - 2026-10-21 20:30 UTC — First fix 5bb08c8 failed Vercel schema validation (ignoreCommand > 256 chars; the error is in get_deployment errorMessage, not in build logs). Moved the logic to scripts/vercel-ignore.sh (ignoreCommand "sh scripts/vercel-ignore.sh", 27 chars). Tested: missing/unknown sha, empty sha, production, code change → 1; notes-only range fc74a51..cc56ac1 → 0.
 - 2026-10-21 20:16 UTC — Pedro: "start the new conductor session for batch 7". New conductor session_01HtEg7XG4MPQU4omrd2BX69 created (source claude/phase3-batch6-integration, opus-5.5), told to check its tools, take over trig_01EkHDimws8K2uJNXoy4qRbY, confirm the Vercel preview fix, then run batch 7 from the hand-off. Owner from now: session_01HtEg7XG4MPQU4omrd2BX69.
+
+## Batch 7 (phase3) — started 2026-10-21 20:17 UTC
+Scope (Pedro 2026-10-21 "go with 1 and 3"): (1) statistics matched to the pitch's pain; (2) wanted facts → weekly sourced proposals → Pedro approves. Integration `claude/phase3-batch7-integration`. Wave 0 = conductor (0050, types, cost entity `fact_research`, vercel.json route maxDuration, prod fixtures, briefs). Wave 1 parallel: benchmark-matching (pitches hub), fact-research, benchmark-review-ui (disjoint files). Wave 2: wanted-facts-writer after benchmark-matching merges (pitches serialized).
+
+| Slug | Module | Model/effort | Branch | Session | PR | Depends on | Status | Turns | Review findings | CI reds | Rework |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| wave0-conductor | 0050, types.ts, cost-tracking entity, vercel.json, fixtures, core-context, 4 briefs | conductor | integration | this | — | — | in progress | | | | |
+| benchmark-matching | lib/benchmarks/queries.ts + industry-families.ts; writer/critic payload `for_pains`; prompt v3.1 | opus/high | claude/benchmark-matching | — | — | wave0 | queued | | | | |
+| fact-research | lib/benchmarks/research.ts + app/api/benchmarks/research (web search, sourcing invariant) | opus/high (deviation: fail-closed sourcing check) | claude/fact-research | — | — | wave0 | queued | | | | |
+| benchmark-review-ui | /benchmarks review + wanted facts UI, actions.ts, proposals.ts | sonnet/medium (admin CRUD lane) | claude/benchmark-review-ui | — | — | wave0 | queued | | | | |
+| wanted-facts-writer | writer/critic `wanted_fact` + recording in pitch-stage | opus/high | claude/wanted-facts-writer | — | — | benchmark-matching merged | waiting | | | | |
+
+Batch-audit pairs: benchmark-matching × wanted-facts-writer (writer records a wish exactly when no offered row carries its lead pain); fact-research × benchmark-review-ui (proposal = wanted_fact_id set, unverified, unrejected; reject keeps the row and research dedupes on it); fact-research × cost cap (web search fee counted); 0050 cron × deploy gap (404 until the route ships).
+
+Questions for Pedro (batch 7):
+| # | Question | Default | Answer |
+|---|---|---|---|
+| 1 | Is web search switched on for the Anthropic org (Claude Console)? The weekly research step needs it | research notes "not enabled" and does nothing until it is | |
+| 2 | Should "outdoor" prospects (23, e.g. outdoor gear shops) count as retail for statistics? | no (only clear retail words) | |
+| 3 | Batch 6 carry items: add cap checks to SnapVerify, ICP Suggest and AI Search (they spend without checking the $3 cap) as a small extra task this batch? | not this batch | |
+
+Log:
+- 2026-10-21 20:36 UTC — resumed: session_01HtEg7XG4MPQU4omrd2BX69 took the lock (started by the previous conductor at Pedro's request, board 20:16). Tools: Supabase, Vercel, GitHub MCP, claude-code-remote all present. Friday check moved: trig_01CPo9kLuGgJ7m3BWXQ3AS2L (Fri 2026-10-23 21:30 UTC, same prompt) bound to this session; old trig_01EkHDimws8K2uJNXoy4qRbY deleted. Vercel previews: 6290fea READY (dpl_FSeEkrwpDxS1amxMeqpgg3D6qC3V); f8dca0d CANCELED = the notes-only skip working (not a failure). Second brain not attached (cloud hook) → asked Pedro.
+- 2026-10-21 20:36 UTC — Prod facts for briefs (queries run now): the 10:15 cart rewrite 9f2d7427 was offered Bain 25-95%, HBR 5-25x (retention, universal) and Wyzowl 85% (content, universal), the 10:00 one 0 rows because its arm was no_benchmark (pitch-stage.ts:362), not because of matching. Cause: lookup keeps rows for ANY of the prospect's pains (queries.ts:124) and the payload never says which pain a row is for. On the 259-prospect fixture: first pain gets ≥1 row for 215, only other-pain rows for 42, none for 2. 0050 tested on local Postgres 16 (dedupe across case/punctuation, length check raises, rejected-not-active CHECK). 1258 tests, typecheck green.
