@@ -86,7 +86,12 @@ async function client() {
 const PROPOSAL_COLUMNS = `id, statistic, figure, publisher, source_url, published_date,
   is_vendor_sourced, caveat, industry_scope, market, proposal_note, proposed_at, wanted_fact_id`;
 
-export async function listBenchmarkProposals(tenantId: string): Promise<BenchmarkProposal[]> {
+/** A failed read must not look like "nothing there": the page warns and locks activation. */
+export type Loaded<T> = { rows: T[]; error: boolean };
+
+export async function listBenchmarkProposals(
+  tenantId: string,
+): Promise<Loaded<BenchmarkProposal>> {
   const supabase = await client();
   const { data, error } = await supabase
     .from("benchmarks")
@@ -97,8 +102,7 @@ export async function listBenchmarkProposals(tenantId: string): Promise<Benchmar
     .is("rejected_at", null)
     .order("proposed_at", { ascending: true })
     .returns<(Omit<BenchmarkProposal, "wanted_fact"> & { wanted_fact_id: string })[]>();
-  // Migration 0050 unapplied: show no proposals rather than a 500.
-  if (error || !data) return [];
+  if (error || !data) return { rows: [], error: true };
 
   const ids = [...new Set(data.map((r) => r.wanted_fact_id))];
   const facts = new Map<string, NonNullable<BenchmarkProposal["wanted_fact"]>>();
@@ -112,13 +116,16 @@ export async function listBenchmarkProposals(tenantId: string): Promise<Benchmar
     for (const f of wf ?? []) facts.set(f.id, f);
   }
 
-  return data.map(({ wanted_fact_id, ...row }) => ({
-    ...row,
-    wanted_fact: facts.get(wanted_fact_id) ?? null,
-  }));
+  return {
+    rows: data.map(({ wanted_fact_id, ...row }) => ({
+      ...row,
+      wanted_fact: facts.get(wanted_fact_id) ?? null,
+    })),
+    error: false,
+  };
 }
 
-export async function listRejectedBenchmarks(tenantId: string): Promise<RejectedBenchmark[]> {
+export async function listRejectedBenchmarks(tenantId: string): Promise<Loaded<RejectedBenchmark>> {
   const supabase = await client();
   const { data, error } = await supabase
     .from("benchmarks")
@@ -127,8 +134,8 @@ export async function listRejectedBenchmarks(tenantId: string): Promise<Rejected
     .not("rejected_at", "is", null)
     .order("rejected_at", { ascending: false })
     .returns<RejectedBenchmark[]>();
-  if (error || !data) return [];
-  return data;
+  if (error || !data) return { rows: [], error: true };
+  return { rows: data, error: false };
 }
 
 export async function listWantedFacts(tenantId: string): Promise<WantedFactRow[]> {

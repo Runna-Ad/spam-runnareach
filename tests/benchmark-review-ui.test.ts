@@ -39,6 +39,7 @@ const ID = "00000000-0000-4000-8000-0000000000aa";
 
 class Query implements PromiseLike<Res> {
   op = "select";
+  list = false;
   values: Row = {};
   filters: ((r: Row) => boolean)[] = [];
   desc: string[] = [];
@@ -55,6 +56,7 @@ class Query implements PromiseLike<Res> {
   is(k: string, v: null) { this.desc.push(`${k} is null`); this.filters.push((r) => (r[k] ?? null) === v); return this; }
   not(k: string, _op: string, v: null) { this.desc.push(`${k} not null`); this.filters.push((r) => (r[k] ?? null) !== v); return this; }
   maybeSingle() { return this; }
+  limit() { this.list = true; return this; }
   then<A = Res, B = never>(ok?: ((v: Res) => A | PromiseLike<A>) | null, bad?: ((e: unknown) => B | PromiseLike<B>) | null) {
     return Promise.resolve(this.run()).then(ok, bad);
   }
@@ -62,9 +64,17 @@ class Query implements PromiseLike<Res> {
     this.env.calls.push({ table: this.table, op: this.op, values: this.values, filters: this.desc });
     const rows = (this.env.tables[this.table] ??= []);
     const hit = rows.filter((r) => this.filters.every((f) => f(r)));
-    if (this.op === "select") return { data: hit[0] ?? null, error: null };
+    if (this.op === "select") {
+      const out = this.list ? hit.map((r) => ({ id: r.id })) : hit[0] ? { ...hit[0] } : null;
+      if (this.table === "benchmarks" && env.afterBenchmarkRead) {
+        const fn = env.afterBenchmarkRead;
+        env.afterBenchmarkRead = undefined;
+        fn();
+      }
+      return { data: out, error: null };
+    }
     for (const r of hit) Object.assign(r, this.values);
-    return { data: hit.map((r) => ({ id: r.id })), error: null };
+    return { data: hit.map((r) => ({ id: r.id, wanted_fact_id: r.wanted_fact_id })), error: null };
   }
 }
 
@@ -75,6 +85,8 @@ type Env = {
   rpcError: { message: string } | null;
   role: "admin" | "reviewer" | "viewer";
   revalidated: string[];
+  /** Runs once, right after the first benchmarks read (simulates another tab). */
+  afterBenchmarkRead?: () => void;
 };
 const env: Env = { tables: {}, calls: [], rpcs: [], rpcError: null, role: "reviewer", revalidated: [] };
 
@@ -98,6 +110,7 @@ function reset(role: Env["role"] = "reviewer") {
   env.rpcs = [];
   env.rpcError = null;
   env.revalidated = [];
+  env.afterBenchmarkRead = undefined;
   env.tables = {
     benchmarks: [
       { id: ID, tenant_id: TENANT, wanted_fact_id: "wf1", verified_at: null, rejected_at: null, is_active: false, statistic: "s", figure: "f" },
@@ -192,6 +205,48 @@ test("activating stamps the approver; a rejected row is refused in words", async
   assert.match(res.ok ? "" : res.error, /rejected/i);
   assert.equal(env.tables.benchmarks![0]!.is_active, false);
   assert.ok(!env.calls.some((c) => c.op === "update"), "no write attempted");
+});
+
+test("a reject from another tab between the check and the approve is not approved", async () => {
+  reset();
+  env.tables.benchmarks![0]!.rejected_at = null;
+  env.afterBenchmarkRead = () => {
+    env.tables.benchmarks![0]!.rejected_at = "2026-10-21T00:00:00Z";
+  };
+  const res = await actions.setBenchmarkActive({ benchmark_id: ID, is_active: true });
+  assert.equal(res.ok, false);
+  assert.match(res.ok ? "" : res.error, /already reviewed/i);
+  assert.equal(env.tables.benchmarks![0]!.is_active, false);
+  assert.equal(env.tables.benchmarks![0]!.verified_at, null);
+});
+
+const OTHER = "00000000-0000-4000-8000-0000000000bb";
+const withFact = (status: string, others: Row[]) => {
+  reset();
+  env.tables.wanted_facts = [{ id: "wf1", tenant_id: TENANT, status }];
+  env.tables.benchmarks!.push(...others);
+};
+
+test("rejecting the last live proposal reopens its proposed fact", async () => {
+  withFact("proposed", [{ id: OTHER, tenant_id: TENANT, wanted_fact_id: "wf1", verified_at: null, rejected_at: "2026-10-01T00:00:00Z", is_active: false }]);
+  assert.deepEqual(await actions.rejectBenchmarkProposal({ benchmark_id: ID }), { ok: true });
+  assert.equal(env.tables.wanted_facts![0]!.status, "open");
+  const w = env.calls.find((c) => c.table === "wanted_facts")!;
+  for (const f of [`tenant_id=${TENANT}`, "id=wf1", "status=proposed"]) assert.ok(w.filters.includes(f), f);
+});
+
+test("rejecting one of two proposals leaves the fact proposed (pending or approved sibling)", async () => {
+  for (const sibling of [{ verified_at: null }, { verified_at: "2026-10-20T00:00:00Z", is_active: true }]) {
+    withFact("proposed", [{ id: OTHER, tenant_id: TENANT, wanted_fact_id: "wf1", rejected_at: null, is_active: false, ...sibling }]);
+    assert.deepEqual(await actions.rejectBenchmarkProposal({ benchmark_id: ID }), { ok: true });
+    assert.equal(env.tables.wanted_facts![0]!.status, "proposed");
+  }
+});
+
+test("rejecting the last proposal of a dismissed fact leaves it dismissed", async () => {
+  withFact("dismissed", []);
+  assert.deepEqual(await actions.rejectBenchmarkProposal({ benchmark_id: ID }), { ok: true });
+  assert.equal(env.tables.wanted_facts![0]!.status, "dismissed");
 });
 
 test("deactivating leaves verified_by / verified_at alone", async () => {

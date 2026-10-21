@@ -83,7 +83,7 @@ function ProposalCard({
 }) {
   const [pending, startTransition] = React.useTransition();
   const [editing, setEditing] = React.useState(false);
-  const [draft, setDraft] = React.useState({
+  const draftFrom = () => ({
     statistic: p.statistic,
     figure: p.figure,
     caveat: p.caveat ?? "",
@@ -91,6 +91,12 @@ function ProposalCard({
     market: p.market ?? "",
     vendor: p.is_vendor_sourced,
   });
+  const [draft, setDraft] = React.useState(draftFrom);
+  // Start every edit from what the server holds now, not from the mount-time copy.
+  const openEditor = () => {
+    setDraft(draftFrom());
+    setEditing(true);
+  };
 
   const run = (fn: () => Promise<{ ok: true } | { ok: false; error: string }>) => {
     onMessage(null);
@@ -241,7 +247,7 @@ function ProposalCard({
             <Button type="button" size="sm" variant="primary" disabled={off} onClick={approve}>
               <Check className="h-3.5 w-3.5" aria-hidden /> Approve
             </Button>
-            <Button type="button" size="sm" disabled={off} onClick={() => setEditing(true)}>
+            <Button type="button" size="sm" disabled={off} onClick={openEditor}>
               <Pencil className="h-3.5 w-3.5" aria-hidden /> Edit before approving
             </Button>
             <Button type="button" size="sm" variant="ghost" disabled={off} onClick={reject}>

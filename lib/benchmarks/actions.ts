@@ -28,6 +28,8 @@ const toggleSchema = z.object({
 
 export type BenchmarkActionResult = { ok: true } | { ok: false; error: string };
 
+const ALREADY_REVIEWED = "Already reviewed (approved or rejected in another tab). Reload the page.";
+
 export async function setBenchmarkActive(
   input: z.input<typeof toggleSchema>,
 ): Promise<BenchmarkActionResult> {
@@ -69,22 +71,26 @@ export async function setBenchmarkActive(
       }
     : { is_active: false };
 
-  let q = supabase
+  const base = supabase
     .from("benchmarks")
     .update(payload)
     .eq("id", parsed.data.benchmark_id)
     .eq("tenant_id", user.tenantId);
-  // Closes the gap between the read above and this write (another tab rejecting).
-  if (parsed.data.is_active) q = q.is("rejected_at", null);
-  const { error } = await q;
 
-  if (error) return { ok: false, error: `Could not update: ${error.message}` };
+  if (parsed.data.is_active) {
+    // Closes the gap between the read above and this write (another tab rejecting):
+    // 0 rows matched means the row was rejected (or removed) in between.
+    const { data, error } = await base.is("rejected_at", null).select("id");
+    if (error) return { ok: false, error: `Could not update: ${error.message}` };
+    if (!data || data.length === 0) return { ok: false, error: ALREADY_REVIEWED };
+  } else {
+    const { error } = await base;
+    if (error) return { ok: false, error: `Could not update: ${error.message}` };
+  }
 
   revalidatePath("/benchmarks");
   return { ok: true };
 }
-
-const ALREADY_REVIEWED = "Already reviewed (approved or rejected in another tab). Reload the page.";
 
 const proposalSchema = z.object({
   benchmark_id: z.string().uuid(),
@@ -165,10 +171,39 @@ export async function rejectBenchmarkProposal(
       .update({ rejected_at: new Date().toISOString() })
       .eq("id", parsed.data.benchmark_id)
       .eq("tenant_id", user.tenantId),
-  ).select("id");
+  ).select("id, wanted_fact_id");
 
   if (error) return { ok: false, error: `Could not reject: ${error.message}` };
-  if (!data || data.length === 0) return { ok: false, error: ALREADY_REVIEWED };
+  const rejected = data?.[0];
+  if (!rejected) return { ok: false, error: ALREADY_REVIEWED };
+
+  // Research only looks at open / no_source facts. When this was the last live
+  // proposal for its fact (nothing pending, nothing approved), put the fact back to
+  // 'open' so the next run can look for a different source. A dismissed fact stays
+  // dismissed: the WHERE only moves 'proposed'.
+  if (rejected.wanted_fact_id) {
+    const { data: others, error: othersError } = await supabase
+      .from("benchmarks")
+      .select("id")
+      .eq("tenant_id", user.tenantId)
+      .eq("wanted_fact_id", rejected.wanted_fact_id)
+      .is("rejected_at", null)
+      .limit(1);
+    if (othersError) {
+      return { ok: false, error: `Rejected, but could not check the fact: ${othersError.message}` };
+    }
+    if (!others || others.length === 0) {
+      const { error: reopenError } = await supabase
+        .from("wanted_facts")
+        .update({ status: "open" })
+        .eq("id", rejected.wanted_fact_id)
+        .eq("tenant_id", user.tenantId)
+        .eq("status", "proposed");
+      if (reopenError) {
+        return { ok: false, error: `Rejected, but could not reopen the fact: ${reopenError.message}` };
+      }
+    }
+  }
 
   revalidatePath("/benchmarks");
   return { ok: true };
