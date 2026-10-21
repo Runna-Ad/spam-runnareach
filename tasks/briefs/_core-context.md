@@ -120,6 +120,14 @@ cost-tracked, daily-capped wrapper in `lib/anthropic/` · Gmail API · Sentry ·
   the code applied after the model answered: filled `{hunter_url}` links (they carry the
   pitch's attribution code), appended lines. Test with a fake model that copies its input
   (batch 6: a rewrite would have kept the old pitch's code and lost its scans).
+- A field you write that another module later TRUSTS as text (a gate's allowed sources,
+  exemplars, prompts): your guard includes that reader's own acceptance rule next to your
+  independent check, and your tests come from the reader's rule (batch 7: an approved
+  statistic sentence would have made "three times more" sendable).
+- Reading meaning into an input the model did NOT get (no benchmark, no exemplar): exclude
+  every path that empties it on purpose (A/B arms, caps, fallbacks), with a test.
+- A number's scale or unit belongs to that number's token or the next word ("6.77bn",
+  "6.77 billion"), never to a word found elsewhere in the text.
 - Client state (`useState`) survives `router.refresh()`: when a server prop disables a
   control, derive the effective state from both (`hotOnly && !unavailable`), never from
   the raw state alone.

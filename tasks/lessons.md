@@ -1,5 +1,87 @@
 # S.P.A.M. — Lessons (newest first)
 
+## Merged from lessons-inbox, batch 7 (2026-10-21)
+
+### conductor + late lessons (wrap-ups, reviews)
+[2026-10-21] A stored field that another module later treats as trusted text needs that module's rule in its guard
+WHAT HAPPENED: fact-research (batch 7) checked a proposed benchmark's figure against the search citation, but the proposal's `statistic` sentence becomes a send-gate source once approved (lib/pitches/gate.ts benchmarkSources → findUnsourcedNumbers). Two review rounds found the same class: a second number in the sentence ("$18 billion"), then spelled claims ("three times more", "sixty percent") that pass a digit check but the gate accepts. The brief named the figure check but never named the gate as a reader of `statistic`.
+RULE: Before briefing a field another module reads, grep its readers including allow-lists and "sources" (gate, exemplars, prompts). The guard then includes the reader's own acceptance rule next to the guard's independent coarse check, and tests are written from the reader's rule.
+TAGS: conductor, briefs, fail-closed, send-gate
+
+[2026-10-21] A number's unit or scale belongs to that number
+WHAT HAPPENED: the research scale check looked for "billion" anywhere in the cited text, so "$6.77 billion" passed against "$6.77 trillion; 3 billion users"; abbreviations ("$6.77B", "bn") passed too.
+RULE: Read scale from the number's own token or the word right after it, including abbreviations (k, m, mm, b, bn, t, tn, mdd), never from a bag of words.
+TAGS: parsing, numbers
+
+[2026-10-21] An inference from "what the model was not given" must exclude every arm that hides inputs on purpose
+WHAT HAPPENED: wanted-facts-writer recorded the writer's wish for a statistic when none was offered; the no_benchmark A/B arm offers none by design, so every pitch in it would have logged false "library lacks this" requests and spent research budget.
+RULE: When a feature reads meaning into an absent input, list every path that empties that input deliberately (A/B arms, caps, fallbacks) and exclude them in code with a test.
+TAGS: autopilot, learning, pitches
+
+[2026-10-21] A fake database must return copies of rows
+WHAT HAPPENED: benchmark-review-ui's fake returned stored row objects; a "reject in another tab" simulation mutated the row before the code read it and the race test failed for the wrong reason.
+RULE: Fakes return copies, so a test can change data between a read and a write deliberately.
+TAGS: testing
+
+[2026-10-21] Run the full suite after the last conductor-only edit, not before it
+WHAT HAPPENED: wave 0 of batch 7 added a vercel.json maxDuration entry for a route a worker had not written yet; the conductor's suite run predated that edit, and tests/vercel-config.test.ts went red on the integration branch for all three workers (caught by a worker 3 minutes after spawn).
+RULE: The last command before pushing a wave-0 commit is the full suite on the final tree. A config entry for code that does not exist yet lands in the merge commit that brings the code.
+TAGS: conductor, ci, vercel
+
+### benchmark-matching
+[2026-10-21] A lookup keyed on "any of the prospect's pains" lets a figure about one pain ride along under another
+WHAT HAPPENED: `fetchBenchmarksForPitch` (lib/benchmarks/queries.ts) kept rows whose pain_codes overlapped ANY evidenced pain, and the payload did not say which pain a row was for. The writer picks its lead pain itself, so a boutique leading with "no cart recovery" got retention and video figures and presented them as about carts. Fixed by tagging each row with `for_pains` and making writer (FACTS 2) and critic (rule 2) enforce the pairing.
+RULE: When a model picks one item (a pain, an angle) from a list and is given supporting evidence for the whole list, every piece of evidence has to name the item it supports, and both the writer and its checker get that tag. An untagged evidence list hands the model the pairing decision without the information it needs to make it.
+TAGS: benchmarks, pitches, prompt, matching
+
+[2026-10-21] A brief's worked example can disagree with its own ranking rule
+WHAT HAPPENED: acceptance check 2 expected Bain and HBR (universal) for low_customer_retention, but decision 3 ranks a same-family vendor row (Omnisend) above universal rows, so the 3-per-pain cap drops HBR. I followed the rule, pinned the real order in the test, and flagged it in the PR.
+RULE: Run the brief's ranking rule over the brief's own example before writing the assertion. When they disagree, implement the rule, pin what it actually produces, and name the gap in the report.
+TAGS: process, briefs, tests
+
+## Out of scope, noticed
+- lib/pitches/pitch-stage.ts ~:798 (rewrite with angle): passes `rewriteBenchmarks` straight to the writer with no `writerArms` check, while claude-composer's forced-angle directive says "no client, no number". So a forced-angle rewrite gets benchmarks its prompt tells it not to use. One of the two is wrong; not changed here.
+- tests/vercel-config.test.ts:18 fails on a clean integration branch (71bd7f4): vercel.json names app/api/benchmarks/research/route.ts, which the research worker creates this wave.
+
+### benchmark-review-ui
+[2026-10-21] Action tests can load a "use server" file with a loader hook
+WHAT HAPPENED: tests/benchmark-review-ui.test.ts imports lib/benchmarks/actions.ts for real, stubbing only next/cache, @/lib/auth and @/lib/supabase/server through a module loader hook, with a fake client that records each query's filters. That let the test assert the WHERE of every write (tenant, unverified, unrejected, allowed from-states), not just the result.
+RULE: assert a write's filters, not only its outcome; a fake that applies the filters and records them proves both that the guard exists and that it works. Node's strip-only TypeScript rejects constructor parameter properties in test files.
+TAGS: benchmarks, testing
+
+## Out of scope, noticed
+- tests/vercel-config.test.ts "every per-route limit names a route file that exists" fails on the integration branch: vercel.json lists app/api/benchmarks/research/route.ts, which the fact-research worker has not added yet. Goes green when that PR merges.
+
+### fact-research
+[2026-10-21] Web search responses: the only checkable source text is what the model cites
+WHAT HAPPENED: lib/benchmarks/research.ts proposes benchmarks from Claude's web_search tool. Result content arrives encrypted, so the sourcing invariant (checkCandidate) can only check the URL against web_search_result urls and the figure against citations[].cited_text from that same URL. The prompt asks the model to state each figure in a cited sentence first, then the JSON; without that step there is no text to verify and every proposal fails closed.
+RULE: When a model's claim must be verified against a source you cannot read, make the model produce the evidence in a channel the API fills itself (citations), and check against that channel only, never against the model's own JSON. Match digits by an independent character scan with whole-group boundaries ("70.22" must not match "170.225").
+TAGS: benchmarks, anthropic, web-search, fail-closed
+
+[2026-10-21] Stamp a time "after the call" by reading the clock after the call
+WHAT HAPPENED: The first draft passed `now: Date` into researchFact before the Claude call, so proposed_at was the run start, 50 s before the answer existed. The exact-payload test with a fake clock caught it.
+RULE: Pass a clock function, not a Date, into anything that awaits a slow call and then stamps rows. Exact-payload tests with an advancing fake clock catch this class.
+TAGS: testing, time
+
+## Out of scope, noticed
+- A client-side timeout (50 s) on the research call leaves no `usage`, so the call is not recorded in cost_tracking although the API may still bill it. Same gap exists for every structuredCall timeout (lib/anthropic/client.ts). Streaming would expose usage; conductor-only file.
+- lib/anthropic/client.ts PRICING has no web-search line; research.ts adds $0.01/request itself. If another caller ever uses server tools it must do the same.
+
+### wanted-facts-writer
+[2026-10-21] An optional LLM field must not be able to fail the parse it rides on
+WHAT HAPPENED: wanted_fact was added to the writer and critic schemas (lib/pitches/claude-composer.ts, lib/pitches/review.ts). A `z.string().nullable().optional()` would have thrown the whole pitch to the template the first time the model returned a number or an object there. The field is `z.unknown()` + `.transform` to string|null, cast to `ZodType<string|null, …, string|null>` because `structuredCall`'s `z.ZodType<T>` infers T from input AND output, so an `unknown` input widens `call.data` to unknown.
+RULE: A nice-to-have field added to an LLM output schema accepts any value and maps it to a typed default; it never decides whether the output parses. Test it with a fake model returning absent, null, "", a number, an object and an oversized string.
+TAGS: pitches, llm-output, zod
+
+[2026-10-21] A test-harness stub that throws on unknown names reaches into best-effort code
+WHAT HAPPENED: tests/pitch-rewrite-notes-stage.test.ts stubs every import of pitch-stage.ts and throws "no stub for X" synchronously on a new import. The new best-effort recorder was called outside any try, so two existing tests failed. Wrapping the call site in an async try/catch fixed it without touching the harness, and is right anyway: "never throws to the caller" has to hold at the call site, not only inside the helper.
+RULE: A best-effort side call is wrapped where it is called, not only inside its own module; a synchronous throw from its wiring must not reach the main path either.
+TAGS: pitches, tests, best-effort
+
+## Out of scope, noticed
+- lib/pitches/website-pitch-stage.ts also runs Claude composes but does not go through composeWithReview's wanted-fact plumbing; its pitches record no wishes (not in this brief).
+
+
 [2026-10-21] A command that tells a platform "skip or go" must map every failure to "go", and fit the platform's schema
 WHAT HAPPENED: The notes-only preview skip (vercel.json ignoreCommand) ran `git diff $VERCEL_GIT_PREVIOUS_SHA HEAD`. Once the last built commit fell outside Vercel's shallow clone, git exited 128 and Vercel reported every later push as a FAILED deployment (5 failure emails to Pedro, 10-19 to 10-21). The first fix was tested as a shell command but not as config: Vercel rejects an ignoreCommand longer than 256 characters, so that commit failed schema validation (it would have failed production too had it reached main).
 RULE: Keep platform hook logic in a script file (scripts/vercel-ignore.sh) referenced by a short command; exit 0 only on a positive "nothing to build", everything else exits 1. Before pushing a vercel.json change, check it against Vercel's documented limits and watch the first deployment of that commit reach READY.

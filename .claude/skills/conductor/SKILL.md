@@ -80,6 +80,13 @@ rework in retros traces to a missing sentence in the brief. Before spawning, che
   column, a status) names that reader and quotes the check it must pass. Grep for the
   consumer before writing the value (batch 2: a hold reason the governor's
   `startsWith("held by a person")` did not match would have re-sent held emails).
+- A field the task writes that another module later TRUSTS as text (a gate's allowed sources,
+  exemplars, prompts): the brief names that reader, quotes its acceptance rule, and asks for
+  the guard to include it (batch 7: fact-research took 2 rework rounds because the brief never
+  said gate.ts:126 turns an approved `statistic` into a send-gate source).
+- A feature that infers something from an input the model did NOT get (no benchmark, no
+  exemplar): the brief lists every path that empties that input on purpose (A/B arms, caps,
+  fallbacks) and says what happens there (batch 7: the no_benchmark arm).
 - Work added to a long route (poll, tick, send-queue) states the route's time budget and
   what runs after it: anything at the end must be safe to be killed at maxDuration
   (batch 2 lead alerts: 3 rounds on "claimed, then killed, never sent").
@@ -133,6 +140,10 @@ rework in retros traces to a missing sentence in the brief. Before spawning, che
   sessions do not get the brain; the brief is how its lessons reach them.
 Keep the brief in the repo (commit to the integration branch) so the worker's fresh
 clone has it.
+
+Before pushing any wave-0 or conductor-only commit, the LAST command is the full suite on
+the final tree; a config entry for code that does not exist yet (a vercel.json route) lands
+in the merge commit that brings the code (batch 7: vercel-config test red for all workers).
 
 ## 3. Spawn
 Default mechanism: a remote session per task (fresh context, own container, own branch).

@@ -98,5 +98,13 @@ Checklist (grown by retros; add a line when a retro records a miss):
   `cost_tracking.created_at` does not exist). A new `"use server"` export or a new
   `messages.create`: auth before the paid call, cost recorded on usage.
 
+- A field written for human review that another module later trusts (a gate's allowed
+  sources, an exemplar, a prompt): run the READER's acceptance rule on the field's worst
+  case, not only the writer's guard (batch 7: an approved statistic sentence would have
+  made "three times more" and "$18 billion" sendable).
+- A feature that reads meaning into a missing input (no benchmark offered, no exemplar,
+  no contact): list every path that empties that input on purpose (A/B arms, caps,
+  fallbacks) and check each is excluded (batch 7: the no_benchmark arm).
+
 Trace a real path from an input to the failure before calling something blocking. If you
 cannot, it is optional. A finding you are unsure of is optional with "unsure" in front.
