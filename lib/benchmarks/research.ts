@@ -27,7 +27,7 @@ import { ANTHROPIC_DEFAULT_MODEL, computeCostUsd, getClient, repairJsonStrings, 
 import type { CostRecordInput } from "../anthropic/cost-tracking.ts";
 import type { Database } from "../supabase/types.ts";
 import { findUnsourcedNumbers, normalizeNumbers } from "../pitches/content-rules.ts";
-import { industryFamily } from "./industry-families.ts";
+import { INDUSTRY_FAMILY_TERMS, industryFamily } from "./industry-families.ts";
 
 type FactRow = Database["public"]["Tables"]["wanted_facts"]["Row"];
 export type WantedFact = Pick<
@@ -369,20 +369,9 @@ export function parseAnswer(finalText: string): ParsedAnswer {
 
 /**
  * The industry vocabulary the model may scope a proposal to: the members of
- * lib/benchmarks/industry-families.ts (not exported there; a test checks every
- * term here maps to a family). Code drops any other term (scopeToFamilies).
+ * lib/benchmarks/industry-families.ts. Code drops any other term (scopeToFamilies).
  */
-export const INDUSTRY_TERMS: readonly string[] = [
-  "online store", "retail", "boutique", "direct to consumer", "tienda", "ecommerce", "e-commerce",
-  "manufacturer", "manufacturing", "industrial supplier", "distribution", "distributor", "wholesale",
-  "wholesale distributor", "supply chain", "logistics",
-  "accounting firm", "chartered accountant", "despacho contable", "asesoría fiscal", "law firm",
-  "despacho de abogados", "consultoría", "consulting firm", "agencia de seguros",
-  "hospital", "clínica", "consultorio dental", "fisioterapia",
-  "spa", "salón de belleza", "estética", "fitness studio", "gimnasio",
-  "restaurant", "restaurante", "restaurant group", "bar", "panadería",
-  "hotel", "hotel chain", "boutique hotel",
-];
+export const INDUSTRY_TERMS: readonly string[] = INDUSTRY_FAMILY_TERMS;
 
 /** Keeps only terms the benchmark matcher knows (industryFamily), deduped, in order. */
 export function scopeToFamilies(scope: string[]): { kept: string[]; unknown: string[] } {

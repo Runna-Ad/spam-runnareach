@@ -48,6 +48,9 @@ const BY_INDUSTRY: ReadonlyMap<string, string> = new Map(
   Object.entries(FAMILIES).flatMap(([family, members]) => members.map((m) => [m, family] as const)),
 );
 
+/** Every industry term a family knows, in family order (the research prompt's vocabulary). */
+export const INDUSTRY_FAMILY_TERMS: readonly string[] = Object.values(FAMILIES).flat();
+
 /** The family of an industry string, or null when it is in none. */
 export function industryFamily(industry: string | null): string | null {
   if (!industry) return null;
