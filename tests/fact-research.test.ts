@@ -17,6 +17,7 @@ import { industryFamily } from "../lib/benchmarks/industry-families.ts";
 import {
   checkCandidate,
   INDUSTRY_TERMS,
+  numberOccurrences,
   RESEARCH_SYSTEM,
   scopeToFamilies,
   containsDigitGroup,
@@ -299,6 +300,34 @@ test("end to end: a proposal whose statistic adds an uncited number is never wri
   assert.match(h.db.tables.wanted_facts![0]!.research_note as string, /70\.22% \([^)]*\): statistic_number_not_in_citation/);
 });
 
+test("spelled claims the send gate accepts must be in the citation too (the gate's own rule is part of the invariant)", () => {
+  const cited = "70% of shoppers abandon carts.";
+  for (const statistic of [
+    "70% of shoppers abandon carts, twice as many as in stores.",
+    "70% of shoppers abandon carts and are three times more likely to leave.",
+    "70% of shoppers abandon carts; seven in ten never return.",
+    "70% of shoppers abandon carts and sixty percent never return.",
+  ]) assert.equal(verdict("70%", statistic, cited), "statistic_number_not_in_citation", statistic);
+  assert.equal(verdict("70%", "70% of shoppers abandon carts.", cited), "keep");
+});
+
+test("abbreviated scale suffixes count, and a scale word only scales the number it follows", () => {
+  assert.equal(verdict("$6.77B", "Sales hit $6.77B.", "Sales reached $6.77 trillion."), "figure_not_in_citation_from_url");
+  assert.equal(verdict("$6.77bn", "Sales hit $6.77bn.", "Sales reached $6.77 trillion."), "figure_not_in_citation_from_url");
+  assert.equal(verdict("$6.77B", "Sales hit $6.77B.", "Sales reached $6.77 billion."), "keep");
+  assert.equal(verdict("$6.77 billion", "Sales hit $6.77 billion.", "Sales reached $6.77 trillion; 3 billion users"), "figure_not_in_citation_from_url");
+  assert.equal(verdict("$4.2 mdd", "Se pierden $4.2 mdd.", "Se pierden $4.2 millones de dólares."), "keep");
+  assert.deepEqual(numberOccurrences("$6.77B and 3 mil millones, 44K"), [
+    { group: "6.77", scale: 9 }, { group: "3", scale: 9 }, { group: "44000", scale: 0 },
+  ]);
+});
+
+test("the gate's normalizeNumbers runs first: 44K = 44,000 and 1,200 = 1200", () => {
+  assert.equal(verdict("44K", "44K stores lose sales.", "About 44,000 stores lose sales."), "keep");
+  assert.equal(verdict("1,200", "1,200 stores were surveyed.", "We surveyed 1200 stores."), "keep");
+  assert.equal(verdict("44K", "44K stores lose sales.", "About 4,400 stores lose sales."), "figure_not_in_citation_from_url");
+});
+
 // ── industry_scope is constrained to the benchmark families ─────────────────
 test("industry_scope keeps only terms industry-families knows; e-commerce and ecommerce map to retail", () => {
   assert.equal(industryFamily("e-commerce"), "retail");
@@ -319,6 +348,28 @@ test("unknown industry terms are dropped from the row but the proposal is kept, 
   const row = h.db.inserts[0]!.rows[0]!;
   assert.deepEqual(row.industry_scope, ["e-commerce"]);
   assert.match(row.proposal_note as string, /Industry terms dropped \(not in the benchmark families\): online shops/);
+});
+
+test("every industry term unknown: the row keeps the model's own terms, never [] (which would rank as universal)", async () => {
+  const r = clone(RESPONSE);
+  const last = r.content.at(-1)!;
+  last.text = (last.text as string).replace('["E-commerce", "online store"]', '["Online Shops", "Webshops"]');
+  const h = harness({ facts: [fact()], respond: () => r });
+  await runFactResearch(h.deps, { dry: false });
+  const row = h.db.inserts[0]!.rows[0]!;
+  assert.deepEqual(row.industry_scope, ["online shops", "webshops"]);
+  assert.match(row.proposal_note as string, /Industry terms kept as written \(none is in the benchmark families/);
+});
+
+test("a model scope of [] stays [] and the note asks to check the caveat says cross-industry", async () => {
+  const r = clone(RESPONSE);
+  const last = r.content.at(-1)!;
+  last.text = (last.text as string).replace('["E-commerce", "online store"]', "[]");
+  const h = harness({ facts: [fact()], respond: () => r });
+  await runFactResearch(h.deps, { dry: false });
+  const row = h.db.inserts[0]!.rows[0]!;
+  assert.deepEqual(row.industry_scope, []);
+  assert.match(row.proposal_note as string, /No industry scope: this would match every prospect/);
 });
 
 // ── Acceptance 1: the realistic response end to end ─────────────────────────

@@ -26,6 +26,7 @@ import { z } from "zod";
 import { ANTHROPIC_DEFAULT_MODEL, computeCostUsd, getClient, repairJsonStrings, type ClaudeUsage } from "../anthropic/client.ts";
 import type { CostRecordInput } from "../anthropic/cost-tracking.ts";
 import type { Database } from "../supabase/types.ts";
+import { findUnsourcedNumbers, normalizeNumbers } from "../pitches/content-rules.ts";
 import { industryFamily } from "./industry-families.ts";
 
 type FactRow = Database["public"]["Tables"]["wanted_facts"]["Row"];
@@ -149,45 +150,82 @@ export function containsDigitGroup(text: string, group: string): boolean {
   return digitGroups(text).includes(group);
 }
 
-/** Every group of `wanted` occurs in `text`, in the same order ("7 in 10" is not "10 stores in 7 regions"). */
-export function digitGroupsInOrder(text: string, wanted: string[]): boolean {
-  const have = digitGroups(text);
+const isLetter = (ch: string | undefined): boolean => ch !== undefined && ch.toLowerCase() !== ch.toUpperCase();
+const isSpace = (ch: string | undefined): boolean => ch === " " || ch === "\t" || ch === "\n" || ch === "\u00a0";
+
+/**
+ * Size of a scale word or suffix as a power of ten. "6.77 billion" and "6.77
+ * trillion" share every digit, so the scale is part of the number. Spanish
+ * "billón" is 10^12 and "mil millones" is 10^9 (read below).
+ */
+const SCALE_OF: ReadonlyMap<string, number> = new Map([
+  ["thousand", 3], ["thousands", 3], ["k", 3], ["mil", 3],
+  ["million", 6], ["millions", 6], ["m", 6], ["mm", 6], ["mn", 6], ["mdd", 6], ["millón", 6], ["millon", 6], ["millones", 6],
+  ["billion", 9], ["billions", 9], ["b", 9], ["bn", 9],
+  ["trillion", 12], ["trillions", 12], ["t", 12], ["tn", 12], ["billón", 12], ["billon", 12], ["billones", 12],
+]);
+
+export type NumberOccurrence = { group: string; scale: number };
+
+/**
+ * Every number in `text` with the scale that FOLLOWS it: letters glued to the
+ * digits ("6.77B") or the next word ("6.77 trillion"), nothing further away, so
+ * "3 billion users" elsewhere in a sentence never scales "$6.77". Runs on the
+ * send gate's normalizeNumbers first, so "44K"/"44,000" and "1,200"/"1200"
+ * compare equal. Scale 0 = no scale word.
+ */
+export function numberOccurrences(text: string): NumberOccurrence[] {
+  const t = normalizeNumbers(text);
+  const out: NumberOccurrence[] = [];
+  const wordAt = (i: number): [string, number] => {
+    let w = "";
+    while (isLetter(t[i])) w += t[i++]!.toLowerCase();
+    return [w, i];
+  };
   let i = 0;
-  for (const g of wanted) {
-    while (i < have.length && have[i] !== g) i++;
+  while (i < t.length) {
+    if (!isDigit(t[i])) {
+      i++;
+      continue;
+    }
+    let group = "";
+    while (i < t.length && (isDigit(t[i]) || (isSep(t[i]) && isDigit(t[i + 1]) && group !== ""))) {
+      group += isDigit(t[i]) ? t[i] : ".";
+      i++;
+    }
+    let j = i;
+    if (!isLetter(t[j])) while (isSpace(t[j])) j++;
+    const [word, after] = wordAt(j);
+    let scale = SCALE_OF.get(word) ?? 0;
+    if (word === "mil") {
+      let k = after;
+      while (isSpace(t[k])) k++;
+      const [next] = wordAt(k);
+      if (next === "millones" || next === "millón" || next === "millon") scale = 9;
+    }
+    out.push({ group, scale });
+  }
+  return out;
+}
+
+const sameOcc = (a: NumberOccurrence, b: NumberOccurrence) => a.group === b.group && a.scale === b.scale;
+
+/** Every number of `wanted` occurs in `text` with the same scale, in the same order ("7 in 10" is not "10 stores in 7 regions"). */
+export function numbersInOrder(text: string, wanted: NumberOccurrence[]): boolean {
+  const have = numberOccurrences(text);
+  let i = 0;
+  for (const w of wanted) {
+    while (i < have.length && !sameOcc(have[i]!, w)) i++;
     if (i >= have.length) return false;
     i++;
   }
   return true;
 }
 
-const isLetter = (ch: string): boolean => ch.toLowerCase() !== ch.toUpperCase();
-
-/** Lower-case letter-only words by a character scan ("$6.77 trillion." → ["trillion"]). */
-function letterWords(text: string): string[] {
-  const words: string[] = [];
-  let cur = "";
-  for (const ch of text) {
-    if (isLetter(ch)) cur += ch.toLowerCase();
-    else if (cur) {
-      words.push(cur);
-      cur = "";
-    }
-  }
-  if (cur) words.push(cur);
-  return words;
-}
-
-/** Words that change a number's size. "6.77 billion" and "6.77 trillion" share every digit. */
-const SCALE_WORDS = new Set([
-  "thousand", "thousands", "million", "millions", "billion", "billions", "trillion", "trillions",
-  "mil", "millón", "millon", "millones", "billón", "billon", "billones",
-]);
-
-/** Every scale word in `claim` also appears as a word in `source`. */
-export function scaleWordsCovered(claim: string, source: string): boolean {
-  const have = new Set(letterWords(source));
-  return letterWords(claim).every((w) => !SCALE_WORDS.has(w) || have.has(w));
+/** Every number of `claim` occurs somewhere in `source` with the same scale. */
+export function numbersCovered(claim: string, source: string): boolean {
+  const have = numberOccurrences(source);
+  return numberOccurrences(claim).every((w) => have.some((h) => sameOcc(h, w)));
 }
 
 export type DropReason =
@@ -203,8 +241,8 @@ export type DropReason =
 export type ExistingBenchmark = { source_url: string; figure: string; wanted_fact_id: string | null; rejected_at: string | null };
 
 const sameFigure = (a: string, b: string): boolean => {
-  const ga = digitGroups(a);
-  const gb = digitGroups(b);
+  const ga = digitGroups(normalizeNumbers(a));
+  const gb = digitGroups(normalizeNumbers(b));
   return ga.length > 0 && ga.length === gb.length && ga.every((g, i) => g === gb[i]);
 };
 
@@ -228,18 +266,16 @@ export function checkCandidate(
   const result = evidence.results.find((r) => normalizeUrl(r.url) === url);
   if (!result) return { keep: false, reason: "url_not_in_search_results" };
 
-  const groups = digitGroups(candidate.figure);
-  if (groups.length === 0) return { keep: false, reason: "figure_has_no_digits" };
-  if (!digitGroupsInOrder(candidate.statistic, groups) || !scaleWordsCovered(candidate.figure, candidate.statistic)) {
-    return { keep: false, reason: "statistic_missing_figure" };
-  }
-  const forFigure = evidence.citations.filter(
-    (c) => normalizeUrl(c.url) === url && digitGroupsInOrder(c.cited_text, groups) && scaleWordsCovered(candidate.figure, c.cited_text),
-  );
+  const figureNums = numberOccurrences(candidate.figure);
+  if (figureNums.length === 0) return { keep: false, reason: "figure_has_no_digits" };
+  if (!numbersInOrder(candidate.statistic, figureNums)) return { keep: false, reason: "statistic_missing_figure" };
+  const forFigure = evidence.citations.filter((c) => normalizeUrl(c.url) === url && numbersInOrder(c.cited_text, figureNums));
   if (forFigure.length === 0) return { keep: false, reason: "figure_not_in_citation_from_url" };
-  const statGroups = digitGroups(candidate.statistic);
+  // Two checks, both required: our digit+scale scan (the gate skips bare years),
+  // and the send gate's own rule, which also reads spelled claims ("seven in ten",
+  // "twice as") and is exactly what will treat this statistic as sourced.
   const citation = forFigure.find(
-    (c) => statGroups.every((g) => containsDigitGroup(c.cited_text, g)) && scaleWordsCovered(candidate.statistic, c.cited_text),
+    (c) => numbersCovered(candidate.statistic, c.cited_text) && findUnsourcedNumbers(candidate.statistic, { sources: [c.cited_text] }).length === 0,
   );
   if (!citation) return { keep: false, reason: "statistic_number_not_in_citation" };
 
@@ -367,7 +403,7 @@ WHAT COUNTS AS SOLID
 - Prefer government statistics offices, academic studies, large independent surveys and established research firms. State the sample, geography and year.
 - A figure published by a company that sells a product related to the claim (an email, cart or software vendor, an agency) is VENDOR-SOURCED: you may return it, but set is_vendor_sourced true and say so in the caveat.
 - Never estimate, combine, round or convert numbers. The figure must appear in the source text exactly as you write it (same digits, same order, same scale word such as million or billion).
-- The statistic sentence may only use numbers that appear in the sentence you cited for it: no extra years, totals or second figures.
+- The statistic sentence may only use numbers that appear in the sentence you cited for it: no extra years, totals or second figures, and no spelled-out comparisons ("twice as", "three times", "seven in ten") unless the cited sentence says exactly that.
 - If nothing solid exists, return no proposals and say why. That is a good, useful answer.
 
 HOW TO ANSWER (two parts, in this order)
@@ -628,7 +664,9 @@ export async function researchFact(fact: WantedFact, deps: FactDeps): Promise<Fa
       statistic: v.statistic,
       figure: v.figure,
       pain_codes: fact.pain_code ? [fact.pain_code] : [],
-      industry_scope: scope.kept,
+      // All terms unknown → keep the model's own terms: [] would rank as universal
+      // (queries.ts) and reach every prospect; raw terms only match by the direct word rule.
+      industry_scope: scope.kept.length === 0 && scope.unknown.length > 0 ? scope.unknown : scope.kept,
       market: v.market,
       source_url: check.resultUrl,
       publisher: v.publisher,
@@ -638,8 +676,9 @@ export async function researchFact(fact: WantedFact, deps: FactDeps): Promise<Fa
       proposal_note: noteOf([
         `Cited: "${check.citedText.trim().slice(0, 600)}"`,
         v.why_solid ? `Why solid: ${v.why_solid}` : null,
-        scope.unknown.length ? `Industry terms dropped (not in the benchmark families): ${scope.unknown.join(", ")}.` : null,
-        scope.kept.length === 0 ? "No industry scope: this would match every prospect; check the caveat says the source is cross-industry." : null,
+        scope.kept.length > 0 && scope.unknown.length > 0 ? `Industry terms dropped (not in the benchmark families): ${scope.unknown.join(", ")}.` : null,
+        scope.kept.length === 0 && scope.unknown.length > 0 ? `Industry terms kept as written (none is in the benchmark families, so they match only by the direct word rule): ${scope.unknown.join(", ")}.` : null,
+        v.industry_scope.length === 0 ? "No industry scope: this would match every prospect; check the caveat says the source is cross-industry." : null,
       ]),
     });
   }
