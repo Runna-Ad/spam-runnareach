@@ -134,7 +134,7 @@ test("every new action refuses a viewer before any database call", async () => {
   const results = await Promise.all([
     actions.updateBenchmarkProposal(edit),
     actions.rejectBenchmarkProposal({ benchmark_id: ID }),
-    actions.addWantedFact({ fact: "a perfectly fine fact" }),
+    actions.addWantedFact({ fact: "a perfectly fine fact", pain_code: "abandoned_cart_loss" }),
     actions.setWantedFactStatus({ wanted_fact_id: ID, status: "dismissed" }),
     actions.setBenchmarkActive({ benchmark_id: ID, is_active: true }),
   ]);
@@ -287,7 +287,7 @@ test("addWantedFact calls the RPC as 'manual' with the session tenant", async ()
 test("a database length error on a 5-character fact becomes a readable form error", async () => {
   reset();
   env.rpcError = { message: 'new row for relation "wanted_facts" violates check constraint "wanted_facts_fact_check"' };
-  const res = await actions.addWantedFact({ fact: "short" });
+  const res = await actions.addWantedFact({ fact: "short", pain_code: "abandoned_cart_loss" });
   assert.equal(res.ok, false);
   assert.equal(res.ok ? "" : res.error, "A fact needs 8 to 300 characters. Describe it in a full phrase.");
 });
@@ -318,4 +318,24 @@ test("wanted facts sort open, proposed, no_source, dismissed, then most-asked fi
   const f = (id: string, status: WantedFactRow["status"], request_count: number) => ({ id, status, request_count }) as WantedFactRow;
   const sorted = sortWantedFacts([f("d", "dismissed", 9), f("n", "no_source", 5), f("o1", "open", 1), f("p", "proposed", 3), f("o2", "open", 4)]);
   assert.deepEqual(sorted.map((x) => x.id), ["o2", "o1", "p", "n", "d"]);
+});
+
+test("batch 7 audit: a wanted fact needs a pain (statistics are offered by pain), refused before any database call", async () => {
+  reset();
+  const res = await actions.addWantedFact({ fact: "how many stores have no cart recovery", pain_code: "" });
+  assert.equal(res.ok, false);
+  assert.equal(res.ok ? "" : res.error, "Pick the problem this fact is about.");
+  assert.equal(env.rpcs.length, 0);
+});
+
+test("batch 7 audit: proposal market accepts only CA, MX, GLOBAL or empty (case-folded); US is refused in words", async () => {
+  reset();
+  const us = await actions.updateBenchmarkProposal({ ...edit, market: "US" });
+  assert.equal(us.ok, false);
+  assert.match(us.ok ? "" : us.error, /For US data use GLOBAL/);
+  assert.equal(env.calls.length, 0);
+  reset();
+  await actions.updateBenchmarkProposal({ ...edit, market: "ca" });
+  const write = env.calls.find((c) => c.op === "update");
+  assert.equal((write?.values as { market?: string } | undefined)?.market, "CA");
 });

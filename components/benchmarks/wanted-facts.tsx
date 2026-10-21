@@ -33,7 +33,7 @@ export function WantedFacts({ facts, pains, canEdit }: Props) {
     e.preventDefault();
     setError(null);
     startTransition(async () => {
-      const res = await addWantedFact({ fact, pain_code: pain || null });
+      const res = await addWantedFact({ fact, pain_code: pain });
       if (res.ok) {
         setFact("");
         setPain("");
@@ -77,7 +77,9 @@ export function WantedFacts({ facts, pains, canEdit }: Props) {
             disabled={!canEdit || pending}
             aria-label="Related pain"
           >
-            <option value="">No specific pain</option>
+            <option value="" disabled>
+              Pick the problem it&apos;s about
+            </option>
             {pains.map((p) => (
               <option key={p.code} value={p.code}>
                 {p.label}
@@ -85,7 +87,7 @@ export function WantedFacts({ facts, pains, canEdit }: Props) {
             ))}
           </Select>
         </div>
-        <Button type="submit" variant="primary" disabled={!canEdit || pending || fact.trim() === ""}>
+        <Button type="submit" variant="primary" disabled={!canEdit || pending || fact.trim() === "" || pain === ""}>
           <Plus className="h-3.5 w-3.5" aria-hidden /> Add
         </Button>
       </form>

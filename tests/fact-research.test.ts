@@ -16,6 +16,7 @@ import type { CostRecordInput } from "../lib/anthropic/cost-tracking.ts";
 import { industryFamily } from "../lib/benchmarks/industry-families.ts";
 import {
   checkCandidate,
+  eligibleFact,
   INDUSTRY_TERMS,
   numberOccurrences,
   RESEARCH_SYSTEM,
@@ -683,4 +684,22 @@ test("a failed proposal insert leaves the fact open with a note and sends no ema
   assert.equal(stored.status, "open");
   assert.match(stored.research_note as string, /Proposals not saved \(database error \(empty message\)\)/);
   assert.equal(h.emails.length, 0);
+});
+
+test("batch 7 audit: a model market of US is stored as GLOBAL (every prospect is CA or MX) and the caveat names US data", async () => {
+  const r = clone(RESPONSE);
+  const last = r.content.at(-1)!;
+  last.text = (last.text as string).replace('"market": "global"', '"market": "US"').replace("mostly US and global e-commerce", "global e-commerce");
+  const h = harness({ facts: [fact()], respond: () => r });
+  await runFactResearch(h.deps, { dry: false });
+  const row = h.db.inserts[0]!.rows[0]!;
+  assert.equal(row.market, "GLOBAL");
+  assert.match(row.caveat as string, /^US data\. /);
+  assert.ok(!RESEARCH_SYSTEM.includes("CA | MX | US"), "the prompt no longer offers US");
+});
+
+test("batch 7 audit: a fact with no pain is never researched (a proposal without pain_codes could never be offered)", () => {
+  const now = new Date("2026-10-28T14:20:00Z");
+  assert.equal(eligibleFact({ status: "open", researched_at: null, pain_code: null }, now), false);
+  assert.equal(eligibleFact({ status: "open", researched_at: null, pain_code: "abandoned_cart_loss" }, now), true);
 });

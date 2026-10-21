@@ -408,7 +408,7 @@ HOW TO ANSWER (two parts, in this order)
   "is_vendor_sourced": false,
   "caveat": "sample, geography, year, who published; anything a careful reader must know",
   "industry_scope": ["industries it legitimately applies to, ONLY from the list below; [] only if the source is truly cross-industry, and then say so in the caveat"],
-  "market": "CA | MX | US | GLOBAL | null",
+  "market": "CA | MX | GLOBAL | null (a study of one other country that applies broadly is GLOBAL, and the caveat names the country)",
   "why_solid": "one sentence on why this source is credible"
 }], "no_source_reason": null}
 \`\`\`
@@ -505,7 +505,10 @@ export function supabaseResearchStore(db: Db): ResearchStore {
 }
 
 /** Selection order. Status filtering is the store's job; this re-checks it (pure, tested). */
-export function eligibleFact(f: Pick<WantedFact, "status" | "researched_at">, now: Date): boolean {
+export function eligibleFact(f: Pick<WantedFact, "status" | "researched_at" | "pain_code">, now: Date): boolean {
+  // A proposal is offered by pain (queries.ts .overlaps("pain_codes")); one with no pain
+  // could never reach a pitch, yet its numbers would become send-gate sources once approved.
+  if (!f.pain_code) return false;
   if (f.status === "open") return true;
   if (f.status !== "no_source" || !f.researched_at) return false;
   return Date.parse(f.researched_at) < now.getTime() - NO_SOURCE_RETRY_DAYS * 86_400_000;
@@ -656,12 +659,16 @@ export async function researchFact(fact: WantedFact, deps: FactDeps): Promise<Fa
       // All terms unknown → keep the model's own terms: [] would rank as universal
       // (queries.ts) and reach every prospect; raw terms only match by the direct word rule.
       industry_scope: scope.kept.length === 0 && scope.unknown.length > 0 ? scope.unknown : scope.kept,
-      market: v.market,
+      // Stored markets are CA, MX or GLOBAL (null = unscoped): matchBenchmarks keeps a row
+      // only when its market is empty, GLOBAL or the prospect's, and every prospect is CA or
+      // MX, so a "US" row would never be offered. US data is GLOBAL with the caveat saying so,
+      // the same convention as the 48 seeded rows.
+      market: v.market === "US" ? "GLOBAL" : v.market,
       source_url: check.resultUrl,
       publisher: v.publisher,
       published_date: v.published_date,
       is_vendor_sourced: v.is_vendor_sourced,
-      caveat: v.caveat,
+      caveat: v.market === "US" && !/\b(US|U\.S\.|United States|American)\b/i.test(v.caveat) ? `US data. ${v.caveat}` : v.caveat,
       proposal_note: noteOf([
         `Cited: "${check.citedText.trim().slice(0, 600)}"`,
         v.why_solid ? `Why solid: ${v.why_solid}` : null,

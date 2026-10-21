@@ -103,12 +103,16 @@ const proposalSchema = z.object({
     .nullish()
     .transform((v) => (v ? v : null)),
   industry_scope: z.array(z.string().trim().min(1).max(80)).max(30),
+  // Only values benchmark matching understands (queries.ts matchBenchmarks): a row for any
+  // other market would never be offered. US data is GLOBAL with the caveat saying so.
   market: z
     .string()
     .trim()
-    .max(40)
     .nullish()
-    .transform((v) => (v ? v : null)),
+    .transform((v) => (v ? v.toUpperCase() : null))
+    .refine((v) => v === null || v === "CA" || v === "MX" || v === "GLOBAL", {
+      message: "Market must be CA, MX, GLOBAL or empty. For US data use GLOBAL and say so in the caveat.",
+    }),
   is_vendor_sourced: z.boolean(),
 });
 
@@ -211,12 +215,8 @@ export async function rejectBenchmarkProposal(
 
 const wantedFactSchema = z.object({
   fact: z.string().trim().min(1, "Write the fact you want a source for."),
-  pain_code: z
-    .string()
-    .trim()
-    .max(80)
-    .nullish()
-    .transform((v) => (v ? v : null)),
+  // Required: statistics are offered by pain, so a fact with none could never be used.
+  pain_code: z.string().trim().min(1, "Pick the problem this fact is about.").max(80),
 });
 
 /** Length rules live in the database (8 to 300 characters); its error is shown in words. */
