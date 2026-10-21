@@ -54,7 +54,27 @@ const responseSchema = z.object({
   measurable_result_included: z.boolean(),
   quality_self_score: z.number().min(0).max(1),
   reasoning: z.string().trim().max(8000).transform((s) => s.slice(0, 800)).optional().default("(no reasoning provided)"),
+  // The statistic it wished payload.benchmarks had (recorded, never sent). Any
+  // shape the model returns reads as text or null: a malformed wish must never
+  // cost the pitch. Clipped generously; the recorder discards anything over 300.
+  wanted_fact: wantedFactField(),
 });
+
+/**
+ * Optional free-text wish: a string (trimmed, clipped) or null, never a parse
+ * failure. Shared with the critic. Typed string | null on both sides because
+ * structuredCall infers its result from a schema whose input and output agree;
+ * at runtime any value (absent, a number, an object) reads as null.
+ */
+export function wantedFactField(): z.ZodType<string | null, z.ZodTypeDef, string | null> {
+  return z
+    .unknown()
+    .transform((v) => (typeof v === "string" && v.trim() ? v.trim().slice(0, 1000) : null)) as unknown as z.ZodType<
+    string | null,
+    z.ZodTypeDef,
+    string | null
+  >;
+}
 
 export type ClaudeComposeResult = {
   composed: ComposedPitch;
@@ -138,7 +158,8 @@ export async function composePitchWithClaude(
     // English overflows in Spanish. That asymmetry made truncation look random
     // when it was actually language-correlated. Headroom is cheap; the failure
     // is not.
-    max_tokens: 1600,
+    // 1700 since v3.2: the wanted_fact field adds up to ~80 tokens.
+    max_tokens: 1700,
     // A larger response takes longer to generate — give it more than the 20s
     // default so a slow generation doesn't time out into the heuristic. Stays
     // well under the 60s Vercel function budget (this is the only Sonnet call).
@@ -214,6 +235,7 @@ export async function composePitchWithClaude(
         measurable_result_included: call.data.measurable_result_included,
         quality_self_score: adjustedScore,
         reasoning: call.data.reasoning ?? "(no reasoning provided)",
+        wanted_fact: call.data.wanted_fact,
       },
       usage: totalUsage,
       model: call.model,
@@ -277,8 +299,14 @@ export function heldBodyForRevision(body: string): string {
  * about (for_pains). A prod rewrite led with "no cart recovery" and was offered
  * only retention and video figures; the writer may now cite a benchmark only
  * when one of its for_pains is the pain it leads with.
+ *
+ * v3.2 (2026-10-22): when no offered benchmark is about the pain it leads with,
+ * the writer writes no number and names the statistic it wished it had
+ * (wanted_fact, recorded in wanted_facts for research). The rewrite-with-angle
+ * directive no longer bans every number: a benchmark tagged with the angle's
+ * pain is allowed, as FACTS 2 says, and the directive names that pain_id.
  */
-export const PITCH_PROMPT_VERSION = "pitch-v3.1-2026-10-22";
+export const PITCH_PROMPT_VERSION = "pitch-v3.2-2026-10-22";
 
 /** Everything that differs by language. The rules themselves do not. */
 type LanguagePack = {
@@ -433,6 +461,7 @@ FACTS: EVERYTHING COMES FROM THE PAYLOAD
    - "about 30 seconds" for the free check;
    - facts about THEM that are in the payload (what_they_do, evidence_quote), e.g. how many locations they run;
    - statistics from payload.benchmarks: real, sourced research on what businesses that make this kind of change typically see (more enquiries won, hours saved, sales recovered, fewer no-shows). We don't need numbers of our own; this is how the outcome gets a size. Each benchmark lists for_pains, the pains it is about: cite a benchmark ONLY if one of its for_pains is the pain you lead with (the same pain_id), otherwise use no number at all, because a figure about a different problem is worse than none. When one matches, USE it: it is usually the line that makes the reader stop. Keep the figure exactly as given, say where it comes from in a few words (${p.benchmark.attribution}), and frame it as what businesses like theirs experience, saying exactly what the source measured ("get a real conversation" is not "win the client"). Each benchmark carries a caveat: follow it. One per email; two only if they make the same point.
+   If a statistic would make this email stronger and none of payload.benchmarks has the pain you lead with in for_pains, write no number in the email and put the fact you wish you had in wanted_fact, in plain words, as a question or a description, never a number.
    How to frame it matters: in cold-email data, percentage and ROI claims made by the sender LOWER replies (Gong: -15%), while a number that describes the reader's world reads as insight. So a statistic describes what happens out there or sizes their problem ("most firms never reply to a web enquiry at all"); it never promises the reader a result ("you'll get 30% more").
    Never: a figure you remember, estimate, round or combine; a benchmark presented as OUR result; a percentage promised to the reader; any number in the subject line. benchmarks may be empty, and then the email has no statistic: the pain and the fix carry it.
      OK (only when that figure is in benchmarks): "${p.benchmark.ok}"
@@ -500,7 +529,8 @@ OUTPUT: one JSON object with exactly these fields, all required (null only where
   "contact_email": string | null,        // address_contact.email, or null
   "measurable_result_included": boolean, // true ONLY if you quoted a benchmark figure
   "quality_self_score": number,          // 0..1, honest grade of how specific and personal it is
-  "reasoning": string                    // 1 to 3 sentences: the pain and the fix you chose, and why
+  "reasoning": string,                   // 1 to 3 sentences: the pain and the fix you chose, and why
+  "wanted_fact": string | null           // the statistic you wished benchmarks had (see FACTS 2), in words with no digits, or null
 }`;
 }
 
@@ -586,9 +616,11 @@ function buildStage2UserPrompt(input: GeneratorInputs): string {
   };
 
   const rewriteDirective = input.forced_angle
-    ? `\n⚑ REWRITE DIRECTIVE: the human chose the angle for this rewrite. Lead with this pain: "${input.forced_angle.pain_label}". Prove it with the kind of work that fixes it${
+    ? `\n⚑ REWRITE DIRECTIVE: the human chose the angle for this rewrite. Lead with this pain: "${input.forced_angle.pain_label}"${
+        input.forced_angle.pain_id ? ` (pain_id ${input.forced_angle.pain_id})` : ""
+      }. Prove it with the kind of work that fixes it${
         input.forced_angle.capability ? ` ("${input.forced_angle.capability}")` : ""
-      }, under the same FACTS rules: no client, no number. Everything else stays the same.\n`
+      }, under the same FACTS rules: no client; a number only as FACTS 2 allows (a benchmark whose for_pains includes this pain). Everything else stays the same.\n`
     : "";
 
   // The AI review sent the previous draft back. Name each issue; keep what

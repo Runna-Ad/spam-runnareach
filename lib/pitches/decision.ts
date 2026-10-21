@@ -84,6 +84,12 @@ export type DecisionRecord = {
    * notes, person-edited, unreadable, or the rewrite fell back to a template).
    */
   retry_mode?: "revised" | "fresh";
+  /**
+   * The statistic the writer wished it had (its wanted_fact, as written, before
+   * the recording's discard checks). Claude path only; absent before
+   * pitch-v3.2 and on a template.
+   */
+  wanted_fact?: string | null;
 };
 
 export type SizeBand = "smb" | "mid_market" | "enterprise" | "unknown";
