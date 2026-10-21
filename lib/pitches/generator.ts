@@ -108,6 +108,12 @@ export type ComposedPitch = {
   measurable_result_included: boolean;
   quality_self_score: number; // 0..1
   reasoning: string;
+  /**
+   * The statistic the writer wished payload.benchmarks had, in words, never a
+   * number (lib/benchmarks/wanted-facts.ts). Recorded, never sent. Absent on a
+   * template.
+   */
+  wanted_fact?: string | null;
 };
 
 /**
@@ -129,6 +135,14 @@ export type GeneratorInputBenchmark = {
   source_url: string;
   /** What the figure does and doesn't measure, trimmed for the prompt. */
   caveat?: string | null;
+  /**
+   * Which of THIS prospect's evidenced pains the row is about: codes in both
+   * the row's pain_codes and the prospect's pains. The writer may cite the row
+   * only when it leads with one of these, and the critic blocks it otherwise.
+   * `pain_id` is the prospect's own pain identifier (as in pains[].pain_id),
+   * so writer and critic can pair the row with the pain they see.
+   */
+  for_pains: Array<{ code: string; label: string | null; pain_id?: string }>;
 };
 
 export type GeneratorInputs = {

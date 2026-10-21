@@ -1,4 +1,4 @@
-# S.P.A.M. core context for workers (refreshed 2026-10-18 for Phase 3 batch 3)
+# S.P.A.M. core context for workers (refreshed 2026-10-21 for Phase 3 batch 7)
 
 This is the ONLY project history a worker loads. Do not open `tasks/lessons.md`,
 `tasks/session-log.md`, `tasks/todo.md`, `tasks/project-state.md` or
@@ -24,7 +24,7 @@ SHARED with runna-hunter: never assume a table is SPAM-only) · Anthropic SDK th
 cost-tracked, daily-capped wrapper in `lib/anthropic/` · Gmail API · Sentry · Vercel Hobby.
 
 - `npm ci` once on a fresh clone, then `npm run typecheck` · `npm run lint` · `npm test`
-  (node test runner, `tests/**/*.test.ts`, 726 tests at batch 3 start)
+  (node test runner, `tests/**/*.test.ts`, 1258 tests at batch 7 start)
 - `npm run build` before claiming a UI change works. `npm run db:types` is conductor-only;
   `lib/supabase/types.ts` is hand-maintained and conductor-only.
 - Pre-commit (lefthook) runs tsc + eslint; CI runs all three on every PR.
@@ -120,6 +120,14 @@ cost-tracked, daily-capped wrapper in `lib/anthropic/` · Gmail API · Sentry ·
   the code applied after the model answered: filled `{hunter_url}` links (they carry the
   pitch's attribution code), appended lines. Test with a fake model that copies its input
   (batch 6: a rewrite would have kept the old pitch's code and lost its scans).
+- A field you write that another module later TRUSTS as text (a gate's allowed sources,
+  exemplars, prompts): your guard includes that reader's own acceptance rule next to your
+  independent check, and your tests come from the reader's rule (batch 7: an approved
+  statistic sentence would have made "three times more" sendable).
+- Reading meaning into an input the model did NOT get (no benchmark, no exemplar): exclude
+  every path that empties it on purpose (A/B arms, caps, fallbacks), with a test.
+- A number's scale or unit belongs to that number's token or the next word ("6.77bn",
+  "6.77 billion"), never to a word found elsewhere in the text.
 - Client state (`useState`) survives `router.refresh()`: when a server prop disables a
   control, derive the effective state from both (`hotOnly && !unavailable`), never from
   the raw state alone.
@@ -148,9 +156,10 @@ lib/replies/   ( 8)    classify, bounce parse, draft, send-reply, intent-actions
 lib/opportunities/ (5) calendar-sync (hourly), google-calendar, outcome, actions, queries
 lib/prospects/  ( 2)  detail actions + queries (status writers live in several modules)
 lib/hunter/     ( 3)  hunter_scans → prospects (table shared with runna-hunter)
+lib/benchmarks/ ( 2)  sourced statistics: lookup for the writer (queries), approve action; wanted_facts (0050)
 lib/warmup/    (10)    deliverability, DMARC, IMAP, placement
 lib/{gmail,compliance,anthropic,supabase,audit,sentry,cron-auth,notify}  shared infra  CONDUCTOR ONLY
-supabase/migrations/0001..0049   numbered; YOUR brief reserves yours (never the next free one)
+supabase/migrations/0001..0050   numbered; YOUR brief reserves yours (never the next free one)
 vercel.json, CLAUDE.md, lib/supabase/types.ts, package.json         CONDUCTOR ONLY
 ```
 Your brief lists the files you may edit. Anything outside it: say so in the PR body under

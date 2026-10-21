@@ -1197,6 +1197,10 @@ export type Database = {
         verified_by: UUID | null;
         verified_at: Timestamptz | null;
         is_active: boolean;
+        wanted_fact_id: UUID | null;
+        proposed_at: Timestamptz | null;
+        proposal_note: string | null;
+        rejected_at: Timestamptz | null;
         created_at: Timestamptz;
         updated_at: Timestamptz;
       };
@@ -1216,6 +1220,10 @@ export type Database = {
         verified_by?: UUID | null;
         verified_at?: Timestamptz | null;
         is_active?: boolean;
+        wanted_fact_id?: UUID | null;
+        proposed_at?: Timestamptz | null;
+        proposal_note?: string | null;
+        rejected_at?: Timestamptz | null;
       };
       Update: {
         statistic?: string;
@@ -1231,6 +1239,40 @@ export type Database = {
         verified_by?: UUID | null;
         verified_at?: Timestamptz | null;
         is_active?: boolean;
+        wanted_fact_id?: UUID | null;
+        proposed_at?: Timestamptz | null;
+        proposal_note?: string | null;
+        rejected_at?: Timestamptz | null;
+      };
+      Relationships: [];
+    };
+    wanted_facts: {
+      Row: {
+        id: UUID;
+        tenant_id: UUID;
+        fact: string;
+        fact_key: string;
+        pain_code: string | null;
+        industry: string | null;
+        market: string | null;
+        source: "writer" | "critic" | "manual";
+        request_count: number;
+        last_pitch_id: UUID | null;
+        first_requested_at: Timestamptz;
+        last_requested_at: Timestamptz;
+        status: "open" | "proposed" | "no_source" | "dismissed";
+        researched_at: Timestamptz | null;
+        research_note: string | null;
+        created_at: Timestamptz;
+        updated_at: Timestamptz;
+      };
+      // Rows are created through the record_wanted_fact() RPC (it computes
+      // fact_key and dedupes); direct inserts are not part of the contract.
+      Insert: never;
+      Update: {
+        status?: "open" | "proposed" | "no_source" | "dismissed";
+        researched_at?: Timestamptz | null;
+        research_note?: string | null;
       };
       Relationships: [];
     };
@@ -1297,6 +1339,20 @@ export type Database = {
       // Migration 0049: one daily send slot per call (lib/pitches/daily-cap.ts).
       // Returns the UTC day the slot was counted on, or null when the cap is reached.
       spam_reserve_send_slot: { Args: { p_inbox: string }; Returns: string | null };
+      // 0050. Throws on a check violation (fact under 8 or over 300 chars, bad
+      // source); callers treat a wanted fact as best-effort and swallow errors.
+      record_wanted_fact: {
+        Args: {
+          p_tenant_id: string;
+          p_fact: string;
+          p_source: "writer" | "critic" | "manual";
+          p_pain_code?: string | null;
+          p_industry?: string | null;
+          p_market?: string | null;
+          p_pitch_id?: string | null;
+        };
+        Returns: string;
+      };
       // Gives a slot back only on the day it was taken; true when one was released.
       spam_release_send_slot: { Args: { p_inbox: string; p_day: string }; Returns: boolean };
     };

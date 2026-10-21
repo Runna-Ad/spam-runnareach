@@ -13,7 +13,7 @@ import { writeAuditLog } from "@/lib/audit/log";
 import type { Actor } from "@/lib/actor";
 import type { Database } from "@/lib/supabase/types";
 import { PITCH_PROMPT_VERSION, heldBodyForRevision } from "./claude-composer";
-import { NOT_REVIEWED_ISSUE, WRITER_FIXABLE, composeWithReview, revisionIssues, type ReviewCall } from "./review";
+import { NOT_REVIEWED_ISSUE, WRITER_FIXABLE, composeWithReview, revisionIssues, type ReviewCall, type WantedFacts } from "./review";
 import {
   DECISION_VERSION,
   detectCitedBenchmark,
@@ -34,7 +34,8 @@ import { renderIndustryTemplate } from "./industry-templates";
 import { buildHunterUrlForPitch } from "./hunter-mapping";
 import { senderForGenerator } from "./sender-identity";
 import { hasUsableEmail, isRoleBasedEmail } from "@/lib/research/email-utils";
-import { fetchBenchmarksForPitch } from "@/lib/benchmarks/queries";
+import { fetchBenchmarksForPitch, resolvePainCodes } from "@/lib/benchmarks/queries";
+import { recordWantedFacts } from "@/lib/benchmarks/wanted-facts";
 import { fetchTopUsableContact } from "@/lib/pitches/contacts";
 import {
   type ComposedPitch,
@@ -325,9 +326,10 @@ export async function generatePitchWith(
     ? allCases.filter((cs) => (cs.pain_strength ?? 0) >= 0.4)
     : allCases;
 
-  // Verified benchmarks matching this prospect's pain AND industry. Empty is
-  // normal and safe — with none, the composer writes the pitch without a
-  // number. Never throws; a benchmark is an enhancement, not a dependency.
+  // Verified benchmarks for this prospect's pains AND industry (or industry
+  // family), each tagged with the pains it is about. Empty is normal and
+  // safe — with none, the composer writes the pitch without a number.
+  // Never throws; a benchmark is an enhancement, not a dependency.
   const benchmarks = await fetchBenchmarksForPitch(supabase, user.tenantId, {
     painIds: pains.map((p) => p.pain_id).filter((v): v is string => Boolean(v)),
     industry: prospect.industry,
@@ -405,6 +407,8 @@ export async function generatePitchWith(
   // Every Claude call the write → review → revise loop made, for cost tracking.
   let reviewCalls: ReviewCall[] = [];
   let critic: CriticVerdict | null = null;
+  // The kept draft's wishes for a statistic the library lacks (Claude path only).
+  let wanted: WantedFacts | null = null;
 
   // ── The autopilot's rewrite revises the held draft ─────────────────────
   // Read BEFORE the draft delete below clears it. A Claude draft held with
@@ -457,6 +461,10 @@ export async function generatePitchWith(
         method = "claude";
         claudeModel = reviewed.model;
         critic = reviewed.critic;
+        // The no_benchmark arm hides the library from the writer and critic on
+        // purpose: a wish there is for a statistic we may well have, not a gap.
+        // The decision still keeps the writer's wish (it is labelled with the arm).
+        wanted = writerArms.evidence === "no_benchmark" ? null : reviewed.wanted;
         claudeUsage = sumUsage(reviewed.calls.map((c) => c.usage));
       } else {
         claudeFallbackReason = `${reviewed.reason}: ${reviewed.error.slice(0, 200)}`;
@@ -539,6 +547,12 @@ export async function generatePitchWith(
   if (insertErr) return { ok: false, error: `Could not save pitch: ${insertErr.message}` };
   if (!created) return { ok: false, error: "Insert returned no row." };
 
+  // Wanted facts: started now (it needs the pitch id), awaited only at the very
+  // end, so it runs alongside the steps below. Never throws, settles in ~3.5 s.
+  const wantedRecording = wanted
+    ? recordWantedFactsForPitch(supabase, user.tenantId, created.id, prospect, composed.pain_id, wanted)
+    : Promise.resolve(0);
+
   // Record each Claude call's cost (writer and critic are different models).
   // Failures were recorded earlier, in the fallback branch.
   if (method === "claude") {
@@ -593,7 +607,11 @@ export async function generatePitchWith(
       id: composed.pain_id,
       label: pains.find((p) => p.pain_id && p.pain_id === composed.pain_id)?.pain_label ?? chosenPainLabel,
     },
-    benchmarks_offered: offeredBenchmarks.map((b) => ({ id: b.id, figure: b.figure })),
+    benchmarks_offered: offeredBenchmarks.map((b) => ({
+      id: b.id,
+      figure: b.figure,
+      pain_codes: b.for_pains.map((f) => f.code),
+    })),
     benchmark_cited: detectCitedBenchmark(composed.body, offeredBenchmarks),
     attribution_code: insertWithPreview.attribution_code,
     recipient: recipientSummary(
@@ -614,6 +632,7 @@ export async function generatePitchWith(
     ...(opts.retryOf
       ? { retry_of: opts.retryOf, retry_mode: reviseFirst && method === "claude" ? ("revised" as const) : ("fresh" as const) }
       : {}),
+    ...(method === "claude" ? { wanted_fact: composed.wanted_fact ?? null } : {}),
   };
   const { error: decisionErr } = await supabase
     .from("pitches")
@@ -654,6 +673,8 @@ export async function generatePitchWith(
     // janitor's 21-day TTL would suppress a prospect with live outreach.
     .in("status", ["raw", "researched", "b_list"]);
 
+  await wantedRecording;
+
   revalidatePath("/pitches");
   revalidatePath("/companies");
   revalidatePath("/funnel");
@@ -669,6 +690,36 @@ export async function generatePitchWith(
         ? `${composed.reasoning} (Claude fallback — ${claudeFallbackReason})`
         : composed.reasoning,
   };
+}
+
+/**
+ * Record the kept draft's wanted facts against a saved pitch, tied to the pain
+ * the writer led with (resolved to its pain_taxonomy code) and the prospect's
+ * segment. Best-effort (lib/benchmarks/wanted-facts.ts): never throws.
+ */
+async function recordWantedFactsForPitch(
+  supabase: Actor["supabase"],
+  tenantId: string,
+  pitchId: string,
+  prospect: { company_name: string; industry: string | null; market: string | null },
+  painId: string | null,
+  wanted: WantedFacts,
+): Promise<number> {
+  try {
+    return await recordWantedFacts(supabase, {
+      tenantId,
+      pitchId,
+      companyName: prospect.company_name,
+      industry: prospect.industry,
+      market: prospect.market,
+      writer: wanted.writer,
+      critic: wanted.critic,
+      painCode: async () => (painId ? ((await resolvePainCodes(supabase, tenantId, [painId]))[0]?.code ?? null) : null),
+    });
+  } catch (e) {
+    console.warn("[wanted-facts] not recorded:", e instanceof Error ? e.message : String(e));
+    return 0;
+  }
 }
 
 const rewriteAngleSchema = z.object({
@@ -868,6 +919,9 @@ export async function rewritePitchWithAngleWith(
     .eq("id", parsed.data.pitch_id)
     .eq("tenant_id", user.tenantId);
   if (updErr) return { ok: false, error: `Could not save rewrite: ${updErr.message}` };
+  const wantedRecording = recordWantedFactsForPitch(
+    supabase, user.tenantId, parsed.data.pitch_id, prospect, composed.pain_id, result.wanted,
+  );
   await refreshGateAfterChange(supabase, user.tenantId, parsed.data.pitch_id);
 
   for (const c of result.calls) {
@@ -897,6 +951,8 @@ export async function rewritePitchWithAngleWith(
       revisions: result.critic?.revisions ?? 0,
     },
   });
+
+  await wantedRecording;
 
   revalidatePath("/pitches");
   return { ok: true, subject: composed.subject, body: composed.body, quality_self_score: composed.quality_self_score };

@@ -1,0 +1,114 @@
+{
+  "id": "msg_01FactResearchFixture",
+  "type": "message",
+  "role": "assistant",
+  "model": "claude-sonnet-4-5-20250929",
+  "content": [
+    { "type": "text", "text": "I'll look for independent research on online cart abandonment." },
+    {
+      "type": "server_tool_use",
+      "id": "srvtoolu_01A",
+      "name": "web_search",
+      "input": { "query": "average online shopping cart abandonment rate study" }
+    },
+    {
+      "type": "web_search_tool_result",
+      "tool_use_id": "srvtoolu_01A",
+      "content": [
+        {
+          "type": "web_search_result",
+          "url": "https://baymard.com/lists/cart-abandonment-rate",
+          "title": "49 Cart Abandonment Rate Statistics 2025 - Baymard",
+          "encrypted_content": "EqgfCioIARgBIiQ3YTAwMjY1Mi1mZjM5LTQ1NGUtODgxNC1kNjNjNTk1ZWI3Y2MSDPx",
+          "page_age": "June 12, 2025"
+        },
+        {
+          "type": "web_search_result",
+          "url": "https://www.statista.com/statistics/477804/online-shopping-cart-abandonment-rate-worldwide/",
+          "title": "Global online shopping cart abandonment rate 2006-2025 | Statista",
+          "encrypted_content": "EpcCCioIARgBIiQ0YmQyN2UxNi1hNzA3LTQ0ZWMtOGE4OC1mMjE2ZGE5ZDc5ZjIS",
+          "page_age": null
+        }
+      ]
+    },
+    {
+      "type": "server_tool_use",
+      "id": "srvtoolu_01B",
+      "name": "web_search",
+      "input": { "query": "abandoned cart email conversion rate benchmark" }
+    },
+    {
+      "type": "web_search_tool_result",
+      "tool_use_id": "srvtoolu_01B",
+      "content": [
+        {
+          "type": "web_search_result",
+          "url": "https://www.klaviyo.com/marketing-resources/abandoned-cart-benchmarks",
+          "title": "Abandoned cart email benchmarks | Klaviyo",
+          "encrypted_content": "EuQBCioIARgBIiRmZjM5NDU0ZS04ODE0LWQ2M2M1OTVlYjdjYzdhMDAyNjUyEgxk",
+          "page_age": "March 3, 2025"
+        }
+      ]
+    },
+    {
+      "type": "server_tool_use",
+      "id": "srvtoolu_01C",
+      "name": "web_search",
+      "input": { "query": "share of small online stores without abandoned cart email" }
+    },
+    {
+      "type": "web_search_tool_result",
+      "tool_use_id": "srvtoolu_01C",
+      "content": [
+        {
+          "type": "web_search_result",
+          "url": "https://www.shopify.com/blog/cart-abandonment",
+          "title": "Cart abandonment: how to recover lost sales",
+          "encrypted_content": "Ev0BCioIARgBIiQyN2UxNmE3MDctNDRlYy04YTg4LWYyMTZkYTlkNzlmMhIMbw",
+          "page_age": "January 20, 2025"
+        }
+      ]
+    },
+    { "type": "text", "text": "Baymard Institute's meta-analysis of 49 studies puts the average documented online cart abandonment rate at " },
+    {
+      "type": "text",
+      "text": "70.22%",
+      "citations": [
+        {
+          "type": "web_search_result_location",
+          "url": "https://baymard.com/lists/cart-abandonment-rate",
+          "title": "49 Cart Abandonment Rate Statistics 2025 - Baymard",
+          "encrypted_index": "Eo8BCioIARgBIiQ3YTAwMjY1Mi1mZjM5LTQ1NGUtODgxNC1kNjNjNTk1ZWI3Y2MSDA",
+          "cited_text": "The average documented online shopping cart abandonment rate is 70.22%. This is based on 49 different studies containing statistics on e-commerce shopping cart abandonment. "
+        }
+      ]
+    },
+    { "type": "text", "text": ". Klaviyo, an email platform, reports that abandoned cart flows convert at " },
+    {
+      "type": "text",
+      "text": "3.65%",
+      "citations": [
+        {
+          "type": "web_search_result_location",
+          "url": "https://www.klaviyo.com/marketing-resources/abandoned-cart-benchmarks",
+          "title": "Abandoned cart email benchmarks | Klaviyo",
+          "encrypted_index": "EpABCioIARgBIiRmZjM5NDU0ZS04ODE0LWQ2M2M1OTVlYjdjYzdhMDAyNjUyEgw",
+          "cited_text": "On average, abandoned cart flows on Klaviyo have a placed order rate of 3.65% across all industries."
+        }
+      ]
+    },
+    {
+      "type": "text",
+      "text": ".\n\nI found no independent study of how many small stores lack cart recovery.\n\n```json\n{\"proposals\": [\n  {\"statistic\": \"Roughly 70.22% of online shopping carts are abandoned before checkout, across 49 studies.\", \"figure\": \"70.22%\", \"source_url\": \"https://baymard.com/lists/cart-abandonment-rate/\", \"publisher\": \"Baymard Institute\", \"published_date\": \"2025-06-12\", \"is_vendor_sourced\": false, \"caveat\": \"Meta-analysis of 49 studies, mostly US and global e-commerce, 2006 to 2025, published by Baymard Institute.\", \"industry_scope\": [\"E-commerce\", \"online store\"], \"market\": \"global\", \"why_solid\": \"Independent UX research firm aggregating 49 published studies.\"},\n  {\"statistic\": \"45% of small online stores send no cart recovery email.\", \"figure\": \"45%\", \"source_url\": \"https://www.invented-source.com/stats\", \"publisher\": \"Invented Research\", \"published_date\": null, \"is_vendor_sourced\": false, \"caveat\": \"Survey of 300 stores, 2024.\", \"industry_scope\": [\"e-commerce\"], \"market\": \"US\", \"why_solid\": \"Large survey.\"},\n  {\"statistic\": \"80% of carts are abandoned on mobile.\", \"figure\": \"80%\", \"source_url\": \"https://baymard.com/lists/cart-abandonment-rate\", \"publisher\": \"Baymard Institute\", \"published_date\": null, \"is_vendor_sourced\": false, \"caveat\": \"Mobile only.\", \"industry_scope\": [\"e-commerce\"], \"market\": \"GLOBAL\", \"why_solid\": \"Same study.\"},\n  {\"statistic\": \"Abandoned cart flows convert 3.65% of recipients into orders.\", \"figure\": \"3.65%\", \"source_url\": \"https://www.statista.com/statistics/477804/online-shopping-cart-abandonment-rate-worldwide/\", \"publisher\": \"Statista\", \"published_date\": null, \"is_vendor_sourced\": false, \"caveat\": \"Global, 2025.\", \"industry_scope\": [\"e-commerce\"], \"market\": \"GLOBAL\", \"why_solid\": \"Statista aggregates data.\"}\n], \"no_source_reason\": null}\n```"
+    }
+  ],
+  "stop_reason": "end_turn",
+  "stop_sequence": null,
+  "usage": {
+    "input_tokens": 18450,
+    "output_tokens": 1210,
+    "cache_read_input_tokens": 0,
+    "cache_creation_input_tokens": 0,
+    "server_tool_use": { "web_search_requests": 3 }
+  }
+}
