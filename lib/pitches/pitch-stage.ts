@@ -325,9 +325,10 @@ export async function generatePitchWith(
     ? allCases.filter((cs) => (cs.pain_strength ?? 0) >= 0.4)
     : allCases;
 
-  // Verified benchmarks matching this prospect's pain AND industry. Empty is
-  // normal and safe — with none, the composer writes the pitch without a
-  // number. Never throws; a benchmark is an enhancement, not a dependency.
+  // Verified benchmarks for this prospect's pains AND industry (or industry
+  // family), each tagged with the pains it is about. Empty is normal and
+  // safe — with none, the composer writes the pitch without a number.
+  // Never throws; a benchmark is an enhancement, not a dependency.
   const benchmarks = await fetchBenchmarksForPitch(supabase, user.tenantId, {
     painIds: pains.map((p) => p.pain_id).filter((v): v is string => Boolean(v)),
     industry: prospect.industry,
@@ -593,7 +594,11 @@ export async function generatePitchWith(
       id: composed.pain_id,
       label: pains.find((p) => p.pain_id && p.pain_id === composed.pain_id)?.pain_label ?? chosenPainLabel,
     },
-    benchmarks_offered: offeredBenchmarks.map((b) => ({ id: b.id, figure: b.figure })),
+    benchmarks_offered: offeredBenchmarks.map((b) => ({
+      id: b.id,
+      figure: b.figure,
+      pain_codes: b.for_pains.map((f) => f.code),
+    })),
     benchmark_cited: detectCitedBenchmark(composed.body, offeredBenchmarks),
     attribution_code: insertWithPreview.attribution_code,
     recipient: recipientSummary(

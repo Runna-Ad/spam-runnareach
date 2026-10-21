@@ -42,7 +42,11 @@ export type DecisionRecord = {
     size_band: SizeBand;
   };
   pain: { id: string | null; label: string | null };
-  benchmarks_offered: Array<{ id: string; figure: string }>;
+  /**
+   * pain_codes: the prospect pains the row was offered for (its for_pains).
+   * Optional: decisions written before pitch-v3.1 have none.
+   */
+  benchmarks_offered: Array<{ id: string; figure: string; pain_codes?: string[] }>;
   /** The offered benchmark the email actually quoted, if any (stat vs no-stat). */
   benchmark_cited: { id: string; figure: string } | null;
   attribution_code: string | null;

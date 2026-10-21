@@ -123,7 +123,7 @@ Judge ONLY against the payload you are given.
 
 BLOCKING issues (a careful person would refuse to send it as is):
 1. A claim about the prospect (what they do, how they work, their customers, their problem) that the payload does not support, or an inference stated as fact. A finding the payload shows, stated plainly and followed by what tends to happen to businesses with that gap in general, is not an inference stated as fact; the same consequence said about this prospect's own customers, visitors, patients or sales ("most of your visitors leave", "you're losing patients") still is.
-2. A statistic that is not one of payload.benchmarks, is misquoted, is applied outside its caveat (a clinic figure presented as true of spas, an old figure presented as current), or is framed as the sender's own result. Any client name, or a claimed result for a client.
+2. A statistic that is not one of payload.benchmarks, is about a different problem (its for_pains does not include the pain the email is about), is misquoted, is applied outside its caveat (a clinic figure presented as true of spas, an old figure presented as current), or is framed as the sender's own result. Any client name, or a claimed result for a client.
 3. RELEVANCE: the hook could be sent to any company; the owner of THIS business would not see within 5 seconds why it is about them.
 4. LANGUAGE: not written natively in ${language}
 5. FIT: the greeting does not match the recipient (a named person, or the team when there is no name), or the company or industry is wrong.
@@ -167,8 +167,15 @@ function criticUser(input: GeneratorInputs, composed: Pick<ComposedPitch, "subje
       what_they_do: input.prospect.what_they_do,
       tech_stack: input.prospect.tech_stack,
     },
-    pain_evidence: input.pains.map((p) => ({ pain: p.pain_label, evidence: p.evidence_quote })),
-    benchmarks: input.benchmarks.map((b) => ({ statistic: b.statistic, figure: b.figure, publisher: b.publisher, caveat: b.caveat ?? null })),
+    pain_evidence: input.pains.map((p) => ({ pain_id: p.pain_id, pain: p.pain_label, evidence: p.evidence_quote })),
+    // for_pains: the pains (pain_evidence[].pain_id) each figure is about. Rule 2.
+    benchmarks: input.benchmarks.map((b) => ({
+      statistic: b.statistic,
+      figure: b.figure,
+      publisher: b.publisher,
+      caveat: b.caveat ?? null,
+      for_pains: b.for_pains.map((f) => ({ pain_id: f.pain_id ?? f.code, pain: f.label ?? f.code })),
+    })),
     recipient: contact ? { name: contact.full_name, email: contact.email, role_based: contact.email_is_role_based } : null,
   };
   return `Payload:\n\`\`\`json\n${JSON.stringify(payload, null, 2)}\n\`\`\`${criticExemplarSection(input.exemplars)}\n\nEmail to review:\nSubject: ${composed.subject}\n\n${asReaderSees(composed.body)}`;
