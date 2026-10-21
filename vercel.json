@@ -30,6 +30,9 @@
     "app/api/opportunities/calendar-sync/route.ts": {
       "maxDuration": 120
     },
+    "app/api/benchmarks/research/route.ts": {
+      "maxDuration": 120
+    },
     "app/**": {
       "maxDuration": 60
     }
