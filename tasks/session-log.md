@@ -1466,3 +1466,10 @@ marketing-context only if it bites.
 - [ ] ⏳ #7 Analytics — pitch funnel metrics, cost tracking, Claude vs template breakdown
 - [ ] ⏳ #7 Analytics — pitch funnel metrics, cost tracking, Claude vs template breakdown
 
+
+## 2026-10-21 20:15 UTC (conductor session_017nqBxLFFXKbhDwKiPi6xLf, hand-off)
+**Shipped:** batch 6 (main c548bc0, PR #46, READY 2026-10-20 21:24:55): rewrites revise the held draft with the reviewer's notes (attribution code kept), writer prompt v3, missing pain_id no longer forces a template, no new pitch for an emailed company, pre-check bar 20, every paid Claude call recorded (failures included), ICP "Suggest with AI" requires a login. Batch 5 verified in prod (first AUTO sends 9/9 counted once; warm-up clean, no SPAM-6/7).
+**Prod data changes (Pedro yes):** the 9 bounce-incident drafts released 2026-10-21 ~19:00 UTC (audit pitch.hold_released): 6 dropped by the address check, 3 back under a person-hold by design.
+**Decisions:** batch 6 option 1; polish premise corrected (0 polish-only drops, not 9); batch 7 = statistic matching fix + "wanted facts" library loop (Pedro 2026-10-21 "go with 1 and 3").
+**Waiting on Pedro:** start the next conductor session (line in tasks/board.md "Hand-off 2026-10-21"); approve or delete the 3 held drafts on the Pitches page if wanted.
+**Next:** batch 7; Fri 2026-10-23 21:30 UTC 3-day rewrite comparison (early: 3/12 vs 14/34).

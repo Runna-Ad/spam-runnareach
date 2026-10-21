@@ -1,5 +1,10 @@
 # S.P.A.M. — Lessons (newest first)
 
+[2026-10-21] After a restart, finish the user's approved action before anything else
+WHAT HAPPENED: Pedro said "go with 2, lift the hold" at ~21:40 UTC on 10-20. The worker process restarted mid-task; the conductor answered the restart notice with "no response requested" and then handled scheduled checks, so the approved data change ran ~21 h late (2026-10-21 19:00). Separately, the pre-ship baseline said "3 held drafts will get the new rewrite": the filter (`retry_of is null`) hid 6 more, and none could be rewritten because all 9 carried a person's hold.
+RULE: On a restart or a late notification, read the last user message first; if it approved an action that has no recorded result, do it (and verify it) before any scheduled check. A baseline that predicts what the code will do to rows reads the field the code branches on (here `autopilot_reasons`), not a convenience filter.
+TAGS: process, conductor, restarts, data-honesty
+
 ## Merged from lessons-inbox, batch 6 (2026-10-20)
 
 ### conductor
