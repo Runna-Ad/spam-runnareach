@@ -27,6 +27,8 @@ When the writer or the critic wants a statistic the library does not have, the s
 
 **Time budget:** generation runs inside a 60 s server action (`app/**` maxDuration 60, review loop deadline startedAt+48 s, see `review.ts` `composeWithReview`). The RPC runs after the insert: give it a 3 s `AbortSignal.timeout` (postgrest-js `.abortSignal()`), and do not await it before anything that follows on the critical path.
 
+**Conductor decision (batch 7 review of #48):** the rewrite-with-angle directive (`claude-composer.ts` ~:583-591, "under the same FACTS rules: no client, no number") contradicts FACTS 2 now that every offered benchmark is tagged with its pain. Change it to "no client; a number only as FACTS 2 allows (a benchmark whose for_pains includes the angle's pain)". Then check `forced_angle.pain_id` (zod at pitch-stage ~:681, sent by the UI) has the same form as `pain_candidates[].pain_id` (UUID); if the UI sends a code, map it with `resolvePainCodes` so the pairing works, and test it. Prompt text changes → bump to `pitch-v3.2-2026-10-22`.
+
 ## Brain lessons
 none matched (second brain not attached to the conductor session on 2026-10-21). `_core-context.md`: LLM output clipped with `.transform`, never hard `.max`; test an error field for presence, not truthiness.
 
@@ -44,7 +46,7 @@ Forbidden: `lib/supabase/*`, `lib/anthropic/*`, migrations, `vercel.json`, `lib/
 - Subject, body, `pain_id`, critic `score`/`issues`/`pass`, the gate verdict and the lane for a given model output: byte-identical with and without a `wanted_fact` in the output (test with a fake model).
 - A pitch whose RPC call errors, times out, or raises the length check is saved exactly as without this feature.
 - An old pitch decision without `wanted_fact` still parses.
-- `PITCH_PROMPT_VERSION` stays `pitch-v3.1-2026-10-22` from `benchmark-matching` unless you change prompt text; if you do, bump to `pitch-v3.2-2026-10-22` and say so.
+- `PITCH_PROMPT_VERSION` becomes `pitch-v3.2-2026-10-22` (you change prompt text).
 
 ## Acceptance checks
 1. Fake composer + critic returning wishes on drafts 1 and 3: exactly one writer and one critic RPC call, both with draft 3's text, the pitch id, the resolved pain code.
