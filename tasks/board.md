@@ -17,7 +17,8 @@ Previous: `phase3-batch2` CLOSED (main e10a326). Rows, log and hand-off in `task
 |---|---|
 | Prod = main head READY before cutting integration | e10a326 READY (dpl_8udavQRnDUycKVocmcXakCav9pEm, verified 19:45) |
 | Batch plan sent to Pedro | scope approved in advance ("all seem good", 2026-10-18); Pedro "Go" 17:07 UTC |
-| Integration → main PR | #25 squash-merged → main 9c98448 (2026-10-19 00:17 UTC); deploy READY 00:19:14. Q1 follow-up: #27 opened 01:12 UTC, Pedro "ship it" 01:14, squash-merged → main 729b299, deploy READY |
+| Integration → main PR (batch 7) | #51 opened 21:47 UTC, waiting for "ship it" |
+| Integration → main PR (batch 3) | #25 squash-merged → main 9c98448 (2026-10-19 00:17 UTC); deploy READY 00:19:14. Q1 follow-up: #27 opened 01:12 UTC, Pedro "ship it" 01:14, squash-merged → main 729b299, deploy READY |
 | Questions sent | with PR #25 (2: pipeline reactivation vs status rule; weekend Vercel send-queue) |
 | `npm run build` green on integration | yes after #24 (845 tests) |
 | Origin in sync (`git status -sb`) | yes |
@@ -307,3 +308,4 @@ Log:
 - 2026-10-21 21:35 UTC — #50 merged (13bd3ca). Fix c6f24c7 (7 lines + test) verified by reading: no recording in the no_benchmark arm; rewrite path applies no arm. Integration: typecheck, lint, 1348 tests, build green. All 4 workers merged; batch audit next.
 - 2026-10-21 21:36 UTC — wanted-facts-writer wrapped + archived ($4.68); its late lesson (arm hides inputs) already merged as the conductor lesson. All 4 workers archived. Worker total $15.07. Batch audit (Fable) running.
 - 2026-10-21 21:43 UTC — Batch audit (Fable): fix-before-ship, 2 blocking (US market never offered; pain-less wanted fact → unofferable proposals whose numbers still become gate sources) + 7 optional. Conductor fixed both (2a039db; 1352 tests, build; new tests fail without the fix). Friday trigger prompt updated to count v3 and v3.2. project-state batch 7 section written; retro + reviewer checklist updated.
+- 2026-10-21 21:47 UTC — Integration → main PR #51 opened (head 6bf072b; 1352 tests, build green); subscribed. Waiting for Pedro's "ship it". Ship order: apply 0050 via connector (verify columns + cron row), then merge, then prod verification per project-state batch 7.
