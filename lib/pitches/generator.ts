@@ -108,6 +108,12 @@ export type ComposedPitch = {
   measurable_result_included: boolean;
   quality_self_score: number; // 0..1
   reasoning: string;
+  /**
+   * The statistic the writer wished payload.benchmarks had, in words, never a
+   * number (lib/benchmarks/wanted-facts.ts). Recorded, never sent. Absent on a
+   * template.
+   */
+  wanted_fact?: string | null;
 };
 
 /**

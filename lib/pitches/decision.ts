@@ -84,6 +84,14 @@ export type DecisionRecord = {
    * notes, person-edited, unreadable, or the rewrite fell back to a template).
    */
   retry_mode?: "revised" | "fresh";
+  /**
+   * The statistic the writer wished it had (its wanted_fact, as written, before
+   * the recording's discard checks). Claude path only; absent before
+   * pitch-v3.2 and on a template. RAW model output: it may carry a guessed
+   * number or the company's name, so never hand it to a model, an exemplar or a
+   * report without lib/benchmarks/wanted-facts.ts cleanWantedFact.
+   */
+  wanted_fact?: string | null;
 };
 
 export type SizeBand = "smb" | "mid_market" | "enterprise" | "unknown";

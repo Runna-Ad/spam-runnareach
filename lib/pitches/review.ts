@@ -18,7 +18,7 @@
 import { z } from "zod";
 import { ANTHROPIC_HAIKU_MODEL, structuredCall, type ClaudeUsage } from "../anthropic/client.ts";
 import { pickAddressContact } from "../research/email-utils.ts";
-import { composePitchWithClaude, heldBodyForRevision } from "./claude-composer.ts";
+import { composePitchWithClaude, heldBodyForRevision, wantedFactField } from "./claude-composer.ts";
 import type { CriticVerdict } from "./decision.ts";
 import { criticExemplarSection } from "./exemplars.ts";
 import type { ComposedPitch, GeneratorInputs } from "./generator.ts";
@@ -91,6 +91,8 @@ const criticIssue = z.union([
 const criticSchema = z.object({
   score: z.number().min(0).max(1),
   issues: z.array(criticIssue).max(12).default([]),
+  // A sourced statistic this email lacks (recorded, never part of the verdict).
+  wanted_fact: wantedFactField(),
 });
 
 type CriticResult = { pass: boolean; score: number; issues: string[] };
@@ -134,7 +136,9 @@ POLISH (worth fixing, never a reason to hold the email): word choice, a line tha
 
 House facts, not yours to dispute: the free check is our own tool, really free, about 30 seconds, no signup. Subject lines are all lower case on purpose. The 👉 line's link is shown to you as [button]; the reader gets a button and never sees the address. The sign-off names the sender and "Runna Advertising" because the law requires the sender to be identified.
 
-Output JSON: {"score": number 0..1, "issues": [{"issue": string, "blocking": boolean}]}.
+WANTED FACT: if a sourced statistic this email lacks would make it stronger (none of payload.benchmarks is about the pain it leads with), name that statistic in wanted_fact, in plain words, as a question or a description, never a number. Otherwise null. It is a note for our research, not an issue: it never changes the score or the issues.
+
+Output JSON: {"score": number 0..1, "issues": [{"issue": string, "blocking": boolean}], "wanted_fact": string | null}.
 score: 0.9 to 1 ready to send as is; 0.8 to 0.89 only polish issues; 0.5 to 0.79 at least one blocking issue a rewrite can fix; below 0.5 wrong prospect, wrong language or misleading.
 Each issue is a concrete instruction the writer can act on ("Replace 'streamline your intake' with what actually happens for them", "The 7 times figure measured getting a conversation, not winning the client"), at most 6, blocking first. Empty when there is nothing to fix.`;
 }
@@ -185,26 +189,40 @@ export async function critiquePitch(
   input: GeneratorInputs,
   composed: Pick<ComposedPitch, "subject" | "body">,
   timeoutMs: number,
-): Promise<{ ok: true; verdict: CriticResult; usage: ClaudeUsage } | { ok: false; usage: ClaudeUsage | null }> {
+): Promise<
+  { ok: true; verdict: CriticResult; wanted_fact: string | null; usage: ClaudeUsage } | { ok: false; usage: ClaudeUsage | null }
+> {
   const call = await structuredCall({
     model: CRITIC_MODEL,
     system: criticSystem(input.prospect.language),
     user: criticUser(input, composed),
-    max_tokens: 700,
+    // 800 (was 700): room for the wanted_fact field.
+    max_tokens: 800,
     timeoutMs,
     schema: criticSchema,
   });
   if (!call.ok) return { ok: false, usage: call.usage };
   const issues = (call.data.issues ?? []).map((i) => (typeof i === "string" ? { issue: i, blocking: true } : i));
-  return { ok: true, verdict: criticVerdict({ score: call.data.score, issues }), usage: call.usage };
+  return { ok: true, verdict: criticVerdict({ score: call.data.score, issues }), wanted_fact: call.data.wanted_fact, usage: call.usage };
 }
 
 // ── The loop ──────────────────────────────────────────────────────────────────
 
 export type ReviewCall = { kind: "compose" | "critic"; model: string; usage: ClaudeUsage };
 
+/** The kept draft's wishes (its writer's and its critic's), raw; null when none. */
+export type WantedFacts = { writer: string | null; critic: string | null };
+
 export type ReviewedCompose =
-  | { ok: true; composed: ComposedPitch; model: string; critic: CriticVerdict | null; writing: GateFailure[]; calls: ReviewCall[] }
+  | {
+      ok: true;
+      composed: ComposedPitch;
+      model: string;
+      critic: CriticVerdict | null;
+      writing: GateFailure[];
+      calls: ReviewCall[];
+      wanted: WantedFacts;
+    }
   | { ok: false; error: string; reason: string; calls: ReviewCall[] };
 
 type Candidate = {
@@ -212,6 +230,8 @@ type Candidate = {
   model: string;
   writing: GateFailure[];
   review: CriticResult | null;
+  /** The critic's wish for THIS draft; outside `review` so it can never move the verdict. */
+  criticWanted?: string | null;
 };
 
 /** Lower is better: block-level writing failures, then any failures, then the critic. */
@@ -269,6 +289,7 @@ export async function composeWithReview(
     model: first.result.model,
     writing: writingFailures(input, first.result.composed),
     review: null,
+    criticWanted: null,
   };
   let best: Candidate = current;
   const history: CriticVerdict["history"] = [];
@@ -282,6 +303,7 @@ export async function composeWithReview(
       if (r.usage) calls.push({ kind: "critic", model: CRITIC_MODEL, usage: r.usage });
       if (r.ok) {
         current.review = r.verdict;
+        current.criticWanted = r.wanted_fact;
         reviewed = true;
         history.push({ pass: r.verdict.pass, score: r.verdict.score, issues: r.verdict.issues });
       }
@@ -312,6 +334,7 @@ export async function composeWithReview(
       model: next.result.model,
       writing: writingFailures(input, next.result.composed),
       review: null,
+      criticWanted: null,
     };
     // A revision that is never reviewed (deadline) still competes on the gate.
     best = better(best, current);
@@ -328,5 +351,7 @@ export async function composeWithReview(
       }
     : null;
 
-  return { ok: true, composed: best.composed, model: best.model, critic, writing: best.writing, calls };
+  // Wishes from the kept draft only: an earlier draft's wish was about an email no one will send.
+  const wanted: WantedFacts = { writer: best.composed.wanted_fact ?? null, critic: best.criticWanted ?? null };
+  return { ok: true, composed: best.composed, model: best.model, critic, writing: best.writing, calls, wanted };
 }
