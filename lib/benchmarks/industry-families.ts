@@ -13,7 +13,9 @@
  */
 
 const FAMILIES: Record<string, readonly string[]> = {
-  retail: ["online store", "retail", "boutique", "direct to consumer", "tienda", "ecommerce", "e-commerce"],
+  // "outdoor" = outdoor gear and clothing shops (Pedro 2026-10-21); online-only stores are
+  // retail too, so both land here.
+  retail: ["online store", "retail", "boutique", "direct to consumer", "tienda", "ecommerce", "e-commerce", "outdoor"],
   b2b_industrial: [
     "manufacturer",
     "manufacturing",
@@ -40,8 +42,6 @@ const FAMILIES: Record<string, readonly string[]> = {
   wellness: ["spa", "salón de belleza", "estética", "fitness studio", "gimnasio"],
   food: ["restaurant", "restaurante", "restaurant group", "bar", "panadería"],
   lodging: ["hotel", "hotel chain", "boutique hotel"],
-  // "outdoor" would go here once Pedro decides which family it belongs to
-  // (open question 2026-10-21); until then it matches only directly.
 };
 
 const BY_INDUSTRY: ReadonlyMap<string, string> = new Map(

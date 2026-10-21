@@ -282,9 +282,9 @@ Batch-audit pairs: benchmark-matching × wanted-facts-writer (writer records a w
 Questions for Pedro (batch 7):
 | # | Question | Default | Answer |
 |---|---|---|---|
-| 1 | Is web search switched on for the Anthropic org (Claude Console)? The weekly research step needs it | research notes "not enabled" and does nothing until it is | |
-| 2 | Should "outdoor" prospects (23, e.g. outdoor gear shops) count as retail for statistics? | no (only clear retail words) | |
-| 3 | Batch 6 carry items: add cap checks to SnapVerify, ICP Suggest and AI Search (they spend without checking the $3 cap) as a small extra task this batch? | not this batch | |
+| 1 | Is web search switched on for the Anthropic org (Claude Console)? The weekly research step needs it | research notes "not enabled" and does nothing until it is | Pedro 21:50 UTC: yes, enabled |
+| 2 | Should "outdoor" prospects (23, e.g. outdoor gear shops) count as retail for statistics? | no (only clear retail words) | Pedro: yes, outdoor gear/clothing shops are retail (online-only stores are retail too) → "outdoor" added to the retail family |
+| 3 | Batch 6 carry items: add cap checks to SnapVerify, ICP Suggest and AI Search (they spend without checking the $3 cap) as a small extra task this batch? | not this batch | Pedro: not now |
 
 Log:
 - 2026-10-21 20:36 UTC — resumed: session_01HtEg7XG4MPQU4omrd2BX69 took the lock (started by the previous conductor at Pedro's request, board 20:16). Tools: Supabase, Vercel, GitHub MCP, claude-code-remote all present. Friday check moved: trig_01CPo9kLuGgJ7m3BWXQ3AS2L (Fri 2026-10-23 21:30 UTC, same prompt) bound to this session; old trig_01EkHDimws8K2uJNXoy4qRbY deleted. Vercel previews: 6290fea READY (dpl_FSeEkrwpDxS1amxMeqpgg3D6qC3V); f8dca0d CANCELED = the notes-only skip working (not a failure). Second brain not attached (cloud hook) → asked Pedro.
@@ -309,3 +309,4 @@ Log:
 - 2026-10-21 21:36 UTC — wanted-facts-writer wrapped + archived ($4.68); its late lesson (arm hides inputs) already merged as the conductor lesson. All 4 workers archived. Worker total $15.07. Batch audit (Fable) running.
 - 2026-10-21 21:43 UTC — Batch audit (Fable): fix-before-ship, 2 blocking (US market never offered; pain-less wanted fact → unofferable proposals whose numbers still become gate sources) + 7 optional. Conductor fixed both (2a039db; 1352 tests, build; new tests fail without the fix). Friday trigger prompt updated to count v3 and v3.2. project-state batch 7 section written; retro + reviewer checklist updated.
 - 2026-10-21 21:47 UTC — Integration → main PR #51 opened (head 6bf072b; 1352 tests, build green); subscribed. Waiting for Pedro's "ship it". Ship order: apply 0050 via connector (verify columns + cron row), then merge, then prod verification per project-state batch 7.
+- 2026-10-21 21:52 UTC — Pedro answered the 3 questions (web search on; outdoor = retail; cap checks not now). Conductor added "outdoor" to the retail family (industry-families.ts + test); 1352 tests, build green. Coverage line unchanged at 243/259 (outdoor first pains are mostly website/mobile, already covered); it widens cart/retention matching for outdoor shops.

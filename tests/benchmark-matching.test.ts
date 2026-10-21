@@ -377,7 +377,8 @@ test("negative: boutique hotel is lodging, never retail", () => {
   assert.equal(industryFamily("boutique hotel"), "lodging");
   assert.equal(industryFamily("Boutique "), "retail");
   assert.equal(industryFamily("construction"), null);
-  assert.equal(industryFamily("outdoor"), null);
+  // Pedro 2026-10-21: outdoor gear and clothing shops are retail.
+  assert.equal(industryFamily("outdoor"), "retail");
   assert.equal(industryFamily(null), null);
 });
 
