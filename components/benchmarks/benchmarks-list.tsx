@@ -9,6 +9,8 @@ import type { BenchmarkAdminRow } from "@/lib/benchmarks/queries";
 
 interface Props {
   benchmarks: BenchmarkAdminRow[];
+  /** True while the review queue failed to load: inactive rows cannot be activated. */
+  lockActivation?: boolean;
 }
 
 /**
@@ -18,7 +20,7 @@ interface Props {
  * research with a stake in the finding, one is 15 years old. Activating without
  * reading is the failure mode this page exists to prevent.
  */
-export function BenchmarksList({ benchmarks }: Props) {
+export function BenchmarksList({ benchmarks, lockActivation = false }: Props) {
   const [pending, startTransition] = React.useTransition();
   const [busyId, setBusyId] = React.useState<string | null>(null);
   const [msg, setMsg] = React.useState<{ tone: "ok" | "warn"; text: string } | null>(null);
@@ -133,7 +135,7 @@ export function BenchmarksList({ benchmarks }: Props) {
                 type="button"
                 size="sm"
                 variant={b.is_active ? "secondary" : "primary"}
-                disabled={pending && busyId === b.id}
+                disabled={(pending && busyId === b.id) || (lockActivation && !b.is_active)}
                 onClick={() => toggle(b)}
               >
                 {b.is_active ? (
