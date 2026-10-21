@@ -6,7 +6,7 @@
  * the second half of it. Every row carries a citation, because an uncited
  * benchmark is a fabricated one wearing a database for a costume.
  *
- * Matching is on pain AND industry, deliberately. A DTC cart-abandonment figure
+ * Matching is on pain AND industry (or industry family), deliberately. A DTC cart-abandonment figure
  * quoted at a construction firm is the same non-sequitur the composer already
  * bans for case studies ("⛔ NEVER bridge a case about a DIFFERENT service"), and
  * it would be more damaging here because a statistic reads as researched.
@@ -17,6 +17,7 @@
 
 import type { createClient } from "@/lib/supabase/server";
 import type { GeneratorInputBenchmark } from "@/lib/pitches/generator";
+import { sameIndustryFamily } from "./industry-families.ts";
 
 type Client = Awaited<ReturnType<typeof createClient>>;
 
@@ -30,6 +31,7 @@ type BenchmarkRow = {
   industry_scope: string[];
   market: string | null;
   caveat: string | null;
+  is_vendor_sourced: boolean;
 };
 
 /**
@@ -67,40 +69,142 @@ export function industryOverlaps(scope: string[], industry: string | null): bool
 }
 
 /**
- * Resolve the pain identifiers the pipeline carries into taxonomy CODES.
+ * Resolve the pain identifiers the pipeline carries into taxonomy CODES, as
+ * (input id, code) pairs in input order, so a caller can map the writer's
+ * chosen `pain_id` back to its code.
  *
  * pain_id is genuinely polymorphic here: the composer's own schema notes it
  * "can be a text slug like 'abandoned_cart_loss' or a UUID — accept both", and
  * stored pitches hold UUIDs. Benchmarks are tagged by code so seed rows stay
- * readable and survive a taxonomy re-key, so UUIDs get translated first.
+ * readable and survive a taxonomy re-key, so UUIDs get translated first. A
+ * slug is its own code. Unknown UUIDs are dropped. Never throws.
  */
-async function resolvePainCodes(
+export async function resolvePainCodes(
   supabase: Client,
   tenantId: string,
   painIds: string[],
-): Promise<string[]> {
-  const ids = painIds.filter(Boolean);
-  if (ids.length === 0) return [];
+): Promise<Array<{ id: string; code: string }>> {
+  return (await resolvePains(supabase, tenantId, painIds)).map(({ id, code }) => ({ id, code }));
+}
 
-  const isUuid = (s: string) =>
-    /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(s);
-  const codes = ids.filter((i) => !isUuid(i));
-  const uuids = ids.filter(isUuid);
-  if (uuids.length === 0) return codes;
+type ResolvedPain = { id: string; code: string; label: string | null };
 
-  type TaxRow = { id: string; code: string };
-  const { data } = await supabase
-    .from("pain_taxonomy")
-    .select("id, code")
-    .eq("tenant_id", tenantId)
-    .in("id", uuids)
-    .returns<TaxRow[]>();
+async function resolvePains(supabase: Client, tenantId: string, painIds: string[]): Promise<ResolvedPain[]> {
+  try {
+    const ids = painIds.filter(Boolean);
+    if (ids.length === 0) return [];
 
-  return [...codes, ...(data ?? []).map((r) => r.code)];
+    const isUuid = (s: string) =>
+      /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(s);
+    const uuids = ids.filter(isUuid);
+
+    const byId = new Map<string, { code: string; label: string | null }>();
+    if (uuids.length > 0) {
+      type TaxRow = { id: string; code: string; display_name_en: string | null };
+      const { data } = await supabase
+        .from("pain_taxonomy")
+        .select("id, code, display_name_en")
+        .eq("tenant_id", tenantId)
+        .in("id", uuids)
+        .returns<TaxRow[]>();
+      for (const r of data ?? []) byId.set(r.id.toLowerCase(), { code: r.code, label: r.display_name_en ?? null });
+    }
+
+    return ids.flatMap((id) => {
+      if (!isUuid(id)) return [{ id, code: id, label: null }];
+      const hit = byId.get(id.toLowerCase());
+      return hit ? [{ id, ...hit }] : [];
+    });
+  } catch {
+    return [];
+  }
+}
+
+/** The fields the matcher reads. A DB row, or a fixture row in tests. */
+export type BenchmarkCandidate = {
+  id: string;
+  pain_codes: string[];
+  industry_scope: string[];
+  market: string | null;
+  is_vendor_sourced: boolean;
+};
+
+/** At most this many rows for one pain, and in total. */
+export const MAX_BENCHMARKS_PER_PAIN = 3;
+export const MAX_BENCHMARKS_TOTAL = 8;
+
+/**
+ * Which rows this prospect is offered, and for which of its pains. Pure.
+ *
+ * Pain first: a row is considered only for the pains it is tagged with, and it
+ * is tagged (`for_pains`) with every one of the prospect's pains it is about,
+ * so the writer and critic can refuse a figure about a different problem.
+ * Then per pain: direct industry match (`industryOverlaps`, unchanged) before
+ * a same-family match (`industry-families.ts`) before a universal row (empty
+ * scope); within a tier, non-vendor before vendor; then input order (the query
+ * orders by created_at, id). Top 3 per pain; pains take turns, first evidenced
+ * pain first, until 8 rows. Output is grouped by pain in that same order.
+ *
+ * `pains` is in the prospect's evidence order; duplicate codes count once.
+ */
+export function matchBenchmarks<R extends BenchmarkCandidate>(
+  rows: readonly R[],
+  pains: ReadonlyArray<{ code: string; label: string | null; id?: string }>,
+  prospect: { industry: string | null; market: string | null },
+): Array<{ row: R; for_pains: GeneratorInputBenchmark["for_pains"] }> {
+  const seen = new Set<string>();
+  const order = pains.filter((p) => (seen.has(p.code) ? false : (seen.add(p.code), true)));
+
+  const eligible = rows.filter(
+    // A geography-scoped row only applies in that market; unscoped applies anywhere.
+    (r) => !r.market || r.market === "GLOBAL" || r.market === prospect.market,
+  );
+
+  const tier = (r: R): number | null => {
+    if (r.industry_scope.length === 0) return 2;
+    if (industryOverlaps(r.industry_scope, prospect.industry)) return 0;
+    if (sameIndustryFamily(r.industry_scope, prospect.industry)) return 1;
+    return null;
+  };
+
+  const ranked = order.map((p) =>
+    eligible
+      .map((r, i) => ({ r, i, t: tier(r) }))
+      .filter((x): x is { r: R; i: number; t: number } => x.t !== null && x.r.pain_codes.includes(p.code))
+      .sort((a, b) => a.t - b.t || Number(a.r.is_vendor_sourced) - Number(b.r.is_vendor_sourced) || a.i - b.i)
+      .slice(0, MAX_BENCHMARKS_PER_PAIN)
+      .map((x) => x.r),
+  );
+
+  const picked = new Set<string>();
+  for (let rank = 0; rank < MAX_BENCHMARKS_PER_PAIN && picked.size < MAX_BENCHMARKS_TOTAL; rank++) {
+    for (const list of ranked) {
+      const r = list[rank];
+      if (r && !picked.has(r.id)) picked.add(r.id);
+      if (picked.size >= MAX_BENCHMARKS_TOTAL) break;
+    }
+  }
+
+  const out: Array<{ row: R; for_pains: GeneratorInputBenchmark["for_pains"] }> = [];
+  const emitted = new Set<string>();
+  for (const list of ranked) {
+    for (const r of list) {
+      if (!picked.has(r.id) || emitted.has(r.id)) continue;
+      emitted.add(r.id);
+      out.push({
+        row: r,
+        for_pains: order
+          .filter((p) => r.pain_codes.includes(p.code))
+          .map((p) => ({ code: p.code, label: p.label, ...(p.id ? { pain_id: p.id } : {}) })),
+      });
+    }
+  }
+  return out;
 }
 
 /**
- * Benchmarks citable for this prospect, best-effort.
+ * Benchmarks citable for this prospect, best-effort, each tagged with the
+ * prospect pains it is about (`matchBenchmarks`).
  *
  * Never throws: a benchmark is an enhancement, and a lookup failure must not
  * cost a pitch. On any error the caller gets an empty list and writes the
@@ -112,32 +216,35 @@ export async function fetchBenchmarksForPitch(
   opts: { painIds: string[]; industry: string | null; market: string | null },
 ): Promise<GeneratorInputBenchmark[]> {
   try {
-    const codes = await resolvePainCodes(supabase, tenantId, opts.painIds);
-    if (codes.length === 0) return [];
+    const pains = await resolvePains(supabase, tenantId, opts.painIds);
+    if (pains.length === 0) return [];
 
     const { data, error } = await supabase
       .from("benchmarks")
-      .select("id, statistic, figure, publisher, source_url, pain_codes, industry_scope, market, caveat")
+      .select(
+        "id, statistic, figure, publisher, source_url, pain_codes, industry_scope, market, caveat, is_vendor_sourced",
+      )
       .eq("tenant_id", tenantId)
       .eq("is_active", true)
       .not("verified_at", "is", null)
-      .overlaps("pain_codes", codes)
+      // 0050's CHECK already keeps a rejected row inactive; this says it twice.
+      .is("rejected_at", null)
+      .overlaps("pain_codes", [...new Set(pains.map((p) => p.code))])
+      .order("created_at", { ascending: true })
+      .order("id", { ascending: true })
       .returns<BenchmarkRow[]>();
 
     if (error || !data) return [];
 
-    return data
-      .filter((r) => industryOverlaps(r.industry_scope, opts.industry))
-      // A geography-scoped row only applies in that market; unscoped applies anywhere.
-      .filter((r) => !r.market || r.market === "GLOBAL" || r.market === opts.market)
-      .map((r) => ({
-        id: r.id,
-        statistic: r.statistic,
-        figure: r.figure,
-        publisher: r.publisher,
-        source_url: r.source_url,
-        caveat: caveatForPrompt(r.caveat),
-      }));
+    return matchBenchmarks(data, pains, opts).map(({ row: r, for_pains }) => ({
+      id: r.id,
+      statistic: r.statistic,
+      figure: r.figure,
+      publisher: r.publisher,
+      source_url: r.source_url,
+      caveat: caveatForPrompt(r.caveat),
+      for_pains,
+    }));
   } catch {
     return [];
   }
