@@ -415,10 +415,15 @@ class Query implements PromiseLike<Result> {
 }
 
 const USER = { id: "u1", tenantId: "t1", role: "admin" };
+/** A sourced statistic about the lead pain: the library HAS it. */
+const LEAD_PAIN_BENCHMARK = {
+  id: "b1", statistic: "firms that reply within the hour get more conversations", figure: "7 times", publisher: "HBR",
+  source_url: "https://hbr.org", caveat: null, for_pains: [{ code: "lead_response_time", label: "Lead response time", pain_id: PAIN }],
+};
 const PROSPECT_ID = "00000000-0000-4000-8000-0000000000f1";
 const EXISTING_PITCH = "00000000-0000-4000-8000-0000000000e1";
 
-async function stage(opts: { rpc?: RpcMode; wishes?: boolean; rewrite?: boolean }) {
+async function stage(opts: { rpc?: RpcMode; wishes?: boolean; rewrite?: boolean; arm?: "benchmark" | "no_benchmark"; leadPainBenchmark?: boolean }) {
   threeDrafts(opts.wishes ?? true);
   const tables: Record<string, Row[]> = {
     prospects: [{
@@ -441,13 +446,13 @@ async function stage(opts: { rpc?: RpcMode; wishes?: boolean; rewrite?: boolean 
     hasUsableEmail: (e: unknown) => typeof e === "string" && e.includes("@"),
     isRoleBasedEmail: () => false,
     listNotableClients: async () => [],
-    fetchBenchmarksForPitch: async () => [],
+    fetchBenchmarksForPitch: async () => (opts.leadPainBenchmark ? [LEAD_PAIN_BENCHMARK] : []),
     resolvePainCodes: async (_s: unknown, _t: string, ids: string[]) => {
       resolved.push(ids);
       return ids.map((id) => ({ id, code: id === PAIN ? "lead_response_time" : id }));
     },
     recordWantedFacts,
-    chooseWriterArms: async () => ({ evidence: "benchmark", guidance: null }),
+    chooseWriterArms: async () => ({ evidence: opts.arm ?? "benchmark", guidance: null }),
     fetchExemplars: async () => [],
     segmentOf: () => "seg",
     newAttributionCode: () => "code",
@@ -544,4 +549,19 @@ test("stage: rewrite with an angle records against the rewritten pitch, kept dra
     ["writer", "writer wish from draft three", EXISTING_PITCH, "lead_response_time"],
     ["critic", "critic wish from draft three", EXISTING_PITCH, "lead_response_time"],
   ]);
+});
+
+test("stage: the no_benchmark arm records nothing (the library was hidden on purpose); the decision keeps the wish", async () => {
+  const hidden = await stage({ arm: "no_benchmark", leadPainBenchmark: true });
+  assert.equal(hidden.result.ok, true, hidden.result.error);
+  assert.equal(hidden.rpcCalls.length, 0, "a wish in the hidden arm is not a library gap");
+  assert.deepEqual(hidden.resolved, [], "no pain lookup either");
+  const decision = hidden.tables.pitches![0]!.decision as DecisionRecord;
+  assert.equal(decision.wanted_fact, "writer wish from draft three");
+  assert.equal(decision.arms?.["writer.evidence"], "no_benchmark");
+  assert.deepEqual(decision.benchmarks_offered, []);
+
+  // Control: same library, benchmark arm → recorded.
+  const shown = await stage({ arm: "benchmark", leadPainBenchmark: true });
+  assert.equal(shown.rpcCalls.length, 2);
 });

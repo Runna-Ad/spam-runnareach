@@ -158,8 +158,9 @@ export async function composePitchWithClaude(
     // English overflows in Spanish. That asymmetry made truncation look random
     // when it was actually language-correlated. Headroom is cheap; the failure
     // is not.
-    // 1700 since v3.2: the wanted_fact field adds up to ~80 tokens.
-    max_tokens: 1700,
+    // 1800 since v3.2: headroom for the wanted_fact field, so a long wish can
+    // never truncate the JSON and drop the pitch to the template (billed on use).
+    max_tokens: 1800,
     // A larger response takes longer to generate — give it more than the 20s
     // default so a slow generation doesn't time out into the heuristic. Stays
     // well under the 60s Vercel function budget (this is the only Sonnet call).

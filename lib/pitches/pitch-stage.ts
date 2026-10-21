@@ -461,7 +461,10 @@ export async function generatePitchWith(
         method = "claude";
         claudeModel = reviewed.model;
         critic = reviewed.critic;
-        wanted = reviewed.wanted;
+        // The no_benchmark arm hides the library from the writer and critic on
+        // purpose: a wish there is for a statistic we may well have, not a gap.
+        // The decision still keeps the writer's wish (it is labelled with the arm).
+        wanted = writerArms.evidence === "no_benchmark" ? null : reviewed.wanted;
         claudeUsage = sumUsage(reviewed.calls.map((c) => c.usage));
       } else {
         claudeFallbackReason = `${reviewed.reason}: ${reviewed.error.slice(0, 200)}`;
