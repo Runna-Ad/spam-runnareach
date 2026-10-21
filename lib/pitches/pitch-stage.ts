@@ -327,7 +327,8 @@ export async function generatePitchWith(
 
   // Verified benchmarks for this prospect's pains AND industry (or industry
   // family), each tagged with the pains it is about. Empty is normal and
-  // safe — with none, the composer writes the pitch without a number. Never throws; a benchmark is an enhancement, not a dependency.
+  // safe — with none, the composer writes the pitch without a number.
+  // Never throws; a benchmark is an enhancement, not a dependency.
   const benchmarks = await fetchBenchmarksForPitch(supabase, user.tenantId, {
     painIds: pains.map((p) => p.pain_id).filter((v): v is string => Boolean(v)),
     industry: prospect.industry,
