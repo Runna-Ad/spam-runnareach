@@ -106,5 +106,9 @@ Checklist (grown by retros; add a line when a retro records a miss):
   no contact): list every path that empties that input on purpose (A/B arms, caps,
   fallbacks) and check each is excluded (batch 7: the no_benchmark arm).
 
+- A value one module writes and another module FILTERS on (market, pain codes, scope,
+  status): run the reader's filter over every value the writer can produce, including the
+  empty one (batch 7 audit: market "US" and pain_codes {} made approved rows unofferable).
+
 Trace a real path from an input to the failure before calling something blocking. If you
 cannot, it is optional. A finding you are unsure of is optional with "unsure" in front.
