@@ -714,7 +714,7 @@ test("a pulled-back pitch is left for a person by the resolve step, and is not a
   }
 });
 
-test("only shadow and off pull back; the stage rules still demote veto → shadow on a quality breaker trip", () => {
+test("only shadow and off pull back; a quality breaker trip in veto restarts the veto clock (never shadow)", () => {
   assert.equal(pullsBackApprovals("shadow"), true);
   assert.equal(pullsBackApprovals("off"), true);
   assert.equal(pullsBackApprovals("veto"), false);
@@ -723,8 +723,8 @@ test("only shadow and off pull back; the stage rules still demote veto → shado
     daysInStage: 1, autoDecided: 0, autoApprovedUnedited: 0, autoFactualErrors: 0,
     autoScheduled: 19, autoVetoed: 0, autoBounceRate: 0.1, autoQualityTrips: 1,
   };
-  assert.equal(nextStage("veto", m0).stage, "shadow");
-  assert.equal(pullsBackApprovals(nextStage("veto", m0).stage), true);
+  assert.deepEqual(nextStage("veto", m0), { stage: "veto", reason: "a quality breaker tripped; veto clock restarted", restart: true });
+  assert.equal(pullsBackApprovals(nextStage("veto", m0).stage), false, "the restart pulls back on its own (tick restartStageClock)");
   assert.equal(pullsBackApprovals(nextStage("auto", m0).stage), false);
 });
 
@@ -801,21 +801,22 @@ test("veto + inbox_bounces trip: the inbox pauses, the stage stays veto", async 
   assert.deepEqual(await stageAfter(db), { stage: "veto", reason: "collecting veto data" });
 });
 
-test("veto + opt_out_spike trip: the stage drops to shadow", async () => {
+test("veto + opt_out_spike trip: the stage stays veto and its clock restarts", async () => {
   const db = fakeDb({ learning_insights: [] });
   const trip = evaluateBreakers({ ...(await metrics(fakeDb({}), new Date(at("21:45")), [])), optOutsThisWeek: 4, optOutWeeklyBaseline: 1 });
   assert.deepEqual(trip.map((t) => t.code), ["opt_out_spike"]);
   breakerInsight(db, trip[0]!, pg("21:45"));
   breakerInsight(db, { scope: "inbox", inboxId: INBOX, code: "inbox_bounces", reason: "2 hard bounces in the last 24 sends" }, pg("21:46"));
   assert.deepEqual(await stageQualityTrips(db, TENANT, STAGE_SINCE), ["opt_out_spike"]);
-  assert.deepEqual(await stageAfter(db), { stage: "shadow", reason: "a quality breaker tripped: opt_out_spike" });
+  assert.deepEqual(await stageAfter(db), { stage: "veto", reason: "a quality breaker tripped: opt_out_spike; veto clock restarted", restart: true });
 });
 
-test("veto + a factual error on an automatic pitch: the stage drops to shadow, with no breaker at all", async () => {
+test("veto + a factual error on an automatic pitch: the veto clock restarts, with no breaker at all", async () => {
   const db = fakeDb({ learning_insights: [] });
   assert.deepEqual(await stageAfter(db, { autoFactualErrors: 1 }), {
-    stage: "shadow",
-    reason: "an automatic pitch had a factual or recipient error",
+    stage: "veto",
+    reason: "an automatic pitch had a factual or recipient error; veto clock restarted",
+    restart: true,
   });
 });
 

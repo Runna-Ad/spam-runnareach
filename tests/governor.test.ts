@@ -141,7 +141,8 @@ test("stages: veto promotes to auto on a low veto and bounce rate", () => {
 
 test("stages: trouble from automatic sends demotes a stage at once", () => {
   assert.equal(nextStage("auto", { ...m0, autoQualityTrips: 1 }).stage, "veto");
-  assert.equal(nextStage("veto", { ...m0, autoFactualErrors: 1 }).stage, "shadow");
+  assert.equal(nextStage("veto", { ...m0, autoFactualErrors: 1 }).stage, "veto");
+  assert.equal(nextStage("veto", { ...m0, autoFactualErrors: 1 }).restart, true);
   assert.equal(nextStage("auto", { ...m0 }).stage, "auto");
 });
 
@@ -211,20 +212,22 @@ test("breaker kinds: only opt_out_spike is quality; every code evaluateBreakers 
   for (const code of ["something_new", undefined, null, 3, "toString", "__proto__"]) assert.equal(isQualityBreaker(code), true, String(code));
 });
 
-test("stages: a delivery trip never moves the stage; a quality trip or a factual error demotes", () => {
+test("stages: a delivery trip never moves the stage; a quality trip or a factual error demotes auto, restarts veto", () => {
   // The tick hands nextStage quality trips only (hold.ts stageQualityTrips), so
   // veto with two dead-mailbox trips arrives as autoQualityTrips 0.
   assert.deepEqual(nextStage("veto", { ...m0, daysInStage: 1, autoScheduled: 19 }), { stage: "veto", reason: "collecting veto data" });
   assert.equal(nextStage("auto", { ...m0 }).stage, "auto");
   assert.deepEqual(nextStage("veto", { ...m0, autoQualityTrips: 2, autoQualityTripCodes: ["opt_out_spike", "opt_out_spike"] }), {
-    stage: "shadow",
-    reason: "a quality breaker tripped: opt_out_spike",
+    stage: "veto",
+    reason: "a quality breaker tripped: opt_out_spike; veto clock restarted",
+    restart: true,
   });
-  assert.equal(nextStage("veto", { ...m0, autoQualityTrips: 1 }).reason, "a quality breaker tripped");
+  assert.equal(nextStage("veto", { ...m0, autoQualityTrips: 1 }).reason, "a quality breaker tripped; veto clock restarted");
   assert.equal(nextStage("auto", { ...m0, autoQualityTrips: 1 }).stage, "veto");
   assert.deepEqual(nextStage("veto", { ...m0, autoFactualErrors: 1 }), {
-    stage: "shadow",
-    reason: "an automatic pitch had a factual or recipient error",
+    stage: "veto",
+    reason: "an automatic pitch had a factual or recipient error; veto clock restarted",
+    restart: true,
   });
   assert.equal(nextStage("auto", { ...m0, autoFactualErrors: 1 }).stage, "veto");
   // Shadow and off never demote further.
