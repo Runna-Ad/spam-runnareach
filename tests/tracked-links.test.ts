@@ -18,6 +18,8 @@ import { senderSignature } from "../lib/pitches/sender-identity.ts";
 import type { GeneratorInputs } from "../lib/pitches/generator.ts";
 import {
   CLICK_DEDUPE_MS,
+  CLICK_MIN_AFTER_SEND_MS,
+  hasTeamSessionCookie,
   buildTrackedLink,
   followupHunterLink,
   hunterDestination,
@@ -46,7 +48,7 @@ const PITCH_INPUT = {
 // ── Fake db: the columns of the real tables only (0001 + 0038) ──────────────
 
 const COLUMNS: Record<string, string[]> = {
-  pitches: ["id", "tenant_id", "prospect_id", "contact_id", "parent_pitch_id", "attribution_code", "status", "sent_at"],
+  pitches: ["id", "tenant_id", "prospect_id", "contact_id", "parent_pitch_id", "attribution_code", "status", "sent_at", "follow_up_step"],
   prospect_contacts: ["id", "email", "full_name"],
   pitch_events: ["id", "tenant_id", "pitch_id", "event_type", "event_at", "payload", "ip_address", "user_agent"],
 };
@@ -92,8 +94,10 @@ function fakeDb(seed: { pitches?: Row[]; prospect_contacts?: Row[]; pitch_events
   return client;
 }
 
-const ROOT = { id: "root-1", tenant_id: "t1", prospect_id: "pr1", contact_id: "c1", parent_pitch_id: null, attribution_code: CODE };
-const FU = { id: "fu-1", tenant_id: "t1", prospect_id: "pr1", contact_id: "c1", parent_pitch_id: "root-1", attribution_code: null };
+const ago = (ms: number) => new Date(Date.now() - ms).toISOString();
+const DAY = 24 * 60 * 60 * 1000;
+const ROOT = { id: "root-1", tenant_id: "t1", prospect_id: "pr1", contact_id: "c1", parent_pitch_id: null, attribution_code: CODE, sent_at: ago(4 * DAY), follow_up_step: 0 };
+const FU = { id: "fu-1", tenant_id: "t1", prospect_id: "pr1", contact_id: "c1", parent_pitch_id: "root-1", attribution_code: null, sent_at: ago(DAY), follow_up_step: 1 };
 function db(over: { contactEmail?: string; events?: Row[]; failPitches?: boolean } = {}) {
   return fakeDb(
     {
@@ -110,11 +114,12 @@ function trackedSearch(extra = ""): URLSearchParams {
   return new URL(link + extra).searchParams;
 }
 
-async function click(client: ReturnType<typeof fakeDb>, over: Partial<{ code: string; method: string; ua: string | null; search: URLSearchParams }> = {}) {
+async function click(client: ReturnType<typeof fakeDb>, over: Partial<{ code: string; method: string; ua: string | null; search: URLSearchParams; team: boolean }> = {}) {
   const plan = await planTrackedClick(client, {
     code: over.code ?? CODE,
     method: over.method ?? "GET",
     userAgent: over.ua === undefined ? CHROME : over.ua,
+    teamSession: over.team ?? false,
     search: over.search ?? trackedSearch(),
   });
   const outcome: ClickOutcome | null = plan.record ? await plan.record() : null;
@@ -339,7 +344,8 @@ test("followupHunterLink: reuses the root email's own link params (tracked or ol
   const d = followupHunterLink({ rootCode: null, followupStep: 1, rootBody: rootDirect, fallback });
   assert.ok(d.startsWith(`${HUNTER_URL}?market=mx`), d);
   assert.ok(!d.includes("r="), d);
-  assert.equal(hunterParamsFromBody("see https://example.com/r/abcdefgh?market=ca")?.get("market"), "ca");
+  assert.equal(hunterParamsFromBody(`see ${BASE}/r/abcdefgh?market=ca`)?.get("market"), "ca");
+  assert.equal(hunterParamsFromBody("see https://example.com/r/abcdefgh?market=ca"), null, "not our host");
   assert.equal(hunterParamsFromBody("see https://example.com/page"), null);
 });
 
@@ -445,7 +451,7 @@ test("template fallback: both steps, both languages carry the 👉 tracked line,
 
 test("heldBodyForRevision: both the old direct link and the new tracked link go back to {hunter_url}", () => {
   const tracked = `Hi Sarah,\n\n👉 Run Smith Law through our free check: ${BASE}/r/${CODE}?market=ca&industry=proservices.\n\nHenry\nRunna Advertising`;
-  const other = `Hi Sarah,\n\n👉 Free check: https://preview-abc.vercel.app/r/${CODE}\n\nHenry`;
+  const other = `Hi Sarah,\n\n👉 Free check: https://spam-runnareach-git-claude-x-runna.vercel.app/r/${CODE}\n\nHenry`;
   const direct = `Hi Sarah,\n\n👉 Free check: ${HUNTER_URL}?market=ca&r=${CODE}&v=1\n\nHenry`;
   assert.ok(heldBodyForRevision(tracked).includes("free check: {hunter_url}."), heldBodyForRevision(tracked));
   for (const b of [tracked, other, direct]) {
@@ -454,7 +460,10 @@ test("heldBodyForRevision: both the old direct link and the new tracked link go 
     assert.ok(out.includes("{hunter_url}"), out);
   }
   // A prospect's own /r/ page with a non-code segment is left alone.
-  assert.ok(heldBodyForRevision("see https://example.com/r/about-us").includes("https://example.com/r/about-us"));
+  // A /r/ path on any host but ours is left alone, even with a code-shaped segment.
+  for (const url of ["https://example.com/r/about-us", "https://www.reddit.com/r/startups", "https://www.reddit.com/r/smallbiz", "https://example.com/r/abcdefgh?x=1"]) {
+    assert.ok(heldBodyForRevision(`see ${url}`).includes(url), url);
+  }
 });
 
 test("rewrite with a writer that copies its input: the new body carries the NEW tracked link, never the old code", async () => {
@@ -503,3 +512,65 @@ function mulberry32(seed: number) {
 function pick<T>(rnd: () => number, xs: readonly T[]): T {
   return xs[Math.floor(rnd() * xs.length)]!;
 }
+
+// ── Conductor review: drafts, team clicks, delivery-time scanners ───────────
+
+test("a draft (root never sent) records nothing, still redirects with r", async () => {
+  const d = fakeDb({ pitches: [{ ...ROOT, sent_at: null }], prospect_contacts: [{ id: "c1", email: "sarah@smithlaw.ca", full_name: null }] });
+  const r = await click(d);
+  assert.equal(r.outcome, "not_sent");
+  assert.equal(r.events.length, 0);
+  assert.equal(new URL(r.location).searchParams.get("r"), CODE);
+});
+
+test("a logged-in team member's click records nothing, still redirects", async () => {
+  const r = await click(db(), { team: true });
+  assert.equal(r.outcome, "team");
+  assert.equal(r.events.length, 0);
+  assert.ok(r.location.startsWith(HUNTER_URL));
+  for (const name of ["sb-ybbrpqzbedaxsmotgtkh-auth-token", "sb-ybbrpqzbedaxsmotgtkh-auth-token.0", "sb-ybbrpqzbedaxsmotgtkh-auth-token.1"]) {
+    assert.equal(hasTeamSessionCookie([name]), true, name);
+  }
+  for (const name of ["sb-ybbrpqzbedaxsmotgtkh-auth-token-code-verifier", "session", "sb-x", "auth-token"]) {
+    assert.equal(hasTeamSessionCookie([name]), false, name);
+  }
+  assert.equal(hasTeamSessionCookie([]), false);
+});
+
+test("a click within 60 s of delivery records nothing (root for s=0, the follow-up's own sent_at for s=1|2)", async () => {
+  const contacts = [{ id: "c1", email: "sarah@smithlaw.ca", full_name: null }];
+  // First email just delivered.
+  const a = await click(fakeDb({ pitches: [{ ...ROOT, sent_at: ago(20_000) }], prospect_contacts: contacts }));
+  assert.equal(a.outcome, "too_soon");
+  assert.equal(a.events.length, 0);
+  // Root is days old, but follow-up 1 was just delivered: its link is too soon.
+  const fuNow = { ...FU, sent_at: ago(20_000) };
+  const b = await click(fakeDb({ pitches: [ROOT, fuNow], prospect_contacts: contacts }), { search: trackedSearch("&s=1") });
+  assert.equal(b.outcome, "too_soon");
+  // ... while a first-email click at the same moment counts.
+  const c = await click(fakeDb({ pitches: [ROOT, fuNow], prospect_contacts: contacts }));
+  assert.equal(c.outcome, "recorded");
+  // Follow-up delivered a day ago → counts; no follow-up row for s=2 → the root's time decides.
+  assert.equal((await click(db(), { search: trackedSearch("&s=1") })).outcome, "recorded");
+  assert.equal((await click(db(), { search: trackedSearch("&s=2") })).outcome, "recorded");
+  // Just past the window → counts.
+  const d = await click(fakeDb({ pitches: [{ ...ROOT, sent_at: ago(CLICK_MIN_AFTER_SEND_MS + 5_000) }], prospect_contacts: contacts }));
+  assert.equal(d.outcome, "recorded");
+});
+
+test("scanner list: bot as a word or token only (CUBOT phones count), WhatsApp's preview fetcher but not its in-app browser", () => {
+  const people = [
+    "Mozilla/5.0 (Linux; Android 10; CUBOT X30 Build/QP1A.190711.020) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Mobile Safari/537.36",
+    "Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Mobile/15E148 WhatsApp/2.24.1",
+  ];
+  for (const ua of people) assert.equal(isScannerUserAgent(ua), false, ua);
+  const bots = [
+    "WhatsApp/2.23.20.0 A",
+    "Slackbot-LinkExpanding 1.0 (+https://api.slack.com/robots)",
+    "Mozilla/5.0 (compatible; bingbot/2.0; +http://www.bing.com/bingbot.htm)",
+    "Mozilla/5.0 (compatible; SomeBot/1.0)",
+    "Mozilla/5.0 (compatible; Yahoo bot)",
+    "Twitterbot/1.0",
+  ];
+  for (const ua of bots) assert.equal(isScannerUserAgent(ua), true, ua);
+});

@@ -29,6 +29,30 @@ type AnySupabase = any;
 
 export const TRACKED_LINK_PATH = "/r/";
 
+/** Hosts our tracked links are served from: the configured base, plus this project's Vercel previews. */
+export function trackedLinkHostPattern(): string {
+  let host = "spam-runnareach.vercel.app";
+  try {
+    host = new URL(trackedLinkBase()).host;
+  } catch {
+    // keep the default
+  }
+  return `(?:${escapeRe(host)}|spam-runnareach[a-z0-9-]*\\.vercel\\.app)`;
+}
+
+/**
+ * Source of a regex matching one of our tracked links in stored text:
+ * https://<our host>/r/<8-char code>[?query…]. A /r/ path on any other host
+ * (reddit.com/r/startups, a prospect's site) is not ours.
+ */
+export function trackedLinkPatternSource(): string {
+  return `https?://${trackedLinkHostPattern()}${TRACKED_LINK_PATH}[abcdefghjkmnpqrstuvwxyz23456789]{8}(?![\\w-])\\S*`;
+}
+
+function escapeRe(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\/]/g, "\\$&");
+}
+
 /** The Hunter parameters a tracked link carries and the redirect copies, in order. */
 export const HUNTER_PARAMS = ["market", "industry", "size", "timesink", "tools", "website", "lead"] as const;
 
@@ -97,35 +121,59 @@ export function stepFromParam(s: string | null): 0 | 1 | 2 {
 
 /**
  * Link scanners and prefetchers open every link in an email. Substrings,
- * case-insensitive. An empty user agent counts as a scanner. Some scanners
- * (Safe Links among them) can send a normal browser UA; those get through,
- * which is why the payload keeps `ua` for an audit.
+ * case-insensitive, plus `bot` as a word or a product token ("Googlebot/2.1",
+ * "bot;" but not the CUBOT phone brand) and WhatsApp's preview fetcher
+ * ("WhatsApp/2.x" with no browser engine; its in-app browser is Mobile Safari
+ * or Chrome and counts). An empty user agent counts as a scanner. Some scanners
+ * (Safe Links among them) send a normal browser UA; the 60-second rule after
+ * delivery (CLICK_MIN_AFTER_SEND_MS) catches most of those, and the payload
+ * keeps `ua` for an audit.
  */
 export const SCANNER_UA_SUBSTRINGS = [
-  "bot", "spider", "crawl", "preview", "scanner", "scan/",
+  "spider", "crawl", "preview", "scanner", "scan/",
+  "googlebot", "bingbot", "applebot", "twitterbot", "linkedinbot", "yandexbot", "duckduckbot",
   "safelinks", "safe links", "existence discovery",
   "barracuda", "proofpoint", "mimecast", "ironport", "messagelabs", "symantec",
   "forcepoint", "zscaler", "trendmicro", "trend micro", "sophos", "fortiguard",
   "headless", "phantomjs", "python", "curl/", "wget", "go-http-client", "java/",
   "okhttp", "libwww", "httpclient", "axios", "node-fetch", "undici",
-  "facebookexternalhit", "whatsapp", "slackbot", "discordbot", "telegrambot",
+  "facebookexternalhit", "slackbot-linkexpanding", "discordbot", "telegrambot",
   "googleimageproxy", "yahoomailproxy",
 ] as const;
 
 export function isScannerUserAgent(ua: string | null | undefined): boolean {
   const s = (ua ?? "").trim().toLowerCase();
   if (!s) return true;
+  if (/\bbot\b|bot\//.test(s)) return true;
+  if (s.startsWith("whatsapp/") && !s.includes("mozilla")) return true;
   return SCANNER_UA_SUBSTRINGS.some((needle) => s.includes(needle));
 }
 
 /** At most one recorded click per pitch per this window. */
 export const CLICK_DEDUPE_MS = 10 * 60 * 1000;
 
+/**
+ * A click this soon after the email went out is a scanner fetching on delivery
+ * (Safe Links and others with a browser UA), not a person.
+ */
+export const CLICK_MIN_AFTER_SEND_MS = 60 * 1000;
+
+/** Supabase auth cookie names: sb-<ref>-auth-token, chunked as .0, .1 … */
+const AUTH_COOKIE_RE = /^sb-.+-auth-token(?:\.\d+)?$/;
+
+/** True when the request carries a logged-in team session (any Supabase auth cookie). */
+export function hasTeamSessionCookie(cookieNames: Iterable<string>): boolean {
+  for (const name of cookieNames) if (AUTH_COOKIE_RE.test(name)) return true;
+  return false;
+}
+
 export type ClickRequest = {
   code: string;
   method: string;
   userAgent: string | null;
   search: URLSearchParams;
+  /** The visitor is logged in to S.P.A.M. (hasTeamSessionCookie): a team click, never counted. */
+  teamSession: boolean;
 };
 
 export type ClickPlan = {
@@ -138,13 +186,16 @@ export type ClickPlan = {
 export type ClickOutcome =
   | "recorded"
   | "head"
+  | "team"
   | "scanner"
+  | "not_sent"
+  | "too_soon"
   | "duplicate"
   | "test_address"
   | "recipient_unknown"
   | "error";
 
-type RootPitch = { id: string; tenant_id: string; contact_id: string | null };
+type RootPitch = { id: string; tenant_id: string; contact_id: string | null; sent_at: string | null };
 
 /**
  * Resolve the code to its pitch (codes live on root pitches; a child row is
@@ -162,7 +213,7 @@ export async function planTrackedClick(supabase: AnySupabase, req: ClickRequest)
   try {
     const { data, error } = await supabase
       .from("pitches")
-      .select("id, tenant_id, contact_id, parent_pitch_id")
+      .select("id, tenant_id, contact_id, parent_pitch_id, sent_at")
       .eq("attribution_code", code)
       .limit(1)
       .maybeSingle();
@@ -178,7 +229,15 @@ export async function planTrackedClick(supabase: AnySupabase, req: ClickRequest)
   const record = async (): Promise<ClickOutcome> => {
     try {
       if (req.method.toUpperCase() !== "GET") return "head";
+      if (req.teamSession) return "team";
       if (isScannerUserAgent(req.userAgent)) return "scanner";
+
+      // A draft already carries its tracked link (and the review page renders
+      // it clickable): nothing sent, nothing to count.
+      if (!pitch.sent_at) return "not_sent";
+      const step = stepFromParam(req.search.get("s"));
+      const sentAt = await sentAtForStep(supabase, pitch.id, pitch.sent_at, step);
+      if (Date.now() - Date.parse(sentAt) < CLICK_MIN_AFTER_SEND_MS) return "too_soon";
 
       // Test addresses never count. Fails closed: no contact, or an unreadable
       // one, records nothing.
@@ -208,7 +267,7 @@ export async function planTrackedClick(supabase: AnySupabase, req: ClickRequest)
         type: "click",
         payload: {
           code,
-          step: stepFromParam(req.search.get("s")),
+          step,
           ua: (req.userAgent ?? "").slice(0, 200),
         },
       });
@@ -221,27 +280,45 @@ export async function planTrackedClick(supabase: AnySupabase, req: ClickRequest)
   return { location, record };
 }
 
-async function resolveRoot(
-  supabase: AnySupabase,
-  row: { id: string; tenant_id: string; contact_id: string | null; parent_pitch_id: string | null } | null,
-): Promise<RootPitch | null> {
-  if (!row) return null;
-  if (!row.parent_pitch_id) return { id: row.id, tenant_id: row.tenant_id, contact_id: row.contact_id };
+/**
+ * When the email holding this link went out: the follow-up's own sent_at for
+ * s=1|2 (one indexed read), else, or if that row isn't found, the root's.
+ */
+async function sentAtForStep(supabase: AnySupabase, rootId: string, rootSentAt: string, step: 0 | 1 | 2): Promise<string> {
+  if (step === 0) return rootSentAt;
   const { data, error } = await supabase
     .from("pitches")
-    .select("id, tenant_id, contact_id")
+    .select("sent_at")
+    .eq("parent_pitch_id", rootId)
+    .eq("follow_up_step", step)
+    .limit(1)
+    .maybeSingle();
+  const at = !error && typeof data?.sent_at === "string" ? data.sent_at : null;
+  return at ?? rootSentAt;
+}
+
+async function resolveRoot(
+  supabase: AnySupabase,
+  row: (RootPitch & { parent_pitch_id: string | null }) | null,
+): Promise<RootPitch | null> {
+  if (!row) return null;
+  const self: RootPitch = { id: row.id, tenant_id: row.tenant_id, contact_id: row.contact_id, sent_at: row.sent_at };
+  if (!row.parent_pitch_id) return self;
+  const { data, error } = await supabase
+    .from("pitches")
+    .select("id, tenant_id, contact_id, sent_at")
     .eq("id", row.parent_pitch_id)
     .maybeSingle();
-  if (error || !data) return { id: row.id, tenant_id: row.tenant_id, contact_id: row.contact_id };
+  if (error || !data) return self;
   return data as RootPitch;
 }
 
 // ── Follow-ups ─────────────────────────────────────────────────────────────
 
 /** Our links in a stored body: a tracked /r/<code> link or a direct Hunter link. */
-const STORED_LINK_RE = new RegExp(
-  `(?:https?://[^\\s/]+${TRACKED_LINK_PATH}[abcdefghjkmnpqrstuvwxyz23456789]{8}|${HUNTER_URL.replace(/[.*+?^${}()|[\]\\/]/g, "\\$&")})\\S*`,
-);
+function storedLinkRe(): RegExp {
+  return new RegExp(`(?:${trackedLinkPatternSource()}|${escapeRe(HUNTER_URL)}\\S*)`);
+}
 
 /**
  * The Hunter parameters of the link the root email carried, so a follow-up
@@ -249,7 +326,7 @@ const STORED_LINK_RE = new RegExp(
  * no link of ours (older pitches).
  */
 export function hunterParamsFromBody(body: string | null | undefined): URLSearchParams | null {
-  const m = (body ?? "").match(STORED_LINK_RE);
+  const m = (body ?? "").match(storedLinkRe());
   if (!m) return null;
   const url = m[0].replace(/[.,;:!?)\]]+$/, "");
   try {

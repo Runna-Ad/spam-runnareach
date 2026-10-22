@@ -4,12 +4,13 @@
  * Public (prospects click it from cold emails). Always a 302 to the free check
  * (runna-hunter), whose host is a constant: the request can never choose where
  * the visitor goes. The click is recorded on the conversation's ROOT pitch after
- * the response is sent, minus HEAD requests, link scanners, repeats within 10
+ * the response is sent, minus HEAD requests, logged-in team members, link
+ * scanners, unsent drafts, clicks within 60 s of delivery, repeats within 10
  * minutes and test addresses. Logic and contract: lib/pitches/tracked-links.ts.
  */
 
 import { after, NextResponse, type NextRequest } from "next/server";
-import { hunterDestination, planTrackedClick } from "@/lib/pitches/tracked-links";
+import { hasTeamSessionCookie, hunterDestination, planTrackedClick } from "@/lib/pitches/tracked-links";
 import { createServiceRoleClient } from "@/lib/supabase/service-role";
 
 export const dynamic = "force-dynamic";
@@ -24,6 +25,7 @@ async function handle(req: NextRequest, ctx: { params: Promise<{ code: string }>
       method: req.method,
       userAgent: req.headers.get("user-agent"),
       search,
+      teamSession: hasTeamSessionCookie(req.cookies.getAll().map((c) => c.name)),
     });
     location = plan.location;
     const record = plan.record;

@@ -19,6 +19,7 @@ import {
 } from "../anthropic/client.ts";
 import { RUNNA_CAPABILITIES_FOR_PITCHES } from "../runna/capabilities.ts";
 import { HUNTER_URL } from "./industry-templates.ts";
+import { trackedLinkPatternSource } from "./tracked-links.ts";
 import { hasUsableEmail } from "../research/email-utils.ts";
 import { findBannedTerms } from "./content-rules.ts";
 import { senderIdentity } from "./sender-identity.ts";
@@ -254,14 +255,18 @@ const FORWARDING_LINE = {
 /**
  * A resolved Hunter link: what resolveCtaLink puts where {hunter_url} was. Either
  * the direct link (HUNTER_URL + its query) or our tracked redirect
- * (<any origin>/r/<8-char attribution code>[?query], lib/pitches/tracked-links.ts).
- * The tracked form matches on any host: the origin is an env var and may differ
- * between the deploy that stored the body and the one rewriting it.
+ * (https://<our host>/r/<8-char code>[?query], lib/pitches/tracked-links.ts). Our
+ * host is the configured base or a spam-runnareach*.vercel.app preview, since
+ * the base may differ between the deploy that stored the body and the one
+ * rewriting it; a /r/ path on any other host is left alone. Built per call so
+ * it follows the env.
  */
-const RESOLVED_HUNTER_LINK_RE = new RegExp(
-  `(?:${HUNTER_URL.replace(/[.*+?^${}()|[\]\\/]/g, "\\$&")}|https?://[^\\s/]+/r/[abcdefghjkmnpqrstuvwxyz23456789]{8}(?![\\w-]))\\S*`,
-  "g",
-);
+function resolvedHunterLinkRe(): RegExp {
+  return new RegExp(
+    `(?:${HUNTER_URL.replace(/[.*+?^${}()|[\]\\/]/g, "\\$&")}\\S*|${trackedLinkPatternSource()})`,
+    "g",
+  );
+}
 
 /**
  * A stored body turned back into what the writer produced, for a revision of
@@ -271,7 +276,7 @@ const RESOLVED_HUNTER_LINK_RE = new RegExp(
  * is appended again after the revision).
  */
 export function heldBodyForRevision(body: string): string {
-  let out = body.replace(RESOLVED_HUNTER_LINK_RE, (url) => {
+  let out = body.replace(resolvedHunterLinkRe(), (url) => {
     const trail = url.match(/[.,;:!?)\]]+$/)?.[0] ?? "";
     return `{hunter_url}${trail}`;
   });
