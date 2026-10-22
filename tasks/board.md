@@ -34,7 +34,8 @@ Previous: `phase3-batch2` CLOSED (main e10a326). Rows, log and hand-off in `task
 | 0049 | batch 4 send slot | APPLIED (version 20261019211644) |
 | 0050 | batch 7: `0050_wanted_facts.sql` | APPLIED 2026-10-21 21:56 UTC via connector before the merge, verified, version normalised to 0050 |
 | 0051 | batch 8 health-alarms: `0051_cron_heartbeats.sql` (cron_heartbeats table, RLS no policies) | reserved |
-| 0052 | — | free |
+| 0052 | batch 8 send-pacing: `0052_follow_up_every_10min.sql` (spam-follow-up → 5-59/10 15-22 * * 1-5) | reserved |
+| 0053 | — | free |
 
 ## Active and queued tasks
 | Slug | Module | Model/effort | Branch | Session | PR | Depends on | Status | Blocked on | Turns | Review findings | CI reds | Rework |
@@ -335,8 +336,9 @@ Migrations: none reserved for wave 1 (`click` already in prod's `pitch_event_typ
 | reply-on-root | poll route records reply/bounce on the root + backfill script | opus/high | claude/reply-on-root | session_01HEPRVfWtJ4jQyZPkkSBr1r | #52 | — | MERGED 099b31d (r1: 1 blocking fixed, verified) | | | | |
 | tracked-links | /r/[code] redirect + click event; follow-ups carry the tracked link, free-check CTA | opus/high | claude/tracked-links | session_01MMFXJXTL8PCeTy1mqdDRoW | #54 | — | MERGED 4d53939 (r1: 1 blocking fixed, verified) | | | | |
 | presend-learning | pre-send guardrail, click reward, weekly review input, /learning cleanup | opus/high | claude/presend-learning | session_01P5hLzYcj7cnh1vz8ycnLeK | #53 | — | MERGED 3f0be9a (r1: 1 blocking fixed, verified) |
-| handsoff-autopilot | veto demotion restarts the veto clock (no auto shadow); gmail_api breaker counts recorded send failures; tick-errors audit row | opus/high | claude/handsoff-autopilot | session_016QfVMPU6GUVvytMYB3jhTk | #55 | wave 1 | fix round 1 | | | | |
-| health-alarms | health rules inbox_paused, tick_errors, learning_stalled, job_silent; 0051 heartbeats in 4 cron routes; Sentry copy of every alert | opus/high | claude/health-alarms | session_017aNNRc3UdX5txuLZq2qz4N | #56 | wave 1 | fix round 1 | | | | | | | | |
+| handsoff-autopilot | veto demotion restarts the veto clock (no auto shadow); gmail_api breaker counts recorded send failures; tick-errors audit row | opus/high | claude/handsoff-autopilot | session_016QfVMPU6GUVvytMYB3jhTk | #55 | wave 1 | MERGED 1cc8bda (r1: 1 blocking fixed, verified) | | | | |
+| health-alarms | health rules inbox_paused, tick_errors, learning_stalled, job_silent; 0051 heartbeats in 4 cron routes; Sentry copy of every alert | opus/high | claude/health-alarms | session_017aNNRc3UdX5txuLZq2qz4N | #56 | wave 1 | MERGED d15ad27 (r1: 1 blocking fixed, verified) |
+| send-pacing | send-queue + follow-up: 1 per inbox / 2 per run; follow-up every 10 min (0052) | opus/high | claude/send-pacing | — | — | wave 2 | queued | | | | | | | | | | | | |
 
 Batch-audit pairs: tracked-links × presend-learning (click on the ROOT, payload {code, step, ua}; value 0.25 never makes an exemplar); reply-on-root × follow-up route (one timeline per conversation, sent + reply on the same row); tracked-links × claude-composer rewrite (no old code inherited); presend-learning × governor (guidance retirement never touches stage); backfill × 23505 skip.
 
@@ -354,3 +356,4 @@ Log:
 - 2026-10-22 17:20 UTC — Wave 2 spawned (2 remote Opus sessions). Sweep trig_016dqPBPbpHTaQPEVgge6naL (17:33), safety trig_01Ct1YzrBdxUUjf3mL3RjxRY (18:16).
 - 2026-10-22 17:35 UTC — wave-1 workers archived (costs: reply-on-root $3.91, tracked-links $5.43, presend-learning $5.62). Late lesson (presend-learning): before adding a signal to a shared scorer, grep every caller and make it opt-in, with a test that existing callers' output is unchanged; noise for a randomized learner can be bias for a segment-ranking one (TAGS: learning, reward, scope).
 - 2026-10-22 18:20 UTC — #55 (1436 tests) and #56 (1451 tests) opened 17:33/17:39; both merge cleanly together. Reviews: #55 fix-then-merge, 1 blocking (stage_since = tick start, older than the breaker insight written later in the same tick → veto clock restarts twice; same root cause on auto→veto) → stage_since after the newest counted trip, regression test; optional taken: guarded write, distinct pitch_ids for gmail_api, try/finally, hold text. #56 fix-then-merge, 1 blocking (conductor brief defect: a deliberate pause would alert daily) → inbox_paused on breaker pauses only; optional taken: bounce exclusion via events, re-enable guard, LEARNING_STEPS=learn, import TICK_ERRORS_ACTION. Merge order #55 then #56. 0051 applied at ship time.
+- 2026-10-22 18:40 UTC — #55 fix verified (stageClockStart after newest counted trip; regression test trip inside tick 1; guarded writes; distinct pitch_ids; try/finally): 1443 tests, build → merged 1cc8bda. #56 fix verified (breaker-only inbox_paused, bounce via events, LEARNING_STEPS=learn, imports TICK_ERRORS_ACTION after #55): 1478 tests, build → merged d15ad27. Wave 2 done; wrap-ups sent. Wave 3 brief send-pacing (0052 reserved).
