@@ -796,6 +796,32 @@ export type Database = {
         };
         Relationships: NoRels;
       };
+      /** 0051: one row per cron job (global, service role only), lib/reports/heartbeat.ts. */
+      cron_heartbeats: {
+        Row: {
+          job: string;
+          last_ok_at: Timestamptz | null;
+          last_error_at: Timestamptz | null;
+          last_error: string | null;
+          created_at: Timestamptz;
+          updated_at: Timestamptz | null;
+        };
+        Insert: {
+          job: string;
+          last_ok_at?: Timestamptz | null;
+          last_error_at?: Timestamptz | null;
+          last_error?: string | null;
+          created_at?: Timestamptz;
+          updated_at?: Timestamptz | null;
+        };
+        Update: {
+          last_ok_at?: Timestamptz | null;
+          last_error_at?: Timestamptz | null;
+          last_error?: string | null;
+          updated_at?: Timestamptz | null;
+        };
+        Relationships: NoRels;
+      };
       replies: {
         Row: {
           id: UUID;
