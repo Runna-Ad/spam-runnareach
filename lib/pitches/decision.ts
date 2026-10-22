@@ -85,6 +85,13 @@ export type DecisionRecord = {
    */
   retry_mode?: "revised" | "fresh";
   /**
+   * Set when the autopilot wrote a fresh draft for a prospect whose only draft
+   * was thrown away for its writing (lib/autopilot/tick.ts redraftPool): that
+   * auto_rejected pitch's id. Carried onto the re-draft's own rewrite, so a
+   * prospect is re-drafted once (governor.redraftOf).
+   */
+  redraft_of?: string;
+  /**
    * The statistic the writer wished it had (its wanted_fact, as written, before
    * the recording's discard checks). Claude path only; absent before
    * pitch-v3.2 and on a template. RAW model output: it may carry a guessed
