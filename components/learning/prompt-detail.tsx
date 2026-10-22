@@ -3,13 +3,12 @@
 import { useState, useTransition } from "react";
 import { PURPOSE_LABELS } from "@/lib/prompts/types";
 import type { PromptDetail } from "@/lib/prompts/types";
-import { rollbackVariant, runWeeklyAnalysis } from "@/lib/prompts/actions";
-import { ProposalCard } from "./proposal-card";
+import { rollbackVariant } from "@/lib/prompts/actions";
 import { Button } from "@/components/ui/button";
 import { Chip } from "@/components/ui/chip";
 import { cn } from "@/lib/utils";
 
-type Tab = "champion" | "history" | "proposals";
+type Tab = "champion" | "history";
 
 interface Props {
   detail: PromptDetail;
@@ -51,7 +50,7 @@ function ChampionTab({ detail }: { detail: PromptDetail }) {
       <div className="flex flex-col items-center gap-2 py-14 text-center">
         <p className="text-sm font-medium text-white/50">No champion set yet</p>
         <p className="max-w-xs text-xs text-white/30">
-          Create a variant in the Proposals tab and promote it to champion to activate this prompt.
+          No version is stored for this prompt; the app uses the prompt written in its code.
         </p>
       </div>
     );
@@ -158,59 +157,6 @@ function HistoryTab({ detail, onRollback }: { detail: PromptDetail; onRollback: 
   );
 }
 
-function ProposalsTab({
-  detail,
-  onAnalysisRun,
-}: {
-  detail: PromptDetail;
-  onAnalysisRun: (msg: string) => void;
-}) {
-  const [isAnalyzing, startTransition] = useTransition();
-
-  function handleRunAnalysis() {
-    startTransition(async () => {
-      const res = await runWeeklyAnalysis(detail.id);
-      onAnalysisRun(res.error ?? "Analysis started.");
-    });
-  }
-
-  const pending = detail.proposals.filter((p) =>
-    ["pending", "ab_testing"].includes(p.status),
-  );
-
-  return (
-    <div className="flex flex-col gap-4">
-      <div className="flex items-center justify-between">
-        <p className="text-sm text-white/50">
-          {pending.length === 0
-            ? "No proposals pending."
-            : `${pending.length} proposal${pending.length > 1 ? "s" : ""} awaiting review.`}
-        </p>
-        <Button size="sm" variant="secondary" disabled={isAnalyzing} onClick={handleRunAnalysis}>
-          {isAnalyzing ? "Running…" : "⚡ Run analysis now"}
-        </Button>
-      </div>
-
-      {pending.length === 0 ? (
-        <div className="rounded-xl border border-white/10 bg-white/[0.03] p-8 text-center flex flex-col gap-2">
-          <p className="text-3xl">📋</p>
-          <p className="text-sm font-medium text-white/60">No pending proposals</p>
-          <p className="text-xs text-white/30 max-w-xs mx-auto">
-            Claude runs the learning analysis every Sunday and proposes prompt tweaks
-            backed by 4-week performance data. Approve, A/B test, or reject each one.
-          </p>
-        </div>
-      ) : (
-        <div className="flex flex-col gap-4">
-          {pending.map((p) => (
-            <ProposalCard key={p.id} proposal={p} />
-          ))}
-        </div>
-      )}
-    </div>
-  );
-}
-
 export function PromptDetailPanel({ detail }: Props) {
   const [tab, setTab] = useState<Tab>("champion");
   const [toast, setToast] = useState<string | null>(null);
@@ -218,11 +164,6 @@ export function PromptDetailPanel({ detail }: Props) {
   const tabs: { id: Tab; label: string; badge?: number }[] = [
     { id: "champion", label: "Champion" },
     { id: "history", label: "History", badge: detail.variants.length },
-    {
-      id: "proposals",
-      label: "Proposals",
-      badge: detail.proposals.filter((p) => p.status === "pending").length || undefined,
-    },
   ];
 
   return (
@@ -268,14 +209,7 @@ export function PromptDetailPanel({ detail }: Props) {
           >
             {t.label}
             {t.badge != null && t.badge > 0 && (
-              <span
-                className={cn(
-                  "flex items-center justify-center rounded-full text-[10px] font-semibold w-4 h-4",
-                  t.id === "proposals"
-                    ? "bg-amber-500/20 text-amber-400"
-                    : "bg-white/10 text-white/50",
-                )}
-              >
+              <span className="flex items-center justify-center rounded-full text-[10px] font-semibold w-4 h-4 bg-white/10 text-white/50">
                 {t.badge}
               </span>
             )}
@@ -288,9 +222,6 @@ export function PromptDetailPanel({ detail }: Props) {
         {tab === "champion" && <ChampionTab detail={detail} />}
         {tab === "history" && (
           <HistoryTab detail={detail} onRollback={() => setToast("Rollback applied.")} />
-        )}
-        {tab === "proposals" && (
-          <ProposalsTab detail={detail} onAnalysisRun={(msg) => setToast(msg)} />
         )}
       </div>
     </div>
