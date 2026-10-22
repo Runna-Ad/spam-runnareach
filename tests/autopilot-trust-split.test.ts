@@ -33,6 +33,7 @@ const REAL: Record<string, Record<string, string>> = {
     "./hold": u("../lib/autopilot/hold.ts"),
     "./bounce-breaker": u("../lib/autopilot/bounce-breaker.ts"),
     "./opt-out-count": u("../lib/autopilot/opt-out-count.ts"),
+    "./send-failures": u("../lib/autopilot/send-failures.ts"),
   },
   [SNAPSHOT]: {},
 };

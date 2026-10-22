@@ -6,8 +6,9 @@
  *                    address is verified and the segment isn't on probation.
  *   evaluateBreakers circuit breakers (audit §5.4): what to pause, and why.
  *   nextStage        autonomy stages (off → shadow → veto → auto), promoted
- *                    on measured agreement, demoted automatically when the
- *                    pitches themselves go wrong (never on delivery trouble).
+ *                    on measured agreement; when the pitches themselves go
+ *                    wrong auto drops to veto and veto restarts its clock
+ *                    (never on delivery trouble, never down to shadow).
  *
  * Learning changes WHAT is said and TO WHOM. It never changes these.
  *
@@ -77,11 +78,15 @@ export const HELD_BY_PERSON = "held by a person";
 /**
  * Prefix of every autopilot_reasons entry that means "the autopilot pulled this
  * back itself" (an automatic approval still waiting to send when the stage
- * dropped to shadow or off, lib/autopilot/hold.ts holdAutoApprovals). Not a
+ * dropped to shadow or off, or the veto clock restarted, lib/autopilot/hold.ts
+ * holdAutoApprovals). Not a
  * person's veto, so it is not HELD_BY_PERSON, but heldAction leaves it alone
  * the same way: what to do with it is a person's call.
  */
 export const HELD_BY_AUTOPILOT = "held by the autopilot";
+
+/** The reason a pitch pulled back by a veto clock restart carries (HELD_BY_AUTOPILOT: a person's call next). */
+export const VETO_RESTART_HOLD_REASON = `${HELD_BY_AUTOPILOT}: veto clock restarted`;
 
 /**
  * The one test for "a person sent this autopilot approval back": it is back in
@@ -123,6 +128,9 @@ export function heldAction(
 ): HeldAction {
   if (d.editedByPerson) return { action: "leave", why: "a person edited it" };
   if (d.reasons.some((r) => r.startsWith(HELD_BY_PERSON))) return { action: "leave", why: "a person held it" };
+  if (d.reasons.some((r) => r.startsWith(VETO_RESTART_HOLD_REASON))) {
+    return { action: "leave", why: "the autopilot pulled it back when the veto clock restarted" };
+  }
   if (d.reasons.some((r) => r.startsWith(HELD_BY_AUTOPILOT))) {
     return { action: "leave", why: "the autopilot pulled it back when its stage dropped" };
   }
@@ -289,15 +297,39 @@ export function qualityTripReason(codes: readonly string[]): string {
   return unique.length ? `a quality breaker tripped: ${unique.join(", ")}` : "a quality breaker tripped";
 }
 
-export function nextStage(stage: Stage, m: StageMetrics): { stage: Stage; reason: string } {
-  // Demotion first: pitches going wrong drops a stage at once. Delivery
-  // trouble pauses sending (the breakers) and never moves the stage.
+/**
+ * restart: the stage stays where it is but its clock (stage_since) starts
+ * again, and automatic approvals still waiting are pulled back as on a
+ * demotion. Only veto restarts (see nextStage).
+ */
+export type StageDecision = { stage: Stage; reason: string; restart?: true };
+
+/**
+ * The new stage_since for a stage change or clock restart: the later of the
+ * write's own clock and 1 ms after the newest evidence the stage step counted
+ * (breaker insights, rejected AUTO pitches; both counted with created_at ≥
+ * stage_since). A trip the same tick wrote after the tick's start must not be
+ * counted again by the next tick (review of #55: a second restart).
+ */
+export function stageClockStart(writeAt: Date, evidenceAt: ReadonlyArray<string | null | undefined>): string {
+  let t = writeAt.getTime();
+  for (const e of evidenceAt) {
+    const ms = e ? Date.parse(e) : NaN;
+    if (!Number.isNaN(ms) && ms + 1 > t) t = ms + 1;
+  }
+  return new Date(t).toISOString();
+}
+
+export function nextStage(stage: Stage, m: StageMetrics): StageDecision {
+  // Pitches going wrong acts at once: auto drops to veto; veto restarts its
+  // clock (14 days / 100 scheduled again) and stays veto. Nothing automatic
+  // ever moves a tenant to shadow: that is a person's choice only (2026-10-22,
+  // shadow needs 100 human approvals to climb back). Delivery trouble pauses
+  // sending (the breakers) and never moves the stage.
   if ((stage === "auto" || stage === "veto") && (m.autoQualityTrips > 0 || m.autoFactualErrors > 0)) {
-    const down: Stage = stage === "auto" ? "veto" : "shadow";
-    return {
-      stage: down,
-      reason: m.autoFactualErrors > 0 ? "an automatic pitch had a factual or recipient error" : qualityTripReason(m.autoQualityTripCodes ?? []),
-    };
+    const why = m.autoFactualErrors > 0 ? "an automatic pitch had a factual or recipient error" : qualityTripReason(m.autoQualityTripCodes ?? []);
+    if (stage === "auto") return { stage: "veto", reason: why };
+    return { stage: "veto", reason: `${why}; veto clock restarted`, restart: true };
   }
 
   if (stage === "shadow") {
