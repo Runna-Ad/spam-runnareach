@@ -209,7 +209,8 @@ export async function learnFromOutcomes(db: Db, tenantId: string, now: Date = ne
   const events = await eventsFor(db, tenantId, pitches.map((p) => p.id));
   const inputs: PitchOutcomeInput[] = pitches.map((p) => ({ arms: p.decision?.arms, events: events.get(p.id) ?? [] }));
   for (const learner of ["writer.evidence", "writer.guidance"]) {
-    await settleLearner(db, tenantId, learner, armStats(inputs, learner, now), 30);
+    // Only the writer learners count clicks (lib/learning/reward.ts).
+    await settleLearner(db, tenantId, learner, armStats(inputs, learner, now, { clicks: true }), 30);
   }
   await presendReview(db, tenantId, now);
 
@@ -292,6 +293,35 @@ export function describePresend(r: PresendRetire): string {
   );
 }
 
+const PRESEND_PAGE = 1000;
+const PRESEND_MAX_PAGES = 10;
+
+/**
+ * Root drafts created since `since`, newest first, paged past PostgREST's
+ * 1000-row cap (ordered by created_at then id so pages never overlap). Only the
+ * arms are read out of the decision record. null on any error.
+ */
+async function presendDrafts(db: Db, tenantId: string, since: string): Promise<PresendDraft[] | null> {
+  const out: PresendDraft[] = [];
+  for (let page = 0; page < PRESEND_MAX_PAGES; page++) {
+    const from = page * PRESEND_PAGE;
+    const { data, error } = await db
+      .from("pitches")
+      .select("id, arms:decision->arms, status, auto_rejected_reason")
+      .eq("tenant_id", tenantId)
+      .is("parent_pitch_id", null)
+      .gte("created_at", since)
+      .order("created_at", { ascending: false })
+      .order("id", { ascending: false })
+      .range(from, from + PRESEND_PAGE - 1);
+    if (error) return null;
+    const rows = (data ?? []) as Array<{ arms: Record<string, string> | null; status: string; auto_rejected_reason: string | null }>;
+    out.push(...rows.map((r) => ({ arms: r.arms, status: r.status, auto_rejected_reason: r.auto_rejected_reason })));
+    if (rows.length < PRESEND_PAGE) return out;
+  }
+  return out;
+}
+
 /**
  * The pre-send guardrail (lib/learning/presend.ts) over the last 14 days of
  * root drafts. Reads the arms after settleLearner wrote them, so a challenger
@@ -300,20 +330,13 @@ export function describePresend(r: PresendRetire): string {
  */
 export async function presendReview(db: Db, tenantId: string, now: Date = new Date()): Promise<PresendRetire[]> {
   const since = new Date(now.getTime() - PRESEND_WINDOW_DAYS * DAY).toISOString();
-  const [{ data: draftRows, error: draftErr }, { data: armRows, error: armErr }] = await Promise.all([
-    db
-      .from("pitches")
-      .select("decision, status, auto_rejected_reason")
-      .eq("tenant_id", tenantId)
-      .is("parent_pitch_id", null)
-      .gte("created_at", since)
-      .limit(5000),
+  const [draftRows, { data: armRows, error: armErr }] = await Promise.all([
+    presendDrafts(db, tenantId, since),
     db.from("learning_arms").select("key, status").eq("tenant_id", tenantId).eq("learner", "writer.guidance"),
   ]);
   // Unreadable is not "no drafts": decide nothing this tick.
-  if (draftErr || armErr) return [];
-  const drafts: PresendDraft[] = ((draftRows ?? []) as Array<{ decision: { arms?: Record<string, string> } | null; status: string; auto_rejected_reason: string | null }>)
-    .map((r) => ({ arms: r.decision?.arms, status: r.status, auto_rejected_reason: r.auto_rejected_reason }));
+  if (!draftRows || armErr) return [];
+  const drafts: PresendDraft[] = draftRows;
   const arms = (armRows ?? []) as Array<{ key: string; status: string }>;
   const stats = presendStats(drafts, WRITER_FIXABLE);
   const retire = presendGuardrail(arms, stats);

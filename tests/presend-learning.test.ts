@@ -13,10 +13,12 @@
  */
 
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { register } from "node:module";
 import test from "node:test";
 import { heldAction, HELD_BY_PERSON, laneFor, type LaneInput } from "../lib/autopilot/governor.ts";
 import { sampleBeta, seededRng } from "../lib/learning/bandit.ts";
+import { armStats, funnelForProspect } from "../lib/learning/outcomes.ts";
 import {
   heldForWriting,
   PRESEND_MIN_DRAFTS,
@@ -261,20 +263,42 @@ const PITCH_COLUMNS = new Set(["id", "tenant_id", "parent_pitch_id", "created_at
 const INSIGHT_COLUMNS = new Set(["id", "tenant_id", "learner", "kind", "title", "detail", "evidence", "applied", "created_at"]);
 const COLUMNS: Record<string, Set<string>> = { learning_arms: ARM_COLUMNS, pitches: PITCH_COLUMNS, learning_insights: INSIGHT_COLUMNS };
 
-function fakeDb(tables: Record<string, Row[]>) {
+/** PostgREST returns at most this many rows per request, whatever the range asks. */
+const MAX_ROWS = 1000;
+
+type Hooks = { beforeUpdate?: (table: string) => void };
+
+/**
+ * Applies filters, ordering, ranges and the 1000-row cap the way PostgREST
+ * would; projects the select list ("alias:col->key" reads a JSON key) and
+ * rejects a column the table does not have. Counts reads per table.
+ */
+function fakeDb(tables: Record<string, Row[]>, hooks: Hooks = {}) {
+  const reads: Record<string, number> = {};
   const check = (table: string, cols: string[]) => {
     for (const c of cols) if (!COLUMNS[table]?.has(c)) throw new Error(`${table} has no column ${c}`);
   };
   const from = (table: string) => {
     const filters: Array<(r: Row) => boolean> = [];
+    const orders: Array<{ col: string; asc: boolean }> = [];
     let mode: "select" | "insert" | "update" = "select";
     let payload: Row | null = null;
-    let limit = Infinity;
+    let window: [number, number] = [0, Infinity];
+    let projection: Array<{ out: string; col: string; key: string | null }> | null = null;
     const rows = () => (tables[table] ??= []);
     const filter = (col: string, f: (v: unknown) => boolean) => {
       check(table, [col]);
       filters.push((r) => f(r[col]));
       return q;
+    };
+    const project = (r: Row): Row => {
+      if (!projection) return { ...r };
+      const o: Row = {};
+      for (const p of projection) {
+        const v = r[p.col];
+        o[p.out] = p.key === null ? v : ((v as Record<string, unknown> | null)?.[p.key] ?? null);
+      }
+      return o;
     };
     const run = () => {
       if (mode === "insert") {
@@ -282,16 +306,26 @@ function fakeDb(tables: Record<string, Row[]>) {
         rows().push({ ...payload });
         return { data: null, error: null };
       }
+      if (mode === "update") hooks.beforeUpdate?.(table);
       const hit = rows().filter((r) => filters.every((f) => f(r)));
       if (mode === "update") {
         check(table, Object.keys(payload!));
         for (const r of hit) Object.assign(r, payload);
+        return { data: hit.map(project), error: null };
       }
-      return { data: hit.slice(0, limit).map((r) => ({ ...r })), error: null };
+      reads[table] = (reads[table] ?? 0) + 1;
+      for (const o of [...orders].reverse()) hit.sort((x, y) => (o.asc ? 1 : -1) * (String(x[o.col]) < String(y[o.col]) ? -1 : String(x[o.col]) > String(y[o.col]) ? 1 : 0));
+      const [lo, hi] = window;
+      return { data: hit.slice(lo, Math.min(hi + 1, lo + MAX_ROWS)).map(project), error: null };
     };
     const q = {
       select(cols: string) {
-        check(table, cols.split(",").map((c) => c.trim()));
+        projection = cols.split(",").map((c) => {
+          const m = c.trim().match(/^(?:(\w+):)?(\w+)(?:->(\w+))?$/);
+          if (!m) throw new Error(`fake select can't read "${c}"`);
+          check(table, [m[2]!]);
+          return { out: m[1] ?? m[2]!, col: m[2]!, key: m[3] ?? null };
+        });
         return q;
       },
       insert(row: Row) {
@@ -307,8 +341,13 @@ function fakeDb(tables: Record<string, Row[]>) {
       eq: (c: string, v: unknown) => filter(c, (x) => x === v),
       is: (c: string, v: unknown) => filter(c, (x) => (x ?? null) === v),
       gte: (c: string, v: unknown) => filter(c, (x) => x != null && String(x) >= String(v)),
-      limit(n: number) {
-        limit = n;
+      order(col: string, o?: { ascending?: boolean }) {
+        check(table, [col]);
+        orders.push({ col, asc: o?.ascending ?? true });
+        return q;
+      },
+      range(a: number, b: number) {
+        window = [a, b];
         return q;
       },
       then(res: (v: unknown) => unknown, rej?: (e: unknown) => unknown) {
@@ -321,12 +360,12 @@ function fakeDb(tables: Record<string, Row[]>) {
     };
     return q;
   };
-  return { tables, from };
+  return { tables, reads, from };
 }
 
 let seq = 0;
 const pitch = (guidance: string | null, status: string, reason: string | null, createdDaysAgo = 3, parent: string | null = null): Row => ({
-  id: `p${++seq}`,
+  id: `p${String(++seq).padStart(6, "0")}`,
   tenant_id: TENANT,
   parent_pitch_id: parent,
   created_at: ago(createdDaysAgo),
@@ -373,6 +412,44 @@ test("presendReview: retires the losing challenger once, logs both rates, leaves
   // Next tick: already retired, nothing new.
   assert.deepEqual(await presendReview(db, TENANT, T0), []);
   assert.equal(db.tables.learning_insights?.length, 1);
+});
+
+test("presendReview: reads past the 1000-row cap", async () => {
+  // 1500 older champion drafts, then the 24 that decide: the newest first, all of them read.
+  const db = fakeDb({
+    learning_arms: [arm("none", "champion"), arm("g-bad", "challenger")],
+    pitches: [
+      ...many(1500, () => pitch("none", "sent", null, 5)),
+      ...many(12, () => pitch("g-bad", "auto_rejected", WRITING, 1)),
+    ],
+    learning_insights: [],
+  });
+  const [r] = await presendReview(db, TENANT, T0);
+  assert.equal(db.reads.pitches, 2);
+  assert.deepEqual(r?.champion && [r.champion.drafts, r.challenger.drafts], [1500, 12]);
+});
+
+test("presendReview: the retire is guarded on status = 'challenger'", async () => {
+  // Between the read and the write, the arm stops being a challenger (promoted
+  // by settleLearner in another tick): the guarded update matches nothing, so
+  // nothing is retired and no insight claims it was.
+  const tables = {
+    learning_arms: [arm("none", "champion"), arm("g-bad", "challenger")],
+    pitches: [...many(20, () => pitch("none", "sent", null)), ...many(12, () => pitch("g-bad", "auto_rejected", WRITING))],
+    learning_insights: [] as Row[],
+  };
+  const db = fakeDb(tables, {
+    beforeUpdate: (t) => {
+      if (t !== "learning_arms") return;
+      const bad = tables.learning_arms.find((a) => a.key === "g-bad")!;
+      const none = tables.learning_arms.find((a) => a.key === "none")!;
+      bad.status = "champion";
+      none.status = "challenger";
+    },
+  });
+  assert.deepEqual(await presendReview(db, TENANT, T0), []);
+  assert.equal(tables.learning_arms.find((a) => a.key === "g-bad")?.status, "champion");
+  assert.equal(tables.learning_insights.length, 0);
 });
 
 test("presendReview: a champion with too few drafts decides nothing", async () => {
@@ -424,33 +501,64 @@ test("clicks: an outcome event type", () => {
   assert.equal(CLICK_VALUE, 0.25);
 });
 
-test("clicks: 0.25, never decisive (pending until the window passes), points once", () => {
-  const fresh = scoreOutcome([ev("sent", 3), click(2), click(1)], T0);
+const W = { clicks: true } as const;
+
+test("clicks: writer learners only; 0.25, never decisive (pending until the window passes), points once", () => {
+  const fresh = scoreOutcome([ev("sent", 3), click(2), click(1)], T0, W);
   assert.equal(fresh.value, 0.25);
   assert.equal(fresh.status, "pending");
   assert.equal(fresh.points, 1);
   assert.deepEqual(fresh.signals, ["click"]);
   assert.equal(fresh.negative, false);
 
-  const settled = scoreOutcome([ev("sent", ATTRIBUTION_WINDOW_DAYS), click(ATTRIBUTION_WINDOW_DAYS - 1)], T0);
+  const settled = scoreOutcome([ev("sent", ATTRIBUTION_WINDOW_DAYS), click(ATTRIBUTION_WINDOW_DAYS - 1)], T0, W);
   assert.equal(settled.status, "settled");
   assert.equal(settled.value, 0.25);
-  const almost = scoreOutcome([ev("sent", ATTRIBUTION_WINDOW_DAYS - 1), click(1)], T0);
+  const almost = scoreOutcome([ev("sent", ATTRIBUTION_WINDOW_DAYS - 1), click(1)], T0, W);
   assert.equal(almost.status, "pending");
 });
 
+test("clicks: off by default, exactly as before (scout, ICP, exemplars, hunter-signals)", () => {
+  const events = [ev("sent", 20), click(19), click(18)];
+  const off = scoreOutcome(events, T0);
+  const silent = scoreOutcome([ev("sent", 20)], T0);
+  assert.deepEqual(off, silent);
+  assert.equal(off.value, 0);
+});
+
+test("clicks: armStats with clicks (the writer learners) sees 0.25; funnelForProspect still reads 0", () => {
+  const p = { arms: { "writer.guidance": "g1", "writer.evidence": "benchmark" }, events: [ev("sent", 20), click(19)] };
+  assert.deepEqual(armStats([p], "writer.guidance", T0, W).get("g1"), { reward: 0.25, trials: 1, negatives: 0 });
+  assert.deepEqual(armStats([p], "writer.evidence", T0, W).get("benchmark"), { reward: 0.25, trials: 1, negatives: 0 });
+  // Without the option (any other caller), a click is silence.
+  assert.deepEqual(armStats([p], "writer.guidance", T0).get("g1"), { reward: 0, trials: 1, negatives: 0 });
+  const funnel = funnelForProspect("pitched", [{ gatePass: true, sent: true, events: p.events }], T0);
+  assert.equal(funnel.outcomeValue, 0);
+});
+
+test("clicks: learn.ts turns clicks on for the writer learners and nowhere else", () => {
+  const src = readFileSync(new URL("../lib/autopilot/learn.ts", import.meta.url), "utf8");
+  assert.equal((src.match(/clicks: true/g) ?? []).length, 1);
+  assert.match(src, /armStats\(inputs, learner, now, \{ clicks: true \}\)/);
+  const writerLoop = src.slice(src.indexOf('for (const learner of ["writer.evidence", "writer.guidance"])'));
+  assert.ok(writerLoop.indexOf("clicks: true") < writerLoop.indexOf("}\n"), "the option sits inside the writer-learner loop");
+  for (const f of ["../lib/learning/scout.ts", "../lib/learning/icp.ts", "../lib/pitches/exemplars.ts", "../app/api/public/hunter-signals/route.ts"]) {
+    assert.doesNotMatch(readFileSync(new URL(f, import.meta.url), "utf8"), /clicks/, f);
+  }
+});
+
 test("clicks: never lower or raise a stronger signal", () => {
-  assert.equal(scoreOutcome([ev("sent", 3), click(2), ev("audit_scan", 1, { stage: "scan" })], T0).value, 0.5);
-  assert.equal(scoreOutcome([ev("sent", 3), ev("audit_scan", 1, { stage: "scan" })], T0).value, 0.5);
-  assert.equal(scoreOutcome([ev("sent", 3), click(2), ev("reply", 1, { intent: "wants_meeting" })], T0).value, 1);
-  assert.equal(scoreOutcome([ev("sent", 3), click(2), ev("meeting_booked", 1)], T0).value, 1);
+  assert.equal(scoreOutcome([ev("sent", 3), click(2), ev("audit_scan", 1, { stage: "scan" })], T0, W).value, 0.5);
+  assert.equal(scoreOutcome([ev("sent", 3), ev("audit_scan", 1, { stage: "scan" })], T0, W).value, 0.5);
+  assert.equal(scoreOutcome([ev("sent", 3), click(2), ev("reply", 1, { intent: "wants_meeting" })], T0, W).value, 1);
+  assert.equal(scoreOutcome([ev("sent", 3), click(2), ev("meeting_booked", 1)], T0, W).value, 1);
   // An opt-out after a click is still a negative and still decisive.
-  const out = scoreOutcome([ev("sent", 3), click(2), ev("unsubscribe", 1)], T0);
+  const out = scoreOutcome([ev("sent", 3), click(2), ev("unsubscribe", 1)], T0, W);
   assert.equal(out.negative, true);
   assert.equal(out.status, "settled");
   // A test click teaches nothing; a bounce still nulls the value.
-  assert.equal(scoreOutcome([ev("sent", 20), ev("click", 19, { test: true })], T0).value, 0);
-  assert.equal(scoreOutcome([ev("sent", 3), click(2), ev("bounce", 1)], T0).value, null);
+  assert.equal(scoreOutcome([ev("sent", 20), ev("click", 19, { test: true })], T0, W).value, 0);
+  assert.equal(scoreOutcome([ev("sent", 3), click(2), ev("bounce", 1)], T0, W).value, null);
 });
 
 test("clicks: a pitch with only a click is never an exemplar; a scan still is", () => {

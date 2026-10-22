@@ -19,6 +19,11 @@
  * instead (see `addressOutcome`). An opportunity event outweighs a bounce: a
  * prospect who booked got the message. Test addresses are ignored entirely.
  *
+ * Clicks are opt-in (`{ clicks: true }`): only the writer learners read them
+ * (armStats, called by learn.ts for writer.evidence / writer.guidance), where
+ * arms are random and a corporate link scanner is only noise. The scout, the
+ * ICP ranking, exemplars and hunter-signals ignore them: a scanner clicks
+ * every link, so there a click would teach which segments sit behind one.
  * A click is never decisive: a pitch with only clicks settles when the window
  * passes, like silence, so a click cannot cut a reply's chance short.
  *
@@ -104,7 +109,12 @@ export type Outcome = {
   sentAt: string | null;
 };
 
-export function scoreOutcome(events: readonly OutcomeEvent[], now: Date = new Date()): Outcome {
+export type ScoreOptions = {
+  /** Count tracked-link clicks (CLICK_VALUE). Writer learners only; everyone else leaves it off. */
+  clicks?: boolean;
+};
+
+export function scoreOutcome(events: readonly OutcomeEvent[], now: Date = new Date(), opts: ScoreOptions = {}): Outcome {
   const real = events.filter((e) => !e.payload?.test);
   const sends = real.filter((e) => e.type === "sent").map((e) => e.at).sort();
   const sentAt = sends[0] ?? null;
@@ -126,7 +136,7 @@ export function scoreOutcome(events: readonly OutcomeEvent[], now: Date = new Da
       if (stage === "contact_request") decisive = true;
     } else if (e.type === "click") {
       // Counted once per pitch: link scanners and repeat opens click many times.
-      if (clicked) continue;
+      if (!opts.clicks || clicked) continue;
       clicked = true;
       signals.push("click");
       value = Math.max(value, CLICK_VALUE);
