@@ -483,6 +483,27 @@ test("checkPitchGate: with no recipient given it checks the pitch's contact_id, 
   assert.deepEqual(greetingFlags(await gate.checkPitchGate(gateDb("bo"), TENANT, "g1", { shared: SHARED, persist: false, recipient: explicit })), ["greeting_mismatch"]);
 });
 
+test("negative set: a pitch linked to the priority-top contact gets the same gate verdict and display as before", async () => {
+  // Before this change the gate used the prospect's top contact (contact_id ignored): contact_id null takes that path.
+  const strip = (r: Awaited<ReturnType<typeof gate.checkPitchGate>>) => {
+    const v = r?.verdict as { checked_at?: string } | undefined;
+    return v ? { ...v, checked_at: "x" } : v;
+  };
+  for (const body of ["Hi Ana,\n\nA short note.\n\nHenry", "Hi Bo,\n\nA short note.\n\nHenry", "Hello,\n\nA short note.\n\nHenry"]) {
+    const linked = gateDb("ana");
+    const old = gateDb(null);
+    linked.tables.pitches![0]!.body_original = body;
+    old.tables.pitches![0]!.body_original = body;
+    assert.deepEqual(
+      strip(await gate.checkPitchGate(linked, TENANT, "g1", { shared: SHARED, persist: false })),
+      strip(await gate.checkPitchGate(old, TENANT, "g1", { shared: SHARED, persist: false })),
+      body,
+    );
+  }
+  const rows = [contact("ana", "p", 1, { full_name: "Ana Ruiz" }), contact("bo", "p", 2)];
+  assert.equal(contacts.pitchRecipient(rows, "ana", NOW), contacts.pickTopUsableContact(rows));
+});
+
 // ── 2. heldAction ────────────────────────────────────────────────────────────
 
 const UNSURE = "verifier unsure about the address";
