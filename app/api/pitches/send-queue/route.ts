@@ -35,6 +35,7 @@ import { reconcileSignOff, senderIdentity } from "@/lib/pitches/sender-identity"
 import { auditGateHold, checkPitchGate } from "@/lib/pitches/gate";
 import { recordPitchEvent } from "@/lib/pitches/events";
 import { editRatio } from "@/lib/pitches/decision";
+import { recordSendFailure } from "@/lib/autopilot/send-failures";
 import { describeFailures, gateAllows } from "@/lib/pitches/send-gate";
 import {
   prospectSendBlock,
@@ -515,6 +516,7 @@ async function runSendQueue() {
         if (!sendResult.ok) {
           await releaseSendSlot(slots, inboxId, slot.day);
           await releaseClaim(releaser, { pitchId: pitch.id, to: "approved" });
+          await recordSendFailure(supabase, { tenantId: pitch.tenant_id, inboxId, pitchId: pitch.id, error: sendResult.error });
           results.push({ pitch_id: pitch.id, status: "error", reason: `Send: ${sendResult.error}` });
           continue;
         }

@@ -18,8 +18,9 @@ import "server-only";
  *   5. schedule   veto stage: AUTO pitches approved and scheduled 18h out, with
  *                 a digest so a person can hold any; auto stage: scheduled now
  *   6. stage      promote / demote the autonomy stage on measured results;
- *                 only pitch quality demotes (a factual error, an opt-out
- *                 spike), never a delivery breaker
+ *                 only pitch quality acts (a factual error, an opt-out
+ *                 spike), never a delivery breaker: auto drops to veto, veto
+ *                 restarts its clock (never down to shadow automatically)
  *   7. learn      re-score writer variants and search cells from outcomes;
  *                 weekly AI review proposes new guidance to test (learn.ts)
  *
@@ -28,13 +29,15 @@ import "server-only";
  * 1 (breakers). The route ticks every tenant with a state row for this.
  *
  * Every autonomous change writes a learning_insights row; breaker trips and
- * stage changes also email the notify address.
+ * stage changes also email the notify address. A tick that hit errors leaves
+ * an audit_log row (recordTickErrors) for the health check.
  */
 
 import type { Actor } from "@/lib/actor";
 import { isUnderDailyCap } from "@/lib/anthropic/cost-tracking";
 import { evolveSearchSpace, learnFromOutcomes, weeklyReview } from "./learn";
 import { bouncesTodayAfterResume, inboxBounceStats } from "./bounce-breaker";
+import { gmailFailuresToday } from "./send-failures";
 import { optOutMetrics } from "./opt-out-count";
 import {
   buildVetoDigest,
@@ -80,7 +83,11 @@ import {
   heldAction,
   laneFor,
   nextStage,
+  isQualityBreaker,
   safetyOnly,
+  STAGE_RULES,
+  stageClockStart,
+  VETO_RESTART_HOLD_REASON,
   type BreakerMetrics,
   type BreakerTrip,
   type Lane,
@@ -125,6 +132,7 @@ export type TickReport = {
   scheduled: number;
   /** Emails listed in the twice-daily veto digest this tick (0 when no slot was due). */
   digest?: number;
+  /** from === to: the veto clock restarted (governor.nextStage restart). */
   stageChange: { from: Stage; to: Stage; reason: string } | null;
   /** Automatic approvals held because the stage is (or dropped to) shadow/off. */
   pulledBack?: number;
@@ -132,11 +140,26 @@ export type TickReport = {
   errors: string[];
 };
 
+/** audit_log action of the row a tick with errors leaves (read by the health check, lib/reports). */
+export const TICK_ERRORS_ACTION = "autopilot.tick_errors";
+const TICK_ERRORS_MAX = 20;
+const TICK_ERROR_CHARS = 300;
+
 export async function runTick(actor: Actor, now: Date = new Date()): Promise<TickReport> {
-  const db = actor.supabase as Db;
-  const tenantId = actor.user.tenantId;
-  const deadline = now.getTime() + TICK_BUDGET_MS;
-  const report: TickReport = {
+  const report = emptyReport(actor.user.tenantId);
+  try {
+    return await runTickSteps(actor, now, report);
+  } catch (err) {
+    // Outside any step(): still leave the row, then fail as before.
+    report.errors.push(`tick: ${(err as Error)?.message ?? String(err)}`);
+    throw err;
+  } finally {
+    await recordTickErrors(actor.supabase as Db, actor.user.tenantId, report.errors);
+  }
+}
+
+function emptyReport(tenantId: string): TickReport {
+  return {
     tenantId,
     stage: null,
     skipped: null,
@@ -149,6 +172,35 @@ export async function runTick(actor: Actor, now: Date = new Date()): Promise<Tic
     stageChange: null,
     errors: [],
   };
+}
+
+/**
+ * A tick that hit errors leaves one audit_log row, so they are not only in the
+ * route's JSON nobody reads. Frozen contract with the health check: action
+ * TICK_ERRORS_ACTION, entity tenant, metadata { errors } (≤ 20, ≤ 300 chars
+ * each). No row for a clean tick. Never throws.
+ */
+export async function recordTickErrors(db: Db, tenantId: string, errors: readonly string[]): Promise<void> {
+  if (errors.length === 0) return;
+  try {
+    const { error } = await db.from("audit_log").insert({
+      tenant_id: tenantId,
+      actor_id: null,
+      action: TICK_ERRORS_ACTION,
+      entity_type: "tenant",
+      entity_id: tenantId,
+      metadata: { errors: errors.slice(0, TICK_ERRORS_MAX).map((e) => String(e).slice(0, TICK_ERROR_CHARS)) },
+    });
+    if (error) console.warn("[autopilot] tick errors not recorded:", error.message || "no detail");
+  } catch (err) {
+    console.warn("[autopilot] tick errors record threw:", (err as Error)?.message ?? err);
+  }
+}
+
+async function runTickSteps(actor: Actor, now: Date, report: TickReport): Promise<TickReport> {
+  const db = actor.supabase as Db;
+  const tenantId = actor.user.tenantId;
+  const deadline = now.getTime() + TICK_BUDGET_MS;
 
   const { data: state } = await db
     .from("autonomy_state")
@@ -266,9 +318,12 @@ async function runBreakers(db: Db, tenantId: string, now: Date, errors: string[]
   // Bounces count only after the inbox's latest resume (lib/autopilot/bounce-breaker.ts),
   // so a person's resume sticks; an inbox never resumed counts as before.
   const inboxStats: BreakerMetrics["inboxes"] = [];
+  // Gmail send failures (lib/autopilot/send-failures.ts) in the same window: today, after the resume.
   for (const inbox of inboxes) {
     const stats = await inboxBounceStats(db, tenantId, inbox.id);
-    inboxStats.push({ id: inbox.id, recentSends: stats.recentSends, recentHardBounces: stats.recentHardBounces, apiErrorsToday: 0 });
+    const gmail = await gmailFailuresToday(db, tenantId, inbox.id, now, stats.resumedAt);
+    if (gmail.error) errors.push(gmail.error);
+    inboxStats.push({ id: inbox.id, recentSends: stats.recentSends, recentHardBounces: stats.recentHardBounces, apiErrorsToday: gmail.count });
   }
 
   const weekAgo = new Date(now.getTime() - 7 * DAY).toISOString();
@@ -795,6 +850,29 @@ async function sendVetoDigest(db: Db, tenantId: string, now: Date): Promise<numb
 
 // ── 6. Autonomy stage ─────────────────────────────────────────────────────────
 
+/**
+ * created_at of the newest breaker insight since `sinceIso` that counts
+ * against the stage (the same rows hold.ts stageQualityTrips counts, same
+ * predicate), or null. Only read on a stage change, to start the new clock
+ * after it (governor.stageClockStart). Throws when unreadable: a clock that
+ * might recount a trip is not written.
+ */
+async function newestQualityTripAt(db: Db, tenantId: string, sinceIso: string): Promise<string | null> {
+  const { data, error } = await db
+    .from("learning_insights")
+    .select("evidence, created_at")
+    .eq("tenant_id", tenantId)
+    .eq("kind", "breaker")
+    .gte("created_at", sinceIso)
+    .order("created_at", { ascending: false })
+    .limit(1000);
+  if (error) throw new Error(`breaker insights (clock): ${error.message || "no detail"}`);
+  const row = ((data ?? []) as Array<{ evidence: { code?: unknown } | null; created_at: string | null }>).find((r) =>
+    isQualityBreaker(r.evidence?.code),
+  );
+  return row?.created_at ?? null;
+}
+
 async function evaluateStage(
   db: Db,
   s: AutonomyState,
@@ -804,11 +882,18 @@ async function evaluateStage(
   const since = s.stage_since;
   const { data: autos } = await db
     .from("pitches")
-    .select("id, status, body_original, body_edited, sent_at")
+    .select("id, status, body_original, body_edited, sent_at, created_at")
     .eq("tenant_id", tenantId)
     .eq("autopilot_lane", "auto")
     .gte("created_at", since);
-  const rows = (autos ?? []) as Array<{ id: string; status: string; body_original: string | null; body_edited: string | null; sent_at: string | null }>;
+  const rows = (autos ?? []) as Array<{
+    id: string;
+    status: string;
+    body_original: string | null;
+    body_edited: string | null;
+    sent_at: string | null;
+    created_at: string | null;
+  }>;
 
   const { data: autoApprovals } = await db
     .from("pitch_events")
@@ -873,7 +958,7 @@ async function evaluateStage(
   // to send (the send-queue sends approved pitches whatever the stage). On the
   // demotion itself, and on every later tick in that stage, which retries a
   // pull-back that failed and catches a stage set by hand. Nothing to hold: silent.
-  if (next.stage === s.stage) {
+  if (next.stage === s.stage && !next.restart) {
     if (!pullsBackApprovals(s.stage)) return { change: null, pullback: null };
     const sweep = await holdAutoApprovals(db, tenantId, s.stage);
     if (sweep.held > 0) {
@@ -887,10 +972,21 @@ async function evaluateStage(
     return { change: null, pullback: sweep };
   }
 
-  await db
+  // The new clock starts after everything this step counted, trips this same tick wrote included.
+  const clock = stageClockStart(new Date(), [
+    ...rows.filter((r) => r.status === "reviewer_rejected").map((r) => r.created_at),
+    await newestQualityTripAt(db, tenantId, since),
+  ]);
+  if (next.restart) return restartStageClock(db, s, next.reason, metrics, clock);
+
+  // Guarded on the stage this tick read: a person's change meanwhile wins.
+  const { data: moved, error: moveError } = await db
     .from("autonomy_state")
-    .update({ stage: next.stage, stage_since: now.toISOString() })
-    .eq("tenant_id", tenantId);
+    .update({ stage: next.stage, stage_since: clock })
+    .eq("tenant_id", tenantId)
+    .eq("stage", s.stage)
+    .select("tenant_id");
+  if (!moveError && ((moved ?? []) as unknown[]).length === 0) return { change: null, pullback: null };
   // After the stage write, so no tick schedules new approvals behind the hold.
   const pullback = pullsBackApprovals(next.stage) ? await holdAutoApprovals(db, tenantId, next.stage) : null;
   await insight(db, tenantId, {
@@ -907,4 +1003,51 @@ async function evaluateStage(
     `Reason: ${next.reason}.\n\n${pullback ? `${pullbackSentence(pullback)}\n\n` : ""}${appUrl()}/pitches`,
   );
   return { change: { from: s.stage, to: next.stage, reason: next.reason }, pullback };
+}
+
+/**
+ * Veto + a quality trip or factual error (governor.nextStage restart): the
+ * stage stays veto, its clock (stage_since) starts again, and the automatic
+ * approvals still waiting are pulled back as on a demotion. Logged like a
+ * stage change. The trips that caused it predate the new stage_since, so the
+ * next tick does not count them again; if the clock write fails, the pull-back
+ * still runs and the step reports the error (no insight, no email: the next
+ * tick retries the whole restart).
+ */
+async function restartStageClock(
+  db: Db,
+  s: AutonomyState,
+  reason: string,
+  metrics: StageMetrics,
+  clock: string,
+): Promise<{ change: TickReport["stageChange"]; pullback: PullbackResult | null }> {
+  const tenantId = s.tenant_id;
+  // Only the clock, and only while still in this stage: a person's change meanwhile wins.
+  const { data: restarted, error } = await db
+    .from("autonomy_state")
+    .update({ stage_since: clock })
+    .eq("tenant_id", tenantId)
+    .eq("stage", s.stage)
+    .select("tenant_id");
+  if (!error && ((restarted ?? []) as unknown[]).length === 0) return { change: null, pullback: null };
+  const pullback = await holdAutoApprovals(db, tenantId, s.stage, VETO_RESTART_HOLD_REASON);
+  if (error) {
+    throw new Error(
+      `${s.stage} clock restart not recorded (${error.message || "no detail"}); pulled back ${pullback.held}${pullback.error ? `, pullback: ${pullback.error}` : ""}`,
+    );
+  }
+  await insight(db, tenantId, {
+    learner: "governor",
+    kind: "stage",
+    title: `Autopilot ${s.stage} clock restarted`,
+    detail: reason,
+    evidence: { ...metrics, restart: true, pulledBack: pullback.held, pullbackError: pullback.error },
+  });
+  await notify(
+    db,
+    tenantId,
+    `Autopilot restarted the ${s.stage} clock`,
+    `Reason: ${reason}.\n\nThe autopilot stays in ${s.stage}; the ${STAGE_RULES.veto.minDays}-day / ${STAGE_RULES.veto.minScheduled}-scheduled count toward auto starts again today.\n\n${pullbackSentence(pullback)}\n\n${appUrl()}/pitches`,
+  );
+  return { change: { from: s.stage, to: s.stage, reason }, pullback };
 }

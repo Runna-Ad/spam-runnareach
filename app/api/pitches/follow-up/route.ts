@@ -27,6 +27,7 @@ import { bodyWithFooter, getOutboundCompliance } from "@/lib/compliance/outbound
 import { threadBlocksSend } from "@/lib/pitches/send-guards";
 import { auditGateHold, gateInputFor, loadGateContext } from "@/lib/pitches/gate";
 import { recordPitchEvent } from "@/lib/pitches/events";
+import { recordSendFailure } from "@/lib/autopilot/send-failures";
 import { evaluateSendGate, describeFailures, type GateResult } from "@/lib/pitches/send-gate";
 import { senderIdentity, senderSignature } from "@/lib/pitches/sender-identity";
 import {
@@ -585,6 +586,7 @@ async function processFollowup(pitch: DuePitchRow, bounceBlocks: BounceBlocks, s
     // Gmail refused it, so nothing went out: give back the slot and the claim.
     await releaseSendSlot(slots, inbox.id, slot.day);
     await release(false);
+    await recordSendFailure(supabase, { tenantId: pitch.tenant_id, inboxId: inbox.id, pitchId: pitch.id, error: sendResult.error });
     return { pitch_id: pitch.id, prospect: prospect.company_name, step: nextStep, status: "skipped", reason: `Gmail send failed: ${sendResult.error}` };
   }
 
