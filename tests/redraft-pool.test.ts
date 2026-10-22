@@ -24,6 +24,7 @@ import test from "node:test";
 import { heldAction, laneFor, redraftOf, rejectedForWriting, type RedraftPitch } from "../lib/autopilot/governor.ts";
 import { heldForWriting } from "../lib/learning/presend.ts";
 import type * as ContactsTypes from "../lib/pitches/contacts.ts";
+import type * as GateTypes from "../lib/pitches/gate.ts";
 import { VERDICT_TTL_MS } from "../lib/research/verify-recipient.ts";
 
 type ContactsModule = typeof ContactsTypes;
@@ -31,6 +32,7 @@ type ContactsModule = typeof ContactsTypes;
 const u = (p: string) => new URL(p, import.meta.url).href;
 const TICK = u("../lib/autopilot/tick.ts");
 const CONTACTS = u("../lib/pitches/contacts.ts");
+const GATE = u("../lib/pitches/gate.ts");
 /** Imports that load for real; everything else these parents import is stubbed. */
 const REAL: Record<string, Record<string, string>> = {
   [TICK]: {
@@ -45,6 +47,10 @@ const REAL: Record<string, Record<string, string>> = {
   [CONTACTS]: {
     "@/lib/research/email-utils": u("../lib/research/email-utils.ts"),
     "@/lib/research/verify-recipient": u("../lib/research/verify-recipient.ts"),
+  },
+  [GATE]: {
+    "@/lib/research/email-utils": u("../lib/research/email-utils.ts"),
+    "./send-gate": u("../lib/pitches/send-gate.ts"),
   },
 };
 
@@ -245,13 +251,13 @@ const COLUMNS: Record<string, readonly string[]> = {
   pitches: [
     "id", "tenant_id", "prospect_id", "contact_id", "status", "parent_pitch_id", "created_at", "decision",
     "autopilot_lane", "autopilot_reasons", "body_edited", "auto_rejected", "auto_rejected_reason", "sent_at",
-    "scheduled_send_at", "subject", "gate_verdict",
+    "scheduled_send_at", "subject", "gate_verdict", "body_original", "gate_override",
   ],
   prospect_contacts: [
     "id", "tenant_id", "prospect_id", "email", "full_name", "priority_rank", "selected_by",
     "verify_verdict", "verify_reasons", "verify_checked_at",
   ],
-  prospects: ["id", "tenant_id", "status", "cooldown_until", "domain"],
+  prospects: ["id", "tenant_id", "status", "cooldown_until", "domain", "company_name", "language"],
 };
 function checkedDb(tables: Record<string, Row[]>) {
   const db = fakeDb(tables);
@@ -287,6 +293,7 @@ g.__stubValues.WRITER_FIXABLE = WRITER_FIXABLE;
 type TickModule = { runTick: (actor: unknown, now?: Date) => Promise<Row & { errors: string[] }> };
 const tick = (await import(TICK)) as TickModule;
 const contacts = (await import(CONTACTS)) as ContactsModule;
+const gate = (await import(GATE)) as typeof GateTypes;
 
 const TENANT = "11111111-1111-1111-1111-111111111111";
 const DAY = 86_400_000;
@@ -433,6 +440,47 @@ test("hasAlternativeRecipient: another unflagged contact, never the same one or 
   assert.equal(contacts.hasAlternativeRecipient([{ ...a, email: null } as never, contact("b", "p", 2) as never], "a", NOW), true);
   // The stored verdict was never written: the rule would pick the same contact again.
   assert.equal(contacts.hasAlternativeRecipient([contact("a", "p", 1) as never, contact("b", "p", 2) as never], "a", NOW), false);
+});
+
+test("pitchRecipient (the /pitches display): the pitch's own usable contact, else the prospect's pick", () => {
+  const a = contact("a", "p", 1, { verify_verdict: "review", verify_checked_at: fresh });
+  const b = contact("b", "p", 2);
+  assert.equal(contacts.pitchRecipient([a, b], "a", NOW)?.id, "a");
+  assert.equal(contacts.pitchRecipient([a, b], "b", NOW)?.id, "b");
+  assert.equal(contacts.pitchRecipient([a, b], null, NOW)?.id, "b");
+  assert.equal(contacts.pitchRecipient([{ ...a, email: "noreply@" }, b], "a", NOW)?.id, "b");
+  assert.equal(contacts.pitchRecipient([a, b], "gone", NOW)?.id, "b");
+});
+
+// ── 1b. The gate checks the pitch's own recipient ────────────────────────────
+
+function gateDb(contactId: string | null): Db {
+  return baseDb({
+    prospects: [{ id: "p", tenant_id: TENANT, status: "pitched", cooldown_until: null, domain: "acme-dental.ca", company_name: "Acme Dental", language: "en" }],
+    prospect_research: [],
+    prospect_contacts: [
+      contact("ana", "p", 1, { full_name: "Ana Ruiz", email: "ana@acme-dental.ca" }),
+      contact("bo", "p", 2, { full_name: "Bo Chen", email: "bo@acme-dental.ca" }),
+    ],
+    pitches: [{
+      id: "g1", tenant_id: TENANT, prospect_id: "p", contact_id: contactId, status: "draft", parent_pitch_id: null,
+      subject: "a question", body_original: "Hi Bo,\n\nA short note.\n\nHenry", body_edited: null, gate_override: null,
+    }],
+  });
+}
+const SHARED = { benchmarkSources: [], clientNames: [] };
+const greetingFlags = (r: Awaited<ReturnType<typeof gate.checkPitchGate>>) =>
+  ((r?.verdict.failures ?? []) as Array<{ code: string }>).filter((f) => f.code.startsWith("greeting")).map((f) => f.code);
+
+test("checkPitchGate: with no recipient given it checks the pitch's contact_id, not the priority-top contact", async () => {
+  // "Hi Bo" on a pitch linked to Bo: no greeting flag (it was flagged against Ana before).
+  assert.deepEqual(greetingFlags(await gate.checkPitchGate(gateDb("bo"), TENANT, "g1", { shared: SHARED, persist: false })), []);
+  // Linked to Ana, or to no one (the prospect's top contact): "Hi Bo" is a mismatch.
+  assert.deepEqual(greetingFlags(await gate.checkPitchGate(gateDb("ana"), TENANT, "g1", { shared: SHARED, persist: false })), ["greeting_mismatch"]);
+  assert.deepEqual(greetingFlags(await gate.checkPitchGate(gateDb(null), TENANT, "g1", { shared: SHARED, persist: false })), ["greeting_mismatch"]);
+  // A send path's explicit recipient still wins.
+  const explicit = { email: "ana@acme-dental.ca", full_name: "Ana Ruiz", selected_by: "scraper" };
+  assert.deepEqual(greetingFlags(await gate.checkPitchGate(gateDb("bo"), TENANT, "g1", { shared: SHARED, persist: false, recipient: explicit })), ["greeting_mismatch"]);
 });
 
 // ── 2. heldAction ────────────────────────────────────────────────────────────

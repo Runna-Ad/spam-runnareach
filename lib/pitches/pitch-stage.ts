@@ -36,7 +36,7 @@ import { senderForGenerator } from "./sender-identity";
 import { hasUsableEmail, isRoleBasedEmail } from "@/lib/research/email-utils";
 import { fetchBenchmarksForPitch, resolvePainCodes } from "@/lib/benchmarks/queries";
 import { recordWantedFacts } from "@/lib/benchmarks/wanted-facts";
-import { fetchTopUsableContact } from "@/lib/pitches/contacts";
+import { chooseRecipient, type VerdictContact } from "@/lib/pitches/contacts";
 import {
   type ComposedPitch,
   type GeneratorInputContact,
@@ -169,7 +169,8 @@ export async function generatePitchWith(
   const pains: GeneratorInputResearchPain[] = normalizePains(research?.pain_points ?? null);
 
   // Load contacts — include role_title so Claude can address "as founder/GM of..."
-  type ContactRow = {
+  type ContactRow = VerdictContact & {
+    id: string;
     full_name: string | null;
     email: string | null;
     email_is_role_based: boolean;
@@ -178,13 +179,28 @@ export async function generatePitchWith(
   };
   const { data: contactRows } = await supabase
     .from("prospect_contacts")
-    .select("full_name, email, email_is_role_based, role_title, priority_rank")
+    // chooseRecipient's columns (contacts.ts RECIPIENT_COLUMNS) plus the composer's.
+    .select("id, email, full_name, priority_rank, selected_by, verify_verdict, verify_checked_at, email_is_role_based, role_title")
     .eq("tenant_id", user.tenantId)
     .eq("prospect_id", parsed.data.prospect_id)
     .order("priority_rank", { ascending: true })
-    .limit(5)
+    .limit(12)
     .returns<ContactRow[]>();
-  const contacts: GeneratorInputContact[] = (contactRows ?? []).map((c) => ({
+  // ── The recipient, chosen once (lib/pitches/contacts.ts chooseRecipient) ──
+  // Every composer and the reviewer greet pickAddressContact (the first usable
+  // contact in this list), and the pitch is linked to `recipient` below: they
+  // must be the same person. When the rule picks someone other than the first
+  // usable of the top five (the verifier flagged that one), that contact leads
+  // the list; otherwise the list is exactly the top five, as before (none
+  // usable there is still refused below).
+  const recipient = chooseRecipient(contactRows, new Date());
+  const topFive = (contactRows ?? []).slice(0, 5);
+  const firstUsable = topFive.find((c) => hasUsableEmail(c.email));
+  const listed =
+    !recipient || !firstUsable || firstUsable.id === recipient.id
+      ? topFive
+      : [recipient, ...topFive.filter((c) => c.id !== recipient.id)].slice(0, 5);
+  const contacts: GeneratorInputContact[] = listed.map((c) => ({
     full_name: c.full_name,
     email: c.email,
     // Re-derive at pitch time as a safety net: legacy/enriched contacts may have
@@ -413,18 +429,20 @@ export async function generatePitchWith(
   // ── The autopilot's rewrite revises the held draft ─────────────────────
   // Read BEFORE the draft delete below clears it. A Claude draft held with
   // notes is revised against those notes; anything else (a template, no
-  // notes, a read error, a row that is gone) composes fresh, as before.
+  // notes, a read error, a row that is gone) composes fresh, as before. So
+  // does a rewrite to a different contact than the held draft's (the
+  // verifier doubted that address): its text greets the old recipient.
   let reviseFirst: NonNullable<GeneratorInputs["revision"]> | undefined;
   if (opts.retryOf) {
     const { data: held, error: heldErr } = await supabase
       .from("pitches")
-      .select("subject, body_original, body_edited, decision, gate_verdict")
+      .select("subject, body_original, body_edited, decision, gate_verdict, contact_id")
       .eq("id", opts.retryOf)
       .eq("tenant_id", user.tenantId)
       .eq("prospect_id", parsed.data.prospect_id)
       .maybeSingle<HeldDraftRow>();
     if (heldErr) console.warn("[generatePitch] held draft not read, composing fresh:", heldErr.message || "no message");
-    else reviseFirst = heldDraftRevision(held) ?? undefined;
+    else if (!held || !held.contact_id || held.contact_id === recipient?.id) reviseFirst = heldDraftRevision(held) ?? undefined;
   }
 
   // ── Status re-check, immediately before any Claude call ───────────────
@@ -499,9 +517,11 @@ export async function generatePitchWith(
     };
   }
 
-  // Link the FK to the top USABLE contact (not just the top priority row, which
-  // could be a name-only/placeholder contact) so the pitch addresses correctly.
-  const topUsable = await fetchTopUsableContact(supabase, user.tenantId, parsed.data.prospect_id);
+  // Link the FK to the recipient chosen above, the contact the text greets
+  // (a usable one, never a name-only/placeholder row).
+  const topUsable = recipient?.email
+    ? { id: recipient.id, email: recipient.email, full_name: recipient.full_name, selected_by: recipient.selected_by ?? null }
+    : null;
 
   type PitchInsert = Database["public"]["Tables"]["pitches"]["Insert"];
   const insert: PitchInsert = {
@@ -760,10 +780,10 @@ export async function rewritePitchWithAngleWith(
   const { supabase } = actor;
 
   // Locked pitches can't be rewritten.
-  type PitchRow = { id: string; prospect_id: string; status: string; attribution_code: string | null };
+  type PitchRow = { id: string; prospect_id: string; contact_id: string | null; status: string; attribution_code: string | null };
   const { data: pitch } = await supabase
     .from("pitches")
-    .select("id, prospect_id, status, attribution_code")
+    .select("id, prospect_id, contact_id, status, attribution_code")
     .eq("id", parsed.data.pitch_id)
     .eq("tenant_id", user.tenantId)
     .maybeSingle<PitchRow>();
@@ -799,12 +819,19 @@ export async function rewritePitchWithAngleWith(
       .maybeSingle<ResearchRow>(),
     supabase
       .from("prospect_contacts")
-      .select("full_name, email, email_is_role_based, role_title, priority_rank")
+      .select("id, full_name, email, email_is_role_based, role_title, priority_rank")
       .eq("prospect_id", pitch.prospect_id).eq("tenant_id", user.tenantId)
-      .order("priority_rank", { ascending: true }).limit(5)
-      .returns<{ full_name: string | null; email: string | null; email_is_role_based: boolean; role_title: string | null }[]>(),
+      .order("priority_rank", { ascending: true }).limit(12)
+      .returns<{ id: string; full_name: string | null; email: string | null; email_is_role_based: boolean; role_title: string | null }[]>(),
   ]);
   if (!prospect) return { ok: false, error: "Prospect not found." };
+  // The rewrite greets the pitch's own recipient: when its contact is usable
+  // and not already the first usable of the top five (a contact chosen past a
+  // flagged one), it leads the list; otherwise the list is the top five, as before.
+  const topFive = (contactRows ?? []).slice(0, 5);
+  const own = (contactRows ?? []).find((c) => c.id === pitch.contact_id && hasUsableEmail(c.email));
+  const firstUsable = topFive.find((c) => hasUsableEmail(c.email));
+  const listed = own && firstUsable && own.id !== firstUsable.id ? [own, ...topFive.filter((c) => c.id !== own.id)].slice(0, 5) : topFive;
 
   // The chosen case study (only when the angle anchors on one).
   let chosenCases: GeneratorInputCaseStudy[] = [];
@@ -856,7 +883,7 @@ export async function rewritePitchWithAngleWith(
     prospect: { ...prospect, what_they_do: research?.what_they_do ?? null, tech_stack: research?.tech_stack ?? [] },
     pains: rewritePains,
     benchmarks: rewriteBenchmarks,
-    contacts: (contactRows ?? []).map((c) => ({
+    contacts: listed.map((c) => ({
       full_name: c.full_name, email: c.email, email_is_role_based: c.email_is_role_based || (c.email ? isRoleBasedEmail(c.email) : false), role_title: c.role_title ?? null,
     })),
     case_studies: chosenCases,
@@ -1330,6 +1357,7 @@ function normalizeMeasurableResults(
 }
 
 type HeldDraftRow = {
+  contact_id?: string | null;
   subject: string | null;
   body_original: string | null;
   body_edited: string | null;

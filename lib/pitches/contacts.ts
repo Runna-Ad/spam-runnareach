@@ -95,6 +95,21 @@ export function hasAlternativeRecipient(
   return !current?.email || current.email.trim().toLowerCase() !== (next.email ?? "").trim().toLowerCase();
 }
 
+/**
+ * Who an existing pitch goes to, for display: its own contact (contact_id)
+ * when that address is usable, else the prospect's pick (chooseRecipient), the
+ * same resolution as the manual send (send-action.ts) and the address the
+ * send-queue uses.
+ */
+export function pitchRecipient<T extends VerdictContact & { id?: string }>(
+  contacts: T[] | null | undefined,
+  contactId: string | null | undefined,
+  now: Date,
+): T | null {
+  const own = contactId ? (contacts ?? []).find((c) => c.id === contactId) : undefined;
+  return own && hasUsableEmail(own.email) ? own : chooseRecipient(contacts, now);
+}
+
 /** The columns chooseRecipient reads, for every query that feeds it. */
 export const RECIPIENT_COLUMNS = "id, email, full_name, priority_rank, selected_by, verify_verdict, verify_checked_at";
 

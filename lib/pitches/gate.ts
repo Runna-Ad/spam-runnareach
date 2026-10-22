@@ -16,7 +16,7 @@
 // Fails CLOSED for sends: if the verdict can't be computed, callers don't send.
 
 import { writeAuditLog } from "@/lib/audit/log";
-import { pickAddressContact } from "@/lib/research/email-utils";
+import { hasUsableEmail, pickAddressContact } from "@/lib/research/email-utils";
 import {
   GATE_VERSION,
   evaluateSendGate,
@@ -228,7 +228,9 @@ export type PitchGateCheck = {
  *
  * `body` / `recipient` let a send path check the EXACT text and address going
  * out (after sign-off reconciliation, after re-resolving the contact); without
- * them the stored body and the prospect's top contact are used.
+ * them the stored body and the pitch's own contact (contact_id, the address the
+ * send-queue uses) are checked, or the prospect's top contact when the pitch
+ * has none with a usable address.
  *
  * Returns null when the pitch or its prospect can't be loaded — callers that
  * send must treat that as "do not send".
@@ -241,7 +243,7 @@ export async function checkPitchGate(
 ): Promise<PitchGateCheck | null> {
   const { data: pitch, error } = await supabase
     .from("pitches")
-    .select("subject, body_original, body_edited, prospect_id, gate_override")
+    .select("subject, body_original, body_edited, prospect_id, contact_id, gate_override")
     .eq("id", pitchId)
     .eq("tenant_id", tenantId)
     .maybeSingle();
@@ -251,17 +253,30 @@ export async function checkPitchGate(
     body_original: string | null;
     body_edited: string | null;
     prospect_id: string;
+    contact_id?: string | null;
     gate_override: unknown;
   };
 
   const ctx = await loadGateContext(supabase, tenantId, row.prospect_id, opts.shared);
   if (!ctx) return null;
 
+  let recipient = opts.recipient;
+  if (recipient === undefined && row.contact_id) {
+    const { data: own } = await supabase
+      .from("prospect_contacts")
+      .select("email, full_name, selected_by")
+      .eq("id", row.contact_id)
+      .eq("tenant_id", tenantId)
+      .maybeSingle();
+    const c = own as GateRecipient | null;
+    if (c && hasUsableEmail(c.email)) recipient = c;
+  }
+
   const result = evaluateSendGate(
     gateInputFor(ctx, {
       subject: row.subject,
       body: opts.body ?? row.body_edited ?? row.body_original ?? "",
-      recipient: opts.recipient,
+      recipient,
     }),
   );
   const verdict = toStoredVerdict(result);

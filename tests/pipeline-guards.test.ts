@@ -197,6 +197,7 @@ async function pitch(status: string, opts: { parkAs?: string; recheckMissing?: b
     buildHunterUrlForPitch: () => "https://hunter.example",
     renderIndustryTemplate: () => { throw new Error("heuristic reached"); },
     composeWithReview: async () => { throw new Error(CLAUDE_REACHED); },
+    chooseRecipient: (rows: Array<{ email?: unknown }> | null) => rows?.find((c) => typeof c.email === "string" && c.email.includes("@")) ?? null,
   }, calls);
   const prospect: Row = {
     id: "00000000-0000-4000-8000-000000000001", tenant_id: "t1", company_name: "Acme",
