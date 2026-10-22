@@ -18,6 +18,7 @@ import { type NextRequest, NextResponse } from "next/server";
 import { systemActorFor } from "@/lib/actor";
 import { runTick, type TickReport } from "@/lib/autopilot/tick";
 import { isSchedulerAuthorized } from "@/lib/cron-auth";
+import { withHeartbeat } from "@/lib/reports/heartbeat";
 import { createServiceRoleClient } from "@/lib/supabase/service-role";
 
 export const dynamic = "force-dynamic";
@@ -26,7 +27,11 @@ async function handle(req: NextRequest) {
   if (!(await isSchedulerAuthorized(req))) {
     return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
   }
+  return withHeartbeat("autopilot-tick", () => runTicks());
+}
 
+/** One authorized run (its heartbeat is written by handle). */
+async function runTicks() {
   // autonomy_state (0040) isn't in the generated types.
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const supabase = createServiceRoleClient() as any;

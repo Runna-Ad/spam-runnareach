@@ -32,6 +32,7 @@
 
 import { type NextRequest, NextResponse } from "next/server";
 import { isSchedulerAuthorized } from "@/lib/cron-auth";
+import { withHeartbeat } from "@/lib/reports/heartbeat";
 import { createServiceRoleClient } from "@/lib/supabase/service-role";
 import { getAccessToken } from "@/lib/gmail/client";
 import { sendNotification } from "@/lib/notify/send";
@@ -118,7 +119,11 @@ export async function GET(req: NextRequest) {
   if (!(await isAuthorized(req))) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
+  return withHeartbeat("replies-poll", () => runPoll(req));
+}
 
+/** One authorized run (its heartbeat is written by GET). */
+async function runPoll(req: NextRequest) {
   const startTime = Date.now();
   const supabase = createServiceRoleClient() as AnySupabase;
   // The daily Vercel cron (user agent vercel-cron/1.0) reads every thread;

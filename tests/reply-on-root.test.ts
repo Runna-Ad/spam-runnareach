@@ -142,6 +142,8 @@ async function poll(pitches: Row[], inbound: Inbound[], opts: Parameters<typeof 
   const g = globalThis as unknown as { __stubValues: Record<string, unknown>; __stubCall: (n: string, a: unknown[]) => unknown };
   g.__stubValues = {
     NextResponse: { json: (body: unknown, init?: unknown) => ({ body, init }) },
+    // The cron heartbeat (tests/health-alarms.test.ts) passes the run through.
+    withHeartbeat: (_job: unknown, run: () => unknown) => run(),
   };
   g.__stubCall = (name, args) => {
     calls.push({ name, args });

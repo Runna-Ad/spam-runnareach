@@ -20,6 +20,7 @@
 
 import { type NextRequest, NextResponse } from "next/server";
 import { isSchedulerAuthorized } from "@/lib/cron-auth";
+import { withHeartbeat } from "@/lib/reports/heartbeat";
 import { createServiceRoleClient } from "@/lib/supabase/service-role";
 import { getAccessToken, sendGmailMessage } from "@/lib/gmail/client";
 import { bodyWithFooter, getOutboundCompliance } from "@/lib/compliance/outbound";
@@ -666,7 +667,11 @@ export async function GET(req: NextRequest) {
   if (!(await isAuthorized(req))) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
+  return withHeartbeat("follow-up", () => runFollowUps());
+}
 
+/** One authorized run (its heartbeat is written by GET). */
+async function runFollowUps() {
   const startTime = Date.now();
   const supabase = createServiceRoleClient();
 
