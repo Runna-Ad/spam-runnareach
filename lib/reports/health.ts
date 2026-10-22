@@ -430,8 +430,8 @@ export function scheduledRuns(expr: string, from: number, to: number, cap: numbe
 
 /**
  * A job is silent when it missed JOB_MISSED_RUNS scheduled runs in a row since
- * its last success: 45 min for the tick, 30 for the poll and the send-queue,
- * three window hours for follow-ups. Runs outside a job's window (weekends,
+ * its last success: 45 min for the tick, 30 for the poll, the send-queue and
+ * the follow-ups. Runs outside a job's window (weekends,
  * before 15:00 UTC) are not scheduled, so they never count. A job with no
  * heartbeat row yet is silent; one that never succeeded counts from when it
  * was first seen.

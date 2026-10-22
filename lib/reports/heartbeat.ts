@@ -20,7 +20,7 @@ export const CRON_JOBS = {
   "autopilot-tick": { pgJob: "spam-autopilot-tick", cron: "*/15 * * * *", migration: "0041", route: "/api/autopilot/tick" },
   "replies-poll": { pgJob: "spam-replies-poll", cron: "5-59/10 * * * *", migration: "0048", route: "/api/replies/poll" },
   "send-queue": { pgJob: "spam-send-queue", cron: "*/10 15-22 * * 1-5", migration: "0041", route: "/api/pitches/send-queue" },
-  "follow-up": { pgJob: "spam-follow-up", cron: "5-59/10 15-22 * * 1-5", migration: "0052", route: "/api/pitches/follow-up" },
+  "follow-up": { pgJob: "spam-follow-up", cron: "7-59/10 15-22 * * 1-5", migration: "0052", route: "/api/pitches/follow-up" },
 } as const;
 
 export type CronJob = keyof typeof CRON_JOBS;

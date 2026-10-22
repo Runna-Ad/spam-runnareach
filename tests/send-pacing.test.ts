@@ -13,7 +13,11 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
 import {
+  backOffFollowup,
   createRunPacer,
+  FOLLOWUP_RETRY_MS,
+  followupRetryAt,
+  type BackoffClient,
   INBOX_LIMIT_REASON,
   PER_INBOX_PER_RUN,
   PER_RUN_TOTAL,
@@ -21,7 +25,7 @@ import {
 } from "../lib/pitches/send-pacing.ts";
 import { CRON_JOBS } from "../lib/reports/heartbeat.ts";
 
-type Due = { id: string; inbox: string | null; fails?: "skip" | "throw" };
+type Due = { id: string; inbox: string | null; fails?: "skip" | "throw" | "after-compose" };
 type Outcome = { id: string; status: "sent" | "skipped" | "error"; reason?: string };
 
 /** The routes' loop: pacing first; a claim (and every read) only after it says ok. */
@@ -39,6 +43,11 @@ function run(due: Due[]) {
     try {
       if (p.fails === "skip") {
         results.push({ id: p.id, status: "skipped", reason: "Quality gate" });
+        continue;
+      }
+      if (p.fails === "after-compose") {
+        pacer.recordAttempt(p.inbox as string);
+        results.push({ id: p.id, status: "skipped", reason: "Gmail send failed" });
         continue;
       }
       claimed.push(p.id);
@@ -98,6 +107,12 @@ test("a pitch that threw counts against its inbox (Gmail may have taken it)", ()
   assert.deepEqual(r.claimed, ["a-0", "b-0"]);
 });
 
+test("a follow-up that failed after its compose uses up its inbox, not the run total", () => {
+  const r = run([{ id: "a-0", inbox: "a", fails: "after-compose" }, ...queue("a", 2, 1), ...queue("b", 1), ...queue("c", 1)]);
+  assert.deepEqual(r.sent, ["b-0", "c-0"]);
+  assert.ok(r.results.filter((x) => x.id.startsWith("a-") && x.id !== "a-0").every((x) => x.reason === INBOX_LIMIT_REASON));
+});
+
 test("no inbox: the pacer lets the route's own skip answer it", () => {
   assert.deepEqual(createRunPacer().check(null), { ok: true });
 });
@@ -147,15 +162,91 @@ test("follow-up: pacing before processFollowup, counted on a real send or a thro
   assert.ok(loop.indexOf("pacer.recordSent(pitch.sender_inbox_id);\n", loop.indexOf("} catch (err) {")) > 0);
 });
 
-test("0052 moves spam-follow-up to every 10 minutes at :05, by job id, idempotently", () => {
+test("0052 moves spam-follow-up to every 10 minutes at :07, by job id, idempotently", () => {
   const sql = src("supabase/migrations/0052_follow_up_every_10min.sql");
   const code = sql.replace(/--.*$/gm, "");
   assert.match(code, /select jobid from cron\.job where jobname = 'spam-follow-up'/);
-  assert.match(code, /cron\.alter_job\(job_id := v_job, schedule := '5-59\/10 15-22 \* \* 1-5'\)/);
-  assert.match(code, /cron\.schedule\('spam-follow-up', '5-59\/10 15-22 \* \* 1-5', \$job\$select public\.spam_cron_call\('\/api\/pitches\/follow-up'\)\$job\$\)/);
+  assert.match(code, /cron\.alter_job\(job_id := v_job, schedule := '7-59\/10 15-22 \* \* 1-5'\)/);
+  assert.match(code, /cron\.schedule\('spam-follow-up', '7-59\/10 15-22 \* \* 1-5', \$job\$select public\.spam_cron_call\('\/api\/pitches\/follow-up'\)\$job\$\)/);
   assert.doesNotMatch(code, /unschedule|drop /i);
-  assert.equal(CRON_JOBS["follow-up"].cron, "5-59/10 15-22 * * 1-5");
+  assert.equal(CRON_JOBS["follow-up"].cron, "7-59/10 15-22 * * 1-5");
   assert.equal(CRON_JOBS["follow-up"].migration, "0052");
-  // Offset 5 minutes from the send-queue, same window.
+  // Same window as the send-queue (:00), 2 minutes after the reply poll (:05).
   assert.equal(CRON_JOBS["send-queue"].cron, "*/10 15-22 * * 1-5");
+  assert.equal(CRON_JOBS["replies-poll"].cron, "5-59/10 * * * *");
+  // Ship order is written where the conductor applies it.
+  assert.match(sql, /SHIP ORDER: apply this migration BEFORE deploying/);
+});
+
+// ── Follow-up back-off ───────────────────────────────────────────────────────
+
+/** Records the update and its filters; answers with `rows` matched rows (or an error / a throw). */
+function backoffStub(answer: { rows?: number; error?: string; throws?: boolean } = { rows: 1 }) {
+  const calls: Array<{ table: string; values: Record<string, unknown>; filters: string[] }> = [];
+  const db: BackoffClient = {
+    from(table) {
+      return {
+        update(values) {
+          const call = { table, values, filters: [] as string[] };
+          calls.push(call);
+          const f = {
+            eq: (c: string, v: unknown) => (call.filters.push(`eq ${c} ${String(v)}`), f),
+            is: (c: string, v: null) => (call.filters.push(`is ${c} ${String(v)}`), f),
+            lte: (c: string, v: string) => (call.filters.push(`lte ${c} ${v}`), f),
+            select: async () => {
+              if (answer.throws) throw new Error("network");
+              return answer.error
+                ? { data: null, error: { message: answer.error } }
+                : { data: Array.from({ length: answer.rows ?? 0 }, () => ({ id: "p1" })), error: null };
+            },
+          };
+          return f;
+        },
+      };
+    },
+  };
+  return { db, calls };
+}
+
+const DUE = "2026-10-22T15:00:00.000Z";
+const RETRY = "2026-10-22T16:20:00.000Z";
+
+test("back-off moves a still-due follow-up an hour, only if nobody moved it since", async () => {
+  assert.equal(FOLLOWUP_RETRY_MS, 3_600_000);
+  assert.equal(followupRetryAt(Date.parse("2026-10-22T15:20:00.000Z")), RETRY);
+  const { db, calls } = backoffStub();
+  assert.equal(await backOffFollowup(db, { pitchId: "p1", priorStep: 1, priorFollowupAt: DUE, retryAt: RETRY }), true);
+  assert.deepEqual(calls, [
+    {
+      table: "pitches",
+      values: { next_followup_at: RETRY },
+      filters: ["eq id p1", "eq sequence_step 1", "is sequence_paused_at null", `lte next_followup_at ${DUE}`],
+    },
+  ]);
+});
+
+test("back-off: a row that moved, an error or a throw answers false and never throws", async () => {
+  const args = { pitchId: "p1", priorStep: 1, priorFollowupAt: DUE, retryAt: RETRY };
+  assert.equal(await backOffFollowup(backoffStub({ rows: 0 }).db, args), false);
+  assert.equal(await backOffFollowup(backoffStub({ error: "" }).db, args), false);
+  assert.equal(await backOffFollowup(backoffStub({ throws: true }).db, args), false);
+});
+
+test("follow-up: every post-compose exit that leaves it due backs off and says so", () => {
+  const code = FOLLOW_UP;
+  const compose = code.indexOf("composeFollowupWithClaude(");
+  const backOffAt = code.indexOf("const backOff = () =>");
+  assert.ok(compose > 0 && backOffAt > compose, "defined after the compose");
+  // Gate unavailable: moved directly (nothing claimed yet).
+  assert.match(code, /if \(!gate\) \{\s+await backOff\(\);\s+return \{[^}]*reason: "Quality gate unavailable — not sent", backed_off: true \};/);
+  // After the claim, the release puts the step back due at retryAt.
+  assert.match(code, /priorStep: pitch\.sequence_step,\s+priorFollowupAt: retryAt,\s+pause,/);
+  assert.match(code, /reason: slot\.reason, backed_off: true \}/);
+  assert.match(code, /reason: pause \? `\$\{lastCheck\.reason\} \(sequence paused\)` : lastCheck\.reason,\s+backed_off: true,/);
+  assert.match(code, /reason: `Gmail send failed: \$\{sendResult\.error\}`, backed_off: true \}/);
+  // A lost claim means the row moved: no back-off there.
+  const lost = code.slice(code.indexOf("if (!claimed) {"), code.indexOf("const release = "));
+  assert.doesNotMatch(lost, /backOff|backed_off/);
+  // The loop counts it against the inbox, not the run total.
+  assert.match(code, /else if \(result\.backed_off && pitch\.sender_inbox_id\) pacer\.recordAttempt\(pitch\.sender_inbox_id\);/);
 });

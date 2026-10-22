@@ -48,7 +48,14 @@ import {
   type SlotClient,
 } from "@/lib/pitches/daily-cap";
 import { inboxBounceBlock } from "@/lib/autopilot/bounce-breaker";
-import { createRunPacer, PER_INBOX_PER_RUN, PER_RUN_TOTAL } from "@/lib/pitches/send-pacing";
+import {
+  backOffFollowup,
+  createRunPacer,
+  followupRetryAt,
+  PER_INBOX_PER_RUN,
+  PER_RUN_TOTAL,
+  type BackoffClient,
+} from "@/lib/pitches/send-pacing";
 import { ANTHROPIC_DEFAULT_MODEL, claudeIsAvailable } from "@/lib/anthropic/client";
 import { isUnderDailyCap, recordClaudeCall } from "@/lib/anthropic/cost-tracking";
 import { hasUsableEmail } from "@/lib/research/email-utils";
@@ -111,9 +118,10 @@ type ProspectRow = {
  * (before 70s of the 120s maxDuration) and claims only while hasTimeToClaim
  * (before 95s); arithmetic in lib/pitches/daily-cap.ts.
  *
- * Volume: pg_cron runs this every 10 minutes at :05/:15/…, 15:05-22:55 UTC on
- * weekdays (`5-59/10 15-22 * * 1-5`, migration 0052), 5 minutes after each
- * send-queue run. Each run sends at most PER_INBOX_PER_RUN follow-up per inbox
+ * Volume: pg_cron runs this every 10 minutes at :07/:17/…, 15:07-22:57 UTC on
+ * weekdays (`7-59/10 15-22 * * 1-5`, migration 0052): 2 minutes after each
+ * reply poll (so a bounce from the :00 send is recorded first) and 7 after
+ * each send-queue run. Each run sends at most PER_INBOX_PER_RUN follow-up per inbox
  * and PER_RUN_TOTAL in total (lib/pitches/send-pacing.ts); the rest stay due
  * for the next run. Follow-ups take a daily slot through the same RPC as first
  * emails (reserveSendSlot, 0049), so the inbox daily_cap covers both.
@@ -156,6 +164,8 @@ type FollowupResult = {
   step: number;
   status: "sent" | "skipped";
   reason?: string;
+  /** Failed after its compose and was moved FOLLOWUP_RETRY_MS later (lib/pitches/send-pacing.ts). */
+  backed_off?: true;
 };
 
 // ── Resolve market type safely ────────────────────────────────────────────────
@@ -476,8 +486,20 @@ async function processFollowup(pitch: DuePitchRow, bounceBlocks: BounceBlocks, s
     composedBy = "template";
     gate = gateFor(email);
   }
+  // An exit from here on that leaves the follow-up due waits FOLLOWUP_RETRY_MS:
+  // the next run would compose it again (a Claude call). Except out of time at
+  // the claim: rare (a 95 s run), and nothing may wait between that check and the claim.
+  const retryAt = followupRetryAt();
+  const backOff = () =>
+    backOffFollowup(supabase as unknown as BackoffClient, {
+      pitchId: pitch.id,
+      priorStep: pitch.sequence_step,
+      priorFollowupAt: pitch.next_followup_at,
+      retryAt,
+    });
   if (!gate) {
-    return { pitch_id: pitch.id, prospect: prospect.company_name, step: nextStep, status: "skipped", reason: "Quality gate unavailable — not sent" };
+    await backOff();
+    return { pitch_id: pitch.id, prospect: prospect.company_name, step: nextStep, status: "skipped", reason: "Quality gate unavailable — not sent", backed_off: true };
   }
   if (!gate.pass) {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -523,19 +545,22 @@ async function processFollowup(pitch: DuePitchRow, bounceBlocks: BounceBlocks, s
     .lte("next_followup_at", pitch.next_followup_at)
     .select("id")
     .maybeSingle();
+  // No back-off: the claim takes nothing only when the row moved (another
+  // run claimed it, a pause, a postpone), so it isn't due as read any more.
   if (!claimed) {
     return { pitch_id: pitch.id, prospect: prospect.company_name, step: nextStep, status: "skipped", reason: "Already handled by another run, or rescheduled since the run read it" };
   }
 
   // Releases put the step back, guarded on the step this run claimed, and
   // never pull back a date another writer (OOO postpone, snooze) set since.
+  // The step goes back due at retryAt, not at once (back-off above).
   const release = (pause: boolean) =>
     releaseFollowupClaim(supabase as unknown as FollowupReleaseClient, {
       pitchId: pitch.id,
       claimedStep: nextStep,
       claimedFollowupAt: nextFollowupAt,
       priorStep: pitch.sequence_step,
-      priorFollowupAt: pitch.next_followup_at,
+      priorFollowupAt: retryAt,
       pause,
     });
 
@@ -544,7 +569,7 @@ async function processFollowup(pitch: DuePitchRow, bounceBlocks: BounceBlocks, s
   const slot = await reserveSendSlot(slots, inbox.id);
   if (!slot.ok) {
     await release(false);
-    return { pitch_id: pitch.id, prospect: prospect.company_name, step: nextStep, status: "skipped", reason: slot.reason };
+    return { pitch_id: pitch.id, prospect: prospect.company_name, step: nextStep, status: "skipped", reason: slot.reason, backed_off: true };
   }
 
   // ── 7d. Last moment: may this prospect still be emailed? ─────────────────
@@ -574,6 +599,7 @@ async function processFollowup(pitch: DuePitchRow, bounceBlocks: BounceBlocks, s
       step: nextStep,
       status: "skipped",
       reason: pause ? `${lastCheck.reason} (sequence paused)` : lastCheck.reason,
+      backed_off: true,
     };
   }
 
@@ -597,7 +623,7 @@ async function processFollowup(pitch: DuePitchRow, bounceBlocks: BounceBlocks, s
     await releaseSendSlot(slots, inbox.id, slot.day);
     await release(false);
     await recordSendFailure(supabase, { tenantId: pitch.tenant_id, inboxId: inbox.id, pitchId: pitch.id, error: sendResult.error });
-    return { pitch_id: pitch.id, prospect: prospect.company_name, step: nextStep, status: "skipped", reason: `Gmail send failed: ${sendResult.error}` };
+    return { pitch_id: pitch.id, prospect: prospect.company_name, step: nextStep, status: "skipped", reason: `Gmail send failed: ${sendResult.error}`, backed_off: true };
   }
 
   const now = new Date().toISOString();
@@ -750,6 +776,8 @@ async function runFollowUps() {
       results.push(result);
       if (result.reason === TIME_BUDGET_REASON) break;
       if (result.status === "sent" && pitch.sender_inbox_id) pacer.recordSent(pitch.sender_inbox_id);
+      // Composed but not sent: no second compose from this inbox this run.
+      else if (result.backed_off && pitch.sender_inbox_id) pacer.recordAttempt(pitch.sender_inbox_id);
     } catch (err) {
       console.error(`[follow-up/cron] Error processing pitch ${pitch.id}:`, err);
       // Can't tell whether Gmail took it before the throw: count it (fails closed).

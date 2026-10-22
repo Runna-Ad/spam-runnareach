@@ -50,8 +50,8 @@ import {
 // Conservative drip. pg_cron runs this every 10 minutes, 15:00-22:50 UTC on
 // weekdays (`*/10 15-22 * * 1-5`, migration 0041), and each run sends at most
 // one first email per inbox and SEND_PER_TICK in total: at most 6 per inbox
-// per hour. The follow-up route runs 5 minutes after each of these runs (0052)
-// under the same per-run limit, so an inbox never sends two emails within ~5
+// per hour. The follow-up route runs 7 minutes after each of these runs (0052)
+// under the same per-run limit, so an inbox never sends two emails within ~3
 // minutes. The inbox daily_cap (slot RPC, 0049) is still the hard ceiling.
 const SEND_PER_TICK = PER_RUN_TOTAL;
 // Between sends of one run, which always come from different inboxes.
