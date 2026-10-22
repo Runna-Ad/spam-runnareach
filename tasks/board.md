@@ -33,7 +33,8 @@ Previous: `phase3-batch2` CLOSED (main e10a326). Rows, log and hand-off in `task
 | 0048 | bounce hotfix | APPLIED (version 20261019190301) |
 | 0049 | batch 4 send slot | APPLIED (version 20261019211644) |
 | 0050 | batch 7: `0050_wanted_facts.sql` | APPLIED 2026-10-21 21:56 UTC via connector before the merge, verified, version normalised to 0050 |
-| 0051 | — | free |
+| 0051 | batch 8 health-alarms: `0051_cron_heartbeats.sql` (cron_heartbeats table, RLS no policies) | reserved |
+| 0052 | — | free |
 
 ## Active and queued tasks
 | Slug | Module | Model/effort | Branch | Session | PR | Depends on | Status | Blocked on | Turns | Review findings | CI reds | Rework |
@@ -332,8 +333,10 @@ Migrations: none reserved for wave 1 (`click` already in prod's `pitch_event_typ
 | Slug | Module | Model/effort | Branch | Session | PR | Depends on | Status | Turns | Review findings | CI reds | Rework |
 |---|---|---|---|---|---|---|---|---|---|---|---|
 | reply-on-root | poll route records reply/bounce on the root + backfill script | opus/high | claude/reply-on-root | session_01HEPRVfWtJ4jQyZPkkSBr1r | #52 | — | MERGED 099b31d (r1: 1 blocking fixed, verified) | | | | |
-| tracked-links | /r/[code] redirect + click event; follow-ups carry the tracked link, free-check CTA | opus/high | claude/tracked-links | session_01MMFXJXTL8PCeTy1mqdDRoW | #54 | — | in review | | | | |
-| presend-learning | pre-send guardrail, click reward, weekly review input, /learning cleanup | opus/high | claude/presend-learning | session_01P5hLzYcj7cnh1vz8ycnLeK | #53 | — | in review | | | | |
+| tracked-links | /r/[code] redirect + click event; follow-ups carry the tracked link, free-check CTA | opus/high | claude/tracked-links | session_01MMFXJXTL8PCeTy1mqdDRoW | #54 | — | MERGED 4d53939 (r1: 1 blocking fixed, verified) | | | | |
+| presend-learning | pre-send guardrail, click reward, weekly review input, /learning cleanup | opus/high | claude/presend-learning | session_01P5hLzYcj7cnh1vz8ycnLeK | #53 | — | MERGED 3f0be9a (r1: 1 blocking fixed, verified) |
+| handsoff-autopilot | veto demotion restarts the veto clock (no auto shadow); gmail_api breaker counts recorded send failures; tick-errors audit row | opus/high | claude/handsoff-autopilot | — | — | wave 1 | queued | | | | |
+| health-alarms | health rules inbox_paused, tick_errors, learning_stalled, job_silent; 0051 heartbeats in 4 cron routes; Sentry copy of every alert | opus/high | claude/health-alarms | — | — | wave 1 | queued | | | | | | | | |
 
 Batch-audit pairs: tracked-links × presend-learning (click on the ROOT, payload {code, step, ua}; value 0.25 never makes an exemplar); reply-on-root × follow-up route (one timeline per conversation, sent + reply on the same row); tracked-links × claude-composer rewrite (no old code inherited); presend-learning × governor (guidance retirement never touches stage); backfill × 23505 skip.
 
@@ -346,3 +349,5 @@ Log:
 - 2026-10-22 16:55 UTC — #54 review (Opus): fix-then-merge, 1 blocking (verified: drafts carry attribution_code + /r link and /pitches renders it clickable → clicks recorded before any send and on team clicks). Sent: skip not-sent, auth-cookie and <60 s after send; pin the fold regex to app hosts (reddit /r/ case); scanner 'bot' token. Redirect safety verified by live probe; /r not gated by proxy.ts. Decision for Pedro before ship: the CTA host becomes spam-runnareach.vercel.app (UNSUBSCRIBE_BASE_URL unset) — word 'spam' in the main link.
 - 2026-10-22 17:00 UTC — #53 review (Opus): fix-then-merge, 1 blocking (conductor decision): clicks reach scout/ICP/hunter-signals via scoreOutcome, against the negative set and biased by browser-UA scanners → clicks opt-in for the two writer learners only. Optional taken: page/order the 14-day drafts read, status-guard test. Exact P verified independently. Conductor carry: prompts-page.tsx pending badge + proposal actions (dead path). Audit item: guardrail sees only final drafts (rewrite deletes the first and redraws arms).
 - 2026-10-22 17:00 UTC — Pedro picked option 2 for the link host ("set it up"). Conductor added alias runna-check.vercel.app to project spam-runnareach (verified: /api/unsubscribe answers on it, x-matched-path) and set Production env UNSUBSCRIBE_BASE_URL=https://runna-check.vercel.app (plain, comment added). Takes effect at the next prod deploy (= batch 8 ship); links already sent keep the old host, which still works. #54 worker told to pin the fold pattern to both hosts.
+- 2026-10-22 17:20 UTC — #54 fix verified (not_sent/team/too_soon filters, host-pinned fold incl. runna-check + spam-runnareach + previews, scanner bot token): typecheck, lint, 1396 tests, build → merged 4d53939. #53 fix verified (clicks opt-in, writer learners only; paged drafts read): on the merge with #54 typecheck, lint, 1419 tests, build → merged 3f0be9a. Wave 1 done. Wrap-ups sent.
+- 2026-10-22 17:25 UTC — Wave 2 briefs: handsoff-autopilot, health-alarms (0051 reserved). Sentry cron monitors dropped (paid beyond one monitor, cost rule) → internal heartbeats + job_silent rule; every alert also captured in Sentry so a dead Gmail token can't hide it. Shared files: send-queue and follow-up routes get one line from each worker (failure record / heartbeat) → conductor resolves the merge.
