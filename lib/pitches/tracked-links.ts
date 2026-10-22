@@ -29,7 +29,14 @@ type AnySupabase = any;
 
 export const TRACKED_LINK_PATH = "/r/";
 
-/** Hosts our tracked links are served from: the configured base, plus this project's Vercel previews. */
+/**
+ * Hosts a stored tracked link may carry whatever the current env says: the
+ * neutral link host (UNSUBSCRIBE_BASE_URL in prod since 2026-10-22) and the
+ * app's own host (links stored before that).
+ */
+const KNOWN_LINK_HOSTS = ["runna-check.vercel.app", "spam-runnareach.vercel.app"] as const;
+
+/** Hosts our tracked links are served from: the configured base, the known hosts, and this project's Vercel previews. */
 export function trackedLinkHostPattern(): string {
   let host = "spam-runnareach.vercel.app";
   try {
@@ -37,7 +44,8 @@ export function trackedLinkHostPattern(): string {
   } catch {
     // keep the default
   }
-  return `(?:${escapeRe(host)}|spam-runnareach[a-z0-9-]*\\.vercel\\.app)`;
+  const hosts = [host, ...KNOWN_LINK_HOSTS].map(escapeRe).join("|");
+  return `(?:${hosts}|spam-runnareach-[a-z0-9-]+\\.vercel\\.app)`;
 }
 
 /**

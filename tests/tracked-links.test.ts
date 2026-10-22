@@ -574,3 +574,26 @@ test("scanner list: bot as a word or token only (CUBOT phones count), WhatsApp's
   ];
   for (const ua of bots) assert.equal(isScannerUserAgent(ua), true, ua);
 });
+
+test("fold pattern: drafts stored under runna-check or spam-runnareach fold to {hunter_url} whatever the env", () => {
+  const saved = { u: process.env.UNSUBSCRIBE_BASE_URL, n: process.env.NEXT_PUBLIC_APP_URL };
+  try {
+    for (const env of [undefined, "https://runna-check.vercel.app", "https://spam-runnareach.vercel.app", "https://other.example.com"]) {
+      if (env === undefined) delete process.env.UNSUBSCRIBE_BASE_URL; else process.env.UNSUBSCRIBE_BASE_URL = env;
+      delete process.env.NEXT_PUBLIC_APP_URL;
+      for (const host of ["runna-check.vercel.app", "spam-runnareach.vercel.app", "spam-runnareach-git-x-runna.vercel.app"]) {
+        const out = heldBodyForRevision(`Hi,\n\n👉 Free check: https://${host}/r/${CODE}?market=ca\n\nHenry`);
+        assert.ok(out.includes("👉 Free check: {hunter_url}") && !out.includes(CODE), `${env} / ${host}: ${out}`);
+        assert.equal(hunterParamsFromBody(`👉 https://${host}/r/${CODE}?market=mx`)?.get("market"), "mx", `${env} / ${host}`);
+      }
+      // The configured base's own host folds too; look-alikes do not.
+      if (env) assert.ok(heldBodyForRevision(`👉 ${env}/r/${CODE}`).includes("{hunter_url}"), env);
+      for (const url of ["https://runna-check.vercel.app.evil.com/r/abcdefgh", "https://notrunna-check.vercel.app/r/abcdefgh", "https://www.reddit.com/r/startups"]) {
+        assert.ok(heldBodyForRevision(`see ${url}`).includes(url), `${env} / ${url}`);
+      }
+    }
+  } finally {
+    if (saved.u === undefined) delete process.env.UNSUBSCRIBE_BASE_URL; else process.env.UNSUBSCRIBE_BASE_URL = saved.u;
+    if (saved.n === undefined) delete process.env.NEXT_PUBLIC_APP_URL; else process.env.NEXT_PUBLIC_APP_URL = saved.n;
+  }
+});
