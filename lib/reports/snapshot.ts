@@ -410,7 +410,7 @@ async function alarmReads(
       : { data: [], error: null },
     db.from("audit_log").select("created_at, metadata").eq("tenant_id", tenantId)
       .eq("action", TICK_ERRORS_ACTION).gte("created_at", iso(1)).order("created_at", { ascending: false }).limit(200),
-    db.from("pitches").select("status, arms:decision->arms, prospect_contacts:contact_id(email)").eq("tenant_id", tenantId)
+    db.from("pitches").select("id, arms:decision->arms, prospect_contacts:contact_id(email)").eq("tenant_id", tenantId)
       .is("parent_pitch_id", null).gte("sent_at", iso(30)).lte("sent_at", iso(15)).limit(1000),
     db.from("learning_arms").select("trials, updated_at").eq("tenant_id", tenantId).like("learner", "writer.%"),
     db.from("cron_heartbeats").select("job, last_ok_at, last_error_at, last_error, created_at"),
@@ -442,13 +442,18 @@ async function alarmReads(
       }))
     : null;
 
+  // The writer learner only counts first emails that recorded their arms (lib/autopilot/learn.ts).
+  const dueRows = ok("due sends", due)
+    ? ((due.data ?? []) as Array<{ id: string; arms: Record<string, unknown> | null; prospect_contacts: unknown }>).filter(
+        (p) => p.arms && typeof p.arms === "object" && Object.keys(p.arms).some((k) => k.startsWith("writer.")),
+      )
+    : null;
+  // A bounce is a pitch_events "bounce" row on the root (nothing sets pitches.status to bounced).
+  const bounced = dueRows ? await bouncedPitchIds(db, tenantId, dueRows.map((p) => p.id)) : null;
   const learning =
-    ok("due sends", due) && ok("writer arms", arms)
+    dueRows && bounced && ok("writer arms", arms)
       ? {
-          // The writer learner only counts first emails that recorded their arms (lib/autopilot/learn.ts).
-          dueRootSends: ((due.data ?? []) as Array<{ status: string; arms: Record<string, unknown> | null; prospect_contacts: unknown }>)
-            .filter((p) => p.arms && typeof p.arms === "object" && Object.keys(p.arms).some((k) => k.startsWith("writer.")))
-            .map((p) => ({ email: emailOf(p.prospect_contacts), status: p.status })),
+          dueRootSends: dueRows.map((p) => ({ email: emailOf(p.prospect_contacts), bounced: bounced.has(p.id) })),
           writerArms: ((arms.data ?? []) as Array<{ trials: number | null; updated_at: string | null }>).map((r) => ({
             trials: r.trials ?? 0,
             updatedAt: r.updated_at,
@@ -463,6 +468,25 @@ async function alarmReads(
     : null;
 
   return { pausedSince, tickErrors, learning, heartbeats };
+}
+
+/** The ids among `pitchIds` with a "bounce" event; null on a failed read. */
+async function bouncedPitchIds(db: Db, tenantId: string, pitchIds: string[]): Promise<Set<string> | null> {
+  const out = new Set<string>();
+  for (let i = 0; i < pitchIds.length; i += IN_CHUNK) {
+    const { data, error } = await db
+      .from("pitch_events")
+      .select("pitch_id")
+      .eq("tenant_id", tenantId)
+      .eq("event_type", "bounce")
+      .in("pitch_id", pitchIds.slice(i, i + IN_CHUNK));
+    if (error) {
+      console.warn("[reports] health bounce read failed:", error.message);
+      return null;
+    }
+    for (const r of (data ?? []) as Array<{ pitch_id: string }>) out.add(r.pitch_id);
+  }
+  return out;
 }
 
 export async function recentHealthAlerts(tenantId: string, since: Date): Promise<Array<{ kind: string; at: string }>> {

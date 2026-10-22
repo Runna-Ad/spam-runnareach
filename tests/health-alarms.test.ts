@@ -9,6 +9,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
 import {
+  BREAKER_PAUSE_PREFIX,
   findProblems,
   handleHealthCheck,
   inboxPaused,
@@ -61,6 +62,8 @@ test("today's designed state raises nothing", () => {
 
 // ── inbox_paused ─────────────────────────────────────────────────────────────
 
+const BREAKER = "Autopilot breaker (hard_bounces): 2 hard bounces today";
+
 test("inbox_paused fires for a connected, capped, paused inbox: which inbox, since when, why, how to resume", () => {
   const p = inboxPaused(
     snap(NOW, {
@@ -78,20 +81,44 @@ test("inbox_paused fires for a connected, capped, paused inbox: which inbox, sin
   assert.match(p.action, /repeats every 24h/);
 });
 
-test("inbox_paused: one of two paused says the other keeps sending; a pause with no trip on record says so", () => {
-  const p = inboxPaused(snap(NOW, { inboxes: [inbox("henry@runna.ca", { paused: true }), inbox("maria@runna.ca")] }));
+test("inbox_paused: one of two paused says the other keeps sending; a breaker pause with no trip on record says so", () => {
+  const p = inboxPaused(snap(NOW, { inboxes: [inbox("henry@runna.ca", { paused: true, pausedReason: BREAKER }), inbox("maria@runna.ca")] }));
   assert.ok(p);
   assert.match(p.stops, /other inboxes keep sending/);
   assert.match(p.detail, /henry@runna\.ca is paused since an unrecorded time/);
   assert.doesNotMatch(p.detail, /maria/);
 });
 
+test("inbox_paused fires on a breaker trip since the last resume even if a person edited the reason", () => {
+  const p = inboxPaused(snap(NOW, { inboxes: [inbox("henry@runna.ca", { paused: true, pausedReason: "checking bounces", pausedSince: "2026-10-21T15:45:00Z" })] }));
+  assert.ok(p);
+  assert.match(p.detail, /since 2026-10-21T15:45:00Z, reason: checking bounces/);
+});
+
+test("inbox_paused: a person's pause next to a breaker pause still counts toward 'all sending stopped'", () => {
+  const p = inboxPaused(
+    snap(NOW, { inboxes: [inbox("henry@runna.ca", { paused: true, pausedReason: BREAKER }), inbox("maria@runna.ca", { paused: true, pausedReason: "holiday" })] }),
+  );
+  assert.ok(p);
+  assert.equal(p.title, "Sending paused on henry@runna.ca");
+  assert.match(p.stops, /All cold sending/);
+});
+
+test("the breaker prefix is the one lib/autopilot/tick.ts writes into paused_reason", () => {
+  const src = readFileSync(new URL("../lib/autopilot/tick.ts", import.meta.url), "utf8");
+  const written = src.match(/paused_reason: `([^$`]*)\$\{trip\.code\}/)?.[1];
+  assert.equal(written, BREAKER_PAUSE_PREFIX);
+});
+
 test("inbox_paused is silent for every designed state", () => {
   const cases: Array<[string, Inbox[]]> = [
     ["nothing paused", [inbox("henry@runna.ca")]],
-    ["paused AND disconnected: google_disconnected's job", [inbox("henry@runna.ca", { paused: true, tokenOk: false, error: "Token refresh failed (400): invalid_grant" })]],
-    ["paused during a transient token failure", [inbox("henry@runna.ca", { paused: true, tokenOk: false, error: "Token refresh failed: timed out after 10s" })]],
-    ["paused with a daily cap of 0 (not a sending inbox)", [inbox("henry@runna.ca", { paused: true, dailyCap: 0 })]],
+    ["a person paused it on purpose (Settings → Sending)", [inbox("henry@runna.ca", { paused: true, pausedReason: "holiday" })]],
+    ["a person paused it with no reason", [inbox("henry@runna.ca", { paused: true })]],
+    ["a breaker pause a person already resumed, then re-paused by hand", [inbox("henry@runna.ca", { paused: true, pausedReason: "testing", pausedSince: null })]],
+    ["paused AND disconnected: google_disconnected's job", [inbox("henry@runna.ca", { paused: true, pausedReason: BREAKER, tokenOk: false, error: "Token refresh failed (400): invalid_grant" })]],
+    ["paused during a transient token failure", [inbox("henry@runna.ca", { paused: true, pausedReason: BREAKER, tokenOk: false, error: "Token refresh failed: timed out after 10s" })]],
+    ["paused with a daily cap of 0 (not a sending inbox)", [inbox("henry@runna.ca", { paused: true, pausedReason: BREAKER, dailyCap: 0 })]],
     ["no inboxes", []],
   ];
   for (const [name, inboxes] of cases) assert.equal(inboxPaused(snap(NOW, { inboxes })), null, name);
@@ -100,7 +127,7 @@ test("inbox_paused is silent for every designed state", () => {
 test("emails_stuck still ignores a paused inbox: one alert (inbox_paused), not two", () => {
   const tueNight = new Date("2026-10-20T23:25:00Z");
   const s = snap(tueNight, {
-    inboxes: [inbox("henry@runna.ca", { paused: true })],
+    inboxes: [inbox("henry@runna.ca", { paused: true, pausedReason: BREAKER })],
     pending: [{ id: "p-due", status: "approved", scheduledSendAt: "2026-10-20T10:00:00Z", updatedAt: null, senderInboxId: "ib-henry@runna.ca", cooldownUntil: null }],
   });
   assert.deepEqual(findProblems(s).map((p) => p.kind), ["inbox_paused"]);
@@ -143,8 +170,9 @@ test("tick_errors is silent for a single failing tick, two, or three spread past
 
 // ── learning_stalled ─────────────────────────────────────────────────────────
 
-const due = (n: number, over: Partial<{ email: string | null; status: string }> = {}) =>
-  Array.from({ length: n }, (_, i) => ({ email: `owner${i}@shop${i}.ca`, status: "sent", ...over }));
+// Prod shape: root pitches keep status "sent" (or replied …) after a bounce; the bounce is a pitch_events row.
+const due = (n: number, over: Partial<{ email: string | null; bounced: boolean }> = {}) =>
+  Array.from({ length: n }, (_, i) => ({ email: `owner${i}@shop${i}.ca`, bounced: false, ...over }));
 const arms = (trials: number, updatedHoursAgo: number) => [
   { trials, updatedAt: ago(updatedHoursAgo) },
   { trials: 0, updatedAt: ago(updatedHoursAgo) },
@@ -164,7 +192,7 @@ test("learning_stalled fires when the writer arms have not been written for 7+ d
 });
 
 test("learning_stalled fires when the learning step failed in 2 ticks in the last 24h", () => {
-  const p = learningStalled(snap(NOW, { tickErrors: [tickRow(1, "learn: relation does not exist"), tickRow(20, "presend: timeout")] }));
+  const p = learningStalled(snap(NOW, { tickErrors: [tickRow(1, "learn: relation does not exist"), tickRow(20, "learn: timeout")] }));
   assert.ok(p);
   assert.match(p.detail, /learning step failed in 2 ticks/);
 });
@@ -174,7 +202,12 @@ test("learning_stalled is silent for every designed state", () => {
     ["today: no 15-day-old sends, arms at 0 trials", snap()],
     ["4 settled sends only", snap(NOW, { learning: { dueRootSends: due(4), writerArms: arms(0, 0.2) } })],
     ["5 due but all to test addresses", snap(NOW, { learning: { dueRootSends: due(5, { email: "pedrojr22+t@gmail.com" }), writerArms: arms(0, 0.2) } })],
-    ["5 due but bounced (never a trial)", snap(NOW, { learning: { dueRootSends: due(5, { status: "bounced" }), writerArms: arms(0, 0.2) } })],
+    ["5 due but bounced (a bounce event; never a trial)", snap(NOW, { learning: { dueRootSends: due(5, { bounced: true }), writerArms: arms(0, 0.2) } })],
+    [
+      "kill switch flipped back on after 10 days off, before the first tick learns",
+      // An off tick never writes autonomy_state.updated_at and the flip doesn't either (no trigger on 0040 tables).
+      snap(NOW, { autopilot: { enabled: true, stage: "veto", updatedAt: ago(240) }, learning: { dueRootSends: due(9), writerArms: arms(3, 240) } }),
+    ],
     ["5 due, learner counted them, wrote arms this tick", snap(NOW, { learning: { dueRootSends: due(5), writerArms: arms(5, 0.2) } })],
     ["autopilot switched off (the tick does not learn)", snap(NOW, { autopilot: { enabled: false, stage: "veto", updatedAt: ago(0.2) }, learning: { dueRootSends: due(9), writerArms: arms(0, 300) } })],
     ["stage off", snap(NOW, { autopilot: { enabled: true, stage: "off", updatedAt: ago(0.2) }, learning: { dueRootSends: due(9), writerArms: arms(0, 300) } })],
@@ -309,7 +342,7 @@ function harness(opts: { snapshot: (now: Date) => HealthSnapshot; deliver?: bool
 }
 
 const pausedAndSilent = (now: Date) =>
-  snap(now, { inboxes: [inbox("henry@runna.ca", { paused: true })], heartbeats: [beat("autopilot-tick", ago(2, now))] });
+  snap(now, { inboxes: [inbox("henry@runna.ca", { paused: true, pausedReason: BREAKER })], heartbeats: [beat("autopilot-tick", ago(2, now))] });
 
 test("each new problem goes to Sentry once, deduped like the email", async () => {
   const h = harness({ snapshot: pausedAndSilent });
@@ -327,7 +360,7 @@ test("each new problem goes to Sentry once, deduped like the email", async () =>
 test("a run with one old and one new problem sends only the new one to Sentry", async () => {
   let both = false;
   const h = harness({
-    snapshot: (n) => (both ? pausedAndSilent(n) : snap(n, { inboxes: [inbox("henry@runna.ca", { paused: true })] })),
+    snapshot: (n) => (both ? pausedAndSilent(n) : snap(n, { inboxes: [inbox("henry@runna.ca", { paused: true, pausedReason: BREAKER })] })),
   });
   await h.call(NOW);
   assert.deepEqual(h.captured, ["S.P.A.M. health: Sending paused on henry@runna.ca"]);

@@ -13,10 +13,11 @@
  *   emails_stuck         the last closed send window had sendable pitches due
  *                        and their inbox sent nothing, or a pitch stayed in
  *                        "sending" through a whole window
- *   inbox_paused         a connected inbox with a daily cap is paused: nothing
- *                        sends from it until a person resumes it. The tick
- *                        emails once at the breaker trip; this rule re-alerts
- *                        every 24h while the pause lasts.
+ *   inbox_paused         a breaker paused a connected inbox with a daily cap:
+ *                        nothing sends from it until a person resumes it. The
+ *                        tick emails once at the trip; this rule re-alerts
+ *                        every 24h while the pause lasts. A pause a person set
+ *                        (Settings → Sending) is silent.
  *   tick_errors          3+ autopilot ticks in the last 2h recorded errors
  *                        (audit_log autopilot.tick_errors); one failing tick is not
  *   learning_stalled     5+ first emails sent 15-30 days ago (all settled) and
@@ -27,7 +28,8 @@
  *                        row inside its window; no heartbeat row yet = silent
  * Not emergencies, by design: the AI budget cap, the daily-cap drip, cooldowns,
  * weekends, hours outside a job's window, a quiet day, one failing tick, no
- * 15-day-old sends yet (nothing has settled), an inbox with a daily cap of 0.
+ * 15-day-old sends yet (nothing has settled), an inbox with a daily cap of 0,
+ * an inbox a person paused on purpose.
  *
  * Dedupe: an audit_log row (action health.alert, metadata.kind = the rule) is
  * written after an email goes out; a rule with such a row in the last 24h is
@@ -101,7 +103,8 @@ export type HealthSnapshot = {
    * every writer.* learning_arms row. null = not read.
    */
   learning: {
-    dueRootSends: Array<{ email: string | null; status: string }>;
+    /** bounced: the pitch has a pitch_events "bounce" row (pitches.status is never set to bounced). */
+    dueRootSends: Array<{ email: string | null; bounced: boolean }>;
     writerArms: Array<{ trials: number; updatedAt: string | null }>;
   } | null;
   /** cron_heartbeats rows (0051). null = not read. */
@@ -235,23 +238,36 @@ export function emailsStuck(s: HealthSnapshot): HealthProblem | null {
 // ── Paused inbox ─────────────────────────────────────────────────────────────
 
 /**
- * A connected inbox with a daily cap that is paused sends nothing, first
- * emails or follow-ups, until a person resumes it; with one inbox that is a
- * full stop. The breaker emails once when it trips; the 24h dedupe turns this
- * into the daily reminder. A disconnected inbox is google_disconnected's job.
+ * The paused_reason prefix the tick's breakers write (lib/autopilot/tick.ts
+ * runBreakers: `Autopilot breaker (<code>): <reason>`). A test pins it to that
+ * source.
+ */
+export const BREAKER_PAUSE_PREFIX = "Autopilot breaker (";
+
+/** A breaker paused it: its reason is the breaker's, or a trip covers it since its last resume. */
+export const pausedByBreaker = (i: HealthSnapshot["inboxes"][number]) =>
+  i.paused && (!!i.pausedSince || (i.pausedReason ?? "").startsWith(BREAKER_PAUSE_PREFIX));
+
+/**
+ * A connected inbox with a daily cap that a breaker paused sends nothing,
+ * first emails or follow-ups, until a person resumes it; with one inbox that
+ * is a full stop. The breaker emails once when it trips; the 24h dedupe turns
+ * this into the daily reminder. A pause a person set on purpose (Settings →
+ * Sending: a daily cap can't go below 1, so pausing is the only off switch) is
+ * silent, and a disconnected inbox is google_disconnected's job.
  */
 export function inboxPaused(s: HealthSnapshot): HealthProblem | null {
   const usable = s.inboxes.filter((i) => i.tokenOk && i.dailyCap > 0);
-  const paused = usable.filter((i) => i.paused);
+  const paused = usable.filter(pausedByBreaker);
   if (paused.length === 0) return null;
-  const all = paused.length === usable.length;
+  const all = usable.every((i) => i.paused);
   const first = paused[0] as (typeof paused)[number];
   return {
     kind: "inbox_paused",
     title: paused.length === 1 ? `Sending paused on ${first.email}` : `Sending paused on ${paused.length} inboxes`,
     detail: paused
       .map((i) => {
-        const since = i.pausedSince ? `since ${i.pausedSince}` : "since an unrecorded time (no breaker trip on record)";
+        const since = i.pausedSince ? `since ${i.pausedSince}` : "since an unrecorded time (no breaker trip on record since its last resume)";
         const why = i.pausedReason ? `, reason: ${i.pausedReason.slice(0, 200)}` : "";
         return `${i.email} is paused ${since}${why}.`;
       })
@@ -305,21 +321,24 @@ export function tickErrors(s: HealthSnapshot): HealthProblem | null {
 export const LEARNING_DUE_MIN = 5;
 /** The learner rewrites every writer arm (learning_arms.updated_at) on each tick it runs. */
 export const LEARNING_STALE_DAYS = 7;
-/** Tick step names of the learning step (lib/autopilot/tick.ts step("learn"), and its parts). */
-export const LEARNING_STEPS: ReadonlySet<string> = new Set(["learn", "settle", "presend"]);
+/** Tick step names of the learning step: lib/autopilot/tick.ts step("learn") (settling and the pre-send guardrail run inside it). */
+export const LEARNING_STEPS: ReadonlySet<string> = new Set(["learn"]);
 /** One failed learning step is a blip: the learner reruns every 15 minutes. */
 export const LEARNING_ERROR_MIN_TICKS = 2;
 
 export function learningStalled(s: HealthSnapshot): HealthProblem | null {
   const a = s.autopilot;
   // The tick only learns with the autopilot on; a silent tick is autopilot_stopped's job.
+  // That guard also covers the kill switch flipped back on: autonomy_state has no
+  // updated_at trigger (0040), and an off tick never writes it, so until the first
+  // tick after the flip (which writes it, then learns) autopilot_stopped owns it.
   if (!a || !a.enabled || a.stage === "off" || autopilotStopped(s)) return null;
   const now = new Date(s.now).getTime();
   const parts: string[] = [];
 
   if (s.learning) {
     // The learner never counts a test send or a bounce (lib/learning/reward.ts).
-    const due = s.learning.dueRootSends.filter((p) => p.status !== "bounced" && !isTestAddress(p.email)).length;
+    const due = s.learning.dueRootSends.filter((p) => !p.bounced && !isTestAddress(p.email)).length;
     if (due >= LEARNING_DUE_MIN) {
       const trials = s.learning.writerArms.reduce((n, r) => n + r.trials, 0);
       const newest = Math.max(...s.learning.writerArms.map((r) => (r.updatedAt ? new Date(r.updatedAt).getTime() : NaN)).filter(Number.isFinite));
