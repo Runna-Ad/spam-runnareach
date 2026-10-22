@@ -81,6 +81,7 @@ function followupCtx(over: Partial<FollowupContext> = {}): FollowupContext {
     painLabel: null,
     lang: "es",
     signature: "Nils\nRunna Advertising",
+    hunterUrl: "https://spam-runnareach.vercel.app/r/abcdefgh?market=mx&s=1",
     ...over,
   };
 }

@@ -8,7 +8,10 @@
  * Sequence:
  *   Step 1 — initial pitch          (send-queue / send-action)
  *   Step 2 — soft check-in          (follow_up_step = 1, day ~3)
- *   Step 3 — final + coffee offer   (follow_up_step = 2, day ~8)
+ *   Step 3 — final note             (follow_up_step = 2, day ~8)
+ *
+ * The one CTA is the free check (standing rule 8: no calls): every body ends
+ * on a 👉 line with `hunterUrl`, the root pitch's tracked link.
  *
  * Both languages, signed by the per-language sender (lib/pitches/sender-identity),
  * no em dashes (the pitch voice bans them), no numbers (nothing here is sourced).
@@ -28,6 +31,8 @@ export type FollowupContext = {
   lang: "en" | "es";
   /** Sign-off block, e.g. "Henry\nRunna Advertising". */
   signature: string;
+  /** The free-check link (the root's tracked link, followupHunterLink). */
+  hunterUrl: string;
 };
 
 export type FollowupEmail = {
@@ -40,6 +45,28 @@ export type FollowupEmail = {
 function greeting(ctx: FollowupContext): string {
   if (ctx.lang === "es") return ctx.contactName ? `Hola ${ctx.contactName}` : `Hola, equipo de ${ctx.prospectName}`;
   return ctx.contactName ? `Hi ${ctx.contactName}` : `Hi ${ctx.prospectName} team`;
+}
+
+/** The CTA: one invitation line, then the 👉 link line. Appended when absent. */
+function ctaBlock(ctx: FollowupContext, final: boolean): string {
+  const invite =
+    ctx.lang === "es"
+      ? final
+        ? "Si en algún momento te sirve, la revisión gratuita sigue aquí, sin registro:"
+        : `Si te sirve, aquí puedes ver gratis dónde ${ctx.prospectName} pierde tiempo, sin registro:`
+      : final
+        ? "If it's ever useful, the free check is still here, no signup:"
+        : `If it helps, here's a free check of where ${ctx.prospectName} loses time, no signup:`;
+  return `${invite}\n👉 ${ctx.hunterUrl}`;
+}
+
+/** Guarantees the body carries the link on its own 👉 line, before the sign-off. */
+export function withCtaLine(body: string, ctx: FollowupContext, final: boolean): string {
+  const hasLine = body.split("\n").some((l) => l.trim().startsWith("👉") && l.includes(ctx.hunterUrl));
+  if (hasLine) return body;
+  const sig = `\n\n${ctx.signature}`;
+  const head = body.endsWith(sig) ? body.slice(0, -sig.length) : body;
+  return `${head}\n\n${ctaBlock(ctx, final)}${body.endsWith(sig) ? sig : ""}`;
 }
 
 function reSubject(originalSubject: string): string {
@@ -63,11 +90,10 @@ export function buildFollowup1(ctx: FollowupContext): FollowupEmail {
     : ctx.painLabel
       ? `Just making sure my note about ${ctx.painLabel} at ${ctx.prospectName} didn't get buried.`
       : `Just making sure my note about ${ctx.prospectName} didn't get buried.`;
-  const ask = es ? "¿Vale la pena una llamada de 20 minutos?" : "Worth a 20-minute chat?";
-  return { subject, body: `${greeting(ctx)},\n\n${hook}\n\n${ask}\n\n${ctx.signature}` };
+  return { subject, body: withCtaLine(`${greeting(ctx)},\n\n${hook}\n\n${ctx.signature}`, ctx, false) };
 }
 
-// ── Follow-up #2 — Final + coffee offer (day ~8) ────────────────────────────
+// ── Follow-up #2 — Final note (day ~8) ──────────────────────────────────────
 
 /** Step 3 (follow_up_step = 2): the last touch, and it says so. */
 export function buildFollowup2(ctx: FollowupContext): FollowupEmail {
@@ -76,12 +102,12 @@ export function buildFollowup2(ctx: FollowupContext): FollowupEmail {
   const intro = es
     ? ctx.painLabel
       ? `Cuando revisamos ${ctx.prospectName}, vimos un hueco en ${ctx.painLabel}, de esos que cuestan ventas cada mes sin que se note.`
-      : `Cuando revisamos ${ctx.prospectName}, encontramos un par de cosas que creo valen 20 minutos.`
+      : `Cuando revisamos ${ctx.prospectName}, encontramos un par de cosas que creo vale la pena ver.`
     : ctx.painLabel
       ? `When we looked at ${ctx.prospectName}, we spotted a gap around ${ctx.painLabel}, the kind that quietly costs revenue every month.`
-      : `When we looked at ${ctx.prospectName}, we found a couple of things I think are worth 20 minutes.`;
+      : `When we looked at ${ctx.prospectName}, we found a couple of things I think are worth a look.`;
   const body = es
-    ? `${greeting(ctx)},\n\nÚltimo correo, lo prometo.\n\n${intro}\n\nSi la llamada no te sirve, el café va por mi cuenta. Después de esto no te escribo más.\n\n${ctx.signature}`
-    : `${greeting(ctx)},\n\nLast note, I promise.\n\n${intro}\n\nIf the call isn't worth your time, coffee's on me. After this I'll leave you alone.\n\n${ctx.signature}`;
-  return { subject, body };
+    ? `${greeting(ctx)},\n\nÚltimo correo, lo prometo.\n\n${intro}\n\n${ctaBlock(ctx, true)}\n\nDespués de esto no te escribo más.\n\n${ctx.signature}`
+    : `${greeting(ctx)},\n\nLast note, I promise.\n\n${intro}\n\n${ctaBlock(ctx, true)}\n\nAfter this I'll leave you alone.\n\n${ctx.signature}`;
+  return { subject, body: withCtaLine(body, ctx, true) };
 }

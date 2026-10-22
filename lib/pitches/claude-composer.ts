@@ -251,13 +251,22 @@ const FORWARDING_LINE = {
   es: "Si no eres la persona indicada para esto, te agradecería mucho que puedas reenviarle este mensaje a quien corresponda.",
 } as const;
 
-/** A resolved Hunter link: what resolveCtaLink puts where {hunter_url} was (HUNTER_URL + its query). */
-const RESOLVED_HUNTER_LINK_RE = new RegExp(`${HUNTER_URL.replace(/[.*+?^${}()|[\]\\/]/g, "\\$&")}\\S*`, "g");
+/**
+ * A resolved Hunter link: what resolveCtaLink puts where {hunter_url} was. Either
+ * the direct link (HUNTER_URL + its query) or our tracked redirect
+ * (<any origin>/r/<8-char attribution code>[?query], lib/pitches/tracked-links.ts).
+ * The tracked form matches on any host: the origin is an env var and may differ
+ * between the deploy that stored the body and the one rewriting it.
+ */
+const RESOLVED_HUNTER_LINK_RE = new RegExp(
+  `(?:${HUNTER_URL.replace(/[.*+?^${}()|[\]\\/]/g, "\\$&")}|https?://[^\\s/]+/r/[abcdefghjkmnpqrstuvwxyz23456789]{8}(?![\\w-]))\\S*`,
+  "g",
+);
 
 /**
  * A stored body turned back into what the writer produced, for a revision of
  * it: every Hunter link back to the {hunter_url} slot (the stored link carries
- * the OLD pitch's &r= attribution code; kept as is, the rewrite's scans would
+ * the OLD pitch's attribution code, as &r= or in the /r/<code> path; kept as is, the rewrite's scans would
  * be credited to a deleted row) and the composer's forwarding line removed (it
  * is appended again after the revision).
  */

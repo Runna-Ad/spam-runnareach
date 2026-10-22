@@ -5,7 +5,10 @@
  * their ORIGINAL pitch so the follow-up never repeats itself), EN/ES aware,
  * no em dashes, with a distinct angle per step.
  *
- * Goal of every follow-up: get a reply (a 20-minute chat). Email 2 is a
+ * Goal of every follow-up: get the prospect to run the free check (the
+ * Inefficiency Hunter), the one CTA of every cold email (standing rule 8: no
+ * calls). The link is REQUIRED, on its own 👉 line: it is the root pitch's
+ * tracked link, so a click is recorded on the conversation. Email 2 is a
  * fresh-value nudge; email 3 is a graceful breakup.
  *
  * Falls back to the deterministic hand-written templates
@@ -19,9 +22,7 @@ import {
   structuredCall,
   type ClaudeUsage,
 } from "../anthropic/client.ts";
-
-// Permanent rule: ALL cold-email CTAs point at the Inefficiency Hunter.
-const HUNTER_URL = "https://runna-hunter.vercel.app/";
+import { HUNTER_URL } from "./industry-templates.ts";
 
 export type FollowupComposerInput = {
   /** 2 = first follow-up (nudge), 3 = final (breakup). */
@@ -47,6 +48,12 @@ export type FollowupComposerInput = {
   hunterValue: number | null;
   senderFirstName: string;
   agencyName: string;
+  /**
+   * The free-check link this follow-up carries (the root's tracked link,
+   * followupHunterLink in lib/pitches/tracked-links.ts). Required: every
+   * cold-email CTA goes to the free check.
+   */
+  hunterUrl: string;
 };
 
 export type ComposedFollowup = {
@@ -82,11 +89,16 @@ export async function composeFollowupWithClaude(
   }
 
   // Hard-strip em dashes — permanent rule shared with the pitch composer.
-  const cleanBody = call.data.body
+  const stripped = call.data.body
     .replace(/\s*—\s*/g, ", ")
     .replace(/—/g, " ")
     .replace(/ {2,}/g, " ")
     .trim();
+  const cleanBody = enforceFollowupCta(stripped, input.hunterUrl);
+  if (!cleanBody) {
+    // Paid, so the usage goes back to the caller; it sends the template.
+    return { ok: false, error: "Follow-up has no free-check link line", reason: "missing_cta", usage: call.usage };
+  }
 
   return {
     ok: true,
@@ -98,6 +110,36 @@ export async function composeFollowupWithClaude(
     usage: call.usage,
     model: call.model,
   };
+}
+
+/** Any link to the free check the model wrote (bare, or a copied query). */
+const ANY_HUNTER_LINK_RE = new RegExp(`${HUNTER_URL.replace(/[.*+?^${}()|[\]\\/]/g, "\\$&")}\\S*`, "g");
+
+/**
+ * The follow-up's one CTA, enforced in code: {hunter_url} and any direct Hunter
+ * link become `hunterUrl` (the tracked link), and the line holding it starts
+ * with 👉 (the send gate's broken_cta rule, and the HTML button). Returns null
+ * when the body has no line with the link: the caller falls back to the
+ * template, which always has one.
+ */
+export function enforceFollowupCta(body: string, hunterUrl: string): string | null {
+  let out = body.replace(/\{\{?\s*hunter_url\s*\}?\}/gi, hunterUrl);
+  out = out.replace(ANY_HUNTER_LINK_RE, (url) => {
+    if (url.startsWith(hunterUrl)) return url;
+    const trail = url.match(/[.,;:!?)\]]+$/)?.[0] ?? "";
+    return `${hunterUrl}${trail}`;
+  });
+  let found = false;
+  out = out
+    .split("\n")
+    .map((line) => {
+      if (!line.includes(hunterUrl)) return line;
+      found = true;
+      const trimmed = line.trim();
+      return trimmed.startsWith("👉") ? line : `👉 ${trimmed}`;
+    })
+    .join("\n");
+  return found ? out : null;
 }
 
 function ensureReSubject(subject: string, original: string): string {
@@ -117,19 +159,22 @@ function buildSystemPrompt(lang: "en" | "es", step: 2 | 3): string {
   consequence, a different way our capability helps them). A fresh angle is a new FRAMING
   of what you were given, never a new FACT.
 - Light, human, zero guilt-tripping. Acknowledge they're busy.
-- End with a low-friction ask: "still worth a quick 20 minutes?" or similar.`
+- End with the free check as the low-friction next step: one line inviting them to run it,
+  then the link line.`
       : `THIS IS FOLLOW-UP #2 (the final / breakup), sent ~5 days after #1 got no reply.
 - Keep it SHORT: 45-80 words. This is the LAST email in the sequence.
 - Be honest that it's the last note. No desperation, no guilt. Confident and warm.
 - Restate the core value/opportunity in one crisp line, using only the payload facts.
-- Offer an easy out + a sweetener: e.g. "if a 20-min call isn't worth it, coffee's on me,
-  and I'll leave you alone after this." Leave the door open for the future.`;
+- Offer an easy out: the free check stays there whenever they want it, and you'll leave them
+  alone after this. Leave the door open for the future.`;
 
   return `You write a FOLLOW-UP email in an ongoing cold-outreach thread to a prospect who has
 not replied yet. You are Runna, a creative + design agency (brand, web/ecommerce, email flows,
 paid social, AI automation, custom apps, UX, content, packaging).
 
-THE GOAL: get a reply. Specifically, a short 20-minute chat. Every follow-up nudges toward that.
+THE GOAL: get them to run the free check (the Inefficiency Hunter: a free audit of where the
+business loses time and money, no signup). It is the ONE call to action. Never ask for a call,
+a meeting, a chat or a reply-to-book.
 
 ${stepRules}
 
@@ -154,9 +199,9 @@ ABSOLUTE FORMAT RULES (violations fail QA):
 - Do NOT repeat the original email's opening line or phrasing. The reader has seen it. Say
   something genuinely different. You are given the original email precisely so you can avoid it.
 - Write the ENTIRE email in ${langName}. Never mix languages.
-- One soft CTA only. If you reference a free check/audit, use the Inefficiency Hunter link
-  provided (a free 30-second audit, no signup), on its own line starting with 👉. No call-booking
-  links, no Loom, no attachments.
+- One CTA only, and it is REQUIRED: the free check. Put the hunter_url from the payload, copied
+  exactly, on its own line starting with 👉 (e.g. "👉 <hunter_url>"). No other link. No call
+  request, no call-booking links, no Loom, no attachments.
 - Sign off: sender's first name on one line, agency name on the next.
 
 Output JSON EXACTLY:
@@ -188,12 +233,12 @@ function buildUserPrompt(input: FollowupComposerInput): string {
     // The first email we sent — write something DIFFERENT from this.
     original_email_body: (input.originalBody ?? "").slice(0, 1200) || null,
     sender: { first_name: input.senderFirstName, agency: input.agencyName },
-    hunter_url: HUNTER_URL,
+    hunter_url: input.hunterUrl,
   };
 
   return `Write follow-up #${input.step} for this prospect. It must read as a natural next message
-in the same thread, take a fresh angle (do NOT echo original_email_body), and push gently toward
-a 20-minute chat.
+in the same thread, take a fresh angle (do NOT echo original_email_body), and point to the free
+check: hunter_url on its own 👉 line.
 
 \`\`\`json
 ${JSON.stringify(payload, null, 2)}
