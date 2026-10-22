@@ -34,7 +34,7 @@
 Still open after the ship:
 - Pedro: Settings → Sending → "Send a test email" (EN + ES, +tag address, plus Outlook); check accents, button, footer links, unsubscribe. Not done by Claude (no Gmail access from the session).
 - Sentry: already correct (warmup-engine active; postmaster-sync, dmarc-sync, reactivation disabled). warmup-engine's first post-fix check-in expected ~14:22 UTC 2026-10-17.
-- Optional: unsubscribe links still read `spam-runnareach.vercel.app/...` — a free `go.runnareach.com` CNAME + `UNSUBSCRIBE_BASE_URL` fixes the look.
+- Link host: Pedro 2026-10-22 chose a neutral free alias. `runna-check.vercel.app` added to the Vercel project; Production `UNSUBSCRIBE_BASE_URL=https://runna-check.vercel.app` set 2026-10-22 17:00 UTC (unsubscribe + tracked /r/ links use it from the batch 8 deploy on). Old `spam-runnareach.vercel.app` links keep working.
 - pedrojr22@gmail.com is Pedro's (confirmed) → the GYMVMT "reply" was a test; exclude from metrics.
 
 ## Phase 1 — "make good measurable" (part 1 SHIPPED 2026-10-17)
