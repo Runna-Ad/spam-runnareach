@@ -96,7 +96,13 @@ function isAuthorized(req: NextRequest): Promise<boolean> {
 }
 
 type ThreadRow = {
+  /** The thread's newest pitch: the reply row, the draft and the reply's threading use it. */
   pitch_id: string;
+  /**
+   * The conversation's first email. Reply and bounce events go here, the one
+   * row the learners, exemplars and reports read (follow-ups record "sent" here too).
+   */
+  root_pitch_id: string;
   tenant_id: string;
   prospect_id: string;
   contact_id: string | null;
@@ -136,7 +142,7 @@ export async function GET(req: NextRequest) {
   const { data: pitchRows, error: pitchErr } = await supabase
     .from("pitches")
     .select(
-      "id, tenant_id, prospect_id, contact_id, sender_inbox_id, subject, gmail_thread_id, sent_at",
+      "id, tenant_id, prospect_id, contact_id, sender_inbox_id, subject, gmail_thread_id, sent_at, parent_pitch_id",
     )
     .eq("status", "sent")
     .not("gmail_thread_id", "is", null)
@@ -149,17 +155,23 @@ export async function GET(req: NextRequest) {
   }
 
   // Dedupe to one (most recent) pitch per thread, remembering the thread's
-  // first send. Rows arrive newest-first, so later rows can only be older.
+  // first send and its root. Rows arrive newest-first, so later rows can only be
+  // older. The root is the thread's row with no parent (the oldest one, should a
+  // thread ever hold two). When that row is not in the result (no longer status
+  // 'sent', or past the 500 newest), the newest row's parent stands in: the
+  // follow-up cron only sends from rows with no parent, so that is the root.
   const threadMap = new Map<string, ThreadRow>();
-  for (const p of (pitchRows ?? []) as Array<ThreadRow & { id: string }>) {
+  for (const p of (pitchRows ?? []) as Array<ThreadRow & { id: string; parent_pitch_id: string | null }>) {
     const key = p.gmail_thread_id;
     if (!key) continue;
     const known = threadMap.get(key);
     if (known) {
       if (p.sent_at && (!known.first_sent_at || p.sent_at < known.first_sent_at)) known.first_sent_at = p.sent_at;
+      if (p.parent_pitch_id === null) known.root_pitch_id = p.id;
     } else {
       threadMap.set(key, {
         pitch_id: p.id,
+        root_pitch_id: p.parent_pitch_id ?? p.id,
         tenant_id: p.tenant_id,
         prospect_id: p.prospect_id,
         contact_id: p.contact_id,
@@ -332,14 +344,17 @@ export async function GET(req: NextRequest) {
           },
         });
 
-        // The pitch's timeline: a bounce is not a reply; a delay is neither.
+        // The conversation's timeline, on the ROOT pitch whatever message the
+        // reply answers: a bounce is not a reply; a delay is neither.
         if (!delay) {
           await recordPitchEvent(supabase, {
             tenantId: thread.tenant_id,
-            pitchId: thread.pitch_id,
+            pitchId: thread.root_pitch_id,
             type: classification.intent === "bounced" ? "bounce" : "reply",
             payload: {
               reply_id: insertedReply.id,
+              // The thread's newest pitch when the reply came in (a follow-up, or the root itself).
+              answered_pitch_id: thread.pitch_id,
               intent: classification.intent,
               sentiment: classification.sentiment,
               // Pedro's own test sends must never count as a real reply.
