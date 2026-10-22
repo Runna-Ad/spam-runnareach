@@ -5,6 +5,7 @@ file alone. Update it on every spawn, every status change, every merge. Keep clo
 for the current phase; move older ones to the retro.
 
 ## Current phase
+`phase3-batch8` ACTIVE since 2026-10-22 16:40 UTC on `claude/phase3-batch8-integration` (main 4418e8d + batch 7 notes). **Owner: session_01HtEg7XG4MPQU4omrd2BX69.** Rows and log: "Batch 8" section at the end.
 `phase3-batch7` SHIPPED 2026-10-21 21:57 UTC (main 4418e8d, PR #51, migration 0050 applied first; deploy READY). Was active since 2026-10-21 20:17 UTC on `claude/phase3-batch7-integration` (cut from main c548bc0 + batch 6 notes/vercel-ignore fix). **Owner: session_01HtEg7XG4MPQU4omrd2BX69.** Rows and log: "Batch 7" section at the end. `phase3-batch6` SHIPPED 2026-10-20 21:24 UTC (main c548bc0, PR #46, no migrations). `phase3-batch5` SHIPPED 2026-10-20 17:08 UTC (main 6ab2d62, PR #43). Previous owner session_017nqBxLFFXKbhDwKiPi6xLf (handed off 2026-10-21 20:16). Older lines below.
 `phase3-batch3` SHIPPED 2026-10-19 00:19 UTC (main 9c98448, PR #25); Q1 follow-up SHIPPED 2026-10-19 (merged 01:14 UTC, READY by 01:19; main 729b299, PR #27, deploy dpl_J3tEospxUg8mzz27FkAuGdUTcuPv READY). **Owner: session_017nqBxLFFXKbhDwKiPi6xLf.** #17 SHIPPED switched off 04:24 UTC (main 3808b56, PR #28). Weekly report HTML + exemplar readiness SHIPPED 13:58 UTC (main 45519c8, PR #29). Integration branch = main via merge commits (no force push).
 Open:
@@ -313,3 +314,28 @@ Log:
 - 2026-10-21 21:57 UTC — Pedro "ship it" (21:55). 0050 applied via connector 21:56:58, verified (wanted_facts + RLS + 1 policy, record_wanted_fact, 4 benchmark columns, CHECK benchmarks_rejected_not_active, cron spam-fact-research '20 14 * * 3', 48 active benchmarks unchanged); version normalised to 0050. PR #51 squash-merged → main 4418e8d. Prod deploy check armed (trig_016ipvpT5eTpvvi6SR96kNxD).
 - 2026-10-22 ~15:00 UTC — (session restarted after the merge; resumed the ship checklist first.) Prod deploy dpl_2uMESf97oAUbqhqAGNPpWHeUvJtV READY for 4418e8d. Prod verification: cron row 1; 13 v3.2 pitches, 6 cited, all cited rows carry the lead pain; 8 wanted_facts (no digits; no_benchmark-arm wishes correctly not recorded); all pg_cron http 200 since. Wishes do not dedupe across wordings (8 rows ≈ 2 gaps) → next batch. Open: first research run Wed 2026-10-28 14:20 UTC. main merged back into integration (board conflict: kept integration's). Batch 7 CLOSED except the Wednesday check.
 - 2026-10-22 16:10 UTC — Pedro asked for a readiness check for the fully automated self-learning flow before batch 8. Report: tasks/audit-2026-10-22-autonomy.md (prod SQL + 3 Opus read-only audits; the reply-on-follow-up claim re-checked in code). Waiting for Pedro's pick.
+
+## Batch 8 (phase3) — started 2026-10-22 ~16:40 UTC
+Scope (Pedro 2026-10-22: "go with option 1 and run batch 8 in that order", readiness check `tasks/audit-2026-10-22-autonomy.md`). Integration `claude/phase3-batch8-integration` (main 4418e8d + batch 7 notes, 697a4e2).
+
+**Decision 12 (Pedro 2026-10-22, option 1):** AI-written writing guidance stays hands-off: it goes live as a challenger and a winner can be promoted with nobody approving. Guardrails: a pre-send guardrail retires guidance whose drafts are thrown away clearly more often than the champion's (presend-learning), plus the existing opt-out guardrail. Gates, caps, compliance, breakers and DNC are never learnable. The dead /learning proposals page is removed.
+
+Waves (Pedro's order):
+1. Learning signal (audit items 1-4): reply-on-root, tracked-links, presend-learning (parallel, disjoint files; tracked-links writes `click` events, presend-learning reads them under a frozen contract).
+2. Hands-off stops and alarms (items 5, 6, 7, 9): governor demotion veto→veto reset instead of shadow; paused-inbox re-alert every 24 h; gmail_api breaker counts real errors; health alerts for tick errors and learning stall; Sentry cron monitors on tick/send-queue/follow-up/poll.
+3. Send pacing (item 10): send-queue ≤ 2 per run with gaps; follow-ups capped with gaps.
+4. Addresses and re-drafts (items 8, 11): verifier-unsure → try another contact; re-draft pool for auto_rejected prospects.
+Then batch audit, retro, integration → main PR, wait for "ship it".
+
+Migrations: none reserved for wave 1 (`click` already in prod's `pitch_event_type`, checked 2026-10-22). 0051 stays free until a later wave asks.
+
+| Slug | Module | Model/effort | Branch | Session | PR | Depends on | Status | Turns | Review findings | CI reds | Rework |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| reply-on-root | poll route records reply/bounce on the root + backfill script | opus/high | claude/reply-on-root | — | — | — | queued | | | | |
+| tracked-links | /r/[code] redirect + click event; follow-ups carry the tracked link, free-check CTA | opus/high | claude/tracked-links | — | — | — | queued | | | | |
+| presend-learning | pre-send guardrail, click reward, weekly review input, /learning cleanup | opus/high | claude/presend-learning | — | — | — | queued | | | | |
+
+Batch-audit pairs: tracked-links × presend-learning (click on the ROOT, payload {code, step, ua}; value 0.25 never makes an exemplar); reply-on-root × follow-up route (one timeline per conversation, sent + reply on the same row); tracked-links × claude-composer rewrite (no old code inherited); presend-learning × governor (guidance retirement never touches stage); backfill × 23505 skip.
+
+Log:
+- 2026-10-22 16:40 UTC — Pedro picked option 1 and the wave order. Wave 1 briefs written (reply-on-root, tracked-links, presend-learning). Spawning wave 1.
