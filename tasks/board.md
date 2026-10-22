@@ -5,7 +5,7 @@ file alone. Update it on every spawn, every status change, every merge. Keep clo
 for the current phase; move older ones to the retro.
 
 ## Current phase
-`phase3-batch8` READY (PR #59 waiting for Pedro's "ship it"; ship order: 0051 + 0052 BEFORE merge) — active since 2026-10-22 16:20 UTC on `claude/phase3-batch8-integration` (main 4418e8d + batch 7 notes). **Owner: session_01HtEg7XG4MPQU4omrd2BX69.** Rows and log: "Batch 8" section at the end.
+`phase3-batch8` SHIPPED 2026-10-22 21:31 UTC (main 7e55e1b, PR #59; 0051 + 0052 applied first) — active since 2026-10-22 16:20 UTC on `claude/phase3-batch8-integration` (main 4418e8d + batch 7 notes). **Owner: session_01HtEg7XG4MPQU4omrd2BX69.** Rows and log: "Batch 8" section at the end.
 `phase3-batch7` SHIPPED 2026-10-21 21:57 UTC (main 4418e8d, PR #51, migration 0050 applied first; deploy READY). Was active since 2026-10-21 20:17 UTC on `claude/phase3-batch7-integration` (cut from main c548bc0 + batch 6 notes/vercel-ignore fix). **Owner: session_01HtEg7XG4MPQU4omrd2BX69.** Rows and log: "Batch 7" section at the end. `phase3-batch6` SHIPPED 2026-10-20 21:24 UTC (main c548bc0, PR #46, no migrations). `phase3-batch5` SHIPPED 2026-10-20 17:08 UTC (main 6ab2d62, PR #43). Previous owner session_017nqBxLFFXKbhDwKiPi6xLf (handed off 2026-10-21 20:16). Older lines below.
 `phase3-batch3` SHIPPED 2026-10-19 00:19 UTC (main 9c98448, PR #25); Q1 follow-up SHIPPED 2026-10-19 (merged 01:14 UTC, READY by 01:19; main 729b299, PR #27, deploy dpl_J3tEospxUg8mzz27FkAuGdUTcuPv READY). **Owner: session_017nqBxLFFXKbhDwKiPi6xLf.** #17 SHIPPED switched off 04:24 UTC (main 3808b56, PR #28). Weekly report HTML + exemplar readiness SHIPPED 13:58 UTC (main 45519c8, PR #29). Integration branch = main via merge commits (no force push).
 Open:
@@ -33,8 +33,8 @@ Previous: `phase3-batch2` CLOSED (main e10a326). Rows, log and hand-off in `task
 | 0048 | bounce hotfix | APPLIED (version 20261019190301) |
 | 0049 | batch 4 send slot | APPLIED (version 20261019211644) |
 | 0050 | batch 7: `0050_wanted_facts.sql` | APPLIED 2026-10-21 21:56 UTC via connector before the merge, verified, version normalised to 0050 |
-| 0051 | batch 8 health-alarms: `0051_cron_heartbeats.sql` (cron_heartbeats table, RLS no policies) | written; apply before the deploy |
-| 0052 | batch 8 send-pacing: `0052_follow_up_every_10min.sql` (spam-follow-up → 7-59/10 15-22 * * 1-5) | written; apply BEFORE the deploy |
+| 0051 | batch 8 health-alarms: `0051_cron_heartbeats.sql` | APPLIED 2026-10-22 21:28 UTC via connector, verified (6 cols, RLS on, 0 policies), version normalised to 0051 |
+| 0052 | batch 8 send-pacing: `0052_follow_up_every_10min.sql` | APPLIED 2026-10-22 21:29 UTC via connector, verified (spam-follow-up = 7-59/10 15-22 * * 1-5, active), version normalised to 0052 |
 | 0053 | — | free |
 
 ## Active and queued tasks
@@ -368,3 +368,4 @@ Log:
 - 2026-10-22 20:05 UTC — #58 fix verified (redraft_of written in the decision record's first write incl. rewrites, audit_log autopilot.redraft_failed, write-once fake, redraft after scheduleAuto, manual contact wins): 1527 tests, build → merged 4508b13. send-pacing archived ($3.90). All 7 batch 8 tasks merged. Batch audit (Fable) next.
 - 2026-10-22 21:15 UTC — Batch audit (Fable, all 9 runtime pairs): SHIP, 0 blocking (1527 tests, build). Prod facts: 0 misfiled reply/bounce events (backfill no-op today), 0 rejected roots older than 14 days (first re-drafts 10-31), cost +$0.2-0.3/day on ~$2.35/day. Conductor took 4 optionals: learn/icp behind the tick deadline; send-queue ends an inbox's run on a Gmail failure (pacer.recordAttempt, outside the source-guarded branch); 'breakers:' prefix on the gmail read error; 0051 header note. Typecheck, lint, 1527 tests, build green. Not taken: multi-inbox scope-all breaker marks person-paused inboxes (one inbox today; noted); vercel.json daily crons (pre-existing).
 - 2026-10-22 21:20 UTC — redraft-pool archived ($10.88). Worker total ≈ $43. Integration → main PR #59 opened (head 63dbe09); subscribed. Waiting for Pedro's "ship it".
+- 2026-10-22 21:31 UTC — Pedro "ship it". 0051 then 0052 applied via connector and verified; versions normalised. PR #59 squash-merged → main 7e55e1b. Production deploy dpl_EUKKsrXEEpBCy5euBDAX61Sb2KRk building; deploy check armed (+4 min).
