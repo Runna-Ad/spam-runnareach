@@ -523,6 +523,9 @@ async function runSendQueue() {
           listUnsubscribe: compliance.value.listUnsubscribe,
         });
 
+        // One Gmail failure ends this inbox's run: a blip must not fail 3 pitches in a row
+        // and trip the gmail_api breaker (lib/pitches/send-pacing.ts recordAttempt).
+        if (!sendResult.ok) pacer.recordAttempt(inboxId);
         if (!sendResult.ok) {
           await releaseSendSlot(slots, inboxId, slot.day);
           await releaseClaim(releaser, { pitchId: pitch.id, to: "approved" });

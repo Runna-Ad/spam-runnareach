@@ -8,7 +8,7 @@
 --   autopilot-tick   spam-autopilot-tick  */15 * * * *
 --   replies-poll     spam-replies-poll    5-59/10 * * * *
 --   send-queue       spam-send-queue      */10 15-22 * * 1-5
---   follow-up        spam-follow-up       20 15-22 * * 1-5
+--   follow-up        spam-follow-up       20 15-22 * * 1-5 (0041; 7-59/10 from 0052)
 --
 -- Global, not per tenant: one run serves every tenant. Service role only: RLS
 -- on with no policies, and no grants to anon/authenticated. created_at is when

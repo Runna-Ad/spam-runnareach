@@ -293,8 +293,10 @@ async function runTickSteps(actor: Actor, now: Date, report: TickReport): Promis
   }
   // Learning: re-score every arm from settled outcomes (cheap), and once a
   // week let the AI review propose new writing guidance to test.
-  await step("learn", () => learnFromOutcomes(db, tenantId, now), undefined);
-  await step("icp", () => evolveSearchSpace(db, tenantId, now), null);
+  // Behind the deadline like review: a rewrite started with 60 s left can run ~70 s,
+  // and a tick killed at maxDuration writes no tick_errors row (batch 8 audit).
+  if (Date.now() < deadline) await step("learn", () => learnFromOutcomes(db, tenantId, now), undefined);
+  if (Date.now() < deadline) await step("icp", () => evolveSearchSpace(db, tenantId, now), null);
   if (Date.now() < deadline) {
     report.review = await step("review", () => weeklyReview(db, tenantId, now), null);
   }
@@ -343,7 +345,7 @@ async function runBreakers(db: Db, tenantId: string, now: Date, errors: string[]
   for (const inbox of inboxes) {
     const stats = await inboxBounceStats(db, tenantId, inbox.id);
     const gmail = await gmailFailuresToday(db, tenantId, inbox.id, now, stats.resumedAt);
-    if (gmail.error) errors.push(gmail.error);
+    if (gmail.error) errors.push(`breakers: ${gmail.error}`);
     inboxStats.push({ id: inbox.id, recentSends: stats.recentSends, recentHardBounces: stats.recentHardBounces, apiErrorsToday: gmail.count });
   }
 
