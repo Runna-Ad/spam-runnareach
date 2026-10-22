@@ -112,3 +112,16 @@ Checklist (grown by retros; add a line when a retro records a miss):
 
 Trace a real path from an input to the failure before calling something blocking. If you
 cannot, it is optional. A finding you are unsure of is optional with "unsure" in front.
+- A column the diff UPDATEs on an existing row: grep the migrations for triggers on that
+  table (write-once, immutability) and check the fake db enforces them (batch 8 #58: a
+  write-once `decision` mark passed every test and failed every write in prod).
+- A "since" timestamp that decides what was already handled (stage_since, resumed_at): is it
+  taken AFTER the newest row the same run wrote? Drive it with the evidence written inside
+  run 1 and three runs in a row (batch 8 #55: the veto clock restarted twice).
+- A new import in a cron route: grep tests/ for the route path; every stub loader needs an
+  answer for the new name.
+- A cadence change: every exit that leaves an item due after paid work (Claude, quota) needs
+  a back-off.
+- An alert rule: run it against each state a PERSON can enter on purpose (a manual pause, a
+  kill switch, a holiday), not only the automatic ones.
+

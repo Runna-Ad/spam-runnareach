@@ -135,6 +135,20 @@ rework in retros traces to a missing sentence in the brief. Before spawning, che
 - Every SQL in a brief's Prod verification is run once against prod (or column-checked
   against the migrations) before spawning; a query that errors is not a check (batch 6:
   `cost_tracking.created_at`, the column is `incurred_at`).
+- A brief that tells a worker to WRITE an existing column: grep the migrations for triggers
+  and constraints on that table first and quote them (batch 8: "mark it in `decision`", but
+  0038 makes `pitches.decision` write-once → every mark failed silently in prod shape).
+- A brief that changes "which X" (which recipient, which link, which arm): list every reader
+  that answers the same question with its own copy and put them all in Files (batch 8: the
+  greeting, the gate and /pitches each picked the recipient separately from `contact_id`).
+- A brief that silences or re-alerts a state: list every way a PERSON can enter that state
+  on purpose and say which stay silent (batch 8: a deliberate inbox pause would have alerted
+  Pedro daily).
+- A brief that changes a schedule or config another module quotes back (heartbeat.ts, health
+  rules, vercel.json tests): state the ship order (migration before/after deploy) in the
+  brief and the migration header (batch 8 #57).
+- A brief that runs a job more often: list every exit that leaves the item due after paid
+  work and ask for a back-off (batch 8 #57: 48 recomposes/day).
 - "Brain lessons": run `tasks/tools/brain-recall-for.sh "<the brief's goal in a sentence>"`
   and paste the RULE of each article that really applies (skip weak matches). Worker
   sessions do not get the brain; the brief is how its lessons reach them.
@@ -252,6 +266,10 @@ Small bounded jobs (one test file, a lint sweep, a doc) may use `Agent` with the
   The next conductor session resumes from §0 at a fraction of the cost of continuing.
   Pedro starts it with: "Read .claude/skills/conductor/SKILL.md, resume from
   tasks/board.md".
+
+Subagent reviewers and auditors write their report INCREMENTALLY to the scratchpad and
+return it at the end (batch 8: two container restarts lost finished reports; one lost a
+fact-gathering run).
 
 ## After a restart or a late notification
 - Re-read the last message from Pedro and finish what it asked before replying "no action":

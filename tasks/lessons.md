@@ -1,5 +1,110 @@
 # S.P.A.M. — Lessons (newest first)
 
+## Merged from lessons-inbox, batch 8 (2026-10-22)
+
+<!-- from reply-on-root -->
+[2026-10-22] A schema comment and the code disagreed on the shape of parent_pitch_id
+WHAT HAPPENED: supabase/migrations/0001_initial_schema.sql:610 says "follow-up step N points to step N-1", while app/api/pitches/follow-up/route.ts only sends from rows with no parent, so every follow-up points straight at the root. Git history starts on 2026-10-17, so older rows could not be proven chain-free. The poll now prefers the thread's own parentless row, and the backfill walks parent_pitch_id up to the top ancestor, so both shapes resolve.
+RULE: When a stored relation's meaning comes from a comment and the code that writes it, and they disagree, make readers and repairs correct for both shapes (resolve to the top ancestor) unless the data can be checked. A backfill must not trust the comment.
+TAGS: replies, pitches, backfill, data-shape
+
+[2026-10-22] Next.js route files cannot export helpers, so route logic is tested through the loader hook
+WHAT HAPPENED: The root resolution lives in app/api/replies/poll/route.ts, and the brief's allow-list had no lib file. A route.ts may only export route fields, so the test drives GET through the stub loader from tests/optout-repair.test.ts, with lib/pitches/events.ts loaded for real against a fake db that stores rows.
+RULE: To test logic inside a route without a lib file, load the route with the loader hook, stub every import except the module whose writes you assert, and check the stored rows rather than spy arguments.
+TAGS: tests, routes
+
+<!-- from tracked-links -->
+[2026-10-22] A Next route file can't export helpers, so the testable logic of a public route lives in lib/
+WHAT HAPPENED: The /r/<code> redirect needed tests for HEAD, scanners, dedupe, test addresses and open-redirect safety. `app/r/[code]/route.ts` can only export GET/HEAD/config, and `after()` throws outside a request, so the logic went to `lib/pitches/tracked-links.ts` as `planTrackedClick(db, req)` returning `{ location, record }`; the route only wires `after(record)`.
+RULE: For any public route, put the decision in a lib function that takes the db client and a plain request object and returns the response plan plus a deferred side effect; the route file stays a three-line adapter. Test the lib function with a fake db that rejects unknown columns, and prove each filter by deleting it and watching a test fail.
+TAGS: app-routes, testing, pitches
+
+[2026-10-22] An LLM-written CTA is enforced after the call, and a missing one falls back instead of being patched in
+WHAT HAPPENED: The follow-up prompt used to make the free-check link optional. Now `enforceFollowupCta` (lib/pitches/followup-composer.ts) swaps {hunter_url} and any direct Hunter link for the tracked link and adds the 👉 marker; a body with no link line returns ok:false with usage, so the route records the cost and sends the template, which always carries the line.
+RULE: When a link or line is required, the prompt asks for it, code fills and normalises it, and a body that still lacks it is refused (paid usage returned), never guessed into place.
+TAGS: pitches, follow-ups, llm-output
+
+<!-- from presend-learning -->
+[2026-10-22] Build a reason-string classifier's test inputs with the code that writes the reasons, plus a fixture-is-clean check
+WHAT HAPPENED: The pre-send guardrail (lib/learning/presend.ts heldForWriting) reads auto_rejected_reason strings that governor laneFor + heldAction write. The tests build every reason by calling those two functions on a clean LaneInput with one field changed. A first test asserting the clean fixture is lane "auto" failed at once: I had guessed the trusted address source as "website_scrape" (the real list says "scraper"), so every "writing-only" case also carried an untrusted-source reason and the exclusion tests would have passed for the wrong reason.
+RULE: When a module classifies strings another module writes, generate the test inputs by calling the writer, and add one assertion that the base fixture produces no reasons at all. Each case then changes exactly one thing, and a wrong guess about the fixture fails loudly instead of making every negative case pass vacuously.
+TAGS: learning, autopilot, testing
+
+[2026-10-22] A Bayesian "P(A worse than B)" with integer counts has an exact closed form; prefer it over Monte Carlo for an autonomous retire rule
+WHAT HAPPENED: The brief asked for Beta posteriors with a seeded RNG. With Monte Carlo, a challenger near the 0.9 line could flip between retire and keep tick to tick on the same counts. lib/learning/presend.ts probabilityWorse uses the exact sum for integer Beta parameters (lnGamma, ~n terms), and the test checks it against a seeded Monte Carlo (within 0.006) and that P(A>B)+P(B>A)=1.
+RULE: For a threshold rule that acts without a person, make the statistic deterministic in its inputs (exact or fixed-seed), so the same evidence always gives the same decision and the boundary tests are exact.
+TAGS: learning, bandit
+
+<!-- from handsoff-autopilot -->
+[2026-10-22] A breaker input hard-coded to 0 passes every pure test
+WHAT HAPPENED: governor.evaluateBreakers had a tested gmail_api rule (≥ 3 errors), but lib/autopilot/tick.ts passed `apiErrorsToday: 0` for every inbox, and nothing durable recorded Gmail send failures, so the breaker could never fire. The pure tests fed the rule its number directly and stayed green.
+RULE: For every rule in a pure governor, keep one test that drives the real caller (the tick through the loader-hook harness in tests/autopilot-trust-split.test.ts) from stored rows to the trip. A literal constant passed into a rule's input is a finding by itself.
+TAGS: autopilot, breakers, testing
+
+[2026-10-22] A clock restart must check its own write
+WHAT HAPPENED: The veto restart's only guard against re-firing every 15 minutes is that the trip predates the new stage_since. tick.ts's existing stage write ignores its error; for the restart, an unrecorded write would restart, pull back and email on every tick. restartStageClock checks the write, still pulls back, and throws (into report.errors, so the tick_errors row shows it) without the email.
+RULE: When "this event was already handled" is encoded as a timestamp the handler writes, check that write's error and skip the side effects (emails, insights) when it fails; keep only the idempotent safety action.
+TAGS: autopilot, stage, idempotency
+
+[2026-10-22] A clock that starts at the tick's `now` recounts what the same tick wrote
+WHAT HAPPENED: Review of #55 found the veto clock restarting twice: restartStageClock (and the existing auto→veto write) set stage_since = the tick's start, but runBreakers had inserted the opt_out_spike insight milliseconds later in the same tick (DB now()), so the next tick's `created_at >= stage_since` counted it again. Fixed with governor.stageClockStart: the later of the write clock and 1 ms after the newest counted evidence.
+RULE: A "since" boundary that decides what is already handled starts after the newest row it handled, never at a timestamp taken before that row was written. Test it with the evidence written INSIDE the first run and three runs in a row.
+TAGS: autopilot, stage, time-windows, testing
+
+<!-- from health-alarms -->
+[2026-10-22] A new import in a cron route breaks every test that stubs that route's imports
+WHAT HAPPENED: adding `import { withHeartbeat } from "@/lib/reports/heartbeat"` to the poll and tick routes failed 12 tests in tests/reply-on-root.test.ts, tests/optout-repair.test.ts and tests/autopilot-trust-split.test.ts. Their loader stubs every import of the route, and any stub without an answer throws "stub withHeartbeat called". Fixed with a pass-through entry in each file's `__stubValues`, three files outside the brief's allow-list.
+RULE: before adding an import to a route, grep tests/ for the route's path (`replies/poll/route`, `autopilot/tick/route`, ...). Every hit that stubs imports needs an answer for the new name, so the brief's allow-list should include those test files.
+TAGS: tests, cron routes, stubs
+
+[2026-10-22] A "has it learned lately" alarm needs a column the learner writes, and learning_arms has none for trials
+WHAT HAPPENED: learning_stalled was briefed as "no writer arm gained a trial in 7 days". learning_arms.trials is recomputed from scratch on every tick (lib/autopilot/learn.ts settleLearner), so its history is never stored. settleLearner does write `updated_at = now` on every arm on every tick it runs. The rule therefore reads two signals: trials = 0 while 5+ settled first emails exist, or the newest writer-arm write is 7+ days old.
+RULE: before writing a "stopped changing" alarm, read the writer and find the column it sets on every run. updated_at only works when the learner is the table's only writer (true for writer.* arms). If no such column exists, compare against what the learner should have counted, using its own exclusions (test sends, bounces, pitches without arms).
+TAGS: health, learning, alerts
+
+<!-- from send-pacing -->
+[2026-10-22] A "max per run" that is also the query LIMIT starves other inboxes once a per-inbox rule is added
+WHAT HAPPENED: The follow-up route used MAX_PER_RUN = 30 both as the read window (`.limit(MAX_PER_RUN)`) and the run size. Cutting the run to 2 by lowering that constant would have read only the 2 oldest due rows; if both belong to one inbox, the second inbox's follow-ups are never seen. Split into DUE_WINDOW (read) and the pacer (send) in app/api/pitches/follow-up/route.ts.
+RULE: When a per-run limit gains a per-key rule (per inbox, per tenant), the read window must stay wider than the send limit, or the head of the queue blocks every other key. Name the two numbers separately.
+TAGS: send-path, cron, pacing
+
+[2026-10-22] pg_cron installs locally with apt in the cloud container
+WHAT HAPPENED: The brief allowed a stub `cron` schema if pg_cron couldn't be installed. `apt-get install -y postgresql-16-cron` worked in under a minute; initdb + `shared_preload_libraries='pg_cron'` in a dir the postgres user can traverse (/var/tmp, not the scratchpad under /tmp/claude-0) gave a real cron.alter_job to test 0052 against.
+RULE: For a pg_cron migration, test against the real extension (apt postgresql-16-cron, cluster under /var/tmp) before reaching for a stub.
+TAGS: migrations, testing, pg_cron
+
+[2026-10-22] A schedule change has a ship order when the health check reads the schedule from code
+WHAT HAPPENED: lib/reports/heartbeat.ts quotes each job's cron and the health check counts missed runs from it. Deploying the code that says "every 10 min" while pg_cron still ran the hourly job would make job_silent fire every window hour. My first PR body claimed the opposite; the conductor reproduced it (now 15:55, last ok 15:20:30 -> 3 missed). Fixed by writing SHIP ORDER into the 0052 header and a test that pins it.
+RULE: When code quotes a pg_cron schedule (heartbeat.ts, health rules), work out both orders of "migration applied" vs "code deployed" before writing the PR body, and put the safe order in the migration header where the person applying it reads it.
+TAGS: migrations, cron, health-check, deploy
+
+[2026-10-22] Running a job more often multiplies the cost of every retry path that redoes paid work
+WHAT HAPPENED: Hourly -> every 10 min made a follow-up that fails after its Claude compose (gate unavailable, no slot, recheck skip, Gmail failure) recompose up to 48x a day instead of 8x. Fixed with a 60-min back-off on those exits (lib/pitches/send-pacing.ts backOffFollowup, or the claim release writing retryAt) and the inbox used up for the run.
+RULE: When a cron's cadence goes up, list every exit that leaves the item due after paid work (AI calls, API quota) and give it a back-off, or the cap pays for the cadence.
+TAGS: cron, cost, follow-up
+
+<!-- from redraft-pool -->
+[2026-10-22] Changing "who gets the email" in one picker silently splits the email from its greeting
+WHAT HAPPENED: The brief moved the recipient choice into `fetchTopUsableContact` (lib/pitches/contacts.ts). That only sets the pitch's `contact_id`. The greeting comes from `pickAddressContact` over pitch-stage's own contacts query (generator.ts, industry-templates.ts, review.ts), and the generation-time gate's recipient from `loadGateContext` (gate.ts:173), each "first usable by priority". Skipping contact A would have produced "Hi <A>" drafts linked to contact B, gated against A (so labelled AUTO), caught only by the send-queue gate's greeting_mismatch.
+RULE: Before changing a "which X" rule, grep every reader that answers the same question by its own copy (here: `pickAddressContact`, `pickTopUsableContact`, `loadGateContext`, the /pitches display) and change them together, or change none. A rule that sets an FK is not the rule the text was written for unless the composer reads the same FK.
+Found mid-task; the conductor extended the scope to pitch-stage.ts, gate.ts and queries.ts the same hour.
+TAGS: pitches, recipient, one-predicate
+
+[2026-10-22] A "one try per X" cap needs a mark that survives the rewrite that replaces X
+WHAT HAPPENED: The re-draft's `decision.redraft_of` mark would have been lost when the tick's rewrite replaced the re-draft (generatePitchWith deletes drafts and writes a fresh decision), so a twice-failed prospect could be re-drafted again 14 days later. resolveHeld now copies the mark onto the rewrite, and a failed generation marks the old pitch (`redraft_failed`) so a repeating failure is not retried every tick.
+RULE: When a marker lives on a row some other step deletes and recreates, carry it across that step and test the full chain (mark → rewrite → drop → next window), not only the first write.
+TAGS: autopilot, tick, caps
+
+[2026-10-22] A revision carries its recipient: change the recipient, compose fresh
+WHAT HAPPENED: The autopilot's rewrite revises the held draft's text (`retryOf`, pitch-stage.ts heldDraftRevision). A rewrite to a different contact would have handed the reviser "Hi Ana" while the pitch now went to Bo. generatePitchWith now composes fresh when the held draft's contact_id is not the new recipient.
+RULE: Stored text handed back to a model carries every fact it was written for (recipient, link, language); when one of them changes, do not revise, write fresh.
+TAGS: pitches, rewrite, recipient
+
+[2026-10-22] A column with a write-once trigger cannot carry a later mark, and the fake db must say so
+WHAT HAPPENED: The re-draft step marked pitches.decision after generatePitchWith had written it. Migration 0038 makes decision write-once (trigger raises), so in prod every mark would fail silently: the 10/day cap would never bind, a failing re-draft would retry every tick. All tests passed because the fake db accepted the update. Fix: the mark goes in at the first write (`generatePitchWith(…, { redraftOf })`), a failed try is an audit_log row, and the test fake now refuses a second decision write.
+RULE: Before writing to an existing column, grep the migrations for triggers on that table (`create trigger … on public.<table>`); a fake db must enforce every such trigger the code path can hit, the same way it must reject a column the table lacks.
+TAGS: autopilot, migrations, fake-db, decision
+
 ## Merged from lessons-inbox, batch 7 (2026-10-21)
 
 ### conductor + late lessons (wrap-ups, reviews)
