@@ -14,7 +14,11 @@ import "server-only";
  *                 verifying the recipient first if it hasn't been
  *   4b. resolve   nothing waits on a person: a held draft gets one rewrite if a
  *                 rewrite can fix what held it, else it is dropped
- *                 (governor.heldAction)
+ *                 (governor.heldAction); an address the verifier doubts is
+ *                 fixed by writing to the prospect's next unflagged contact
+ *   4c. redraft   a prospect whose only draft was thrown away for its writing
+ *                 gets one fresh draft 14 days later (governor.redraftOf),
+ *                 at most 3 a tick and 10 a day, inside the AI cap
  *   5. schedule   veto stage: AUTO pitches approved and scheduled 18h out, with
  *                 a digest so a person can hold any; auto stage: scheduled now
  *   6. stage      promote / demote the autonomy stage on measured results;
@@ -69,7 +73,10 @@ import {
   type SearchCell,
 } from "@/lib/learning/scout";
 import { editRatio } from "@/lib/pitches/decision";
+import { fetchTopUsableContact, hasAlternativeRecipient, RECIPIENT_COLUMNS, type VerdictContact } from "@/lib/pitches/contacts";
 import { generatePitchWith, transitionPitchStatusWith } from "@/lib/pitches/pitch-stage";
+import { prospectSendBlock } from "@/lib/pitches/status-transitions";
+import { isEmailOnDncList } from "@/lib/discover/dnc-check";
 import { WRITER_FIXABLE } from "@/lib/pitches/review";
 import { sendNotification, type NotificationResult } from "@/lib/notify/send";
 import { storedVerdictUsable, verifyRecipient } from "@/lib/research/verify-recipient";
@@ -84,13 +91,24 @@ import {
   laneFor,
   nextStage,
   isQualityBreaker,
+  REDRAFT_AFTER_DAYS,
+  REDRAFT_FAILED,
+  REDRAFT_OF,
+  redraftOf,
+  rejectedForWriting,
+  REDRAFTS_PER_DAY,
+  REDRAFTS_PER_TICK,
+  REWRITE_FAILED,
   safetyOnly,
   STAGE_RULES,
   stageClockStart,
+  VERIFIER_DROP_REASON,
+  VERIFIER_UNSURE_REASON,
   VETO_RESTART_HOLD_REASON,
   type BreakerMetrics,
   type BreakerTrip,
   type Lane,
+  type RedraftPitch,
   type Stage,
   type StageMetrics,
 } from "./governor";
@@ -129,6 +147,8 @@ export type TickReport = {
   discovery: { started: boolean; reason: string; cell?: string; budget?: number };
   labelled: Record<Lane, number>;
   resolved: { rewritten: number; dropped: number; waiting: string | null };
+  /** 4c: fresh drafts for prospects whose only draft was thrown away for its writing. */
+  redrafted?: { drafted: number; failed: number; waiting: string | null };
   scheduled: number;
   /** Emails listed in the twice-daily veto digest this tick (0 when no slot was due). */
   digest?: number;
@@ -260,7 +280,8 @@ async function runTickSteps(actor: Actor, now: Date, report: TickReport): Promis
   report.resumedJobs = await step("watchdog", () => resumeStaleJobs(actor, db, now), 0);
   report.discovery = await step("supply", () => maybeStartDiscovery(actor, db, now), { started: false, reason: "error" });
   report.labelled = await step("label", () => labelDrafts(actor, db, now, deadline), report.labelled);
-  report.resolved = await step("resolve", () => resolveHeld(actor, db, deadline), report.resolved);
+  report.resolved = await step("resolve", () => resolveHeld(actor, db, now, deadline), report.resolved);
+  report.redrafted = await step("redraft", () => redraftPool(actor, db, now, deadline), { drafted: 0, failed: 0, waiting: "error" });
   if ((s.stage === "veto" || s.stage === "auto") && !sendingHalted) {
     report.scheduled = await step("schedule", () => scheduleAuto(actor, db, s.stage, now, deadline), 0);
   }
@@ -633,12 +654,12 @@ async function labelDrafts(actor: Actor, db: Db, now: Date, deadline: number): P
 
 // ── 4b. Resolve held drafts ───────────────────────────────────────────────────
 
-async function resolveHeld(actor: Actor, db: Db, deadline: number): Promise<TickReport["resolved"]> {
+async function resolveHeld(actor: Actor, db: Db, now: Date, deadline: number): Promise<TickReport["resolved"]> {
   const tenantId = actor.user.tenantId;
   const out: TickReport["resolved"] = { rewritten: 0, dropped: 0, waiting: null };
   const { data } = await db
     .from("pitches")
-    .select("id, prospect_id, autopilot_lane, autopilot_reasons, body_edited, decision")
+    .select("id, prospect_id, contact_id, autopilot_lane, autopilot_reasons, body_edited, decision")
     .eq("tenant_id", tenantId)
     .eq("status", "draft")
     .in("autopilot_lane", ["review", "drop"])
@@ -650,21 +671,26 @@ async function resolveHeld(actor: Actor, db: Db, deadline: number): Promise<Tick
   for (const p of (data ?? []) as Array<{
     id: string;
     prospect_id: string;
+    contact_id: string | null;
     autopilot_lane: Lane;
     autopilot_reasons: string[] | null;
     body_edited: string | null;
-    decision: { retry_of?: string } | null;
+    decision: { retry_of?: string; redraft_of?: string } | null;
   }>) {
     if (Date.now() > deadline) break;
-    const next = heldAction(
-      {
-        lane: p.autopilot_lane,
-        reasons: p.autopilot_reasons ?? [],
-        isRewrite: Boolean(p.decision?.retry_of),
-        editedByPerson: p.body_edited !== null,
-      },
-      WRITER_FIXABLE,
-    );
+    const held = {
+      lane: p.autopilot_lane,
+      reasons: p.autopilot_reasons ?? [],
+      isRewrite: Boolean(p.decision?.retry_of),
+      editedByPerson: p.body_edited !== null,
+    };
+    let next = heldAction(held, WRITER_FIXABLE);
+    // A drop over the verifier's doubt about the address: would another contact take it?
+    // Read only then (a person's draft is left alone without asking).
+    if (next.action === "drop" && held.reasons.some((r) => r === VERIFIER_UNSURE_REASON || r === VERIFIER_DROP_REASON)) {
+      const hasAlternativeContact = await alternativeContact(db, tenantId, p.prospect_id, p.contact_id, now);
+      if (hasAlternativeContact) next = heldAction({ ...held, hasAlternativeContact }, WRITER_FIXABLE);
+    }
     if (next.action === "leave") continue;
     if (next.action === "drop") {
       await dropDraft(db, tenantId, p.id, next.why);
@@ -686,9 +712,150 @@ async function resolveHeld(actor: Actor, db: Db, deadline: number): Promise<Tick
     const rewritten = await generatePitchWith(actor, p.prospect_id, { retryOf: p.id });
     if (rewritten.ok) {
       out.rewritten++;
+      // A re-draft's rewrite is still that re-draft (one per prospect, ever).
+      if (p.decision?.redraft_of) await markDecision(db, tenantId, rewritten.pitch_id, { [REDRAFT_OF]: p.decision.redraft_of });
     } else {
-      await dropDraft(db, tenantId, p.id, `rewrite failed: ${rewritten.error}`);
+      await dropDraft(db, tenantId, p.id, `${REWRITE_FAILED}${rewritten.error}`);
       out.dropped++;
+    }
+  }
+  return out;
+}
+
+/**
+ * Does the prospect have a usable contact, other than this draft's, that the
+ * verifier has not flagged (lib/pitches/contacts.ts hasAlternativeRecipient,
+ * the rule the rewrite's recipient comes from)? A read error is "no": the
+ * draft drops as before, never rewritten on a guess.
+ */
+async function alternativeContact(db: Db, tenantId: string, prospectId: string, contactId: string | null, now: Date): Promise<boolean> {
+  const { data, error } = await db
+    .from("prospect_contacts")
+    .select(RECIPIENT_COLUMNS)
+    .eq("tenant_id", tenantId)
+    .eq("prospect_id", prospectId)
+    .order("priority_rank", { ascending: true })
+    .limit(12);
+  if (error || !Array.isArray(data)) return false;
+  return hasAlternativeRecipient(data as Array<VerdictContact & { id: string }>, contactId, now);
+}
+
+/** Merge keys into a pitch's decision (read, then write; only this tick writes these keys). */
+async function markDecision(db: Db, tenantId: string, pitchId: string, keys: Record<string, unknown>): Promise<void> {
+  const { data, error } = await db.from("pitches").select("decision").eq("id", pitchId).eq("tenant_id", tenantId).maybeSingle();
+  if (error || !data) {
+    console.warn("[autopilot] decision not marked:", error?.message || "no row");
+    return;
+  }
+  const decision = ((data as { decision: Record<string, unknown> | null }).decision ?? {}) as Record<string, unknown>;
+  const { error: writeErr } = await db
+    .from("pitches")
+    .update({ decision: { ...decision, ...keys } })
+    .eq("id", pitchId)
+    .eq("tenant_id", tenantId);
+  if (writeErr) console.warn("[autopilot] decision not marked:", writeErr.message || "no detail");
+}
+
+// ── 4c. Re-draft pool ─────────────────────────────────────────────────────────
+
+/** Auto_rejected pitches read per tick to find re-draft candidates. */
+const REDRAFT_SCAN = 100;
+
+/**
+ * A researched prospect is not thrown away for good because one draft failed
+ * for its writing: 14 days later it gets one fresh draft (governor.redraftOf),
+ * labelled next tick like any draft. At most REDRAFTS_PER_TICK a tick and
+ * REDRAFTS_PER_DAY a UTC day, and only while the AI budget has at least the
+ * rewrite minimum left. The prospect must still be "pitched" (nothing sent,
+ * nothing parked), out of cooldown, and its recipient off the do-not-contact
+ * list; a read error skips it.
+ */
+async function redraftPool(actor: Actor, db: Db, now: Date, deadline: number): Promise<NonNullable<TickReport["redrafted"]>> {
+  const tenantId = actor.user.tenantId;
+  const out: NonNullable<TickReport["redrafted"]> = { drafted: 0, failed: 0, waiting: null };
+  if (deadline - Date.now() < 60_000) return { ...out, waiting: "tick time budget" };
+
+  const midnight = new Date(now);
+  midnight.setUTCHours(0, 0, 0, 0);
+  const { data: today, error: todayErr } = await db
+    .from("pitches")
+    .select("decision")
+    .eq("tenant_id", tenantId)
+    .not(`decision->>${REDRAFT_OF}`, "is", null)
+    .gte("created_at", midnight.toISOString())
+    .limit(100);
+  if (todayErr) throw new Error(`today's re-drafts not read: ${todayErr.message || "no detail"}`);
+  // A re-draft's rewrite carries the same mark: count re-drafts, not rows.
+  const doneToday = new Set(((today ?? []) as Array<{ decision: Record<string, unknown> | null }>).map((r) => String(r.decision?.[REDRAFT_OF]))).size;
+  const room = Math.min(REDRAFTS_PER_TICK, REDRAFTS_PER_DAY - doneToday);
+  if (room <= 0) return { ...out, waiting: `${REDRAFTS_PER_DAY} re-drafts today` };
+
+  // Rows already re-drafted (or tried) are left out, so the scan moves on to new ones.
+  const { data: rejected, error: rejErr } = await db
+    .from("pitches")
+    .select("prospect_id, auto_rejected_reason")
+    .eq("tenant_id", tenantId)
+    .eq("status", "auto_rejected")
+    .is("parent_pitch_id", null)
+    .is(`decision->>${REDRAFT_OF}`, null)
+    .is(`decision->>${REDRAFT_FAILED}`, null)
+    .lte("created_at", new Date(now.getTime() - REDRAFT_AFTER_DAYS * DAY).toISOString())
+    .order("created_at", { ascending: false })
+    .limit(REDRAFT_SCAN);
+  if (rejErr) throw new Error(`auto_rejected pitches not read: ${rejErr.message || "no detail"}`);
+  // Only a writing rejection is worth reading the rest of the prospect for (redraftOf decides).
+  const prospectIds = [
+    ...new Set(
+      ((rejected ?? []) as Array<{ prospect_id: string; auto_rejected_reason: string | null }>)
+        .filter((r) => rejectedForWriting(r.auto_rejected_reason, WRITER_FIXABLE))
+        .map((r) => r.prospect_id),
+    ),
+  ];
+
+  for (const prospectId of prospectIds) {
+    if (out.drafted + out.failed >= room) break;
+    if (deadline - Date.now() < 60_000) {
+      out.waiting = "tick time budget";
+      break;
+    }
+    // Every pitch the prospect has, follow-ups included: one that is not an
+    // auto_rejected draft (sent, approved, sending, a live draft) rules it out.
+    const { data: pitches, error: pErr } = await db
+      .from("pitches")
+      .select("id, status, created_at, auto_rejected_reason, decision")
+      .eq("tenant_id", tenantId)
+      .eq("prospect_id", prospectId)
+      .limit(10);
+    if (pErr || !Array.isArray(pitches)) continue;
+    const replaces = redraftOf(pitches as RedraftPitch[], now, WRITER_FIXABLE);
+    if (!replaces) continue;
+
+    const { data: prospect, error: prospectErr } = await db
+      .from("prospects")
+      .select("status, cooldown_until")
+      .eq("id", prospectId)
+      .eq("tenant_id", tenantId)
+      .maybeSingle();
+    const row = prospect as { status: string | null; cooldown_until: string | null } | null;
+    if (prospectSendBlock(row, prospectErr, now.toISOString()) || row?.status !== "pitched") continue;
+    const recipient = await fetchTopUsableContact(db, tenantId, prospectId, now);
+    if (!recipient) continue;
+    const dnc = await isEmailOnDncList(db, tenantId, recipient.email);
+    if (dnc.blocked || dnc.error) continue;
+
+    const cap = await isUnderDailyCap(tenantId);
+    if (!cap.under || cap.cap_usd - cap.spent_today_usd < REWRITE_MIN_BUDGET_USD) {
+      out.waiting = `AI budget: $${cap.spent_today_usd.toFixed(2)} of $${cap.cap_usd.toFixed(2)} used in 24h`;
+      break;
+    }
+    const drafted = await generatePitchWith(actor, prospectId);
+    if (drafted.ok) {
+      await markDecision(db, tenantId, drafted.pitch_id, { [REDRAFT_OF]: replaces });
+      out.drafted++;
+    } else {
+      // One try per prospect: a failure that repeats would otherwise be retried every tick.
+      await markDecision(db, tenantId, replaces, { [REDRAFT_FAILED]: { at: now.toISOString(), error: drafted.error.slice(0, 300) } });
+      out.failed++;
     }
   }
   return out;
