@@ -331,7 +331,7 @@ Migrations: none reserved for wave 1 (`click` already in prod's `pitch_event_typ
 
 | Slug | Module | Model/effort | Branch | Session | PR | Depends on | Status | Turns | Review findings | CI reds | Rework |
 |---|---|---|---|---|---|---|---|---|---|---|---|
-| reply-on-root | poll route records reply/bounce on the root + backfill script | opus/high | claude/reply-on-root | session_01HEPRVfWtJ4jQyZPkkSBr1r | — | — | running | | | | |
+| reply-on-root | poll route records reply/bounce on the root + backfill script | opus/high | claude/reply-on-root | session_01HEPRVfWtJ4jQyZPkkSBr1r | #52 | — | in review | | | | |
 | tracked-links | /r/[code] redirect + click event; follow-ups carry the tracked link, free-check CTA | opus/high | claude/tracked-links | session_01MMFXJXTL8PCeTy1mqdDRoW | — | — | running | | | | |
 | presend-learning | pre-send guardrail, click reward, weekly review input, /learning cleanup | opus/high | claude/presend-learning | session_01P5hLzYcj7cnh1vz8ycnLeK | — | — | running | | | | |
 
@@ -339,3 +339,6 @@ Batch-audit pairs: tracked-links × presend-learning (click on the ROOT, payload
 
 Log:
 - 2026-10-22 16:20 UTC — Pedro picked option 1 and the wave order. Wave 1 briefs written (reply-on-root, tracked-links, presend-learning). Wave 1 spawned (3 remote Opus sessions). PR sweep trig_01UiZEy3h4tVAcmzkqVrmUuE (16:29), safety check trig_01BEZKhKf75y5xEZpKo2tV5A (17:11).
+- 2026-10-22 16:30 UTC — Pedro: the Hunter has always recorded its links (rows land with the code); likely nobody has clicked yet. Matches the 10-22 probe. Kept tracked-links: the Hunter writes a row only when the visitor RUNS the check (index.html:1239-1262), so clicks that stop at the page stay invisible without our counter.
+- 2026-10-22 16:30 UTC — #52 reply-on-root opened 16:29 (report: 1363 tests, ~30 turns; needs conductor: run the backfill after deploy). Subscribed; Opus reviewer running in /var/tmp/rv-52. Sweep re-armed trig_0147CBJeATBPqfnpqhYdg9E1 (16:41).
+- 2026-10-22 16:40 UTC — #52 review (Opus): fix-then-merge, 1 blocking (verified by conductor in bounce-breaker.ts:60-87): bounces moved to the root fall outside the inbox breaker's last-50-sends window once volume ramps → breaker blind to follow-up bounces. Sent to the warm worker with scope extended to inboxBounceStats (count pitch_id OR answered_pitch_id, once). Optional taken: tenant/prospect guard on the root override, backfill header 'run section 1 alone', PR count. Audit note: follow-up bounces now null the root reward and count in the stage bounce metric (stricter, intended).
