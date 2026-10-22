@@ -33,8 +33,8 @@ Previous: `phase3-batch2` CLOSED (main e10a326). Rows, log and hand-off in `task
 | 0048 | bounce hotfix | APPLIED (version 20261019190301) |
 | 0049 | batch 4 send slot | APPLIED (version 20261019211644) |
 | 0050 | batch 7: `0050_wanted_facts.sql` | APPLIED 2026-10-21 21:56 UTC via connector before the merge, verified, version normalised to 0050 |
-| 0051 | batch 8 health-alarms: `0051_cron_heartbeats.sql` (cron_heartbeats table, RLS no policies) | reserved |
-| 0052 | batch 8 send-pacing: `0052_follow_up_every_10min.sql` (spam-follow-up → 5-59/10 15-22 * * 1-5) | reserved |
+| 0051 | batch 8 health-alarms: `0051_cron_heartbeats.sql` (cron_heartbeats table, RLS no policies) | written; apply before the deploy |
+| 0052 | batch 8 send-pacing: `0052_follow_up_every_10min.sql` (spam-follow-up → 7-59/10 15-22 * * 1-5) | written; apply BEFORE the deploy |
 | 0053 | — | free |
 
 ## Active and queued tasks
@@ -338,7 +338,7 @@ Migrations: none reserved for wave 1 (`click` already in prod's `pitch_event_typ
 | presend-learning | pre-send guardrail, click reward, weekly review input, /learning cleanup | opus/high | claude/presend-learning | session_01P5hLzYcj7cnh1vz8ycnLeK | #53 | — | MERGED 3f0be9a (r1: 1 blocking fixed, verified) |
 | handsoff-autopilot | veto demotion restarts the veto clock (no auto shadow); gmail_api breaker counts recorded send failures; tick-errors audit row | opus/high | claude/handsoff-autopilot | session_016QfVMPU6GUVvytMYB3jhTk | #55 | wave 1 | MERGED 1cc8bda (r1: 1 blocking fixed, verified) | | | | |
 | health-alarms | health rules inbox_paused, tick_errors, learning_stalled, job_silent; 0051 heartbeats in 4 cron routes; Sentry copy of every alert | opus/high | claude/health-alarms | session_017aNNRc3UdX5txuLZq2qz4N | #56 | wave 1 | MERGED d15ad27 (r1: 1 blocking fixed, verified) |
-| send-pacing | send-queue + follow-up: 1 per inbox / 2 per run; follow-up every 10 min (0052) | opus/high | claude/send-pacing | session_0186upAL8EFPobQfBGtYJkcm | #57 | wave 2 | in review |
+| send-pacing | send-queue + follow-up: 1 per inbox / 2 per run; follow-up every 10 min (0052) | opus/high | claude/send-pacing | session_0186upAL8EFPobQfBGtYJkcm | #57 | wave 2 | MERGED 04f2b64 (r1: ship-order text fixed, verified) |
 | redraft-pool | verifier-unsure → next contact; one fresh re-draft for writer-rejected prospects after 14 days (3/tick, 10/day) | opus/high | claude/redraft-pool | session_01MyWiWL2WYTUijw8qPoDm3j | — | wave 2 | running | | | | | | | | | | | | | | | | |
 
 Batch-audit pairs: tracked-links × presend-learning (click on the ROOT, payload {code, step, ua}; value 0.25 never makes an exemplar); reply-on-root × follow-up route (one timeline per conversation, sent + reply on the same row); tracked-links × claude-composer rewrite (no old code inherited); presend-learning × governor (guidance retirement never touches stage); backfill × 23505 skip.
@@ -362,3 +362,4 @@ Log:
 - 2026-10-22 18:55 UTC — redraft-pool worker blocked (valid): the greeting and the generation-time gate pick the recipient separately from fetchTopUsableContact (pitch-stage.ts:178-185, gate.ts:173 pickAddressContact), so a skipped contact would give 'Hi <A>' sent to B. Scope extended to pitch-stage.ts (one recipient chooser before composing), gate.ts (gate defaults to the pitch's contact_id), queries.ts display if small; negative set: byte-identical for today's pitches. Conductor brief miss: didn't trace every reader of 'the recipient' (retro).
 - 2026-10-22 19:10 UTC — wave-2 workers archived (handsoff-autopilot $5.32, health-alarms $7.91). #57 send-pacing opened 18:52; subscribed; Opus reviewer running. Conductor carry: add cron_heartbeats to lib/supabase/types.ts before the audit.
 - 2026-10-22 19:25 UTC — #57 review: fix-then-merge, 1 blocking = ship order (code before 0052 → job_silent false alarm hourly) → SHIP ORDER: apply 0051 and 0052 BEFORE merging to main; body fixed by worker. Optional taken: follow-up at 7-59/10 (2 min after the reply poll), back off a follow-up that fails after compose (60 min) to protect the $3 cap, health.ts comment. Not taken: .limit(50) starvation (pre-existing).
+- 2026-10-22 19:30 UTC — #57 fix verified (0052 header 'apply BEFORE deploy', 7-59/10 in 0052 + heartbeat.ts + tests, 60-min back-off after a post-compose failure, recordAttempt): 1492 tests, build → merged 04f2b64. Wrap-up sent. Waiting for redraft-pool.
