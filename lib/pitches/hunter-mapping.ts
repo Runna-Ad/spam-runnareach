@@ -18,6 +18,7 @@
  */
 
 import { detectIndustryKey, HUNTER_URL } from "./industry-templates.ts";
+import { buildTrackedLink, isAttributionCode } from "./tracked-links.ts";
 
 export type HunterIndustry =
   | "ecommerce"
@@ -248,6 +249,16 @@ export type BuildHunterUrlInput = {
  * hunterUrlForLanguage — the Hunter degrades gracefully if any param is missing.
  */
 export function buildHunterUrl(input: BuildHunterUrlInput): string {
+  const params = hunterParams(input);
+  // Attribution: the pitch's short code, so a scan can be tied to the email
+  // that prompted it. runna-hunter must store it for that to work.
+  if (input.ref?.trim()) params.set("r", input.ref.trim());
+  params.set("v", "1");
+  return `${HUNTER_URL}?${params.toString()}`;
+}
+
+/** The Hunter's pre-fill parameters (no r, no v). */
+function hunterParams(input: BuildHunterUrlInput): URLSearchParams {
   const params = new URLSearchParams();
   params.set("market", input.market);
   if (input.industry) params.set("industry", input.industry);
@@ -257,16 +268,25 @@ export function buildHunterUrl(input: BuildHunterUrlInput): string {
   if (tools.length) params.set("tools", tools.join(","));
   if (input.website?.trim()) params.set("website", input.website.trim());
   if (input.lead) params.set("lead", input.lead);
-  // Attribution: the pitch's short code, so a scan can be tied to the email
-  // that prompted it. runna-hunter must store it for that to work.
-  if (input.ref?.trim()) params.set("r", input.ref.trim());
-  params.set("v", "1");
-  return `${HUNTER_URL}?${params.toString()}`;
+  return params;
 }
 
 /**
- * Convenience: build the full handoff URL straight from prospect + chosen pain.
- * Used by the pitch generator (lib/pitches/actions.ts).
+ * The CTA link an email carries. With an attribution code: our tracked
+ * redirect (`/r/<code>?<same params>`, lib/pitches/tracked-links.ts), which
+ * records the click on the root pitch and forwards to the free check with
+ * &r=<code>&v=1. Without one: the direct Hunter link, as before.
+ */
+export function buildCtaUrl(input: BuildHunterUrlInput & { step?: 0 | 1 | 2 }): string {
+  const code = input.ref?.trim();
+  if (!isAttributionCode(code)) return buildHunterUrl({ ...input, ref: null });
+  return buildTrackedLink({ code, params: hunterParams(input), step: input.step });
+}
+
+/**
+ * Convenience: build the email's CTA link straight from prospect + chosen pain.
+ * Used by the pitch generator (lib/pitches/pitch-stage.ts). Tracked when the
+ * pitch has an attribution code (buildCtaUrl).
  */
 export function buildHunterUrlForPitch(args: {
   language: "en" | "es";
@@ -293,7 +313,7 @@ export function buildHunterUrlForPitch(args: {
         : "mx";
 
   const industry = mapToHunterIndustry(args.industry);
-  return buildHunterUrl({
+  return buildCtaUrl({
     market,
     industry,
     size: mapToHunterSize(args.employeeEstimate),

@@ -34,6 +34,8 @@ import {
   type FollowupContext,
 } from "@/lib/pitches/followup-templates";
 import { composeFollowupWithClaude } from "@/lib/pitches/followup-composer";
+import { buildHunterUrlForPitch } from "@/lib/pitches/hunter-mapping";
+import { followupHunterLink } from "@/lib/pitches/tracked-links";
 import {
   effectiveSendsToday,
   hasTimeToClaim,
@@ -83,6 +85,8 @@ type DuePitchRow = {
   case_study_id: string;
   service_id: string | null;
   pain_id: string | null;
+  /** The root's code: the follow-up's link is the root's tracked link. */
+  attribution_code: string | null;
 };
 
 type ProspectRow = {
@@ -94,6 +98,9 @@ type ProspectRow = {
   language: string | null;
   status: string;
   cooldown_until: string | null;
+  employee_size_estimate: number | null;
+  domain: string | null;
+  website_url: string | null;
 };
 
 /**
@@ -162,7 +169,7 @@ async function processFollowup(pitch: DuePitchRow, bounceBlocks: BounceBlocks, s
   // ── 1. Load prospect ──────────────────────────────────────────────────────
   const { data: prospect, error: prospectErr } = await supabase
     .from("prospects")
-    .select("id, company_name, market, industry, city, language, status, cooldown_until")
+    .select("id, company_name, market, industry, city, language, status, cooldown_until, employee_size_estimate, domain, website_url")
     .eq("id", pitch.prospect_id)
     .maybeSingle<ProspectRow>();
 
@@ -345,6 +352,26 @@ async function processFollowup(pitch: DuePitchRow, bounceBlocks: BounceBlocks, s
       ? rawLabel.charAt(0).toLowerCase() + rawLabel.slice(1)
       : null;
   const sender = senderIdentity(lang);
+  // The free-check link: the root's tracked link (click recorded on the root),
+  // same Hunter parameters as the first email. The follow-up row itself keeps
+  // attribution_code null: the code belongs to the root.
+  const hunterUrl = followupHunterLink({
+    rootCode: pitch.attribution_code,
+    followupStep: nextStep === 2 ? 1 : 2,
+    rootBody: originalBody,
+    fallback: new URL(
+      buildHunterUrlForPitch({
+        language: lang,
+        market: prospect.market,
+        industry: prospect.industry,
+        employeeEstimate: prospect.employee_size_estimate,
+        painLabel: rawLabel || null,
+        techStack,
+        domain: prospect.domain,
+        websiteUrl: prospect.website_url,
+      }),
+    ).searchParams,
+  });
   const ctx: FollowupContext = {
     prospectName: prospect.company_name,
     contactName: contactFirstName,
@@ -352,6 +379,7 @@ async function processFollowup(pitch: DuePitchRow, bounceBlocks: BounceBlocks, s
     painLabel,
     lang,
     signature: senderSignature(lang),
+    hunterUrl,
   };
 
   // Deterministic template — the always-available fallback.
@@ -385,6 +413,7 @@ async function processFollowup(pitch: DuePitchRow, bounceBlocks: BounceBlocks, s
         hunterValue,
         senderFirstName: sender.firstName,
         agencyName: sender.agency,
+        hunterUrl,
       });
       if (ai.ok) {
         email = { subject: ai.followup.subject, body: ai.followup.body };
@@ -655,7 +684,7 @@ export async function GET(req: NextRequest) {
     .select(
       "id, tenant_id, prospect_id, contact_id, sender_inbox_id, subject, " +
       "gmail_thread_id, gmail_message_id, sequence_step, next_followup_at, sent_at, " +
-      "case_study_id, service_id, pain_id",
+      "case_study_id, service_id, pain_id, attribution_code",
     )
     .eq("status", "sent")
     .is("parent_pitch_id", null)

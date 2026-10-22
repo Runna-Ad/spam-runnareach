@@ -23,6 +23,7 @@ export type PitchEventType =
   | "bounce"
   | "unsubscribe"
   | "audit_scan"
+  | "click"
   | "meeting_booked"
   | "won"
   | "lost";

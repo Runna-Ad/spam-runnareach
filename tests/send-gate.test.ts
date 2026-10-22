@@ -428,6 +428,7 @@ test("follow-up fallback templates pass the content rules in both languages", ()
         const e = build({
           prospectName: "Casa Norte", contactName: "Ana", originalSubject: "una idea para casa norte",
           painLabel: lang === "en" ? painLabel : null, lang, signature: senderSignature(lang),
+          hunterUrl: "https://spam-runnareach.vercel.app/r/abcdefgh?market=mx&industry=retail&s=1",
         });
         const r = evaluateSendGate({
           subject: e.subject, body: e.body, lang,

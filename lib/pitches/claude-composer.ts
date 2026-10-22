@@ -19,6 +19,7 @@ import {
 } from "../anthropic/client.ts";
 import { RUNNA_CAPABILITIES_FOR_PITCHES } from "../runna/capabilities.ts";
 import { HUNTER_URL } from "./industry-templates.ts";
+import { trackedLinkPatternSource } from "./tracked-links.ts";
 import { hasUsableEmail } from "../research/email-utils.ts";
 import { findBannedTerms } from "./content-rules.ts";
 import { senderIdentity } from "./sender-identity.ts";
@@ -251,18 +252,31 @@ const FORWARDING_LINE = {
   es: "Si no eres la persona indicada para esto, te agradecería mucho que puedas reenviarle este mensaje a quien corresponda.",
 } as const;
 
-/** A resolved Hunter link: what resolveCtaLink puts where {hunter_url} was (HUNTER_URL + its query). */
-const RESOLVED_HUNTER_LINK_RE = new RegExp(`${HUNTER_URL.replace(/[.*+?^${}()|[\]\\/]/g, "\\$&")}\\S*`, "g");
+/**
+ * A resolved Hunter link: what resolveCtaLink puts where {hunter_url} was. Either
+ * the direct link (HUNTER_URL + its query) or our tracked redirect
+ * (https://<our host>/r/<8-char code>[?query], lib/pitches/tracked-links.ts). Our
+ * host is the configured base or a spam-runnareach*.vercel.app preview, since
+ * the base may differ between the deploy that stored the body and the one
+ * rewriting it; a /r/ path on any other host is left alone. Built per call so
+ * it follows the env.
+ */
+function resolvedHunterLinkRe(): RegExp {
+  return new RegExp(
+    `(?:${HUNTER_URL.replace(/[.*+?^${}()|[\]\\/]/g, "\\$&")}\\S*|${trackedLinkPatternSource()})`,
+    "g",
+  );
+}
 
 /**
  * A stored body turned back into what the writer produced, for a revision of
  * it: every Hunter link back to the {hunter_url} slot (the stored link carries
- * the OLD pitch's &r= attribution code; kept as is, the rewrite's scans would
+ * the OLD pitch's attribution code, as &r= or in the /r/<code> path; kept as is, the rewrite's scans would
  * be credited to a deleted row) and the composer's forwarding line removed (it
  * is appended again after the revision).
  */
 export function heldBodyForRevision(body: string): string {
-  let out = body.replace(RESOLVED_HUNTER_LINK_RE, (url) => {
+  let out = body.replace(resolvedHunterLinkRe(), (url) => {
     const trail = url.match(/[.,;:!?)\]]+$/)?.[0] ?? "";
     return `{hunter_url}${trail}`;
   });
