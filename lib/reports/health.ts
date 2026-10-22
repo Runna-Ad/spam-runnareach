@@ -1,6 +1,8 @@
 /**
  * The hourly health check: emails ONLY when something is wrong, at most once
- * per problem per 24h, and is silent otherwise.
+ * per problem per 24h, and is silent otherwise. Every alert email also goes to
+ * Sentry (a warning, deduped like the email), so a dead Gmail token cannot
+ * hide its own alarm.
  *
  * An emergency is activity that was due in a period and did not happen, never
  * "something is waiting": every state the system enters by design is silent,
@@ -11,13 +13,32 @@
  *   emails_stuck         the last closed send window had sendable pitches due
  *                        and their inbox sent nothing, or a pitch stayed in
  *                        "sending" through a whole window
- * Not emergencies, by design: the AI budget cap, breaker trips (the tick
- * already emails them), the daily-cap drip, cooldowns, weekends, a quiet day.
+ *   inbox_paused         a breaker paused a connected inbox with a daily cap:
+ *                        nothing sends from it until a person resumes it. The
+ *                        tick emails once at the trip; this rule re-alerts
+ *                        every 24h while the pause lasts. A pause a person set
+ *                        (Settings → Sending) is silent.
+ *   tick_errors          3+ autopilot ticks in the last 2h recorded errors
+ *                        (audit_log autopilot.tick_errors); one failing tick is not
+ *   learning_stalled     5+ first emails sent 15-30 days ago (all settled) and
+ *                        the writer learner shows no trial or has not written
+ *                        its arms for 7 days, or the learning step failed in
+ *                        2+ ticks in the last 24h
+ *   job_silent           a cron job (heartbeat.ts) missed 3 scheduled runs in a
+ *                        row inside its window; no heartbeat row yet = silent
+ * Not emergencies, by design: the AI budget cap, the daily-cap drip, cooldowns,
+ * weekends, hours outside a job's window, a quiet day, one failing tick, no
+ * 15-day-old sends yet (nothing has settled), an inbox with a daily cap of 0,
+ * an inbox a person paused on purpose.
  *
  * Dedupe: an audit_log row (action health.alert, metadata.kind = the rule) is
  * written after an email goes out; a rule with such a row in the last 24h is
- * not emailed again. Tested in tests/reports-health.test.ts.
+ * not emailed again. Tested in tests/reports-health.test.ts and
+ * tests/health-alarms.test.ts.
  */
+
+import { CRON_JOBS, type CronJob } from "./heartbeat.ts";
+import { isTestAddress } from "../compliance/test-addresses.ts";
 
 const HOUR = 3_600_000;
 
@@ -33,14 +54,32 @@ export const TICK_SILENCE_HOURS = 2;
  */
 const SEND_WINDOW = { days: [1, 2, 3, 4, 5], startHour: 15, endHour: 23, lastRunMinute: 22 * 60 + 50 };
 
-export type HealthRule = "google_disconnected" | "autopilot_stopped" | "emails_stuck";
+export type HealthRule =
+  | "google_disconnected"
+  | "autopilot_stopped"
+  | "emails_stuck"
+  | "inbox_paused"
+  | "tick_errors"
+  | "learning_stalled"
+  | "job_silent";
 
 export type HealthSnapshot = {
   now: string;
   appUrl: string;
   autopilot: { enabled: boolean; stage: string; updatedAt: string | null } | null;
   /** Every sender_inboxes row with a refresh token, its send state, and what getAccessToken said. */
-  inboxes: Array<{ id: string; email: string; paused: boolean; dailyCap: number; tokenOk: boolean; error: string | null }>;
+  inboxes: Array<{
+    id: string;
+    email: string;
+    paused: boolean;
+    dailyCap: number;
+    tokenOk: boolean;
+    error: string | null;
+    /** sender_inboxes.paused_reason (the breaker writes its reason; a person may write one). */
+    pausedReason?: string | null;
+    /** The latest breaker trip covering this inbox after its last resume (learning_insights), if any. */
+    pausedSince?: string | null;
+  }>;
   /** Pitches in approved or sending. updatedAt is the row's updated_at (trigger-maintained). */
   pending: Array<{
     id: string;
@@ -53,6 +92,23 @@ export type HealthSnapshot = {
   }>;
   /** Pitches sent in the last 48h (sent_at, from which inbox): proof the queue ran. */
   recentSends: Array<{ senderInboxId: string | null; sentAt: string }>;
+  /**
+   * audit_log autopilot.tick_errors rows of the last 24h (one per tick that had
+   * errors, each "step: message"). null = not read (the rule stays silent).
+   */
+  tickErrors: Array<{ at: string; errors: string[] }> | null;
+  /**
+   * What the writer learner should have seen. dueRootSends: first emails sent
+   * 15-30 days ago that carry writer arms (all settled by then). writerArms:
+   * every writer.* learning_arms row. null = not read.
+   */
+  learning: {
+    /** bounced: the pitch has a pitch_events "bounce" row (pitches.status is never set to bounced). */
+    dueRootSends: Array<{ email: string | null; bounced: boolean }>;
+    writerArms: Array<{ trials: number; updatedAt: string | null }>;
+  } | null;
+  /** cron_heartbeats rows (0051). null = not read. */
+  heartbeats: Array<{ job: string; lastOkAt: string | null; lastErrorAt: string | null; lastError: string | null; createdAt: string | null }> | null;
 };
 
 export type HealthProblem = {
@@ -119,8 +175,8 @@ export function lastClosedSendWindow(now: number): { start: number; end: number;
 /**
  * Emails stuck = the last closed send window should have sent something and
  * did not. Every state the send-queue holds a pitch in BY DESIGN is silent:
- *   - a paused inbox (a breaker, which the tick already emails), a
- *     disconnected one (E1's job), or one with no daily cap
+ *   - a paused inbox (inbox_paused's job), a disconnected one (E1's job),
+ *     or one with no daily cap
  *   - the daily-cap drip: if the inbox sent anything in the window, the queue
  *     ran and the backlog is the cap working
  *   - a prospect in cooldown through the window's last run
@@ -179,7 +235,247 @@ export function emailsStuck(s: HealthSnapshot): HealthProblem | null {
   };
 }
 
-export const HEALTH_RULES: ReadonlyArray<(s: HealthSnapshot) => HealthProblem | null> = [googleDisconnected, autopilotStopped, emailsStuck];
+// ── Paused inbox ─────────────────────────────────────────────────────────────
+
+/**
+ * The paused_reason prefix the tick's breakers write (lib/autopilot/tick.ts
+ * runBreakers: `Autopilot breaker (<code>): <reason>`). A test pins it to that
+ * source.
+ */
+export const BREAKER_PAUSE_PREFIX = "Autopilot breaker (";
+
+/** A breaker paused it: its reason is the breaker's, or a trip covers it since its last resume. */
+export const pausedByBreaker = (i: HealthSnapshot["inboxes"][number]) =>
+  i.paused && (!!i.pausedSince || (i.pausedReason ?? "").startsWith(BREAKER_PAUSE_PREFIX));
+
+/**
+ * A connected inbox with a daily cap that a breaker paused sends nothing,
+ * first emails or follow-ups, until a person resumes it; with one inbox that
+ * is a full stop. The breaker emails once when it trips; the 24h dedupe turns
+ * this into the daily reminder. A pause a person set on purpose (Settings →
+ * Sending: a daily cap can't go below 1, so pausing is the only off switch) is
+ * silent, and a disconnected inbox is google_disconnected's job.
+ */
+export function inboxPaused(s: HealthSnapshot): HealthProblem | null {
+  const usable = s.inboxes.filter((i) => i.tokenOk && i.dailyCap > 0);
+  const paused = usable.filter(pausedByBreaker);
+  if (paused.length === 0) return null;
+  const all = usable.every((i) => i.paused);
+  const first = paused[0] as (typeof paused)[number];
+  return {
+    kind: "inbox_paused",
+    title: paused.length === 1 ? `Sending paused on ${first.email}` : `Sending paused on ${paused.length} inboxes`,
+    detail: paused
+      .map((i) => {
+        const since = i.pausedSince ? `since ${i.pausedSince}` : "since an unrecorded time (no breaker trip on record since its last resume)";
+        const why = i.pausedReason ? `, reason: ${i.pausedReason.slice(0, 200)}` : "";
+        return `${i.email} is paused ${since}${why}.`;
+      })
+      .join("\n"),
+    stops: all
+      ? "All cold sending: no first email or follow-up goes out from any inbox."
+      : "Cold sending from that inbox (first emails and follow-ups). The other inboxes keep sending.",
+    action: `Once the cause is fixed, resume it in Settings → Sending: ${s.appUrl}/settings/sending. This reminder repeats every ${ALERT_DEDUPE_HOURS}h while the pause lasts.`,
+  };
+}
+
+// ── Tick errors ──────────────────────────────────────────────────────────────
+
+/** Ticks run every 15 min (0041): 3 erroring ticks in 2h is a pattern, one is a blip. */
+export const TICK_ERROR_WINDOW_HOURS = 2;
+export const TICK_ERROR_MIN_TICKS = 3;
+
+/** The step name a tick error starts with ("learn: …" → "learn"). */
+export const errorStep = (e: string) => (e.split(":")[0] ?? "").trim() || "unknown";
+
+const within = <T extends { at: string }>(rows: T[], now: number, hours: number): T[] =>
+  rows.filter((r) => {
+    const t = new Date(r.at).getTime();
+    return t <= now && now - t <= hours * HOUR;
+  });
+
+export function tickErrors(s: HealthSnapshot): HealthProblem | null {
+  if (!s.tickErrors) return null;
+  const now = new Date(s.now).getTime();
+  const rows = within(s.tickErrors, now, TICK_ERROR_WINDOW_HOURS).filter((r) => r.errors.length > 0);
+  if (rows.length < TICK_ERROR_MIN_TICKS) return null;
+  const counts = new Map<string, number>();
+  for (const r of rows) for (const step of new Set(r.errors.map(errorStep))) counts.set(step, (counts.get(step) ?? 0) + 1);
+  const steps = [...counts].sort((a, b) => b[1] - a[1]).slice(0, 5);
+  const latest = [...rows].sort((a, b) => b.at.localeCompare(a.at))[0];
+  return {
+    kind: "tick_errors",
+    title: "Autopilot ticks are failing",
+    detail:
+      `${rows.length} autopilot ticks in the last ${TICK_ERROR_WINDOW_HOURS}h recorded errors (it ticks every 15 minutes). ` +
+      `Failing steps: ${steps.map(([k, n]) => `${k} (${n} ticks)`).join(", ")}.` +
+      (latest?.errors[0] ? `\nLatest (${latest.at}): ${latest.errors[0].slice(0, 200)}` : ""),
+    stops: "The failing steps of every tick (see the step names); the other steps keep running.",
+    action: "Read the errors in audit_log (action autopilot.tick_errors) and the /api/autopilot/tick logs in Vercel.",
+  };
+}
+
+// ── Learning stalled ─────────────────────────────────────────────────────────
+
+/** First emails sent 15-30 days ago are all settled (ATTRIBUTION_WINDOW_DAYS 14 + a day). */
+export const LEARNING_DUE_MIN = 5;
+/** The learner rewrites every writer arm (learning_arms.updated_at) on each tick it runs. */
+export const LEARNING_STALE_DAYS = 7;
+/** Tick step names of the learning step: lib/autopilot/tick.ts step("learn") (settling and the pre-send guardrail run inside it). */
+export const LEARNING_STEPS: ReadonlySet<string> = new Set(["learn"]);
+/** One failed learning step is a blip: the learner reruns every 15 minutes. */
+export const LEARNING_ERROR_MIN_TICKS = 2;
+
+export function learningStalled(s: HealthSnapshot): HealthProblem | null {
+  const a = s.autopilot;
+  // The tick only learns with the autopilot on; a silent tick is autopilot_stopped's job.
+  // That guard also covers the kill switch flipped back on: autonomy_state has no
+  // updated_at trigger (0040), and an off tick never writes it, so until the first
+  // tick after the flip (which writes it, then learns) autopilot_stopped owns it.
+  if (!a || !a.enabled || a.stage === "off" || autopilotStopped(s)) return null;
+  const now = new Date(s.now).getTime();
+  const parts: string[] = [];
+
+  if (s.learning) {
+    // The learner never counts a test send or a bounce (lib/learning/reward.ts).
+    const due = s.learning.dueRootSends.filter((p) => !p.bounced && !isTestAddress(p.email)).length;
+    if (due >= LEARNING_DUE_MIN) {
+      const trials = s.learning.writerArms.reduce((n, r) => n + r.trials, 0);
+      const newest = Math.max(...s.learning.writerArms.map((r) => (r.updatedAt ? new Date(r.updatedAt).getTime() : NaN)).filter(Number.isFinite));
+      const stale = !Number.isFinite(newest) || now - newest > LEARNING_STALE_DAYS * 24 * HOUR;
+      if (trials === 0 || stale) {
+        const seen = trials === 0 ? "the writer arms show 0 trials" : `the writer arms were last written ${new Date(newest).toISOString()}`;
+        parts.push(`${due} first emails were sent 15-30 days ago, so their outcomes have settled, but ${seen} (learning_arms, writer.*).`);
+      }
+    }
+  }
+
+  if (s.tickErrors) {
+    const failed = within(s.tickErrors, now, 24).filter((r) => r.errors.some((e) => LEARNING_STEPS.has(errorStep(e))));
+    if (failed.length >= LEARNING_ERROR_MIN_TICKS) {
+      const sample = failed.flatMap((r) => r.errors).find((e) => LEARNING_STEPS.has(errorStep(e))) ?? "";
+      parts.push(`The learning step failed in ${failed.length} ticks in the last 24h. Latest: ${sample.slice(0, 200)}`);
+    }
+  }
+
+  if (parts.length === 0) return null;
+  return {
+    kind: "learning_stalled",
+    title: "Learning has stalled",
+    detail: parts.join("\n"),
+    stops: "The writer stops learning from replies and scans: no arm is promoted or retired. Sending goes on.",
+    action: "Check the learn step in the /api/autopilot/tick logs (Vercel) and audit_log autopilot.tick_errors; the arms are on " + `${s.appUrl}/learning.`,
+  };
+}
+
+// ── Cron job silent ──────────────────────────────────────────────────────────
+
+/** Scheduled runs a job may miss in a row before it is an emergency. */
+export const JOB_MISSED_RUNS = 3;
+/** A run is due only once it had time to finish (maxDuration 120s) and write its heartbeat. */
+export const JOB_GRACE_MINUTES = 5;
+
+const JOB_STOPS: Record<CronJob, string> = {
+  "autopilot-tick": "Drafting, AUTO scheduling, breakers and learning.",
+  "replies-poll": "Reading replies and bounces: lead alerts, opt-outs and the bounce breaker.",
+  "send-queue": "Approved emails going out.",
+  "follow-up": "Follow-up emails.",
+};
+
+/** The values one cron field allows: *, n, a-b, a-b/n, *\/n and lists of them. */
+function cronField(spec: string, min: number, max: number): Set<number> {
+  const out = new Set<number>();
+  for (const part of spec.split(",")) {
+    const [range = "*", stepText] = part.split("/");
+    const step = stepText ? Number(stepText) : 1;
+    let lo = min;
+    let hi = max;
+    if (range !== "*") {
+      const [a, b] = range.split("-");
+      lo = Number(a);
+      hi = b !== undefined ? Number(b) : stepText ? max : lo;
+    }
+    for (let v = lo; v <= hi; v += step) out.add(v);
+  }
+  return out;
+}
+
+/** A UTC matcher for a 5-field cron expression (pg_cron runs in UTC). */
+export function cronMatcher(expr: string): (t: number) => boolean {
+  const [m = "*", h = "*", dom = "*", mon = "*", dow = "*"] = expr.trim().split(/\s+/);
+  const minutes = cronField(m, 0, 59);
+  const hours = cronField(h, 0, 23);
+  const days = cronField(dom, 1, 31);
+  const months = cronField(mon, 1, 12);
+  const weekdays = cronField(dow, 0, 6);
+  return (t) => {
+    const d = new Date(t);
+    return (
+      minutes.has(d.getUTCMinutes()) &&
+      hours.has(d.getUTCHours()) &&
+      days.has(d.getUTCDate()) &&
+      months.has(d.getUTCMonth() + 1) &&
+      weekdays.has(d.getUTCDay())
+    );
+  };
+}
+
+/** Scheduled runs after `from` and at or before `to`, counted up to `cap`. */
+export function scheduledRuns(expr: string, from: number, to: number, cap: number = JOB_MISSED_RUNS): number {
+  const match = cronMatcher(expr);
+  let n = 0;
+  for (let t = Math.floor(from / 60_000) * 60_000 + 60_000; t <= to && n < cap; t += 60_000) if (match(t)) n++;
+  return n;
+}
+
+/**
+ * A job is silent when it missed JOB_MISSED_RUNS scheduled runs in a row since
+ * its last success: 45 min for the tick, 30 for the poll, the send-queue and
+ * the follow-ups. Runs outside a job's window (weekends,
+ * before 15:00 UTC) are not scheduled, so they never count. A job with no
+ * heartbeat row yet is silent; one that never succeeded counts from when it
+ * was first seen.
+ */
+export function jobSilent(s: HealthSnapshot): HealthProblem | null {
+  if (!s.heartbeats) return null;
+  const now = new Date(s.now).getTime();
+  const due = now - JOB_GRACE_MINUTES * 60_000;
+  const silent: Array<{ job: CronJob; line: string }> = [];
+  for (const hb of s.heartbeats) {
+    if (!(hb.job in CRON_JOBS)) continue;
+    const job = hb.job as CronJob;
+    const spec = CRON_JOBS[job];
+    const base = hb.lastOkAt ?? hb.createdAt;
+    if (!base) continue;
+    const baseMs = new Date(base).getTime();
+    if (!Number.isFinite(baseMs) || scheduledRuns(spec.cron, baseMs, due) < JOB_MISSED_RUNS) continue;
+    const since = hb.lastOkAt ? `last successful run ${hb.lastOkAt}` : `no successful run since it was first seen ${hb.createdAt}`;
+    const lastError =
+      hb.lastErrorAt && new Date(hb.lastErrorAt).getTime() > baseMs ? `; last error ${hb.lastErrorAt}: ${(hb.lastError ?? "").slice(0, 200)}` : "";
+    silent.push({ job, line: `${job} (pg_cron ${spec.pgJob}, ${spec.cron} UTC): ${since}, ${JOB_MISSED_RUNS}+ scheduled runs since without a success${lastError}.` });
+  }
+  if (silent.length === 0) return null;
+  const first = silent[0] as (typeof silent)[number];
+  return {
+    kind: "job_silent",
+    title: silent.length === 1 ? `Scheduled job ${first.job} stopped completing` : `${silent.length} scheduled jobs stopped completing`,
+    detail: silent.map((x) => x.line).join("\n"),
+    stops: silent.map((x) => `${x.job}: ${JOB_STOPS[x.job]}`).join(" "),
+    action:
+      `In Supabase, cron.job_run_details for ${silent.map((x) => CRON_JOBS[x.job].pgJob).join(", ")} and net._http_response (what the app answered); ` +
+      `in Vercel, the logs of ${silent.map((x) => CRON_JOBS[x.job].route).join(", ")}. A 5xx run records its error above; a run that never reached the app records nothing.`,
+  };
+}
+
+export const HEALTH_RULES: ReadonlyArray<(s: HealthSnapshot) => HealthProblem | null> = [
+  googleDisconnected,
+  autopilotStopped,
+  emailsStuck,
+  inboxPaused,
+  tickErrors,
+  learningStalled,
+  jobSilent,
+];
 
 export function findProblems(s: HealthSnapshot): HealthProblem[] {
   return HEALTH_RULES.map((rule) => rule(s)).filter((p): p is HealthProblem => p !== null);
@@ -219,6 +515,8 @@ export type HealthRouteDeps = {
   /** sendNotification: tries each connected inbox, and reports to Sentry when none can send. */
   send: (tenantId: string, message: { subject: string; body: string }) => Promise<{ sent: number; failed: string[] }>;
   recordAlert: (tenantId: string, problem: HealthProblem) => Promise<void>;
+  /** Sentry.captureMessage at warning level: every alert also reaches Sentry, whether or not an inbox can send it. */
+  capture: (message: string) => void;
   now?: () => Date;
 };
 
@@ -254,6 +552,14 @@ export async function handleHealthCheck(req: Request, deps: HealthRouteDeps): Pr
       if (dry) {
         Object.assign(row, message);
         continue;
+      }
+      // Once per new problem, deduped like the email: an undelivered one retries next hour.
+      for (const p of fresh) {
+        try {
+          deps.capture(`S.P.A.M. health: ${p.title}`);
+        } catch {
+          // Sentry down must not stop the email.
+        }
       }
       const res = await deps.send(tenantId, message);
       sent += res.sent;

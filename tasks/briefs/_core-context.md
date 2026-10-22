@@ -54,6 +54,12 @@ cost-tracked, daily-capped wrapper in `lib/anthropic/` · Gmail API · Sentry ·
 - One predicate per question. If two paths ask "is this contact usable" or "may this
   send", they call the same function. A gate and the UI that announces it share it.
 - Every claim an outbound email makes about the prospect is verified where it is used.
+- One recipient per pitch: `chooseRecipient` (lib/pitches/contacts.ts) answers it once and
+  the greeting, `contact_id`, the gate and /pitches all use that answer (batch 8).
+- `pitches.decision` is WRITE-ONCE (0038 trigger): anything that belongs in it goes in at
+  generation (`generatePitchWith` options); later marks go to `audit_log` or `pitch_events`.
+- Conversation events (reply, bounce, click, sent) live on the ROOT pitch; a follow-up's
+  answered row is `payload.answered_pitch_id` (batch 8).
 - Any `fetch` has `AbortSignal.timeout`; sum worst-case time × retries under the route's
   `maxDuration` (`vercel.json`: Vercel uses the FIRST matching pattern); emit a heartbeat
   from the work itself; `Promise.race` is not cancellation.

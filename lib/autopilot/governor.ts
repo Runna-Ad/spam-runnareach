@@ -6,14 +6,16 @@
  *                    address is verified and the segment isn't on probation.
  *   evaluateBreakers circuit breakers (audit §5.4): what to pause, and why.
  *   nextStage        autonomy stages (off → shadow → veto → auto), promoted
- *                    on measured agreement, demoted automatically when the
- *                    pitches themselves go wrong (never on delivery trouble).
+ *                    on measured agreement; when the pitches themselves go
+ *                    wrong auto drops to veto and veto restarts its clock
+ *                    (never on delivery trouble, never down to shadow).
  *
  * Learning changes WHAT is said and TO WHOM. It never changes these.
  *
  * Pure — tested in tests/governor.test.ts.
  */
 
+import { heldForWriting } from "../learning/presend.ts";
 import { isTrustedForAutoSend } from "../research/verify-recipient.ts";
 
 // ── Lanes ─────────────────────────────────────────────────────────────────────
@@ -42,7 +44,7 @@ export const AUTO_MIN_CRITIC_SCORE = 0.8;
 
 export function laneFor(i: LaneInput): { lane: Lane; reasons: string[] } {
   const drop: string[] = [];
-  if (i.verify === "drop") drop.push("verifier says the address will not deliver");
+  if (i.verify === "drop") drop.push(VERIFIER_DROP_REASON);
   if (i.gate?.failures.some((f) => f.code === "unusable_email")) drop.push("no usable recipient address");
   if (drop.length) return { lane: "drop", reasons: drop };
 
@@ -52,7 +54,7 @@ export function laneFor(i: LaneInput): { lane: Lane; reasons: string[] } {
   if (!i.critic) review.push("AI review did not run");
   else if (!i.critic.pass) review.push("AI review flagged issues");
   else if (i.critic.score < AUTO_MIN_CRITIC_SCORE) review.push(`AI review score ${i.critic.score.toFixed(2)} < ${AUTO_MIN_CRITIC_SCORE}`);
-  if (i.verify !== "send") review.push(i.verify === "review" ? "verifier unsure about the address" : "address not verified yet");
+  if (i.verify !== "send") review.push(i.verify === "review" ? VERIFIER_UNSURE_REASON : "address not verified yet");
   if (!TRUSTED_SOURCES.has(i.recipientSelectedBy ?? "")) review.push(`address source "${i.recipientSelectedBy ?? "unknown"}" not trusted`);
   if (!i.path.startsWith("claude") && i.path !== "website_claude") review.push("written by a template (templates never go automatically)");
   if (i.segmentOnProbation) review.push("segment on probation after opt-outs");
@@ -67,6 +69,10 @@ export type HeldAction = { action: "leave"; why: string } | { action: "rewrite" 
 // Reasons a rewrite cannot change: the recipient, or a segment on probation.
 const UNFIXABLE_REASON = /^(verifier unsure about the address|address source |segment on probation)/;
 
+/** laneFor's reasons about the verifier's verdict on the recipient (exact strings). */
+export const VERIFIER_DROP_REASON = "verifier says the address will not deliver";
+export const VERIFIER_UNSURE_REASON = "verifier unsure about the address";
+
 /**
  * Prefix of every autopilot_reasons entry that means "a person held this after
  * the autopilot scheduled it" (a /pitches veto, a digest hold link). heldAction
@@ -77,11 +83,15 @@ export const HELD_BY_PERSON = "held by a person";
 /**
  * Prefix of every autopilot_reasons entry that means "the autopilot pulled this
  * back itself" (an automatic approval still waiting to send when the stage
- * dropped to shadow or off, lib/autopilot/hold.ts holdAutoApprovals). Not a
+ * dropped to shadow or off, or the veto clock restarted, lib/autopilot/hold.ts
+ * holdAutoApprovals). Not a
  * person's veto, so it is not HELD_BY_PERSON, but heldAction leaves it alone
  * the same way: what to do with it is a person's call.
  */
 export const HELD_BY_AUTOPILOT = "held by the autopilot";
+
+/** The reason a pitch pulled back by a veto clock restart carries (HELD_BY_AUTOPILOT: a person's call next). */
+export const VETO_RESTART_HOLD_REASON = `${HELD_BY_AUTOPILOT}: veto clock restarted`;
 
 /**
  * The one test for "a person sent this autopilot approval back": it is back in
@@ -116,26 +126,100 @@ export function countVetoes(
  * writing rule, an address not checked yet), and is dropped otherwise or when
  * the rewrite is held again. A DROP draft is closed at once. Drafts a person
  * edited or pulled back stay theirs.
+ *
+ * The verifier's doubt about the address is fixed by writing to someone else:
+ * with `hasAlternativeContact` (the prospect has another usable contact the
+ * verifier has not flagged, lib/pitches/contacts.ts hasAlternativeRecipient)
+ * an unsure address no longer blocks the rewrite, and a DROP draft whose only
+ * reason is the verifier's "will not deliver" is rewritten instead of closed.
+ * The rewrite goes to that contact. Without one (or when the contacts could
+ * not be read) both drop as before.
  */
 export function heldAction(
-  d: { lane: Lane; reasons: string[]; isRewrite: boolean; editedByPerson: boolean },
+  d: { lane: Lane; reasons: string[]; isRewrite: boolean; editedByPerson: boolean; hasAlternativeContact?: boolean },
   writerFixable: ReadonlySet<string>,
 ): HeldAction {
   if (d.editedByPerson) return { action: "leave", why: "a person edited it" };
   if (d.reasons.some((r) => r.startsWith(HELD_BY_PERSON))) return { action: "leave", why: "a person held it" };
+  if (d.reasons.some((r) => r.startsWith(VETO_RESTART_HOLD_REASON))) {
+    return { action: "leave", why: "the autopilot pulled it back when the veto clock restarted" };
+  }
   if (d.reasons.some((r) => r.startsWith(HELD_BY_AUTOPILOT))) {
     return { action: "leave", why: "the autopilot pulled it back when its stage dropped" };
   }
   const why = d.reasons.join("; ") || "held";
-  if (d.lane === "drop") return { action: "drop", why };
+  const alternative = d.hasAlternativeContact === true;
+  if (d.lane === "drop") {
+    const addressOnly = d.reasons.length > 0 && d.reasons.every((r) => r === VERIFIER_DROP_REASON);
+    if (!(alternative && addressOnly && !d.isRewrite)) return { action: "drop", why };
+  }
   if (d.isRewrite) return { action: "drop", why: `still held after one rewrite: ${why}` };
   const unfixable = d.reasons.filter((r) => {
+    if (alternative && r === VERIFIER_UNSURE_REASON) return false;
     if (UNFIXABLE_REASON.test(r)) return true;
     const code = r.match(/^gate: (\S+)/)?.[1];
     return code !== undefined && !writerFixable.has(code);
   });
   if (unfixable.length) return { action: "drop", why: `a rewrite can't fix: ${unfixable.join("; ")}` };
   return { action: "rewrite" };
+}
+
+// ── Re-draft pool ─────────────────────────────────────────────────────────────
+
+/** A prospect whose drafts were all thrown away for their writing waits this long for a fresh one. */
+export const REDRAFT_AFTER_DAYS = 14;
+/** Fresh drafts per tick and per UTC day (each is a full write + review). */
+export const REDRAFTS_PER_TICK = 3;
+export const REDRAFTS_PER_DAY = 10;
+/** decision key on a re-draft (and on its rewrite): the auto_rejected pitch it replaces. */
+export const REDRAFT_OF = "redraft_of";
+
+/** Prefix dropDraft gives a draft whose rewrite could not be generated (lib/autopilot/tick.ts resolveHeld). */
+export const REWRITE_FAILED = "rewrite failed: ";
+
+/**
+ * Was this draft thrown away for its writing? The pre-send guardrail's rule
+ * (lib/learning/presend.ts heldForWriting: the AI reviewer, writer-fixable
+ * gate codes, also after one rewrite), plus a rewrite that could not be
+ * generated. Anything about the address, the company, a template, a
+ * probation segment, a person or an unknown reason is not.
+ */
+export function rejectedForWriting(reason: string | null | undefined, writerFixable: ReadonlySet<string>): boolean {
+  if (!reason) return false;
+  return reason.trim().startsWith(REWRITE_FAILED) || heldForWriting(reason, writerFixable);
+}
+
+export type RedraftPitch = {
+  id: string;
+  status: string;
+  created_at: string;
+  auto_rejected_reason: string | null;
+  decision: Record<string, unknown> | null;
+};
+
+/**
+ * May the autopilot write this prospect one fresh draft? Every pitch it has
+ * (roots and follow-ups) was auto_rejected for its writing, the newest at
+ * least REDRAFT_AFTER_DAYS ago, none of them is already a re-draft, and it has
+ * fewer than two: a prospect gets at most two auto_rejected drafts ever. Any
+ * other pitch (a draft, an approval, anything sent or sending) means no. The
+ * prospect's own status, cooldown and do-not-contact checks, and a re-draft
+ * that failed to generate (its audit row), are the caller's.
+ * Returns the pitch the re-draft replaces (the newest), or null.
+ */
+export function redraftOf(
+  pitches: readonly RedraftPitch[],
+  now: Date,
+  writerFixable: ReadonlySet<string>,
+): string | null {
+  if (pitches.length === 0 || pitches.length >= 2) return null;
+  if (!pitches.every((p) => p.status === "auto_rejected" && rejectedForWriting(p.auto_rejected_reason, writerFixable))) return null;
+  const isRedraft = (d: RedraftPitch["decision"]) => d !== null && typeof d === "object" && Object.hasOwn(d, REDRAFT_OF);
+  if (pitches.some((p) => isRedraft(p.decision))) return null;
+  const newest = [...pitches].sort((a, b) => Date.parse(b.created_at) - Date.parse(a.created_at))[0]!;
+  const age = now.getTime() - Date.parse(newest.created_at);
+  if (!(age >= REDRAFT_AFTER_DAYS * 86_400_000)) return null;
+  return newest.id;
 }
 
 // ── Circuit breakers ──────────────────────────────────────────────────────────
@@ -289,15 +373,39 @@ export function qualityTripReason(codes: readonly string[]): string {
   return unique.length ? `a quality breaker tripped: ${unique.join(", ")}` : "a quality breaker tripped";
 }
 
-export function nextStage(stage: Stage, m: StageMetrics): { stage: Stage; reason: string } {
-  // Demotion first: pitches going wrong drops a stage at once. Delivery
-  // trouble pauses sending (the breakers) and never moves the stage.
+/**
+ * restart: the stage stays where it is but its clock (stage_since) starts
+ * again, and automatic approvals still waiting are pulled back as on a
+ * demotion. Only veto restarts (see nextStage).
+ */
+export type StageDecision = { stage: Stage; reason: string; restart?: true };
+
+/**
+ * The new stage_since for a stage change or clock restart: the later of the
+ * write's own clock and 1 ms after the newest evidence the stage step counted
+ * (breaker insights, rejected AUTO pitches; both counted with created_at ≥
+ * stage_since). A trip the same tick wrote after the tick's start must not be
+ * counted again by the next tick (review of #55: a second restart).
+ */
+export function stageClockStart(writeAt: Date, evidenceAt: ReadonlyArray<string | null | undefined>): string {
+  let t = writeAt.getTime();
+  for (const e of evidenceAt) {
+    const ms = e ? Date.parse(e) : NaN;
+    if (!Number.isNaN(ms) && ms + 1 > t) t = ms + 1;
+  }
+  return new Date(t).toISOString();
+}
+
+export function nextStage(stage: Stage, m: StageMetrics): StageDecision {
+  // Pitches going wrong acts at once: auto drops to veto; veto restarts its
+  // clock (14 days / 100 scheduled again) and stays veto. Nothing automatic
+  // ever moves a tenant to shadow: that is a person's choice only (2026-10-22,
+  // shadow needs 100 human approvals to climb back). Delivery trouble pauses
+  // sending (the breakers) and never moves the stage.
   if ((stage === "auto" || stage === "veto") && (m.autoQualityTrips > 0 || m.autoFactualErrors > 0)) {
-    const down: Stage = stage === "auto" ? "veto" : "shadow";
-    return {
-      stage: down,
-      reason: m.autoFactualErrors > 0 ? "an automatic pitch had a factual or recipient error" : qualityTripReason(m.autoQualityTripCodes ?? []),
-    };
+    const why = m.autoFactualErrors > 0 ? "an automatic pitch had a factual or recipient error" : qualityTripReason(m.autoQualityTripCodes ?? []);
+    if (stage === "auto") return { stage: "veto", reason: why };
+    return { stage: "veto", reason: `${why}; veto clock restarted`, restart: true };
   }
 
   if (stage === "shadow") {

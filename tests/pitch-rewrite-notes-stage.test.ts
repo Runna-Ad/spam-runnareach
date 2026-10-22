@@ -84,7 +84,8 @@ class Query implements PromiseLike<Result> {
   in(k: string, v: unknown[]) { this.filters.push((r) => v.includes(r[k])); return this; }
   gte() { return this; }
   order() { return this; }
-  limit() { return this; }
+  private lim: number | null = null;
+  limit(n: number) { this.lim = n; return this; }
   returns() { return this; }
   maybeSingle() { this.one = true; return this; }
   single() { this.one = true; return this; }
@@ -102,7 +103,7 @@ class Query implements PromiseLike<Result> {
     const hit = rows.filter((r) => this.filters.every((f) => f(r)));
     if (this.op === "select") {
       if (this.db.failSelects?.[this.table]) return { data: null, error: this.db.failSelects[this.table]! };
-      const out = hit.map((r) => ({ ...r }));
+      const out = (this.lim === null ? hit : hit.slice(0, this.lim)).map((r) => ({ ...r }));
       return { data: this.one ? (out[0] ?? null) : out, error: null };
     }
     if (this.op === "delete") for (const r of hit) rows.splice(rows.indexOf(r), 1);
@@ -168,8 +169,13 @@ async function run(opts: {
   /** Run the real write → review loop (SDK mocked) instead of the throwing stub. */
   realCompose?: boolean;
   roleInbox?: boolean;
+  /** The prospect's contacts (default: one, Ana) and the recipient rule's pick (default: the first usable). */
+  contacts?: Row[];
+  pick?: (rows: Row[]) => Row | null;
+  redraftOf?: string;
 }) {
   const calls: string[] = [];
+  const composerContacts: unknown[] = [];
   const seen: Array<{ reviseFirst: unknown; deadline: number; startedAt: number; heldStillThere: boolean }> = [];
   const db: Db = {
     tables: {
@@ -181,7 +187,7 @@ async function run(opts: {
       prospect_research: opts.realCompose
         ? [{ tenant_id: "t1", prospect_id: PROSPECT_ID, what_they_do: "family dental clinic", tech_stack: [], pain_points: [{ pain_id: "p1", pain_label: "Lead response time", evidence_quote: "contact form only, no online booking" }] }]
         : [],
-      prospect_contacts: [opts.roleInbox
+      prospect_contacts: opts.contacts ?? [opts.roleInbox
         ? { tenant_id: "t1", prospect_id: PROSPECT_ID, email: "info@clinicasur.ca", email_is_role_based: true, full_name: null, role_title: null, priority_rank: 1 }
         : { tenant_id: "t1", prospect_id: PROSPECT_ID, email: "ana@clinicasur.ca", email_is_role_based: false, full_name: "Ana", role_title: null, priority_rank: 1 }],
       case_studies: [],
@@ -209,6 +215,8 @@ async function run(opts: {
     buildHunterUrlForPitch: () => NEW_LINK,
     heldBodyForRevision,
     fetchTopUsableContact: async () => null,
+    chooseRecipient: (rows: Row[] | null) =>
+      opts.pick ? opts.pick(rows ?? []) : (rows?.find((c) => typeof c.email === "string" && c.email.includes("@")) ?? null),
     refreshGateAfterChange: async () => null,
     sizeBand: () => "smb",
     registerFor: () => "tu",
@@ -219,6 +227,7 @@ async function run(opts: {
     renderIndustryTemplate: (_i: unknown, why: string) => { throw new Error(`template reached: ${why}`); },
     revisionIssues,
     composeWithReview: async (input: Parameters<typeof composeWithReview>[0], o: Parameters<typeof composeWithReview>[1]) => {
+      composerContacts.push(input.contacts);
       if (opts.realCompose) return composeWithReview(input, o);
       seen.push({
         reviseFirst: o.reviseFirst,
@@ -241,13 +250,14 @@ async function run(opts: {
   let result: { ok: boolean; error?: string } | null = null;
   let thrown: unknown = null;
   try {
-    result = await generatePitchWith({ supabase, user: USER }, PROSPECT_ID, opts.retryOf === null ? {} : { retryOf: opts.retryOf ?? HELD_ID });
+    const redraft = opts.redraftOf ? { redraftOf: opts.redraftOf } : {};
+    result = await generatePitchWith({ supabase, user: USER }, PROSPECT_ID, opts.retryOf === null ? redraft : { retryOf: opts.retryOf ?? HELD_ID, ...redraft });
   } catch (e) {
     thrown = e;
   } finally {
     Date.now = realNow;
   }
-  return { result, thrown, seen, calls, log: db.log, db };
+  return { result, thrown, seen, calls, log: db.log, db, composerContacts };
 }
 
 test("rewrite of a Claude draft: the first compose revises it with its notes, gate details first, max 8", async () => {
@@ -380,6 +390,72 @@ test("guard: a drafted-but-unsent company (pitched, queued, approved) still gets
     const { seen } = await run({ status, held: claudeHeld() });
     assert.equal(seen.length, 1, status);
   }
+});
+
+// ── The recipient (redraft-pool): the text greets the contact the pitch is linked to ──
+
+const person = (id: string, rank: number, email: string | null, full_name: string | null): Row => ({
+  id, tenant_id: "t1", prospect_id: PROSPECT_ID, email, email_is_role_based: false, full_name, role_title: null, priority_rank: rank,
+  selected_by: "scraper", verify_verdict: null, verify_checked_at: null,
+});
+const asComposer = (rows: Row[]) =>
+  rows.map((c) => ({ full_name: c.full_name, email: c.email, email_is_role_based: false, role_title: null }));
+
+test("recipient: the rule's usual pick leaves the composer's contacts exactly the top five, as before", async () => {
+  const six = [person("n", 0, null, "Name Only"), person("a", 1, "ana@clinicasur.ca", "Ana"), person("b", 2, "bo@clinicasur.ca", "Bo"),
+    person("c", 3, "cy@clinicasur.ca", "Cy"), person("d", 4, "di@clinicasur.ca", "Di"), person("e", 5, "ed@clinicasur.ca", "Ed")];
+  const { composerContacts } = await run({ held: null, retryOf: null, contacts: six });
+  assert.deepEqual(composerContacts, [asComposer(six.slice(0, 5))]);
+});
+
+test("recipient: a contact chosen past a flagged one leads the list and is the pitch's contact_id", async () => {
+  echoWriter();
+  const rows = [person("a", 1, "ana@clinicasur.ca", "Ana"), person("b", 2, "bo@clinicasur.ca", "Bo")];
+  const { result, db, composerContacts } = await run({
+    held: null, retryOf: null, realCompose: true, contacts: rows, pick: (r) => r.find((c) => c.id === "b") ?? null,
+  });
+  assert.equal(result?.ok, true, result?.error);
+  assert.deepEqual(composerContacts[0], asComposer([rows[1]!, rows[0]!]));
+  const created = db.tables.pitches!.find((p) => p.id !== HELD_ID)!;
+  assert.equal(created.contact_id, "b");
+});
+
+test("recipient: no usable contact in the top five is refused as before, whatever the rule picks", async () => {
+  const rows = [0, 1, 2, 3, 4].map((i) => person(`n${i}`, i, null, `N${i}`)).concat(person("f", 9, "fa@clinicasur.ca", "Fa"));
+  const { result, composerContacts } = await run({ held: null, retryOf: null, contacts: rows, pick: (r) => r.find((c) => c.id === "f") ?? null });
+  assert.equal(result?.ok, false);
+  assert.match(result?.error ?? "", /No contact email/);
+  assert.equal(composerContacts.length, 0);
+});
+
+test("recipient: a rewrite to another contact composes fresh; to the same contact it revises as before", async () => {
+  const rows = [person("a", 1, "ana@clinicasur.ca", "Ana"), person("b", 2, "bo@clinicasur.ca", "Bo")];
+  const toBo = (r: Row[]) => r.find((c) => c.id === "b") ?? null;
+  const moved = await run({ held: claudeHeld({ contact_id: "a" } as Held), contacts: rows, pick: toBo });
+  assert.equal(moved.seen[0]!.reviseFirst, undefined, "the held text greets Ana; Bo gets a fresh draft");
+  const same = await run({ held: claudeHeld({ contact_id: "b" } as Held), contacts: rows, pick: toBo });
+  assert.notEqual(same.seen[0]!.reviseFirst, undefined);
+});
+
+test("redraft_of is written with the decision record (write-once), and a rewrite carries the held draft's", async () => {
+  echoWriter();
+  const fresh = await run({ held: null, retryOf: null, realCompose: true, redraftOf: "old-1" });
+  assert.equal(fresh.result?.ok, true, fresh.result?.error);
+  const created = fresh.db.tables.pitches!.find((p) => p.id !== HELD_ID)!;
+  assert.equal((created.decision as { redraft_of?: string }).redraft_of, "old-1");
+
+  echoWriter();
+  const held = claudeHeld({ decision: { path: "claude", redraft_of: "old-2", critic: { issues: ["x"] } } });
+  const rewrite = await run({ held, realCompose: true });
+  assert.equal(rewrite.result?.ok, true, rewrite.result?.error);
+  const next = rewrite.db.tables.pitches!.find((p) => p.id !== HELD_ID)!;
+  assert.equal((next.decision as { redraft_of?: string; retry_of?: string }).redraft_of, "old-2");
+  assert.equal((next.decision as { retry_of?: string }).retry_of, HELD_ID);
+
+  // A plain first draft has none.
+  echoWriter();
+  const plain = await run({ held: null, retryOf: null, realCompose: true });
+  assert.equal(Object.hasOwn(plain.db.tables.pitches!.find((p) => p.id !== HELD_ID)!.decision as object, "redraft_of"), false);
 });
 
 // ── suggestPitchAnglesAction records its Claude call ──────────────────────────

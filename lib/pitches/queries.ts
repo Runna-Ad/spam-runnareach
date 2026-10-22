@@ -1,5 +1,5 @@
 import { createClient } from "@/lib/supabase/server";
-import { pickTopUsableContact, isGuessedContact } from "@/lib/pitches/contacts";
+import { pitchRecipient, isGuessedContact } from "@/lib/pitches/contacts";
 import { parseGateOverride, parseGateVerdict, type StoredGateVerdict } from "@/lib/pitches/gate";
 import type { CriticVerdict } from "@/lib/pitches/decision";
 import type { HotLeadLevel } from "@/lib/pitches/hot-lead";
@@ -83,6 +83,7 @@ export async function listPitches(
   type Row = {
     id: string;
     prospect_id: string;
+    contact_id: string | null;
     case_study_id: string | null;
     status: PitchStatus;
     subject: string;
@@ -99,7 +100,15 @@ export async function listPitches(
       company_name: string;
       market: "CA" | "MX" | "US" | "LATAM";
       language: "en" | "es";
-      prospect_contacts: { full_name: string | null; email: string | null; priority_rank: number | null; selected_by: string | null }[] | null;
+      prospect_contacts: {
+        id: string;
+        full_name: string | null;
+        email: string | null;
+        priority_rank: number | null;
+        selected_by: string | null;
+        verify_verdict: "send" | "review" | "drop" | null;
+        verify_checked_at: string | null;
+      }[] | null;
     } | null;
     case_studies: { client_name: string } | null;
     pain_taxonomy: { display_name_en: string } | null;
@@ -109,9 +118,9 @@ export async function listPitches(
     .from("pitches")
     .select(
       `
-      id, prospect_id, case_study_id, status, subject, variant_index,
+      id, prospect_id, contact_id, case_study_id, status, subject, variant_index,
       quality_self_score, cost_usd, pain_id, approved_at, scheduled_send_at, sent_at,
-      prospects(company_name, market, language, prospect_contacts(full_name, email, priority_rank, selected_by)),
+      prospects(company_name, market, language, prospect_contacts(id, full_name, email, priority_rank, selected_by, verify_verdict, verify_checked_at)),
       case_studies(client_name),
       pain_taxonomy:pain_id(display_name_en)
     `,
@@ -127,11 +136,12 @@ export async function listPitches(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const { hotByPitch, hotLeadsUnavailable } = await loadHotLeads(supabase as any, (data ?? []).map((r) => r.id));
 
+  const now = new Date();
   const pitches = (data ?? []).map((r) => {
     const hot = hotByPitch.get(r.id);
-    // Resolve the prospect's CURRENT top usable contact, not the frozen pitch FK
-    // (which goes stale — see lib/pitches/contacts.ts).
-    const topContact = pickTopUsableContact(r.prospects?.prospect_contacts);
+    // Who it goes to: the pitch's own contact when usable, else the prospect's
+    // current pick (the FK goes stale — see lib/pitches/contacts.ts pitchRecipient).
+    const topContact = pitchRecipient(r.prospects?.prospect_contacts, r.contact_id, now);
     return {
     id: r.id,
     prospect_id: r.prospect_id,
@@ -186,6 +196,7 @@ export async function getPitch(
   type PitchDetailRow = {
     id: string;
     prospect_id: string;
+    contact_id: string | null;
     case_study_id: string | null;
     status: PitchStatus;
     subject: string;
@@ -210,7 +221,15 @@ export async function getPitch(
       company_name: string;
       market: "CA" | "MX" | "US" | "LATAM";
       language: "en" | "es";
-      prospect_contacts: { full_name: string | null; email: string | null; priority_rank: number | null; selected_by: string | null }[] | null;
+      prospect_contacts: {
+        id: string;
+        full_name: string | null;
+        email: string | null;
+        priority_rank: number | null;
+        selected_by: string | null;
+        verify_verdict: "send" | "review" | "drop" | null;
+        verify_checked_at: string | null;
+      }[] | null;
     } | null;
     case_studies: { client_name: string } | null;
     pain_taxonomy: { display_name_en: string } | null;
@@ -220,12 +239,12 @@ export async function getPitch(
     .from("pitches")
     .select(
       `
-      id, prospect_id, case_study_id, status, subject, variant_index,
+      id, prospect_id, contact_id, case_study_id, status, subject, variant_index,
       quality_self_score, cost_usd, pain_id, approved_at, scheduled_send_at, sent_at,
       body_original, body_edited, body_sent,
       measurable_result_included, auto_rejected, auto_rejected_reason,
       rejection_reason, gate_verdict, gate_override, decision,
-      prospects(company_name, market, language, prospect_contacts(full_name, email, priority_rank, selected_by)),
+      prospects(company_name, market, language, prospect_contacts(id, full_name, email, priority_rank, selected_by, verify_verdict, verify_checked_at)),
       case_studies(client_name),
       pain_taxonomy:pain_id(display_name_en)
     `,
@@ -238,7 +257,7 @@ export async function getPitch(
   if (!rawData) return null;
 
   const r = rawData as unknown as PitchDetailRow;
-  const topContact = pickTopUsableContact(r.prospects?.prospect_contacts);
+  const topContact = pitchRecipient(r.prospects?.prospect_contacts, r.contact_id, new Date());
 
   return {
     id: r.id,

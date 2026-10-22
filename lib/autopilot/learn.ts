@@ -12,6 +12,10 @@ import "server-only";
  *                        writer.evidence  cite a sourced statistic or not
  *                        writer.guidance  learned writing instructions
  *                        scout.cell       ICP × keyword × region searches
+ *                      Then the pre-send guardrail (lib/learning/presend.ts):
+ *                      a guidance challenger whose drafts the autopilot throws
+ *                      away for their writing clearly more often than the
+ *                      champion's is retired, days before any reply could say so.
  *   weeklyReview       once a week: an AI review of the week's replies, holds,
  *                      edits, gate failures and arm results proposes up to two
  *                      new writing instructions; each that passes the guidance
@@ -20,14 +24,29 @@ import "server-only";
  * What learning may never touch (audit §6.4): the gate, compliance, caps,
  * breakers, do-not-contact, the no-invented-numbers rule. Guidance can only add
  * to the writer's rules, and every email still passes the gate and reviewer.
+ *
+ * Decision 12 (Pedro, 2026-10-22): AI-written guidance is hands-off. It goes
+ * live as a challenger and may be promoted or retired with no person in the
+ * loop, protected by two guardrails: the pre-send held rate (above) and the
+ * opt-out guardrail (bandit.reviewArms). Gates, caps, compliance, breakers and
+ * do-not-contact are never learnable.
  */
 
 import { z } from "zod";
 import { ANTHROPIC_DEFAULT_MODEL, claudeIsAvailable, structuredCall } from "@/lib/anthropic/client";
 import { isUnderDailyCap, recordClaudeCall } from "@/lib/anthropic/cost-tracking";
 import { chooseArm, meanReward, reviewArms, type Arm, type ArmAction } from "@/lib/learning/bandit";
+import { WRITER_FIXABLE } from "@/lib/pitches/review";
 import { armStats, funnelForProspect, GUIDANCE_MAX_CHARS, sanitizeGuidance, type PitchOutcomeInput } from "@/lib/learning/outcomes";
 import { hunterDemand, industryScore, proposeCells, type IcpForCells, type IndustryEvidence } from "@/lib/learning/icp";
+import {
+  PRESEND_REASON,
+  PRESEND_WINDOW_DAYS,
+  presendGuardrail,
+  presendStats,
+  type PresendDraft,
+  type PresendRetire,
+} from "@/lib/learning/presend";
 import type { OutcomeEvent } from "@/lib/learning/reward";
 import { cellArm, cellKey, prospectReward, scoutCredits } from "@/lib/learning/scout";
 import { normalizeIndustry, type SegmentIndustry } from "@/lib/learning/segments";
@@ -190,8 +209,10 @@ export async function learnFromOutcomes(db: Db, tenantId: string, now: Date = ne
   const events = await eventsFor(db, tenantId, pitches.map((p) => p.id));
   const inputs: PitchOutcomeInput[] = pitches.map((p) => ({ arms: p.decision?.arms, events: events.get(p.id) ?? [] }));
   for (const learner of ["writer.evidence", "writer.guidance"]) {
-    await settleLearner(db, tenantId, learner, armStats(inputs, learner, now), 30);
+    // Only the writer learners count clicks (lib/learning/reward.ts).
+    await settleLearner(db, tenantId, learner, armStats(inputs, learner, now, { clicks: true }), 30);
   }
+  await presendReview(db, tenantId, now);
 
   // Scout cells: autopilot discovery jobs and what their crawls' prospects
   // became. Only the stats keys read here: stats also carries processed_ids.
@@ -260,6 +281,91 @@ export async function learnFromOutcomes(db: Db, tenantId: string, now: Date = ne
       .eq("learner", "scout.cell")
       .eq("key", key);
   }
+}
+
+const pct = (x: number) => `${(x * 100).toFixed(0)}%`;
+
+/** The insight title for a pre-send retirement: both rates and counts. */
+export function describePresend(r: PresendRetire): string {
+  return (
+    `writer.guidance: retired "${r.key}": ${r.challenger.held} of ${r.challenger.drafts} drafts thrown away for their writing (${pct(r.challenger.rate)}) ` +
+    `vs ${r.champion.held} of ${r.champion.drafts} for the champion "${r.champion.key}" (${pct(r.champion.rate)}), ${pct(r.pWorse)} likely worse`
+  );
+}
+
+const PRESEND_PAGE = 1000;
+const PRESEND_MAX_PAGES = 10;
+
+/**
+ * Root drafts created since `since`, newest first, paged past PostgREST's
+ * 1000-row cap (ordered by created_at then id so pages never overlap). Only the
+ * arms are read out of the decision record. null on any error.
+ */
+async function presendDrafts(db: Db, tenantId: string, since: string): Promise<PresendDraft[] | null> {
+  const out: PresendDraft[] = [];
+  for (let page = 0; page < PRESEND_MAX_PAGES; page++) {
+    const from = page * PRESEND_PAGE;
+    const { data, error } = await db
+      .from("pitches")
+      .select("id, arms:decision->arms, status, auto_rejected_reason")
+      .eq("tenant_id", tenantId)
+      .is("parent_pitch_id", null)
+      .gte("created_at", since)
+      .order("created_at", { ascending: false })
+      .order("id", { ascending: false })
+      .range(from, from + PRESEND_PAGE - 1);
+    if (error) return null;
+    const rows = (data ?? []) as Array<{ arms: Record<string, string> | null; status: string; auto_rejected_reason: string | null }>;
+    out.push(...rows.map((r) => ({ arms: r.arms, status: r.status, auto_rejected_reason: r.auto_rejected_reason })));
+    if (rows.length < PRESEND_PAGE) return out;
+  }
+  return out;
+}
+
+/**
+ * The pre-send guardrail (lib/learning/presend.ts) over the last 14 days of
+ * root drafts. Reads the arms after settleLearner wrote them, so a challenger
+ * promoted this tick is judged as the champion. The retire is guarded on
+ * status = 'challenger': the champion is never touched here.
+ */
+export async function presendReview(db: Db, tenantId: string, now: Date = new Date()): Promise<PresendRetire[]> {
+  const since = new Date(now.getTime() - PRESEND_WINDOW_DAYS * DAY).toISOString();
+  const [draftRows, { data: armRows, error: armErr }] = await Promise.all([
+    presendDrafts(db, tenantId, since),
+    db.from("learning_arms").select("key, status").eq("tenant_id", tenantId).eq("learner", "writer.guidance"),
+  ]);
+  // Unreadable is not "no drafts": decide nothing this tick.
+  if (!draftRows || armErr) return [];
+  const drafts: PresendDraft[] = draftRows;
+  const arms = (armRows ?? []) as Array<{ key: string; status: string }>;
+  const stats = presendStats(drafts, WRITER_FIXABLE);
+  const retire = presendGuardrail(arms, stats);
+  const at = now.toISOString();
+  const done: PresendRetire[] = [];
+  for (const r of retire) {
+    const { data: updated, error } = await db
+      .from("learning_arms")
+      .update({ status: "retired", retired_at: at, updated_at: at })
+      .eq("tenant_id", tenantId)
+      .eq("learner", "writer.guidance")
+      .eq("key", r.key)
+      .eq("status", "challenger")
+      .select("key");
+    if (error || ((updated ?? []) as unknown[]).length === 0) continue;
+    done.push(r);
+    await insight(db, tenantId, {
+      learner: "writer.guidance",
+      kind: "retire",
+      title: describePresend(r),
+      evidence: {
+        action: { kind: "retire", key: r.key, reason: PRESEND_REASON, pWorse: Number(r.pWorse.toFixed(4)) },
+        challenger: r.challenger,
+        champion: r.champion,
+        window_days: PRESEND_WINDOW_DAYS,
+      },
+    });
+  }
+  return done;
 }
 
 // ── Smarter ICPs: grow the search space ───────────────────────────────────────
@@ -495,6 +601,26 @@ export function reviewFailureText(error: string): string {
 }
 
 /**
+ * Every auto_rejected reason, split into its parts (heldAction joins them with
+ * "; " behind a "still held after one rewrite" / "a rewrite can't fix" prefix)
+ * and counted, most common first: what the weekly review reads as the main
+ * cause of thrown-away drafts.
+ */
+export function groupRejectionReasons(rows: ReadonlyArray<{ auto_rejected_reason: string | null }>, max = 12): Array<{ reason: string; count: number }> {
+  const counts = new Map<string, number>();
+  for (const r of rows) {
+    const text = (r.auto_rejected_reason ?? "").trim() || "no reason recorded";
+    const body = text.replace(/^(still held after one rewrite|a rewrite can't fix|rewrite failed): /, "");
+    const parts = text.startsWith("rewrite failed: ") ? ["rewrite failed"] : body.split("; ").map((p) => p.trim()).filter(Boolean);
+    for (const p of new Set(parts)) counts.set(p, (counts.get(p) ?? 0) + 1);
+  }
+  return [...counts]
+    .map(([reason, count]) => ({ reason: reason.slice(0, 160), count }))
+    .sort((a, b) => b.count - a.count || a.reason.localeCompare(b.reason))
+    .slice(0, max);
+}
+
+/**
  * At most one successful review a week and one paid attempt a day, and only
  * with something to learn from. Returns what was created.
  */
@@ -541,9 +667,13 @@ export async function weeklyReview(
   const cap = await deps.underCap(tenantId);
   if (!cap.under) return { ran: false, reason: "daily AI cap reached", guidance: [] };
 
-  const [{ data: replies }, { data: held }, { data: edited }, { data: drafts }, { data: arms }] = await Promise.all([
+  // Held drafts: the 20 newest as examples, plus every auto_rejected reason
+  // counted, so the review sees the main cause and not just a sample of it.
+  // Windowed on created_at: updated_at moves on every write (core rule).
+  const [{ data: replies }, { data: held }, { data: rejectedReasons }, { data: edited }, { data: drafts }, { data: arms }] = await Promise.all([
     db.from("replies").select("intent, body_text").eq("tenant_id", tenantId).gte("received_at", since).limit(40),
-    db.from("pitches").select("subject, rejection_reason, auto_rejected_reason, autopilot_reasons, status").eq("tenant_id", tenantId).in("status", ["reviewer_rejected", "auto_rejected"]).gte("updated_at", since).limit(20),
+    db.from("pitches").select("subject, rejection_reason, auto_rejected_reason, autopilot_reasons, status").eq("tenant_id", tenantId).in("status", ["reviewer_rejected", "auto_rejected"]).gte("created_at", since).order("created_at", { ascending: false }).limit(20),
+    db.from("pitches").select("auto_rejected_reason").eq("tenant_id", tenantId).eq("status", "auto_rejected").gte("created_at", since).limit(2000),
     db.from("pitches").select("body_original, body_edited").eq("tenant_id", tenantId).not("body_edited", "is", null).gte("updated_at", since).limit(8),
     db.from("pitches").select("gate_verdict, decision").eq("tenant_id", tenantId).gte("created_at", since).limit(200),
     db.from("learning_arms").select("learner, key, status, reward, trials, negatives, config").eq("tenant_id", tenantId).neq("status", "retired"),
@@ -561,6 +691,7 @@ export async function weeklyReview(
       text: (r.body_text ?? "").slice(0, 400),
     })),
     held_or_rejected: held ?? [],
+    auto_rejected_reasons: groupRejectionReasons((rejectedReasons ?? []) as Array<{ auto_rejected_reason: string | null }>),
     human_edits: ((edited ?? []) as Array<{ body_original: string | null; body_edited: string | null }>).map((e) => ({
       before: (e.body_original ?? "").slice(0, 900),
       after: (e.body_edited ?? "").slice(0, 900),

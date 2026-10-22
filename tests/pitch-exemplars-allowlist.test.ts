@@ -170,6 +170,7 @@ function housePitches(n: number, seed: number): Pitch[] {
         painLabel: rnd() < 0.7 ? pick(lang === "en" ? PAINS_EN : PAINS_ES) : null,
         lang,
         signature,
+        hunterUrl: "https://spam-runnareach.vercel.app/r/abcdefgh?market=ca&s=1",
       } as const;
       ({ subject, body } = kind === 2 ? buildFollowup1(ctx) : buildFollowup2(ctx));
     } else if (kind >= 4) {

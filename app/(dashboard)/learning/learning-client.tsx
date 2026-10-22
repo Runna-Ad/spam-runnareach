@@ -30,8 +30,6 @@ export function LearningClient({ prompts, initialDetail, learners = [] }: Props)
     });
   }
 
-  const totalPending = prompts.reduce((s, p) => s + p.pending_proposals, 0);
-
   return (
     <div className="flex flex-col h-full overflow-hidden">
       {/* Page header */}
@@ -39,16 +37,9 @@ export function LearningClient({ prompts, initialDetail, learners = [] }: Props)
         <div className="flex flex-col gap-0.5">
           <h1 className="text-2xl font-semibold tracking-tight text-white">Learning</h1>
           <p className="text-sm text-white/40">
-            Prompt version control · A/B testing · Sunday analysis proposals
+            Writing instructions are tested on live drafts and retired automatically when they do worse. Nothing here waits for a review.
           </p>
         </div>
-        {totalPending > 0 && (
-          <div className="flex items-center gap-2 rounded-lg border border-amber-500/20 bg-amber-500/10 px-3 py-1.5">
-            <span className="text-amber-400 text-sm font-medium">
-              {totalPending} proposal{totalPending > 1 ? "s" : ""} pending review
-            </span>
-          </div>
-        )}
       </div>
 
       <LearnerArms groups={learners} />

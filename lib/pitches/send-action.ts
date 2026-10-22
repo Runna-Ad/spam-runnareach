@@ -20,6 +20,8 @@ import { isEmailOnDncList, type DncClient } from "@/lib/discover/dnc-check";
 import { requireUser } from "@/lib/auth";
 import { getAccessToken, sendGmailMessage } from "@/lib/gmail/client";
 import { createClient } from "@/lib/supabase/server";
+import { createServiceRoleClient } from "@/lib/supabase/service-role";
+import { recordSendFailure } from "@/lib/autopilot/send-failures";
 import { bodyWithFooter, getOutboundCompliance } from "@/lib/compliance/outbound";
 import { firstTouchConflict } from "@/lib/pitches/send-guards";
 import { verifyRecipient } from "@/lib/research/verify-recipient";
@@ -289,6 +291,8 @@ export async function sendPitch(input: {
     // Rollback so user can retry
     await releaseSendSlot(slots, inbox_id, slot.day);
     await releaseClaim(releaser, { pitchId: pitch_id, tenantId: user.tenantId, to: "approved" });
+    // audit_log has RLS and no policies: the session client can't write it.
+    await recordSendFailure(createServiceRoleClient(), { tenantId: user.tenantId, inboxId: inbox_id, pitchId: pitch_id, error: sendResult.error });
     return { ok: false, error: `Send failed: ${sendResult.error}` };
   }
 

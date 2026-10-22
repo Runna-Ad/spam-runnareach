@@ -12,7 +12,7 @@
  */
 
 import { findBannedTerms } from "../pitches/content-rules.ts";
-import { scoreOutcome, type OutcomeEvent } from "./reward.ts";
+import { scoreOutcome, type OutcomeEvent, type ScoreOptions } from "./reward.ts";
 import type { ProspectFunnel } from "./scout.ts";
 
 export type PitchOutcomeInput = {
@@ -22,13 +22,22 @@ export type PitchOutcomeInput = {
 
 export type ArmTotals = { reward: number; trials: number; negatives: number };
 
-/** Settled outcomes only; a pitch that must not teach the writer (bounce, never sent) is skipped. */
-export function armStats(pitches: readonly PitchOutcomeInput[], learner: string, now: Date = new Date()): Map<string, ArmTotals> {
+/**
+ * Settled outcomes only; a pitch that must not teach the writer (bounce, never
+ * sent) is skipped. `score` goes to scoreOutcome: the writer learners pass
+ * `{ clicks: true }` (lib/autopilot/learn.ts), nothing else does.
+ */
+export function armStats(
+  pitches: readonly PitchOutcomeInput[],
+  learner: string,
+  now: Date = new Date(),
+  score: ScoreOptions = {},
+): Map<string, ArmTotals> {
   const out = new Map<string, ArmTotals>();
   for (const p of pitches) {
     const key = p.arms?.[learner];
     if (!key) continue;
-    const o = scoreOutcome(p.events, now);
+    const o = scoreOutcome(p.events, now, score);
     if (o.status !== "settled" || o.value === null) continue;
     const t = out.get(key) ?? { reward: 0, trials: 0, negatives: 0 };
     t.reward += o.value;

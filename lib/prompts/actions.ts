@@ -104,14 +104,3 @@ export async function rollbackVariant(variantId: string, promptId: string) {
   revalidatePath("/learning");
   return { ok: true };
 }
-
-export async function runWeeklyAnalysis(promptId: string) {
-  // Stub — in Phase 5 this will call Claude with the learning_proposal prompt,
-  // passing 4-week rolling window data, and insert a prompt_change_proposal.
-  // For now, surface a toast so Pedro knows it's coming.
-  void promptId;
-  return {
-    ok: false,
-    error: "Weekly analysis runs automatically every Sunday. Manual trigger coming in Phase 5.",
-  };
-}

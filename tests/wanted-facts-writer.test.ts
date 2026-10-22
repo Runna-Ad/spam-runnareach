@@ -460,6 +460,7 @@ async function stage(opts: { rpc?: RpcMode; wishes?: boolean; rewrite?: boolean;
     buildHunterUrlForPitch: () => "https://runna-hunter.vercel.app/?market=ca&r=code",
     heldBodyForRevision,
     fetchTopUsableContact: async () => null,
+    chooseRecipient: (rows: Array<{ email?: unknown }> | null) => rows?.find((c) => typeof c.email === "string" && c.email.includes("@")) ?? null,
     refreshGateAfterChange: async () => null,
     sizeBand: () => "smb",
     registerFor: () => null,
