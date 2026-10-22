@@ -167,7 +167,9 @@ export async function GET(req: NextRequest) {
     const known = threadMap.get(key);
     if (known) {
       if (p.sent_at && (!known.first_sent_at || p.sent_at < known.first_sent_at)) known.first_sent_at = p.sent_at;
-      if (p.parent_pitch_id === null) known.root_pitch_id = p.id;
+      if (p.parent_pitch_id === null && p.tenant_id === known.tenant_id && p.prospect_id === known.prospect_id) {
+        known.root_pitch_id = p.id;
+      }
     } else {
       threadMap.set(key, {
         pitch_id: p.id,

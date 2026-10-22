@@ -357,8 +357,10 @@ function fakeDb(tables: Record<string, Row[]>, opts: { fail?: Record<string, str
     tables,
     from(table: string) {
       const unknown: string[] = [];
+      // A JSON path ("payload->>key") is checked on its column, as PostgREST does.
       const use = (col: string) => {
-        if (SCHEMA[table] && !SCHEMA[table]!.includes(col)) unknown.push(col);
+        const base = col.split("->>")[0]!;
+        if (SCHEMA[table] && !SCHEMA[table]!.includes(base)) unknown.push(base);
       };
       const rows = (tables[table] ??= []);
       const filters: Array<(r: Row) => boolean> = [];
@@ -370,7 +372,12 @@ function fakeDb(tables: Record<string, Row[]>, opts: { fail?: Record<string, str
       let returning = false;
       let order: { col: string; asc: boolean } | null = null;
       let lim: number | null = null;
-      const val = (r: Row, k: string) => r[k] ?? null;
+      const val = (r: Row, k: string) => {
+        const [col, key] = k.split("->>") as [string, string | undefined];
+        if (key === undefined) return r[col] ?? null;
+        const v = (r[col] as Row | null | undefined)?.[key];
+        return v === undefined || v === null ? null : String(v);
+      };
       const run = () => {
         if (unknown.length) return { data: null, count: null, error: { message: `column ${table}.${unknown[0]} does not exist`, code: "42703" } };
         const f = opts.fail?.[`${table}.${op}`];

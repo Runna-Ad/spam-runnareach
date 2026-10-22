@@ -18,6 +18,12 @@
 --   * otherwise pitch_id is set to the root. event_at is untouched (no event is
 --     re-dated) and payload gains answered_pitch_id = the follow-up's id, as the
 --     poll now writes.
+--
+-- HOW TO RUN: run section 1 (preview) ALONE first and read its output. Pasting
+-- or running the whole file executes section 2 (the apply) right after it.
+-- Then run sections 2 and 3 together; section 3 rolls everything back if
+-- anything is left on a follow-up.
+--
 -- Idempotent: a second run finds no reply/bounce on a follow-up and changes 0 rows.
 -- Other event types (sent, unsubscribe, audit_scan ...) are left alone.
 
