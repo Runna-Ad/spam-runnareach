@@ -48,6 +48,7 @@ import {
   type SlotClient,
 } from "@/lib/pitches/daily-cap";
 import { inboxBounceBlock } from "@/lib/autopilot/bounce-breaker";
+import { createRunPacer, PER_INBOX_PER_RUN, PER_RUN_TOTAL } from "@/lib/pitches/send-pacing";
 import { ANTHROPIC_DEFAULT_MODEL, claudeIsAvailable } from "@/lib/anthropic/client";
 import { isUnderDailyCap, recordClaudeCall } from "@/lib/anthropic/cost-tracking";
 import { hasUsableEmail } from "@/lib/research/email-utils";
@@ -109,8 +110,17 @@ type ProspectRow = {
  * Bounded batch. Time: a follow-up starts composing only while hasTimeToCompose
  * (before 70s of the 120s maxDuration) and claims only while hasTimeToClaim
  * (before 95s); arithmetic in lib/pitches/daily-cap.ts.
+ *
+ * Volume: pg_cron runs this every 10 minutes at :05/:15/…, 15:05-22:55 UTC on
+ * weekdays (`5-59/10 15-22 * * 1-5`, migration 0052), 5 minutes after each
+ * send-queue run. Each run sends at most PER_INBOX_PER_RUN follow-up per inbox
+ * and PER_RUN_TOTAL in total (lib/pitches/send-pacing.ts); the rest stay due
+ * for the next run. Follow-ups take a daily slot through the same RPC as first
+ * emails (reserveSendSlot, 0049), so the inbox daily_cap covers both.
+ * DUE_WINDOW only bounds the read: enough due rows that a busy inbox at the
+ * head of the queue doesn't hide another inbox's follow-ups.
  */
-const MAX_PER_RUN = 30;
+const DUE_WINDOW = 30;
 
 // Prospect states that must never receive an automated follow-up
 // (DO_NOT_SEND_STATUSES). Manual/bulk suppression doesn't touch
@@ -700,7 +710,7 @@ async function runFollowUps() {
     .is("sequence_paused_at", null)
     .not("next_followup_at", "is", null)
     .order("next_followup_at", { ascending: true })
-    .limit(MAX_PER_RUN) as {
+    .limit(DUE_WINDOW) as {
     data: DuePitchRow[] | null;
     error: { message: string } | null;
   };
@@ -718,6 +728,7 @@ async function runFollowUps() {
 
   const results: FollowupResult[] = [];
   const bounceBlocks: BounceBlocks = new Map();
+  const pacer = createRunPacer({ perInbox: PER_INBOX_PER_RUN, total: PER_RUN_TOTAL });
 
   for (const pitch of pitches) {
     // Stop well inside maxDuration (120s): a kill mid-loop is what turns a
@@ -727,11 +738,22 @@ async function runFollowUps() {
       break;
     }
     try {
+      // Pacing, before any read, compose or claim: a follow-up over the limit
+      // stays due exactly as it is, for the next run.
+      const pace = pacer.check(pitch.sender_inbox_id);
+      if (!pace.ok) {
+        results.push({ pitch_id: pitch.id, prospect: "", step: pitch.sequence_step + 1, status: "skipped", reason: pace.reason });
+        if (pace.stop) break;
+        continue;
+      }
       const result = await processFollowup(pitch, bounceBlocks, startTime);
       results.push(result);
       if (result.reason === TIME_BUDGET_REASON) break;
+      if (result.status === "sent" && pitch.sender_inbox_id) pacer.recordSent(pitch.sender_inbox_id);
     } catch (err) {
       console.error(`[follow-up/cron] Error processing pitch ${pitch.id}:`, err);
+      // Can't tell whether Gmail took it before the throw: count it (fails closed).
+      if (pitch.sender_inbox_id) pacer.recordSent(pitch.sender_inbox_id);
       results.push({
         pitch_id: pitch.id,
         prospect: "unknown",

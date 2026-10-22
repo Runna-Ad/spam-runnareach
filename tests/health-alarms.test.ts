@@ -236,7 +236,13 @@ const silentAt = (now: Date, ...beats: Beat[]) => jobSilent(snap(now, { heartbea
 
 test("each job's schedule is the one its migration sets", () => {
   for (const [job, spec] of Object.entries(CRON_JOBS)) {
-    const file = spec.migration === "0041" ? "0041_autopilot_scheduler.sql" : "0048_replies_poll_every_10min.sql";
+    const files: Record<string, string> = {
+      "0041": "0041_autopilot_scheduler.sql",
+      "0048": "0048_replies_poll_every_10min.sql",
+      "0052": "0052_follow_up_every_10min.sql",
+    };
+    const file = files[spec.migration];
+    assert.ok(file, `${job}: unknown migration ${spec.migration}`);
     const sql = readFileSync(new URL(`../supabase/migrations/${file}`, import.meta.url), "utf8");
     assert.ok(sql.includes(`'${spec.pgJob}', '${spec.cron}'`) || sql.includes(`schedule := '${spec.cron}'`), job);
     assert.ok(sql.includes(spec.route), job);
@@ -249,8 +255,10 @@ test("scheduledRuns counts only runs inside the window", () => {
   assert.equal(scheduledRuns(CRON_JOBS["replies-poll"].cron, t("2026-10-21T14:06:00Z"), t("2026-10-21T14:44:00Z"), 10), 3); // :15 :25 :35
   // Friday 22:51 → Monday 15:05: only Monday 15:00 is a send-queue run.
   assert.equal(scheduledRuns(CRON_JOBS["send-queue"].cron, t("2026-10-23T22:51:00Z"), t("2026-10-26T15:05:00Z"), 10), 1);
-  // Follow-ups: 15:20…22:20 weekdays only.
-  assert.equal(scheduledRuns(CRON_JOBS["follow-up"].cron, t("2026-10-21T22:21:00Z"), t("2026-10-22T16:30:00Z"), 10), 2);
+  // Follow-ups: :05/:15/…, 15:05…22:55 weekdays only (0052). Wed 22:25…22:55 (4) + Thu 15:05…16:25 (9).
+  assert.equal(scheduledRuns(CRON_JOBS["follow-up"].cron, t("2026-10-21T22:21:00Z"), t("2026-10-22T16:30:00Z"), 20), 13);
+  // Friday 22:56 → Monday 15:04: none.
+  assert.equal(scheduledRuns(CRON_JOBS["follow-up"].cron, t("2026-10-23T22:56:00Z"), t("2026-10-26T15:04:00Z"), 10), 0);
   // The run at exactly `from` is the one that succeeded: never counted.
   assert.equal(scheduledRuns(CRON_JOBS["autopilot-tick"].cron, t("2026-10-21T14:00:00Z"), t("2026-10-21T14:14:00Z"), 10), 0);
 });
@@ -297,8 +305,8 @@ test("job_silent is silent for every designed state", () => {
     ["send-queue Monday before the window", at("2026-10-26T14:25:00Z"), [beat("send-queue", "2026-10-23T22:51:00Z")]],
     ["send-queue Monday 15:24, the 15:20 run still in its grace", at("2026-10-26T15:24:00Z"), [beat("send-queue", "2026-10-23T22:51:00Z")]],
     ["send-queue at night, last ran at 22:50", at("2026-10-21T23:59:00Z"), [beat("send-queue", "2026-10-21T22:51:00Z")]],
-    ["follow-up two window hours in (17:20 run in its grace)", at("2026-10-21T17:24:00Z"), [beat("follow-up", "2026-10-20T22:21:00Z")]],
-    ["follow-up overnight", at("2026-10-22T14:25:00Z"), [beat("follow-up", "2026-10-21T22:21:00Z")]],
+    ["follow-up 15:29, the 15:25 run still in its grace", at("2026-10-21T15:29:00Z"), [beat("follow-up", "2026-10-20T22:56:00Z")]],
+    ["follow-up overnight", at("2026-10-22T14:25:00Z"), [beat("follow-up", "2026-10-21T22:56:00Z")]],
     ["poll ran 15 minutes ago", NOW, [beat("replies-poll", ago(0.25))]],
     ["an unknown job row", NOW, [beat("warmup-engine", ago(100))]],
     ["no last_ok and no created_at", NOW, [beat("autopilot-tick", null, { createdAt: null })]],
@@ -307,8 +315,8 @@ test("job_silent is silent for every designed state", () => {
   assert.equal(jobSilent(snap(NOW, { heartbeats: null })), null, "not read (null)");
 });
 
-test("job_silent: follow-up fires on the third missed window hour", () => {
-  assert.ok(silentAt(at("2026-10-21T17:30:00Z"), beat("follow-up", "2026-10-20T22:21:00Z")));
+test("job_silent: follow-up fires on the third missed run (15:05, 15:15, 15:25)", () => {
+  assert.ok(silentAt(at("2026-10-21T15:30:00Z"), beat("follow-up", "2026-10-20T22:56:00Z")));
 });
 
 // ── Sentry copy of each alert ───────────────────────────────────────────────

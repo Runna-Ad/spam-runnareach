@@ -3,8 +3,8 @@
 // Drip-send queued cold pitches — triggered by Vercel Cron.
 //
 // A pitch is "queued" when status='approved' AND scheduled_send_at <= now.
-// Each tick sends at most SEND_PER_TICK pitches (jittered), and never exceeds
-// each inbox's daily_cap. Leftovers stay queued and roll to the next tick/day,
+// Each tick sends at most one pitch per inbox and SEND_PER_TICK in total
+// (lib/pitches/send-pacing.ts), and never exceeds each inbox's daily_cap. Leftovers stay queued and roll to the next tick/day,
 // so a batch drips out gradually instead of bursting — protecting the warmed
 // sending domain's reputation.
 //
@@ -24,6 +24,7 @@ import {
   reserveSendSlot,
   type SlotClient,
 } from "@/lib/pitches/daily-cap";
+import { createRunPacer, PER_RUN_TOTAL } from "@/lib/pitches/send-pacing";
 import { holdDoubtfulAutoApproval, latestApproval, sendTimeVerdictAction } from "@/lib/pitches/send-time-hold";
 import { hasUsableEmail } from "@/lib/research/email-utils";
 import { isEmailOnDncList, type DncClient } from "@/lib/discover/dnc-check";
@@ -46,12 +47,14 @@ import {
   type SendCheckClient,
 } from "@/lib/pitches/status-transitions";
 
-// Conservative drip. The cron runs daily (Hobby-tier limit), so this is the
-// cold-email volume PER DAY: a queue of N pitches goes out ~SEND_PER_TICK/day,
-// spread across days, which is gentler on the freshly-warmed domain than
-// bursting toward the inbox daily_cap. The inbox daily_cap is still the hard
-// ceiling. Tune up once the domain has a longer sending history.
-const SEND_PER_TICK = 6;
+// Conservative drip. pg_cron runs this every 10 minutes, 15:00-22:50 UTC on
+// weekdays (`*/10 15-22 * * 1-5`, migration 0041), and each run sends at most
+// one first email per inbox and SEND_PER_TICK in total: at most 6 per inbox
+// per hour. The follow-up route runs 5 minutes after each of these runs (0052)
+// under the same per-run limit, so an inbox never sends two emails within ~5
+// minutes. The inbox daily_cap (slot RPC, 0049) is still the hard ceiling.
+const SEND_PER_TICK = PER_RUN_TOTAL;
+// Between sends of one run, which always come from different inboxes.
 const JITTER_MS = 8_000;
 
 /** A row left in 'sending' this long was interrupted mid-send (the route caps at 120s). */
@@ -223,14 +226,21 @@ async function runSendQueue() {
       .limit(50);
 
     const duePitches = (due ?? []) as DuePitch[];
-    let sentThisTick = 0;
+    const pacer = createRunPacer({ perInbox: 1, total: SEND_PER_TICK });
 
     for (const pitch of duePitches) {
       // One pitch failing (network, Gmail) must not abort the rest of the run.
       // A throw after the claim leaves the row in 'sending'; recoverStuckSends
       // resolves it on the next run from Gmail's Sent folder.
       try {
-        if (sentThisTick >= SEND_PER_TICK) break;
+        // Pacing first, before any read or claim: a pitch over the limit stays
+        // 'approved' as it is, for the next run.
+        const pace = pacer.check(pitch.sender_inbox_id);
+        if (!pace.ok) {
+          results.push({ pitch_id: pitch.id, status: "skipped", reason: pace.reason });
+          if (pace.stop) break;
+          continue;
+        }
         // Time budget: what's left is picked up by the next run (every 10 min).
         if (!hasTimeToClaim(startMs)) {
           results.push({ pitch_id: pitch.id, status: "skipped", reason: "Time budget reached — next run" });
@@ -481,7 +491,7 @@ async function runSendQueue() {
           continue;
         }
 
-        if (sentThisTick > 0) {
+        if (pacer.sent > 0) {
           await new Promise((r) => setTimeout(r, Math.random() * JITTER_MS));
         }
 
@@ -556,9 +566,11 @@ async function runSendQueue() {
           },
         });
 
-        sentThisTick += 1;
+        pacer.recordSent(inboxId);
         results.push({ pitch_id: pitch.id, status: "sent" });
       } catch (err) {
+        // Can't tell whether Gmail took it before the throw: count it (fails closed).
+        if (pitch.sender_inbox_id) pacer.recordSent(pitch.sender_inbox_id);
         results.push({ pitch_id: pitch.id, status: "error", reason: err instanceof Error ? err.message : String(err) });
       }
     }
