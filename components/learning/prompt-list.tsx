@@ -64,11 +64,6 @@ export function PromptList({ prompts, selectedId, onSelect }: Props) {
                     </span>
                   </div>
                   <div className="flex items-center gap-1 shrink-0">
-                    {prompt.pending_proposals > 0 && (
-                      <span className="flex items-center justify-center rounded-full bg-amber-500/20 text-amber-400 text-[10px] font-semibold w-4 h-4">
-                        {prompt.pending_proposals}
-                      </span>
-                    )}
                     {!prompt.is_active && (
                       <Chip tone="neutral">off</Chip>
                     )}

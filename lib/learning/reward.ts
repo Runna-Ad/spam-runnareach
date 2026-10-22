@@ -8,7 +8,9 @@
  *   value   0..1, the bandit's reward. The strongest signal wins: a booked
  *           meeting or a deal (won OR lost: the email did its job) = 1, asking
  *           to talk = 1, a positive reply ≈ 1, running the free check = 0.5, a
- *           neutral reply a little, silence or an opt-out = 0.
+ *           neutral reply a little, a click on one of the email's tracked
+ *           links 0.25 (interest, weaker than running the check), silence or
+ *           an opt-out = 0.
  *   points  a weighted score for dashboards and yield ranking, where an
  *           opt-out costs points (it is a real harm, not just silence).
  *
@@ -16,6 +18,9 @@
  * ADDRESS was bad, not the email. Discovery and the verifier learn from them
  * instead (see `addressOutcome`). An opportunity event outweighs a bounce: a
  * prospect who booked got the message. Test addresses are ignored entirely.
+ *
+ * A click is never decisive: a pitch with only clicks settles when the window
+ * passes, like silence, so a click cannot cut a reply's chance short.
  *
  * An outcome is "settled" once a decisive signal arrives or the attribution
  * window passes; learners only count settled outcomes so a pitch sent an hour
@@ -25,7 +30,7 @@
  */
 
 export type OutcomeEvent = {
-  type: "sent" | "audit_scan" | "reply" | "bounce" | "unsubscribe" | "meeting_booked" | "won" | "lost" | string;
+  type: "sent" | "audit_scan" | "click" | "reply" | "bounce" | "unsubscribe" | "meeting_booked" | "won" | "lost" | string;
   at: string;
   payload?: {
     stage?: string;
@@ -53,6 +58,7 @@ export const POINTS = {
   wants_meeting: 12,
   wants_info: 10,
   scan: 3,
+  click: 1,
   not_now: 1,
   wrong_person: 1,
   unclassified: 0.5,
@@ -60,6 +66,9 @@ export const POINTS = {
   unsubscribe: -5,
   lost: 0,
 } as const;
+
+/** A click on a tracked link (written on the root pitch by the tracked-links redirect): a small positive, below a scan. */
+export const CLICK_VALUE = 0.25;
 
 /** Opportunity events: the email produced a meeting or a deal. Full success, decisive. */
 const OPPORTUNITY_EVENT_TYPES = ["meeting_booked", "won", "lost"] as const;
@@ -76,6 +85,7 @@ export const OUTCOME_EVENT_TYPES: readonly string[] = [
   "sent",
   "reply",
   "audit_scan",
+  "click",
   "bounce",
   "unsubscribe",
   ...OPPORTUNITY_EVENT_TYPES,
@@ -105,6 +115,7 @@ export function scoreOutcome(events: readonly OutcomeEvent[], now: Date = new Da
   let decisive = false;
   let bounced = false;
   let opportunity = false;
+  let clicked = false;
 
   for (const e of real) {
     if (e.type === "audit_scan") {
@@ -113,6 +124,13 @@ export function scoreOutcome(events: readonly OutcomeEvent[], now: Date = new Da
       value = Math.max(value, stage === "contact_request" ? 1 : 0.5);
       points += stage === "contact_request" ? POINTS.contact_request : POINTS.scan;
       if (stage === "contact_request") decisive = true;
+    } else if (e.type === "click") {
+      // Counted once per pitch: link scanners and repeat opens click many times.
+      if (clicked) continue;
+      clicked = true;
+      signals.push("click");
+      value = Math.max(value, CLICK_VALUE);
+      points += POINTS.click;
     } else if (e.type === "reply") {
       const intent = e.payload?.intent ?? "unclassified";
       signals.push(`reply:${intent}`);
