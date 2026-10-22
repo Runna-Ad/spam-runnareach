@@ -8,6 +8,7 @@
 import "server-only";
 import * as Sentry from "@sentry/nextjs";
 import { INBOX_RESUMED_ACTION } from "@/lib/autopilot/inbox-resume";
+import { TICK_ERRORS_ACTION } from "@/lib/autopilot/tick";
 import { getAccessToken } from "@/lib/gmail/client";
 import { createServiceRoleClient } from "@/lib/supabase/service-role";
 import type { ArmRow } from "@/lib/learning/report";
@@ -377,9 +378,6 @@ export async function gatherHealthSnapshot(tenantId: string, now: Date): Promise
     heartbeats: extra.heartbeats,
   };
 }
-
-/** audit_log action of the tick's error row (lib/autopilot/tick.ts; contract in tasks/briefs/health-alarms.md). */
-export const TICK_ERRORS_ACTION = "autopilot.tick_errors";
 
 /**
  * The reads behind inbox_paused, tick_errors, learning_stalled and job_silent.
