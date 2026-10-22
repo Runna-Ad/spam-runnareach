@@ -72,16 +72,24 @@ export async function inboxBounceStats(db: Db, tenantId: string, inboxId: string
 
   let bounces = 0;
   if (ids.length) {
-    let q = db
-      .from("pitch_events")
-      .select("id", { count: "exact", head: true })
-      .eq("tenant_id", tenantId)
-      .eq("event_type", "bounce")
-      .in("pitch_id", ids);
-    if (resumedAt) q = q.gt("event_at", resumedAt);
-    const { count, error: bounceError } = await q;
-    if (bounceError) error ??= `bounces: ${detail(bounceError)}`;
-    bounces = count ?? 0;
+    // A bounce is recorded on the conversation's ROOT pitch, with the follow-up it
+    // answered in payload.answered_pitch_id (app/api/replies/poll). The root can be
+    // outside this inbox's last sends while its follow-up is inside: match either
+    // column and count each event once. Older events have no answered_pitch_id.
+    const seen = new Set<string>();
+    for (const col of ["pitch_id", "payload->>answered_pitch_id"]) {
+      let q = db
+        .from("pitch_events")
+        .select("id")
+        .eq("tenant_id", tenantId)
+        .eq("event_type", "bounce")
+        .in(col, ids);
+      if (resumedAt) q = q.gt("event_at", resumedAt);
+      const { data, error: bounceError } = await q;
+      if (bounceError) error ??= `bounces: ${detail(bounceError)}`;
+      for (const r of (data ?? []) as Array<{ id: string }>) seen.add(r.id);
+    }
+    bounces = seen.size;
   }
   return { recentSends: ids.length, recentHardBounces: bounces, resumedAt, error };
 }

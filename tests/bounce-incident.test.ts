@@ -376,6 +376,59 @@ test("bounces_today with no resume counts the whole UTC day, as before", async (
   assert.equal(await bouncesTodayAfterResume(db, TENANT, new Date(at("12:00"))), 1);
 });
 
+// reply-on-root: the poll records a bounce on the conversation's root pitch, with the
+// follow-up it answered in payload.answered_pitch_id.
+function addRootBounce(db: Db, rootId: string, answeredId: string, eventAt: string) {
+  (db.tables.pitch_events ??= []).push({
+    id: `ev-${rootId}-${eventAt}`,
+    tenant_id: TENANT,
+    pitch_id: rootId,
+    event_type: "bounce",
+    event_at: eventAt,
+    payload: { reply_id: "r1", answered_pitch_id: answeredId },
+  });
+}
+
+test("a bounce on a root outside the last 50 sends counts when the follow-up it answered is inside", async () => {
+  const db = fakeDb({ pitches: [], pitch_events: [], audit_log: [] });
+  const sends = addSends(db, 60);
+  const followUp = sends[2]!;
+  const root = sends[57]!; // sent days earlier: out of the window
+  addRootBounce(db, root, followUp, pg("16:00"));
+  const s = await inboxBounceStats(db, TENANT, INBOX);
+  assert.equal(s.recentHardBounces, 1);
+  assert.equal(s.error, null);
+});
+
+test("a bounce on a root inside the window that answered the root itself counts once, not twice", async () => {
+  const db = fakeDb({ pitches: [], pitch_events: [], audit_log: [] });
+  const sends = addSends(db, 60);
+  addRootBounce(db, sends[4]!, sends[4]!, pg("16:00"));
+  addRootBounce(db, sends[5]!, sends[1]!, pg("16:01")); // root and follow-up both inside
+  const s = await inboxBounceStats(db, TENANT, INBOX);
+  assert.equal(s.recentHardBounces, 2);
+});
+
+test("old-shape bounces (on the follow-up, no answered_pitch_id) still count; the resume filter applies to both", async () => {
+  const db = fakeDb({ sender_inboxes: [pausedInbox()], pitches: [], pitch_events: [], audit_log: [] });
+  const sends = addSends(db, 60);
+  addBounce(db, sends[0]!, pg("15:40"));
+  addRootBounce(db, sends[58]!, sends[3]!, pg("15:45")); // before the resume: not counted
+  assert.deepEqual(await resume(db, pg("15:50")), { ok: true, resumed: true });
+  addRootBounce(db, sends[59]!, sends[6]!, pg("16:00"));
+  addBounce(db, sends[7]!, pg("16:05"));
+  const s = await inboxBounceStats(db, TENANT, INBOX);
+  assert.equal(s.recentHardBounces, 2);
+});
+
+test("a bounce read error is still reported", async () => {
+  const db = fakeDb({ pitches: [], pitch_events: [], audit_log: [] }, { fail: { "pitch_events.select": "timeout" } });
+  addSends(db, 5);
+  const s = await inboxBounceStats(db, TENANT, INBOX);
+  assert.equal(s.recentHardBounces, 0);
+  assert.equal(s.error, "bounces: timeout");
+});
+
 test("an unreadable audit log reads as never resumed: the breaker errs toward pausing", async () => {
   const { db } = incident();
   await resume(db, pg("15:50"));
