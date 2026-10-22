@@ -47,10 +47,16 @@ export async function recordSendFailure(
   }
 }
 
+/** Rows read per inbox per tick; far above the 3 that trip (the breaker pauses the inbox well before). */
+const FAILURE_READ_LIMIT = 500;
+
 /**
- * gmail.send_failed rows for one inbox since the later of today's UTC midnight
- * and `resumedAt` (the inbox's latest resume, bounce-breaker.ts latestResumeAt).
- * A read failure returns the error with count 0: the caller reports it.
+ * Distinct pitches with a gmail.send_failed row for one inbox since the later
+ * of today's UTC midnight and `resumedAt` (the inbox's latest resume,
+ * bounce-breaker.ts latestResumeAt). One pitch Gmail keeps rejecting, retried
+ * by the send-queue every 10 minutes, counts once: it alone must not pause the
+ * inbox. A row without a pitch_id counts as its own pitch. A read failure
+ * returns the error with count 0: the caller reports it.
  */
 export async function gmailFailuresToday(
   db: Db,
@@ -62,13 +68,15 @@ export async function gmailFailuresToday(
   const dayStart = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate())).toISOString();
   const q = db
     .from("audit_log")
-    .select("id", { count: "exact", head: true })
+    .select("id, metadata")
     .eq("tenant_id", tenantId)
     .eq("action", GMAIL_SEND_FAILED_ACTION)
     .eq("entity_id", inboxId);
   // Same window as bounce-breaker.ts bouncesTodayAfterResume.
   const afterResume = resumedAt !== null && Date.parse(resumedAt) > Date.parse(dayStart);
-  const { count, error } = await (afterResume ? q.gt("created_at", resumedAt) : q.gte("created_at", dayStart));
+  const { data, error } = await (afterResume ? q.gt("created_at", resumedAt) : q.gte("created_at", dayStart)).limit(FAILURE_READ_LIMIT);
   if (error) return { count: 0, error: `gmail failures: ${error.message || "no detail"}` };
-  return { count: count ?? 0, error: null };
+  const rows = (data ?? []) as Array<{ id: string; metadata: { pitch_id?: unknown } | null }>;
+  const pitches = new Set(rows.map((r) => (typeof r.metadata?.pitch_id === "string" ? `pitch:${r.metadata.pitch_id}` : `row:${r.id}`)));
+  return { count: pitches.size, error: null };
 }

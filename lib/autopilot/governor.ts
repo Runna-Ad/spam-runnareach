@@ -85,6 +85,9 @@ export const HELD_BY_PERSON = "held by a person";
  */
 export const HELD_BY_AUTOPILOT = "held by the autopilot";
 
+/** The reason a pitch pulled back by a veto clock restart carries (HELD_BY_AUTOPILOT: a person's call next). */
+export const VETO_RESTART_HOLD_REASON = `${HELD_BY_AUTOPILOT}: veto clock restarted`;
+
 /**
  * The one test for "a person sent this autopilot approval back": it is back in
  * draft or rejected, and NOT because the autopilot pulled it back itself
@@ -125,6 +128,9 @@ export function heldAction(
 ): HeldAction {
   if (d.editedByPerson) return { action: "leave", why: "a person edited it" };
   if (d.reasons.some((r) => r.startsWith(HELD_BY_PERSON))) return { action: "leave", why: "a person held it" };
+  if (d.reasons.some((r) => r.startsWith(VETO_RESTART_HOLD_REASON))) {
+    return { action: "leave", why: "the autopilot pulled it back when the veto clock restarted" };
+  }
   if (d.reasons.some((r) => r.startsWith(HELD_BY_AUTOPILOT))) {
     return { action: "leave", why: "the autopilot pulled it back when its stage dropped" };
   }
@@ -291,15 +297,28 @@ export function qualityTripReason(codes: readonly string[]): string {
   return unique.length ? `a quality breaker tripped: ${unique.join(", ")}` : "a quality breaker tripped";
 }
 
-/** The reason a pitch pulled back by a veto clock restart carries (HELD_BY_AUTOPILOT: a person's call next). */
-export const VETO_RESTART_HOLD_REASON = `${HELD_BY_AUTOPILOT}: veto clock restarted`;
-
 /**
  * restart: the stage stays where it is but its clock (stage_since) starts
  * again, and automatic approvals still waiting are pulled back as on a
  * demotion. Only veto restarts (see nextStage).
  */
 export type StageDecision = { stage: Stage; reason: string; restart?: true };
+
+/**
+ * The new stage_since for a stage change or clock restart: the later of the
+ * write's own clock and 1 ms after the newest evidence the stage step counted
+ * (breaker insights, rejected AUTO pitches; both counted with created_at ≥
+ * stage_since). A trip the same tick wrote after the tick's start must not be
+ * counted again by the next tick (review of #55: a second restart).
+ */
+export function stageClockStart(writeAt: Date, evidenceAt: ReadonlyArray<string | null | undefined>): string {
+  let t = writeAt.getTime();
+  for (const e of evidenceAt) {
+    const ms = e ? Date.parse(e) : NaN;
+    if (!Number.isNaN(ms) && ms + 1 > t) t = ms + 1;
+  }
+  return new Date(t).toISOString();
+}
 
 export function nextStage(stage: Stage, m: StageMetrics): StageDecision {
   // Pitches going wrong acts at once: auto drops to veto; veto restarts its

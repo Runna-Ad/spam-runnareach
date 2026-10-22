@@ -19,7 +19,15 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { register } from "node:module";
 import test from "node:test";
-import { evaluateBreakers, nextStage, VETO_RESTART_HOLD_REASON, type Stage, type StageMetrics } from "../lib/autopilot/governor.ts";
+import {
+  evaluateBreakers,
+  heldAction,
+  nextStage,
+  stageClockStart,
+  VETO_RESTART_HOLD_REASON,
+  type Stage,
+  type StageMetrics,
+} from "../lib/autopilot/governor.ts";
 import { INBOX_RESUMED_ACTION } from "../lib/autopilot/inbox-resume.ts";
 import {
   GMAIL_SEND_FAILED_ACTION,
@@ -434,7 +442,11 @@ test("tick: a failed clock write still pulls back, reports the error, sends no e
     b.update = (v: Row) => {
       const r = update(v);
       if (!("stage_since" in v)) return r;
-      return { eq: () => Promise.resolve({ data: null, error: { message: "" } }) } as unknown as typeof b;
+      const failed: Record<string, unknown> = {
+        then: (ok: (x: unknown) => unknown) => Promise.resolve({ data: null, error: { message: "" } }).then(ok),
+      };
+      failed.eq = failed.select = () => failed;
+      return failed as unknown as typeof b;
     };
     return b;
   };
@@ -444,6 +456,72 @@ test("tick: a failed clock write still pulls back, reports the error, sends no e
   assert.ok(report.errors.some((e) => /^stage: veto clock restart not recorded \(no detail\); pulled back 1/.test(e)), report.errors.join(" | "));
   assert.deepEqual(subjects().filter((x) => x.startsWith("Autopilot")), []);
   assert.equal(tickErrorRows(db).length, 1, "and the health check can see it");
+});
+
+/** Three people unsubscribed in the last hour and one unpaused inbox: opt_out_spike fires INSIDE the tick. */
+function spikeInsideTickDb(stage: Stage): Db {
+  const db = vetoDb({ stage }, false);
+  db.tables.sender_inboxes = [{ id: INBOX, tenant_id: TENANT, email: "s0@runnareach.com", paused: false, paused_reason: null }];
+  for (const n of [1, 2, 3]) {
+    db.tables.pitches!.push({ id: `old-${n}`, tenant_id: TENANT, prospect_id: `prospect-${n}`, status: "sent", autopilot_lane: "review", sent_at: ago(60 * 48), created_at: ago(60 * 72) });
+    db.tables.pitch_events!.push({ id: `u-${n}`, tenant_id: TENANT, pitch_id: `old-${n}`, event_type: "unsubscribe", event_at: ago(30 + n), payload: {} });
+  }
+  return db;
+}
+
+for (const stage of ["veto", "auto"] as const) {
+  test(`tick: a quality trip written INSIDE tick 1 (${stage}) acts once over ticks at t, t+15m, t+30m`, async () => {
+    const db = spikeInsideTickDb(stage);
+    const t = Date.now();
+    const changes: unknown[] = [];
+    const stageEmails: string[] = [];
+    for (const k of [0, 15, 30]) {
+      wire();
+      const report = await tick.runTick(actorFor(db), new Date(t + k * 60_000));
+      changes.push(report.stageChange && [report.stageChange.from, report.stageChange.to]);
+      stageEmails.push(...subjects().filter((x) => /^Autopilot (restarted|moved)/.test(x)));
+    }
+    assert.deepEqual(db.tables.learning_insights!.filter((r) => r.kind === "breaker").map((r) => (r.evidence as Row).code), ["opt_out_spike"], "the trip was written in tick 1");
+    assert.deepEqual(changes, [[stage, "veto"], null, null], "exactly one restart / demotion");
+    assert.equal(stageEmails.length, 1, "one email");
+    assert.equal(db.tables.autonomy_state![0]!.stage, "veto");
+  });
+}
+
+test("tick: a person's stage change between the read and the write wins (guarded write, no pull-back, no email)", async () => {
+  for (const stage of ["veto", "auto"] as const) {
+    const db = vetoDb({ stage });
+    const realFrom = db.from.bind(db);
+    db.from = (table: string) => {
+      const b = realFrom(table);
+      if (table !== "autonomy_state") return b;
+      const update = b.update.bind(b);
+      b.update = (v: Row) => {
+        if ("stage_since" in v) db.tables.autonomy_state![0]!.stage = "shadow"; // the person, just before
+        return update(v);
+      };
+      return b;
+    };
+    wire();
+    const report = await tick.runTick(actorFor(db));
+    assert.equal(db.tables.autonomy_state![0]!.stage, "shadow", stage);
+    assert.equal(report.stageChange, null, stage);
+    assert.equal(db.tables.pitches!.find((p) => p.id === "auto-1")!.status, "approved", `${stage}: the next tick's shadow sweep holds it, not this one`);
+    assert.deepEqual(subjects().filter((x) => x.startsWith("Autopilot")), [], stage);
+  }
+});
+
+test("stageClockStart: the later of the write clock and 1 ms after the newest evidence", () => {
+  const w = new Date("2026-10-22T17:50:23.221Z");
+  assert.equal(stageClockStart(w, []), "2026-10-22T17:50:23.221Z");
+  assert.equal(stageClockStart(w, [null, "2026-10-22T17:50:23.232Z", "2026-10-21T00:00:00Z"]), "2026-10-22T17:50:23.233Z");
+  assert.equal(stageClockStart(w, ["2026-10-22T10:00:00Z", undefined, "not a date"]), "2026-10-22T17:50:23.221Z");
+});
+
+test("heldAction says the veto clock restarted for a restart pull-back, and stage dropped for a demotion", () => {
+  const d = (reasons: string[]) => heldAction({ lane: "review", reasons, isRewrite: false, editedByPerson: false }, new Set());
+  assert.deepEqual(d([VETO_RESTART_HOLD_REASON]), { action: "leave", why: "the autopilot pulled it back when the veto clock restarted" });
+  assert.deepEqual(d(["held by the autopilot: stage dropped to shadow"]), { action: "leave", why: "the autopilot pulled it back when its stage dropped" });
 });
 
 // ── 2. The gmail_api breaker ─────────────────────────────────────────────────
@@ -486,6 +564,18 @@ test("tick: failures before the latest resume, from yesterday, or of another ten
   assert.equal(db.tables.sender_inboxes![0]!.paused, false);
 });
 
+test("gmail_api counts distinct pitches: one pitch Gmail rejects on every retry never pauses the inbox alone", async () => {
+  const same = (at: string) => ({ ...failure(INBOX, at), metadata: { pitch_id: "p-stuck", error: "Gmail send failed (400)" } });
+  const db = safetyDb([INBOX], [same(todayAt(1)), same(todayAt(11)), same(todayAt(21)), same(todayAt(31)), { ...failure(INBOX, todayAt(41)), metadata: { pitch_id: "p-2", error: "x" } }]);
+  assert.deepEqual(await gmailFailuresToday(db, TENANT, INBOX, new Date(), null), { count: 2, error: null });
+  wire();
+  const report = await tick.runTick(actorFor(db));
+  assert.deepEqual(report.breakers, []);
+  db.tables.audit_log!.push({ ...failure(INBOX, todayAt(42)), metadata: { pitch_id: "p-3", error: "x" } });
+  wire();
+  assert.deepEqual((await tick.runTick(actorFor(db))).breakers.map((t) => t.reason), ["3 Gmail API errors today"]);
+});
+
 test("gmailFailuresToday: counts today's rows for that inbox, and reports a read error instead of throwing", async () => {
   const now = new Date();
   const db = safetyDb([INBOX], [failure(INBOX, todayAt(1)), failure(INBOX2, todayAt(1)), { ...failure(INBOX, todayAt(1)), action: "pitch.held" }]);
@@ -493,7 +583,8 @@ test("gmailFailuresToday: counts today's rows for that inbox, and reports a read
   const broken = { from: () => ({ select: () => broken.q, q: null }) } as unknown as { q: unknown };
   const q: Record<string, unknown> = {};
   for (const m of ["eq", "gt"]) q[m] = () => q;
-  q.gte = () => Promise.resolve({ count: null, error: { message: "" } });
+  q.gte = () => q;
+  q.limit = () => Promise.resolve({ data: null, error: { message: "" } });
   (broken as { q: unknown }).q = q;
   assert.deepEqual(await gmailFailuresToday(broken, TENANT, INBOX, now, null), { count: 0, error: "gmail failures: no detail" });
 });
@@ -579,6 +670,18 @@ test("a failed tick_errors insert does not break the tick", async () => {
   assert.deepEqual(tickErrorRows(db), []);
   assert.equal(warned.length, 1, "logged");
   await tick.recordTickErrors({ from: () => { throw new Error("boom"); } }, TENANT, ["x"]);
+});
+
+test("a throw outside any step still writes the tick_errors row, and the tick still fails", async () => {
+  const db = safetyDb([INBOX]);
+  const realFrom = db.from.bind(db);
+  db.from = (table: string) => {
+    if (table === "autonomy_state") throw new Error("state unreadable");
+    return realFrom(table);
+  };
+  wire();
+  await assert.rejects(tick.runTick(actorFor(db)), /state unreadable/);
+  assert.deepEqual(tickErrorRows(db).map((r) => r.metadata), [{ errors: ["tick: state unreadable"] }]);
 });
 
 test("recordTickErrors: at most 20 errors, each cut to 300 chars", async () => {

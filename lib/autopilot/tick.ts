@@ -83,8 +83,10 @@ import {
   heldAction,
   laneFor,
   nextStage,
+  isQualityBreaker,
   safetyOnly,
   STAGE_RULES,
+  stageClockStart,
   VETO_RESTART_HOLD_REASON,
   type BreakerMetrics,
   type BreakerTrip,
@@ -144,9 +146,32 @@ const TICK_ERRORS_MAX = 20;
 const TICK_ERROR_CHARS = 300;
 
 export async function runTick(actor: Actor, now: Date = new Date()): Promise<TickReport> {
-  const report = await runTickSteps(actor, now);
-  await recordTickErrors(actor.supabase as Db, actor.user.tenantId, report.errors);
-  return report;
+  const report = emptyReport(actor.user.tenantId);
+  try {
+    return await runTickSteps(actor, now, report);
+  } catch (err) {
+    // Outside any step(): still leave the row, then fail as before.
+    report.errors.push(`tick: ${(err as Error)?.message ?? String(err)}`);
+    throw err;
+  } finally {
+    await recordTickErrors(actor.supabase as Db, actor.user.tenantId, report.errors);
+  }
+}
+
+function emptyReport(tenantId: string): TickReport {
+  return {
+    tenantId,
+    stage: null,
+    skipped: null,
+    breakers: [],
+    resumedJobs: 0,
+    discovery: { started: false, reason: "not run" },
+    labelled: { auto: 0, review: 0, drop: 0 },
+    resolved: { rewritten: 0, dropped: 0, waiting: null },
+    scheduled: 0,
+    stageChange: null,
+    errors: [],
+  };
 }
 
 /**
@@ -172,23 +197,10 @@ export async function recordTickErrors(db: Db, tenantId: string, errors: readonl
   }
 }
 
-async function runTickSteps(actor: Actor, now: Date): Promise<TickReport> {
+async function runTickSteps(actor: Actor, now: Date, report: TickReport): Promise<TickReport> {
   const db = actor.supabase as Db;
   const tenantId = actor.user.tenantId;
   const deadline = now.getTime() + TICK_BUDGET_MS;
-  const report: TickReport = {
-    tenantId,
-    stage: null,
-    skipped: null,
-    breakers: [],
-    resumedJobs: 0,
-    discovery: { started: false, reason: "not run" },
-    labelled: { auto: 0, review: 0, drop: 0 },
-    resolved: { rewritten: 0, dropped: 0, waiting: null },
-    scheduled: 0,
-    stageChange: null,
-    errors: [],
-  };
 
   const { data: state } = await db
     .from("autonomy_state")
@@ -838,6 +850,29 @@ async function sendVetoDigest(db: Db, tenantId: string, now: Date): Promise<numb
 
 // ── 6. Autonomy stage ─────────────────────────────────────────────────────────
 
+/**
+ * created_at of the newest breaker insight since `sinceIso` that counts
+ * against the stage (the same rows hold.ts stageQualityTrips counts, same
+ * predicate), or null. Only read on a stage change, to start the new clock
+ * after it (governor.stageClockStart). Throws when unreadable: a clock that
+ * might recount a trip is not written.
+ */
+async function newestQualityTripAt(db: Db, tenantId: string, sinceIso: string): Promise<string | null> {
+  const { data, error } = await db
+    .from("learning_insights")
+    .select("evidence, created_at")
+    .eq("tenant_id", tenantId)
+    .eq("kind", "breaker")
+    .gte("created_at", sinceIso)
+    .order("created_at", { ascending: false })
+    .limit(1000);
+  if (error) throw new Error(`breaker insights (clock): ${error.message || "no detail"}`);
+  const row = ((data ?? []) as Array<{ evidence: { code?: unknown } | null; created_at: string | null }>).find((r) =>
+    isQualityBreaker(r.evidence?.code),
+  );
+  return row?.created_at ?? null;
+}
+
 async function evaluateStage(
   db: Db,
   s: AutonomyState,
@@ -847,11 +882,18 @@ async function evaluateStage(
   const since = s.stage_since;
   const { data: autos } = await db
     .from("pitches")
-    .select("id, status, body_original, body_edited, sent_at")
+    .select("id, status, body_original, body_edited, sent_at, created_at")
     .eq("tenant_id", tenantId)
     .eq("autopilot_lane", "auto")
     .gte("created_at", since);
-  const rows = (autos ?? []) as Array<{ id: string; status: string; body_original: string | null; body_edited: string | null; sent_at: string | null }>;
+  const rows = (autos ?? []) as Array<{
+    id: string;
+    status: string;
+    body_original: string | null;
+    body_edited: string | null;
+    sent_at: string | null;
+    created_at: string | null;
+  }>;
 
   const { data: autoApprovals } = await db
     .from("pitch_events")
@@ -930,12 +972,21 @@ async function evaluateStage(
     return { change: null, pullback: sweep };
   }
 
-  if (next.restart) return restartStageClock(db, s, next.reason, metrics, now);
+  // The new clock starts after everything this step counted, trips this same tick wrote included.
+  const clock = stageClockStart(new Date(), [
+    ...rows.filter((r) => r.status === "reviewer_rejected").map((r) => r.created_at),
+    await newestQualityTripAt(db, tenantId, since),
+  ]);
+  if (next.restart) return restartStageClock(db, s, next.reason, metrics, clock);
 
-  await db
+  // Guarded on the stage this tick read: a person's change meanwhile wins.
+  const { data: moved, error: moveError } = await db
     .from("autonomy_state")
-    .update({ stage: next.stage, stage_since: now.toISOString() })
-    .eq("tenant_id", tenantId);
+    .update({ stage: next.stage, stage_since: clock })
+    .eq("tenant_id", tenantId)
+    .eq("stage", s.stage)
+    .select("tenant_id");
+  if (!moveError && ((moved ?? []) as unknown[]).length === 0) return { change: null, pullback: null };
   // After the stage write, so no tick schedules new approvals behind the hold.
   const pullback = pullsBackApprovals(next.stage) ? await holdAutoApprovals(db, tenantId, next.stage) : null;
   await insight(db, tenantId, {
@@ -968,13 +1019,17 @@ async function restartStageClock(
   s: AutonomyState,
   reason: string,
   metrics: StageMetrics,
-  now: Date,
+  clock: string,
 ): Promise<{ change: TickReport["stageChange"]; pullback: PullbackResult | null }> {
   const tenantId = s.tenant_id;
-  const { error } = await db
+  // Only the clock, and only while still in this stage: a person's change meanwhile wins.
+  const { data: restarted, error } = await db
     .from("autonomy_state")
-    .update({ stage: s.stage, stage_since: now.toISOString() })
-    .eq("tenant_id", tenantId);
+    .update({ stage_since: clock })
+    .eq("tenant_id", tenantId)
+    .eq("stage", s.stage)
+    .select("tenant_id");
+  if (!error && ((restarted ?? []) as unknown[]).length === 0) return { change: null, pullback: null };
   const pullback = await holdAutoApprovals(db, tenantId, s.stage, VETO_RESTART_HOLD_REASON);
   if (error) {
     throw new Error(
