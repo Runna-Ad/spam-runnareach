@@ -14,5 +14,10 @@ WHAT HAPPENED: The autopilot's rewrite revises the held draft's text (`retryOf`,
 RULE: Stored text handed back to a model carries every fact it was written for (recipient, link, language); when one of them changes, do not revise, write fresh.
 TAGS: pitches, rewrite, recipient
 
+[2026-10-22] A column with a write-once trigger cannot carry a later mark, and the fake db must say so
+WHAT HAPPENED: The re-draft step marked pitches.decision after generatePitchWith had written it. Migration 0038 makes decision write-once (trigger raises), so in prod every mark would fail silently: the 10/day cap would never bind, a failing re-draft would retry every tick. All tests passed because the fake db accepted the update. Fix: the mark goes in at the first write (`generatePitchWith(…, { redraftOf })`), a failed try is an audit_log row, and the test fake now refuses a second decision write.
+RULE: Before writing to an existing column, grep the migrations for triggers on that table (`create trigger … on public.<table>`); a fake db must enforce every such trigger the code path can hit, the same way it must reject a column the table lacks.
+TAGS: autopilot, migrations, fake-db, decision
+
 ## Out of scope, noticed
 - none

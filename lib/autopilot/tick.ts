@@ -16,11 +16,12 @@ import "server-only";
  *                 rewrite can fix what held it, else it is dropped
  *                 (governor.heldAction); an address the verifier doubts is
  *                 fixed by writing to the prospect's next unflagged contact
- *   4c. redraft   a prospect whose only draft was thrown away for its writing
- *                 gets one fresh draft 14 days later (governor.redraftOf),
- *                 at most 3 a tick and 10 a day, inside the AI cap
  *   5. schedule   veto stage: AUTO pitches approved and scheduled 18h out, with
  *                 a digest so a person can hold any; auto stage: scheduled now
+ *   5b. redraft   a prospect whose only draft was thrown away for its writing
+ *                 gets one fresh draft 14 days later (governor.redraftOf),
+ *                 at most 3 a tick and 10 a day, inside the AI cap; after
+ *                 scheduling, so an AUTO approval never waits on a draft
  *   6. stage      promote / demote the autonomy stage on measured results;
  *                 only pitch quality acts (a factual error, an opt-out
  *                 spike), never a delivery breaker: auto drops to veto, veto
@@ -92,7 +93,6 @@ import {
   nextStage,
   isQualityBreaker,
   REDRAFT_AFTER_DAYS,
-  REDRAFT_FAILED,
   REDRAFT_OF,
   redraftOf,
   rejectedForWriting,
@@ -281,10 +281,10 @@ async function runTickSteps(actor: Actor, now: Date, report: TickReport): Promis
   report.discovery = await step("supply", () => maybeStartDiscovery(actor, db, now), { started: false, reason: "error" });
   report.labelled = await step("label", () => labelDrafts(actor, db, now, deadline), report.labelled);
   report.resolved = await step("resolve", () => resolveHeld(actor, db, now, deadline), report.resolved);
-  report.redrafted = await step("redraft", () => redraftPool(actor, db, now, deadline), { drafted: 0, failed: 0, waiting: "error" });
   if ((s.stage === "veto" || s.stage === "auto") && !sendingHalted) {
     report.scheduled = await step("schedule", () => scheduleAuto(actor, db, s.stage, now, deadline), 0);
   }
+  report.redrafted = await step("redraft", () => redraftPool(actor, db, now, deadline), { drafted: 0, failed: 0, waiting: "error" });
   const stage = await step("stage", () => evaluateStage(db, s, now), { change: null, pullback: null });
   report.stageChange = stage.change;
   if (stage.pullback) {
@@ -675,7 +675,7 @@ async function resolveHeld(actor: Actor, db: Db, now: Date, deadline: number): P
     autopilot_lane: Lane;
     autopilot_reasons: string[] | null;
     body_edited: string | null;
-    decision: { retry_of?: string; redraft_of?: string } | null;
+    decision: { retry_of?: string } | null;
   }>) {
     if (Date.now() > deadline) break;
     const held = {
@@ -710,10 +710,9 @@ async function resolveHeld(actor: Actor, db: Db, now: Date, deadline: number): P
     }
     if (!budget.ok) continue;
     const rewritten = await generatePitchWith(actor, p.prospect_id, { retryOf: p.id });
+    // A re-draft's rewrite carries its redraft_of (generatePitchWith copies it from the held draft).
     if (rewritten.ok) {
       out.rewritten++;
-      // A re-draft's rewrite is still that re-draft (one per prospect, ever).
-      if (p.decision?.redraft_of) await markDecision(db, tenantId, rewritten.pitch_id, { [REDRAFT_OF]: p.decision.redraft_of });
     } else {
       await dropDraft(db, tenantId, p.id, `${REWRITE_FAILED}${rewritten.error}`);
       out.dropped++;
@@ -740,26 +739,14 @@ async function alternativeContact(db: Db, tenantId: string, prospectId: string, 
   return hasAlternativeRecipient(data as Array<VerdictContact & { id: string }>, contactId, now);
 }
 
-/** Merge keys into a pitch's decision (read, then write; only this tick writes these keys). */
-async function markDecision(db: Db, tenantId: string, pitchId: string, keys: Record<string, unknown>): Promise<void> {
-  const { data, error } = await db.from("pitches").select("decision").eq("id", pitchId).eq("tenant_id", tenantId).maybeSingle();
-  if (error || !data) {
-    console.warn("[autopilot] decision not marked:", error?.message || "no row");
-    return;
-  }
-  const decision = ((data as { decision: Record<string, unknown> | null }).decision ?? {}) as Record<string, unknown>;
-  const { error: writeErr } = await db
-    .from("pitches")
-    .update({ decision: { ...decision, ...keys } })
-    .eq("id", pitchId)
-    .eq("tenant_id", tenantId);
-  if (writeErr) console.warn("[autopilot] decision not marked:", writeErr.message || "no detail");
-}
+// ── 5b. Re-draft pool ─────────────────────────────────────────────────────────
 
-// ── 4c. Re-draft pool ─────────────────────────────────────────────────────────
-
-/** Auto_rejected pitches read per tick to find re-draft candidates. */
-const REDRAFT_SCAN = 100;
+/** Auto_rejected pitches read per tick to find re-draft candidates (two short columns each). */
+const REDRAFT_SCAN = 500;
+/** Rejections older than this are not re-drafted (and bound the scan and its exclusions). */
+const REDRAFT_HORIZON_DAYS = 60;
+/** audit_log action of a re-draft that could not be generated: that prospect's one try (entity: the old pitch). */
+export const REDRAFT_FAILED_ACTION = "autopilot.redraft_failed";
 
 /**
  * A researched prospect is not thrown away for good because one draft failed
@@ -790,23 +777,47 @@ async function redraftPool(actor: Actor, db: Db, now: Date, deadline: number): P
   const room = Math.min(REDRAFTS_PER_TICK, REDRAFTS_PER_DAY - doneToday);
   if (room <= 0) return { ...out, waiting: `${REDRAFTS_PER_DAY} re-drafts today` };
 
-  // Rows already re-drafted (or tried) are left out, so the scan moves on to new ones.
+  // pitches.decision is write-once (0038): an old pitch is never marked. What
+  // was already re-drafted is read from the re-drafts' own decision, and a
+  // failed try from its audit row; either one leaves the prospect out.
+  const horizon = new Date(now.getTime() - REDRAFT_HORIZON_DAYS * DAY).toISOString();
+  const { data: done, error: doneErr } = await db
+    .from("pitches")
+    .select("decision")
+    .eq("tenant_id", tenantId)
+    .not(`decision->>${REDRAFT_OF}`, "is", null)
+    .gte("created_at", horizon)
+    .limit(2000);
+  if (doneErr) throw new Error(`earlier re-drafts not read: ${doneErr.message || "no detail"}`);
+  const redrafted = new Set(((done ?? []) as Array<{ decision: Record<string, unknown> | null }>).map((r) => String(r.decision?.[REDRAFT_OF])));
+  const { data: failedRows, error: failedErr } = await db
+    .from("audit_log")
+    .select("entity_id, metadata")
+    .eq("tenant_id", tenantId)
+    .eq("action", REDRAFT_FAILED_ACTION)
+    .gte("created_at", horizon)
+    .limit(2000);
+  if (failedErr) throw new Error(`failed re-drafts not read: ${failedErr.message || "no detail"}`);
+  const failedProspects = new Set(
+    ((failedRows ?? []) as Array<{ metadata: { prospect_id?: unknown } | null }>).map((r) => String(r.metadata?.prospect_id)),
+  );
+
   const { data: rejected, error: rejErr } = await db
     .from("pitches")
-    .select("prospect_id, auto_rejected_reason")
+    .select("id, prospect_id, auto_rejected_reason")
     .eq("tenant_id", tenantId)
     .eq("status", "auto_rejected")
     .is("parent_pitch_id", null)
-    .is(`decision->>${REDRAFT_OF}`, null)
-    .is(`decision->>${REDRAFT_FAILED}`, null)
+    .gte("created_at", horizon)
     .lte("created_at", new Date(now.getTime() - REDRAFT_AFTER_DAYS * DAY).toISOString())
     .order("created_at", { ascending: false })
     .limit(REDRAFT_SCAN);
   if (rejErr) throw new Error(`auto_rejected pitches not read: ${rejErr.message || "no detail"}`);
-  // Only a writing rejection is worth reading the rest of the prospect for (redraftOf decides).
+  // Only a writing rejection not yet tried is worth reading the rest of the prospect for (redraftOf decides).
   const prospectIds = [
     ...new Set(
-      ((rejected ?? []) as Array<{ prospect_id: string; auto_rejected_reason: string | null }>)
+      ((rejected ?? []) as Array<{ id: string; prospect_id: string; auto_rejected_reason: string | null }>)
+        .filter((r) => !redrafted.has(r.id) && !failedProspects.has(r.prospect_id))
         .filter((r) => rejectedForWriting(r.auto_rejected_reason, WRITER_FIXABLE))
         .map((r) => r.prospect_id),
     ),
@@ -848,14 +859,23 @@ async function redraftPool(actor: Actor, db: Db, now: Date, deadline: number): P
       out.waiting = `AI budget: $${cap.spent_today_usd.toFixed(2)} of $${cap.cap_usd.toFixed(2)} used in 24h`;
       break;
     }
-    const drafted = await generatePitchWith(actor, prospectId);
+    // The mark is part of the decision record's first (and only) write.
+    const drafted = await generatePitchWith(actor, prospectId, { redraftOf: replaces });
     if (drafted.ok) {
-      await markDecision(db, tenantId, drafted.pitch_id, { [REDRAFT_OF]: replaces });
       out.drafted++;
     } else {
       // One try per prospect: a failure that repeats would otherwise be retried every tick.
-      await markDecision(db, tenantId, replaces, { [REDRAFT_FAILED]: { at: now.toISOString(), error: drafted.error.slice(0, 300) } });
       out.failed++;
+      const { error } = await db.from("audit_log").insert({
+        tenant_id: tenantId,
+        actor_id: null,
+        action: REDRAFT_FAILED_ACTION,
+        entity_type: "pitch",
+        entity_id: replaces,
+        metadata: { prospect_id: prospectId, error: drafted.error.slice(0, 300) },
+      });
+      // Not recorded = it would be tried again every tick: stop and leave a tick error.
+      if (error) throw new Error(`failed re-draft not recorded: ${error.message || "no detail"}`);
     }
   }
   return out;

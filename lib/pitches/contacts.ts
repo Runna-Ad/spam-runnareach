@@ -64,6 +64,9 @@ export function badStoredVerdict(c: VerdictContact, now: Date): "drop" | "review
  * flagged; failing that, the first usable one it is only unsure about
  * ("review": a person can still decide in the review lane); failing that,
  * the same contact as pickTopUsableContact (no alternative, nothing changes).
+ * A contact a person added or chose (selected_by "manual") is never passed
+ * over for a verdict: their choice wins, and the lane rules still keep an
+ * address the verifier doubts away from an automatic send.
  */
 export function chooseRecipient<T extends VerdictContact>(contacts: T[] | null | undefined, now: Date): T | null {
   if (!contacts || contacts.length === 0) return null;
@@ -71,7 +74,7 @@ export function chooseRecipient<T extends VerdictContact>(contacts: T[] | null |
     .sort((a, b) => (a.priority_rank ?? 99) - (b.priority_rank ?? 99))
     .filter((c) => hasUsableEmail(c.email));
   return (
-    usable.find((c) => badStoredVerdict(c, now) === null) ??
+    usable.find((c) => c.selected_by === "manual" || badStoredVerdict(c, now) === null) ??
     usable.find((c) => badStoredVerdict(c, now) === "review") ??
     usable[0] ??
     null

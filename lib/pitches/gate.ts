@@ -260,6 +260,10 @@ export async function checkPitchGate(
   const ctx = await loadGateContext(supabase, tenantId, row.prospect_id, opts.shared);
   if (!ctx) return null;
 
+  // No recipient given: the pitch's own contact. A failed read (or a contact
+  // with no usable address) falls back to the prospect's top contact; if that
+  // is someone else, a greeting for the real recipient reads as a
+  // greeting_mismatch and the pitch is held: it fails closed, never open.
   let recipient = opts.recipient;
   if (recipient === undefined && row.contact_id) {
     const { data: own } = await supabase

@@ -172,6 +172,7 @@ async function run(opts: {
   /** The prospect's contacts (default: one, Ana) and the recipient rule's pick (default: the first usable). */
   contacts?: Row[];
   pick?: (rows: Row[]) => Row | null;
+  redraftOf?: string;
 }) {
   const calls: string[] = [];
   const composerContacts: unknown[] = [];
@@ -249,7 +250,8 @@ async function run(opts: {
   let result: { ok: boolean; error?: string } | null = null;
   let thrown: unknown = null;
   try {
-    result = await generatePitchWith({ supabase, user: USER }, PROSPECT_ID, opts.retryOf === null ? {} : { retryOf: opts.retryOf ?? HELD_ID });
+    const redraft = opts.redraftOf ? { redraftOf: opts.redraftOf } : {};
+    result = await generatePitchWith({ supabase, user: USER }, PROSPECT_ID, opts.retryOf === null ? redraft : { retryOf: opts.retryOf ?? HELD_ID, ...redraft });
   } catch (e) {
     thrown = e;
   } finally {
@@ -433,6 +435,27 @@ test("recipient: a rewrite to another contact composes fresh; to the same contac
   assert.equal(moved.seen[0]!.reviseFirst, undefined, "the held text greets Ana; Bo gets a fresh draft");
   const same = await run({ held: claudeHeld({ contact_id: "b" } as Held), contacts: rows, pick: toBo });
   assert.notEqual(same.seen[0]!.reviseFirst, undefined);
+});
+
+test("redraft_of is written with the decision record (write-once), and a rewrite carries the held draft's", async () => {
+  echoWriter();
+  const fresh = await run({ held: null, retryOf: null, realCompose: true, redraftOf: "old-1" });
+  assert.equal(fresh.result?.ok, true, fresh.result?.error);
+  const created = fresh.db.tables.pitches!.find((p) => p.id !== HELD_ID)!;
+  assert.equal((created.decision as { redraft_of?: string }).redraft_of, "old-1");
+
+  echoWriter();
+  const held = claudeHeld({ decision: { path: "claude", redraft_of: "old-2", critic: { issues: ["x"] } } });
+  const rewrite = await run({ held, realCompose: true });
+  assert.equal(rewrite.result?.ok, true, rewrite.result?.error);
+  const next = rewrite.db.tables.pitches!.find((p) => p.id !== HELD_ID)!;
+  assert.equal((next.decision as { redraft_of?: string; retry_of?: string }).redraft_of, "old-2");
+  assert.equal((next.decision as { retry_of?: string }).retry_of, HELD_ID);
+
+  // A plain first draft has none.
+  echoWriter();
+  const plain = await run({ held: null, retryOf: null, realCompose: true });
+  assert.equal(Object.hasOwn(plain.db.tables.pitches!.find((p) => p.id !== HELD_ID)!.decision as object, "redraft_of"), false);
 });
 
 // ── suggestPitchAnglesAction records its Claude call ──────────────────────────

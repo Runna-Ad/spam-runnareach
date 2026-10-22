@@ -116,7 +116,9 @@ export async function generatePitchWith(
   actor: Actor,
   prospectId: string,
   // Only the autopilot passes this (the browser wrapper takes a prospect id).
-  opts: { retryOf?: string } = {},
+  // redraftOf: the autopilot's re-draft pool (lib/autopilot/tick.ts), written in the
+  // decision record at its first write (pitches.decision is write-once, 0038).
+  opts: { retryOf?: string; redraftOf?: string } = {},
 ): Promise<GeneratePitchResult> {
   const { user } = actor;
   const { supabase } = actor;
@@ -433,6 +435,8 @@ export async function generatePitchWith(
   // does a rewrite to a different contact than the held draft's (the
   // verifier doubted that address): its text greets the old recipient.
   let reviseFirst: NonNullable<GeneratorInputs["revision"]> | undefined;
+  // A re-draft's rewrite is still that re-draft: its mark comes with it.
+  let redraftOf: string | undefined = opts.redraftOf;
   if (opts.retryOf) {
     const { data: held, error: heldErr } = await supabase
       .from("pitches")
@@ -443,6 +447,8 @@ export async function generatePitchWith(
       .maybeSingle<HeldDraftRow>();
     if (heldErr) console.warn("[generatePitch] held draft not read, composing fresh:", heldErr.message || "no message");
     else if (!held || !held.contact_id || held.contact_id === recipient?.id) reviseFirst = heldDraftRevision(held) ?? undefined;
+    const heldMark = (held?.decision as { redraft_of?: unknown } | null | undefined)?.redraft_of;
+    if (!redraftOf && typeof heldMark === "string" && heldMark) redraftOf = heldMark;
   }
 
   // ── Status re-check, immediately before any Claude call ───────────────
@@ -652,6 +658,7 @@ export async function generatePitchWith(
     ...(opts.retryOf
       ? { retry_of: opts.retryOf, retry_mode: reviseFirst && method === "claude" ? ("revised" as const) : ("fresh" as const) }
       : {}),
+    ...(redraftOf ? { redraft_of: redraftOf } : {}),
     ...(method === "claude" ? { wanted_fact: composed.wanted_fact ?? null } : {}),
   };
   const { error: decisionErr } = await supabase

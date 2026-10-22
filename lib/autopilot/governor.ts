@@ -173,8 +173,6 @@ export const REDRAFTS_PER_TICK = 3;
 export const REDRAFTS_PER_DAY = 10;
 /** decision key on a re-draft (and on its rewrite): the auto_rejected pitch it replaces. */
 export const REDRAFT_OF = "redraft_of";
-/** decision key on an auto_rejected pitch whose re-draft could not be generated: that was its one try. */
-export const REDRAFT_FAILED = "redraft_failed";
 
 /** Prefix dropDraft gives a draft whose rewrite could not be generated (lib/autopilot/tick.ts resolveHeld). */
 export const REWRITE_FAILED = "rewrite failed: ";
@@ -202,11 +200,11 @@ export type RedraftPitch = {
 /**
  * May the autopilot write this prospect one fresh draft? Every pitch it has
  * (roots and follow-ups) was auto_rejected for its writing, the newest at
- * least REDRAFT_AFTER_DAYS ago, none of them is already a re-draft (or a
- * re-draft that failed to generate), and it has
+ * least REDRAFT_AFTER_DAYS ago, none of them is already a re-draft, and it has
  * fewer than two: a prospect gets at most two auto_rejected drafts ever. Any
  * other pitch (a draft, an approval, anything sent or sending) means no. The
- * prospect's own status, cooldown and do-not-contact checks are the caller's.
+ * prospect's own status, cooldown and do-not-contact checks, and a re-draft
+ * that failed to generate (its audit row), are the caller's.
  * Returns the pitch the re-draft replaces (the newest), or null.
  */
 export function redraftOf(
@@ -216,9 +214,8 @@ export function redraftOf(
 ): string | null {
   if (pitches.length === 0 || pitches.length >= 2) return null;
   if (!pitches.every((p) => p.status === "auto_rejected" && rejectedForWriting(p.auto_rejected_reason, writerFixable))) return null;
-  const tried = (d: RedraftPitch["decision"]) =>
-    d !== null && typeof d === "object" && (Object.hasOwn(d, REDRAFT_OF) || Object.hasOwn(d, REDRAFT_FAILED));
-  if (pitches.some((p) => tried(p.decision))) return null;
+  const isRedraft = (d: RedraftPitch["decision"]) => d !== null && typeof d === "object" && Object.hasOwn(d, REDRAFT_OF);
+  if (pitches.some((p) => isRedraft(p.decision))) return null;
   const newest = [...pitches].sort((a, b) => Date.parse(b.created_at) - Date.parse(a.created_at))[0]!;
   const age = now.getTime() - Date.parse(newest.created_at);
   if (!(age >= REDRAFT_AFTER_DAYS * 86_400_000)) return null;

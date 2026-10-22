@@ -184,6 +184,11 @@ function fakeDb(tables: Record<string, Row[]>, failInsert: (table: string, rows:
         }
         let hit = rows.filter((r) => filters.every((f) => f(r)));
         if (op === "update") {
+          // pitches.decision is write-once (migration 0038 pitches_decision_write_once).
+          if (table === "pitches" && "decision" in patch) {
+            const changed = hit.find((r) => r.decision != null && JSON.stringify(r.decision) !== JSON.stringify(patch.decision));
+            if (changed) return { data: null, count: null, error: { message: `pitches.decision is immutable once written (pitch ${String(changed.id)})` } };
+          }
           for (const r of hit) Object.assign(r, patch);
           return { data: returning ? hit.map((r) => ({ id: r.id })) : null, count: null, error: null };
         }
@@ -258,6 +263,7 @@ const COLUMNS: Record<string, readonly string[]> = {
     "verify_verdict", "verify_reasons", "verify_checked_at",
   ],
   prospects: ["id", "tenant_id", "status", "cooldown_until", "domain", "company_name", "language"],
+  audit_log: ["id", "tenant_id", "actor_id", "action", "entity_type", "entity_id", "metadata", "created_at"],
 };
 function checkedDb(tables: Record<string, Row[]>) {
   const db = fakeDb(tables);
@@ -322,16 +328,19 @@ function wire(db: Db, extra: Record<string, (...a: unknown[]) => unknown> = {}) 
     weeklyReview: async () => null,
     isUnderDailyCap: async () => ({ under: true, spent_today_usd: 0.5, cap_usd: 3 }),
     isEmailOnDncList: async () => ({ blocked: false }),
-    generatePitchWith: async (_actor: unknown, prospectId: string, opts?: { retryOf?: string }) => {
-      // As pitch-stage.ts: clear the prospect's drafts, link the chosen recipient.
+    generatePitchWith: async (_actor: unknown, prospectId: string, opts?: { retryOf?: string; redraftOf?: string }) => {
+      // As pitch-stage.ts: clear the prospect's drafts, link the chosen recipient, write the
+      // decision once with redraft_of (given, or the held draft's on a rewrite).
       const top = await contacts.fetchTopUsableContact(db as never, TENANT, prospectId, NOW);
+      const heldMark = opts?.retryOf ? (db.tables.pitches!.find((p) => p.id === opts.retryOf)?.decision as Row | null)?.redraft_of : undefined;
+      const redraftOf = opts?.redraftOf ?? (typeof heldMark === "string" ? heldMark : undefined);
       db.tables.pitches = db.tables.pitches!.filter((p) => !(p.prospect_id === prospectId && p.status === "draft"));
       const id = `new-${++n}`;
       db.tables.pitches!.push({
         id, tenant_id: TENANT, prospect_id: prospectId, contact_id: top?.id ?? null, status: "draft",
         parent_pitch_id: null, created_at: NOW.toISOString(), body_edited: null, autopilot_lane: null,
         autopilot_reasons: null, auto_rejected_reason: null,
-        decision: { path: "claude", ...(opts?.retryOf ? { retry_of: opts.retryOf } : {}) },
+        decision: { path: "claude", ...(opts?.retryOf ? { retry_of: opts.retryOf } : {}), ...(redraftOf ? { redraft_of: redraftOf } : {}) },
       });
       return { ok: true, pitch_id: id, method: "claude", quality_self_score: 8, reasoning: "" };
     },
@@ -412,6 +421,15 @@ test("chooseRecipient property: with no fresh verdicts it is exactly pickTopUsab
       }),
     );
     assert.equal(contacts.chooseRecipient(list, NOW)?.id, contacts.pickTopUsableContact(list)?.id);
+  }
+});
+
+test("chooseRecipient: a contact a person chose (selected_by manual) is never passed over for a verdict", () => {
+  for (const verdict of ["review", "drop"] as const) {
+    const m = contact("m", "p", 1, { selected_by: "manual", verify_verdict: verdict, verify_checked_at: fresh });
+    assert.equal(contacts.chooseRecipient([m, contact("b", "p", 2)], NOW)?.id, "m", verdict);
+    // …and so it is not an "alternative" elsewhere either: the rewrite keeps the person's choice.
+    assert.equal(contacts.hasAlternativeRecipient([m, contact("b", "p", 2)], "m", NOW), false, verdict);
   }
 });
 
@@ -641,7 +659,8 @@ test("redraft: a writer rejection 15 days old gets one fresh draft marked redraf
   const r = (await tick.runTick(actorFor(db), NOW)) as Report;
   assert.deepEqual(stepErrors(r), []);
   assert.deepEqual(r.redrafted, { drafted: 1, failed: 0, waiting: null });
-  assert.deepEqual(generated().map((c) => [c.args[1], c.args[2]]), [["p1", undefined]]);
+  // The mark goes in at generation (no later decision write: it would be refused).
+  assert.deepEqual(generated().map((c) => [c.args[1], c.args[2]]), [["p1", { redraftOf: "old" }]]);
   assert.deepEqual(redrafts(db).map((p) => [p.prospect_id, (p.decision as Row).redraft_of, p.status]), [["p1", "old", "draft"]]);
   // Next tick: the prospect now has a live draft and is not re-drafted again.
   calls.length = 0;
@@ -685,12 +704,17 @@ test("redraft: address, person, template, probation, unknown reasons → none; w
 });
 
 test("redraft: already re-drafted once (or a failed try) → none; two rejected drafts → none", async () => {
-  for (const pitches of [
-    [rejected("r2", "p1", 15, WRITER_REASON, { path: "claude", redraft_of: "r1" })],
-    [rejected("r1", "p1", 15, WRITER_REASON, { path: "claude", redraft_failed: { at: daysAgo(1), error: "x" } })],
-    [rejected("r1", "p1", 40, WRITER_REASON), rejected("r2", "p1", 20, WRITER_REASON)],
-  ]) {
+  const failedTry: Row = {
+    id: "au1", tenant_id: TENANT, actor_id: null, action: "autopilot.redraft_failed", entity_type: "pitch",
+    entity_id: "r1", metadata: { prospect_id: "p1", error: "x" }, created_at: daysAgo(1),
+  };
+  for (const [pitches, audit] of [
+    [[rejected("r2", "p1", 15, WRITER_REASON, { path: "claude", redraft_of: "r1" })], []],
+    [[rejected("r1", "p1", 15, WRITER_REASON)], [failedTry]],
+    [[rejected("r1", "p1", 40, WRITER_REASON), rejected("r2", "p1", 20, WRITER_REASON)], []],
+  ] as Array<[Row[], Row[]]>) {
     const db = poolDb(pitches);
+    db.tables.audit_log = audit;
     wire(db);
     const r = (await tick.runTick(actorFor(db), NOW)) as Report;
     assert.equal(r.redrafted?.drafted, 0);
@@ -774,7 +798,12 @@ test("redraft: a failed generation is the prospect's one try (no retry every tic
   wire(db, { generatePitchWith: async () => ({ ok: false, error: "Status re-check failed: boom" }) });
   const r = (await tick.runTick(actorFor(db), NOW)) as Report;
   assert.deepEqual(r.redrafted, { drafted: 0, failed: 1, waiting: null });
-  assert.deepEqual(((db.tables.pitches![0]!.decision as Row).redraft_failed as Row).error, "Status re-check failed: boom");
+  // Recorded where it is writable (decision is write-once): one audit row on the old pitch.
+  assert.deepEqual(
+    db.tables.audit_log!.filter((a) => a.action === "autopilot.redraft_failed").map((a) => [a.entity_type, a.entity_id, a.metadata]),
+    [["pitch", "old", { prospect_id: "p1", error: "Status re-check failed: boom" }]],
+  );
+  assert.deepEqual(db.tables.pitches![0]!.decision, { path: "claude" });
   calls.length = 0;
   await tick.runTick(actorFor(db), NOW);
   assert.equal(generated().length, 0);
