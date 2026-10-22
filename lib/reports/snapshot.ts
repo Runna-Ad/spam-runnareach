@@ -7,6 +7,7 @@
 
 import "server-only";
 import * as Sentry from "@sentry/nextjs";
+import { INBOX_RESUMED_ACTION } from "@/lib/autopilot/inbox-resume";
 import { getAccessToken } from "@/lib/gmail/client";
 import { createServiceRoleClient } from "@/lib/supabase/service-role";
 import type { ArmRow } from "@/lib/learning/report";
@@ -316,7 +317,7 @@ export async function gatherHealthSnapshot(tenantId: string, now: Date): Promise
   const [state, inboxRows, pending, sends] = await Promise.all([
     db.from("autonomy_state").select("enabled, stage, updated_at").eq("tenant_id", tenantId).maybeSingle(),
     db.from("sender_inboxes")
-      .select("id, email, paused, daily_cap, gmail_refresh_token_encrypted")
+      .select("id, email, paused, paused_reason, daily_cap, gmail_refresh_token_encrypted")
       .eq("tenant_id", tenantId)
       .not("gmail_refresh_token_encrypted", "is", null),
     db.from("pitches")
@@ -332,20 +333,25 @@ export async function gatherHealthSnapshot(tenantId: string, now: Date): Promise
   }
 
   // In parallel: each refresh can take up to 10s and app/** routes get 60s.
-  type InboxRow = { id: string; email: string; paused: boolean; daily_cap: number | null; gmail_refresh_token_encrypted: string };
-  const inboxes: HealthSnapshot["inboxes"] = await Promise.all(
-    ((inboxRows.data ?? []) as InboxRow[]).map(async (row) => {
-      const token = await getAccessToken(row.gmail_refresh_token_encrypted);
-      return {
-        id: row.id,
-        email: row.email,
-        paused: row.paused === true,
-        dailyCap: row.daily_cap ?? 0,
-        tokenOk: token.ok,
-        error: token.ok ? null : token.error,
-      };
-    }),
-  );
+  type InboxRow = { id: string; email: string; paused: boolean; paused_reason: string | null; daily_cap: number | null; gmail_refresh_token_encrypted: string };
+  const rows = (inboxRows.data ?? []) as InboxRow[];
+  const [tokens, extra] = await Promise.all([
+    Promise.all(rows.map((row) => getAccessToken(row.gmail_refresh_token_encrypted))),
+    alarmReads(db, tenantId, now, rows.filter((r) => r.paused === true).map((r) => r.id)),
+  ]);
+  const inboxes: HealthSnapshot["inboxes"] = rows.map((row, i) => {
+    const token = tokens[i] ?? { ok: false as const, error: "token refresh not run" };
+    return {
+      id: row.id,
+      email: row.email,
+      paused: row.paused === true,
+      dailyCap: row.daily_cap ?? 0,
+      tokenOk: token.ok,
+      error: token.ok ? null : token.error,
+      pausedReason: row.paused_reason ?? null,
+      pausedSince: extra.pausedSince.get(row.id) ?? null,
+    };
+  });
 
   type PendingRow = { id: string; status: string; scheduled_send_at: string | null; updated_at: string | null; sender_inbox_id: string | null; prospects: unknown };
   const s = state.data as { enabled: boolean; stage: string; updated_at: string | null } | null;
@@ -366,7 +372,97 @@ export async function gatherHealthSnapshot(tenantId: string, now: Date): Promise
       senderInboxId: r.sender_inbox_id,
       sentAt: r.sent_at,
     })),
+    tickErrors: extra.tickErrors,
+    learning: extra.learning,
+    heartbeats: extra.heartbeats,
   };
+}
+
+/** audit_log action of the tick's error row (lib/autopilot/tick.ts; contract in tasks/briefs/health-alarms.md). */
+export const TICK_ERRORS_ACTION = "autopilot.tick_errors";
+
+/**
+ * The reads behind inbox_paused, tick_errors, learning_stalled and job_silent.
+ * Unlike the core reads above, a failure here makes only that input null (its
+ * rule stays silent, and the failure is logged): a missing table or a bad read
+ * must not take google_disconnected and emails_stuck down with it.
+ */
+async function alarmReads(
+  db: Db,
+  tenantId: string,
+  now: Date,
+  pausedIds: string[],
+): Promise<{
+  pausedSince: Map<string, string>;
+  tickErrors: HealthSnapshot["tickErrors"];
+  learning: HealthSnapshot["learning"];
+  heartbeats: HealthSnapshot["heartbeats"];
+}> {
+  const iso = (days: number) => new Date(now.getTime() - days * DAY).toISOString();
+  const [trips, resumes, ticks, due, arms, beats] = await Promise.all([
+    pausedIds.length
+      ? db.from("learning_insights").select("created_at, evidence").eq("tenant_id", tenantId)
+          .eq("learner", "governor").eq("kind", "breaker").gte("created_at", iso(60)).order("created_at", { ascending: false }).limit(200)
+      : { data: [], error: null },
+    pausedIds.length
+      ? db.from("audit_log").select("created_at, entity_id").eq("tenant_id", tenantId)
+          .eq("action", INBOX_RESUMED_ACTION).in("entity_id", pausedIds).gte("created_at", iso(60))
+      : { data: [], error: null },
+    db.from("audit_log").select("created_at, metadata").eq("tenant_id", tenantId)
+      .eq("action", TICK_ERRORS_ACTION).gte("created_at", iso(1)).order("created_at", { ascending: false }).limit(200),
+    db.from("pitches").select("status, arms:decision->arms, prospect_contacts:contact_id(email)").eq("tenant_id", tenantId)
+      .is("parent_pitch_id", null).gte("sent_at", iso(30)).lte("sent_at", iso(15)).limit(1000),
+    db.from("learning_arms").select("trials, updated_at").eq("tenant_id", tenantId).like("learner", "writer.%"),
+    db.from("cron_heartbeats").select("job, last_ok_at, last_error_at, last_error, created_at"),
+  ]);
+  const ok = (name: string, r: Result) => {
+    if (r.error) console.warn(`[reports] health ${name} read failed:`, r.error.message);
+    return !r.error;
+  };
+
+  const pausedSince = new Map<string, string>();
+  if (ok("breaker trips", trips) && ok("resumes", resumes)) {
+    const lastResume = new Map<string, string>();
+    for (const r of (resumes.data ?? []) as Array<{ created_at: string; entity_id: string }>) {
+      if ((lastResume.get(r.entity_id) ?? "") < r.created_at) lastResume.set(r.entity_id, r.created_at);
+    }
+    // Newest first: the first trip covering an inbox after its last resume.
+    for (const t of (trips.data ?? []) as Array<{ created_at: string; evidence: { scope?: string; inboxId?: string } | null }>) {
+      for (const id of pausedIds) {
+        if (pausedSince.has(id) || t.created_at <= (lastResume.get(id) ?? "")) continue;
+        if (t.evidence?.scope === "all" || t.evidence?.inboxId === id) pausedSince.set(id, t.created_at);
+      }
+    }
+  }
+
+  const tickErrors = ok("tick errors", ticks)
+    ? ((ticks.data ?? []) as Array<{ created_at: string; metadata: { errors?: unknown } | null }>).map((r) => ({
+        at: r.created_at,
+        errors: Array.isArray(r.metadata?.errors) ? r.metadata.errors.filter((e): e is string => typeof e === "string") : [],
+      }))
+    : null;
+
+  const learning =
+    ok("due sends", due) && ok("writer arms", arms)
+      ? {
+          // The writer learner only counts first emails that recorded their arms (lib/autopilot/learn.ts).
+          dueRootSends: ((due.data ?? []) as Array<{ status: string; arms: Record<string, unknown> | null; prospect_contacts: unknown }>)
+            .filter((p) => p.arms && typeof p.arms === "object" && Object.keys(p.arms).some((k) => k.startsWith("writer.")))
+            .map((p) => ({ email: emailOf(p.prospect_contacts), status: p.status })),
+          writerArms: ((arms.data ?? []) as Array<{ trials: number | null; updated_at: string | null }>).map((r) => ({
+            trials: r.trials ?? 0,
+            updatedAt: r.updated_at,
+          })),
+        }
+      : null;
+
+  const heartbeats = ok("cron heartbeats", beats)
+    ? ((beats.data ?? []) as Array<{ job: string; last_ok_at: string | null; last_error_at: string | null; last_error: string | null; created_at: string | null }>).map(
+        (r) => ({ job: r.job, lastOkAt: r.last_ok_at, lastErrorAt: r.last_error_at, lastError: r.last_error, createdAt: r.created_at }),
+      )
+    : null;
+
+  return { pausedSince, tickErrors, learning, heartbeats };
 }
 
 export async function recentHealthAlerts(tenantId: string, since: Date): Promise<Array<{ kind: string; at: string }>> {

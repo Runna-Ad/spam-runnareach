@@ -91,6 +91,8 @@ g.__stubValues = {
   ATTRIBUTION_WINDOW_DAYS: 30,
   OUTCOME_EVENT_TYPES: [],
   EXEMPLAR_CANDIDATE_COLUMNS: "id",
+  // The cron heartbeat (tests/health-alarms.test.ts) passes the run through.
+  withHeartbeat: (_job: unknown, run: () => unknown) => run(),
 };
 
 // ── Fake Supabase (filters applied the way Postgres would) ───────────────────

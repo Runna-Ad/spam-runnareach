@@ -51,6 +51,10 @@ function healthy(now: Date = NOW): HealthSnapshot {
     ],
     // The queue ran in the last closed window.
     recentSends: [{ senderInboxId: "ib-henry@runna.ca", sentAt: new Date((lastClosedSendWindow(now.getTime())?.start ?? 0) + 600_000).toISOString() }],
+    // Today's designed state: no tick errors, no 15-day-old sends, arms at 0 trials, no heartbeat rows yet.
+    tickErrors: [],
+    learning: { dueRootSends: [], writerArms: [{ trials: 0, updatedAt: ago(0.2, now) }] },
+    heartbeats: [],
   };
 }
 
@@ -187,8 +191,8 @@ test("AI cap reached, no discovery for hours, nothing waiting: silent (the tick 
 test("budget cap, breaker trips and a quiet day are not emergencies", () => {
   const s = healthy();
   s.pending = [];
-  // Nothing in the snapshot even carries spend or breakers: the rules cannot see them.
-  assert.deepEqual(Object.keys(s).sort(), ["appUrl", "autopilot", "inboxes", "now", "pending", "recentSends"]);
+  // Nothing in the snapshot even carries spend or breaker trips: the rules cannot see them.
+  assert.deepEqual(Object.keys(s).sort(), ["appUrl", "autopilot", "heartbeats", "inboxes", "learning", "now", "pending", "recentSends", "tickErrors"]);
   assert.deepEqual(findProblems(s), []);
 });
 
@@ -226,6 +230,7 @@ function harness(opts: { snapshot: (now: Date) => HealthSnapshot; deliver?: bool
     recordAlert: async (_t, p) => {
       audit.push({ kind: p.kind, at: now.toISOString() });
     },
+    capture: () => {},
     now: () => now,
   };
   const call = async (at: Date, query = "") => {

@@ -9,6 +9,7 @@
 // (lib/cron-auth.ts isSchedulerAuthorized).
 // ─────────────────────────────────────────────────────────────────────────────
 
+import * as Sentry from "@sentry/nextjs";
 import { type NextRequest } from "next/server";
 import { isSchedulerAuthorized } from "@/lib/cron-auth";
 import { sendNotification } from "@/lib/notify/send";
@@ -26,6 +27,9 @@ const deps: Omit<HealthRouteDeps, "authorize"> = {
   send: (tenantId, message) =>
     sendNotification(createServiceRoleClient(), tenantId, { kind: "ops", fromName: "S.P.A.M. health", ...message }),
   recordAlert: recordHealthAlert,
+  capture: (message) => {
+    Sentry.captureMessage(message, { level: "warning" });
+  },
 };
 
 export async function GET(req: NextRequest) {
