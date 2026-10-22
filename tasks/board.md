@@ -339,7 +339,7 @@ Migrations: none reserved for wave 1 (`click` already in prod's `pitch_event_typ
 | handsoff-autopilot | veto demotion restarts the veto clock (no auto shadow); gmail_api breaker counts recorded send failures; tick-errors audit row | opus/high | claude/handsoff-autopilot | session_016QfVMPU6GUVvytMYB3jhTk | #55 | wave 1 | MERGED 1cc8bda (r1: 1 blocking fixed, verified) | | | | |
 | health-alarms | health rules inbox_paused, tick_errors, learning_stalled, job_silent; 0051 heartbeats in 4 cron routes; Sentry copy of every alert | opus/high | claude/health-alarms | session_017aNNRc3UdX5txuLZq2qz4N | #56 | wave 1 | MERGED d15ad27 (r1: 1 blocking fixed, verified) |
 | send-pacing | send-queue + follow-up: 1 per inbox / 2 per run; follow-up every 10 min (0052) | opus/high | claude/send-pacing | session_0186upAL8EFPobQfBGtYJkcm | — | wave 2 | running |
-| redraft-pool | verifier-unsure → next contact; one fresh re-draft for writer-rejected prospects after 14 days (3/tick, 10/day) | opus/high | claude/redraft-pool | — | — | wave 2 | queued | | | | | | | | | | | | | | | | |
+| redraft-pool | verifier-unsure → next contact; one fresh re-draft for writer-rejected prospects after 14 days (3/tick, 10/day) | opus/high | claude/redraft-pool | session_01MyWiWL2WYTUijw8qPoDm3j | — | wave 2 | running | | | | | | | | | | | | | | | | |
 
 Batch-audit pairs: tracked-links × presend-learning (click on the ROOT, payload {code, step, ua}; value 0.25 never makes an exemplar); reply-on-root × follow-up route (one timeline per conversation, sent + reply on the same row); tracked-links × claude-composer rewrite (no old code inherited); presend-learning × governor (guidance retirement never touches stage); backfill × 23505 skip.
 
