@@ -339,3 +339,4 @@ Batch-audit pairs: tracked-links × presend-learning (click on the ROOT, payload
 
 Log:
 - 2026-10-22 16:20 UTC — Pedro picked option 1 and the wave order. Wave 1 briefs written (reply-on-root, tracked-links, presend-learning). Wave 1 spawned (3 remote Opus sessions). PR sweep trig_01UiZEy3h4tVAcmzkqVrmUuE (16:29), safety check trig_01BEZKhKf75y5xEZpKo2tV5A (17:11).
+- 2026-10-22 16:30 UTC — Pedro: the Hunter has always recorded its links (rows land with the code); likely nobody has clicked yet. Matches the 10-22 probe. Kept tracked-links: the Hunter writes a row only when the visitor RUNS the check (index.html:1239-1262), so clicks that stop at the page stay invisible without our counter.
