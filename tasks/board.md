@@ -382,7 +382,8 @@ Workers: writer-honesty (1-3, pitches hub, opus/high), digest-once (4, lib/autop
 | Slug | Module | Model/effort | Branch | Session | PR | Depends on | Status | Turns | Review findings | CI reds | Rework |
 |---|---|---|---|---|---|---|---|---|---|---|---|
 | digest-once | veto digest: each email announced once, no empty digest, truthful subject | opus/high | claude/digest-once | session_01F9yRiYtBRPzsFF8VqUReoQ | — | — | running | | | | |
-| writer-honesty | writer + critic calibration on guesses, greeting rules, fresh rewrites, prompt v3.3 | opus/high | claude/writer-honesty | — | — | calibration study | briefing | | | | |
+| writer-honesty | writer + critic calibration on guesses, greeting rules, fresh rewrites, prompt v3.3 | opus/high | claude/writer-honesty | — | — | calibration study | queued | | | | |
 
 Log:
 - 2026-10-26 15:20 UTC — Pedro picked all three + digest fix. Integration cut (main merged into batch 8 notes; code identical to main). digest-once brief written; calibration study running.
+- 2026-10-26 15:45 UTC — Calibration study (Opus, newest 30 failed v3.2 drafts, 64 blocking issues): critic over-strict 31, writer unsupported 16 (11 from research advice stored as evidence_quote), greeting code/writer 7, critic wrong on greeting 4, recipient data 2, statistic 4. Estimate: both fixed → ~20-25 of 30 pass (critic only ~12, writer only ~3). writer-honesty brief written (writer + critic + greetingName + observed flag + fresh rewrites, prompt v3.3).
