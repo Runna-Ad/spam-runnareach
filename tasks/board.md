@@ -381,10 +381,11 @@ Workers: writer-honesty (1-3, pitches hub, opus/high), digest-once (4, lib/autop
 
 | Slug | Module | Model/effort | Branch | Session | PR | Depends on | Status | Turns | Review findings | CI reds | Rework |
 |---|---|---|---|---|---|---|---|---|---|---|---|
-| digest-once | veto digest: each email announced once, no empty digest, truthful subject | opus/high | claude/digest-once | session_01F9yRiYtBRPzsFF8VqUReoQ | #60 | — | in review | | | | |
+| digest-once | veto digest: each email announced once, no empty digest, truthful subject | opus/high | claude/digest-once | session_01F9yRiYtBRPzsFF8VqUReoQ | #60 | — | MERGED c733ecb (0 blocking) | | | | |
 | writer-honesty | writer + critic calibration on guesses, greeting rules, fresh rewrites, prompt v3.3 | opus/high | claude/writer-honesty | session_01HVDrD3T9YACnHYzGea5QkE | #61 | calibration study | in review | | | | |
 
 Log:
 - 2026-10-26 15:20 UTC — Pedro picked all three + digest fix. Integration cut (main merged into batch 8 notes; code identical to main). digest-once brief written; calibration study running.
 - 2026-10-26 15:45 UTC — Calibration study (Opus, newest 30 failed v3.2 drafts, 64 blocking issues): critic over-strict 31, writer unsupported 16 (11 from research advice stored as evidence_quote), greeting code/writer 7, critic wrong on greeting 4, recipient data 2, statistic 4. Estimate: both fixed → ~20-25 of 30 pass (critic only ~12, writer only ~3). writer-honesty brief written (writer + critic + greetingName + observed flag + fresh rewrites, prompt v3.3).
 - 2026-10-26 15:55 UTC — #60 digest-once (15:29) and #61 writer-honesty (15:45) opened; subscribed; two Opus reviewers running.
+- 2026-10-26 16:00 UTC — #60 review (Opus): merge, 0 blocking (every send path traced; property test 672 emails over a week each listed exactly once before send; 1537 tests, build). Merged c733ecb. Optional noted, not taken: pitches query .limit(200) could hide a fresh item only above 200 total daily cap (1 inbox, cap 30 today).
