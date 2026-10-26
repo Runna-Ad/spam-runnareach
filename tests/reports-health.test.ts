@@ -345,6 +345,32 @@ test("newProblems ignores alerts older than 24h", () => {
   assert.equal(newProblems([p], [{ kind: "emails_stuck", at: ago(1) }], NOW).length, 1);
 });
 
+test("newProblems: a run 24h after an alert is not suppressed by the seconds the alert took to record", () => {
+  // Sat 13:25:05 alert (recorded after its run read `now`), next run Sun 13:25:00: on weekends that is the only one.
+  const sun = at("2026-10-25T13:25:00Z");
+  const p = googleDisconnected(disconnectedAt(sun));
+  assert.ok(p);
+  assert.equal(newProblems([p], [{ kind: "google_disconnected", at: "2026-10-24T13:25:05Z" }], sun).length, 1);
+  assert.equal(newProblems([p], [{ kind: "google_disconnected", at: "2026-10-24T14:25:00Z" }], sun).length, 0, "23h ago still suppresses");
+});
+
+test("emails_stuck: each closed window gets its own alert, even when the previous one alerted less than 24h ago", () => {
+  // Friday's window is judged only Fri 23:25, Sat 12:40 (Vercel) and Sat 13:25; by Sunday it is over 24h old.
+  const FRI_NIGHT = at("2026-10-23T23:25:00Z");
+  const SAT_MORNING = at("2026-10-24T13:25:00Z");
+  const dueFri = pitch({ id: "p-due", scheduledSendAt: "2026-10-23T10:00:00Z" });
+  for (const now of [FRI_NIGHT, SAT_MORNING]) {
+    const p = emailsStuck(snapAt(now, { pending: [dueFri] }));
+    assert.ok(p);
+    // An alert about Thursday's window (Fri 16:25) must not hide Friday's.
+    assert.equal(newProblems([p], [{ kind: "emails_stuck", at: "2026-10-23T16:25:05Z" }], now).length, 1, now.toISOString());
+  }
+  // Once Friday's window has alerted (Fri 23:25:05), Saturday's runs stay quiet about it.
+  const p = emailsStuck(snapAt(SAT_MORNING, { pending: [dueFri] }));
+  assert.ok(p);
+  assert.equal(newProblems([p], [{ kind: "emails_stuck", at: "2026-10-23T23:25:05Z" }], SAT_MORNING).length, 0);
+});
+
 // ── Migration 0045 ───────────────────────────────────────────────────────────
 
 test("migration 0045 schedules exactly the health check and the weekly report", () => {

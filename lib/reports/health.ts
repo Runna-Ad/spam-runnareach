@@ -46,6 +46,12 @@ const HOUR = 3_600_000;
 
 export const ALERT_DEDUPE_HOURS = 24;
 /**
+ * A run reads `now` seconds before the previous run records its alert, so a run
+ * exactly 24h later would still see that alert. Outside the send window the next
+ * run can be a day away (0053), so the dedupe ends a few minutes early.
+ */
+const ALERT_DEDUPE_SLACK_MS = 5 * 60_000;
+/**
  * The health check's own weekday runs (0053 spam-health-check 25 15-23 * * 1-5
  * and spam-health-check-morning 25 13 * * *), for its Sentry monitor, which
  * takes a single crontab. Weekend runs are extra check-ins it does not expect.
@@ -129,11 +135,17 @@ export type HealthProblem = {
   detail: string;
   stops: string;
   action: string;
+  /**
+   * An earlier alert of the same kind recorded before this time does not
+   * suppress this one. emails_stuck sets the judged window's close, so each
+   * window gets its own alert even when the previous window alerted <24h ago.
+   */
+  dedupeAfter?: number;
 };
 
 /**
  * A token failure that says nothing about the connection (Google down or rate
- * limiting, a timeout) is retried next hour instead of raising
+ * limiting, a timeout) is retried at the next run instead of raising
  * "disconnected". Anything else, including errors we haven't seen, counts.
  */
 export function isTransientTokenError(error: string | null): boolean {
@@ -247,6 +259,7 @@ export function emailsStuck(s: HealthSnapshot): HealthProblem | null {
     detail: parts.join("\n"),
     stops: "Those emails (and their follow-ups) are not going out.",
     action: `Look at the send-queue run (Vercel logs for /api/pitches/send-queue) and the pitches on ${s.appUrl}/pitches. A pitch stuck in "sending" needs checking in Gmail Sent before moving it back to approved.`,
+    dedupeAfter: w.end,
   };
 }
 
@@ -290,7 +303,7 @@ export function inboxPaused(s: HealthSnapshot): HealthProblem | null {
     stops: all
       ? "All cold sending: no first email or follow-up goes out from any inbox."
       : "Cold sending from that inbox (first emails and follow-ups). The other inboxes keep sending.",
-    action: `Once the cause is fixed, resume it in Settings → Sending: ${s.appUrl}/settings/sending. This reminder repeats every ${ALERT_DEDUPE_HOURS}h while the pause lasts.`,
+    action: `Once the cause is fixed, resume it in Settings → Sending: ${s.appUrl}/settings/sending. This reminder repeats about once a day while the pause lasts.`,
   };
 }
 
@@ -506,11 +519,13 @@ export function findProblems(s: HealthSnapshot): HealthProblem[] {
   return HEALTH_RULES.map((rule) => rule(s)).filter((p): p is HealthProblem => p !== null);
 }
 
-/** Problems with no alert of the same kind in the last 24h. */
+/** Problems with no alert of the same kind in the last 24h (and since `dedupeAfter`, when set). */
 export function newProblems(problems: HealthProblem[], recentAlerts: Array<{ kind: string; at: string }>, now: Date): HealthProblem[] {
-  const cutoff = now.getTime() - ALERT_DEDUPE_HOURS * HOUR;
-  const recent = new Set(recentAlerts.filter((a) => new Date(a.at).getTime() > cutoff).map((a) => a.kind));
-  return problems.filter((p) => !recent.has(p.kind));
+  const cutoff = now.getTime() - ALERT_DEDUPE_HOURS * HOUR + ALERT_DEDUPE_SLACK_MS;
+  return problems.filter((p) => {
+    const after = Math.max(cutoff, p.dedupeAfter ?? cutoff);
+    return !recentAlerts.some((a) => a.kind === p.kind && new Date(a.at).getTime() > after);
+  });
 }
 
 export function formatHealthAlert(problems: HealthProblem[]): { subject: string; body: string } {
@@ -525,7 +540,7 @@ export function formatHealthAlert(problems: HealthProblem[]): { subject: string;
     "",
     blocks.join("\n\n"),
     "",
-    `You get this at most once per problem per ${ALERT_DEDUPE_HOURS}h. No email means healthy.`,
+    "You get this about once a day per problem while it lasts. No email means healthy.",
   ].join("\n");
   return { subject, body };
 }
@@ -578,7 +593,7 @@ export async function handleHealthCheck(req: Request, deps: HealthRouteDeps): Pr
         Object.assign(row, message);
         continue;
       }
-      // Once per new problem, deduped like the email: an undelivered one retries next hour.
+      // Once per new problem, deduped like the email: an undelivered one retries at the next run.
       for (const p of fresh) {
         try {
           deps.capture(`S.P.A.M. health: ${p.title}`);
@@ -589,7 +604,7 @@ export async function handleHealthCheck(req: Request, deps: HealthRouteDeps): Pr
       const res = await deps.send(tenantId, message);
       sent += res.sent;
       failed.push(...res.failed.map((f) => `${tenantId}: ${f}`));
-      // Dedupe only what was delivered; an undelivered alert is retried next hour.
+      // Dedupe only what was delivered; an undelivered alert is retried at the next run.
       if (res.sent > 0) {
         for (const p of fresh) await deps.recordAlert(tenantId, p);
         row.emailed = fresh.map((p) => p.kind);

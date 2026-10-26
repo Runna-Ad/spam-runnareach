@@ -3,7 +3,7 @@
 // Health check. Supabase pg_cron calls it at :25, hourly in the send window and
 // right after it, then once a day at 13:25 (migrations 0045, 0053).
 // Emails the ops list ONLY when an emergency rule fires (lib/reports/health.ts),
-// at most once per problem per 24h; silent otherwise. ?dry=1 (still authorized)
+// about once a day per problem; silent otherwise. ?dry=1 (still authorized)
 // returns the text it would send without sending or recording anything.
 //
 // Auth: Authorization: Bearer <CRON_SECRET>, or pg_cron's Vault-held token

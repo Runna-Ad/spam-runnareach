@@ -85,7 +85,8 @@ Why: Vercel's free team used 75% of its 4h Fluid Active CPU. pg_cron called the 
 - Sentry `includeLocalVariables` off: 0.95s → 0.67s CPU per cold start (measured, built app).
 - Health rules count missed scheduled runs (autopilot_stopped = 8 missed ticks), never clock hours; the health check's Sentry monitor matches the new schedule.
 - Safety kept: the 23:15 close tick counts the day's last bounces before UTC midnight; the 01:15 tick (Mon–Sat) keeps every email in a digest 6h+ before it sends; the 14:45 tick sees the kill switch before the first send; /inbox replies ask Gmail for unread mail first; unsubscribe page says "within 24 hours"; the bounce-repair sweep looks back 26h (Pedro, 2026-10-26).
-**Ship:** merge, deploy READY, THEN apply 0053 (before the deploy, job_silent would read the old schedule). Verify `cron.job` holds the twelve schedules, then the first quiet runs in `net._http_response` (23:05 poll, 23:15 tick, 23:25 health, 01:15 tick).
+- Health alerts: emails_stuck dedupes per send window (each closed window can alert once), and the 24h dedupe ends 5 minutes early so a daily run isn't skipped by seconds.
+**Ship:** merge, deploy READY, THEN apply 0053 (before the deploy, job_silent would read the old schedule), inside the weekday send window so the next :25 health run tells Sentry the new crontab before any quiet hour. Verify `cron.job` holds the twelve schedules, then the first quiet runs in `net._http_response` (23:05 poll, 23:15 tick, 23:25 health, 01:15 tick).
 
 ## Phase 3 — batch 9 (READY, waiting for Pedro's "ship it": integration `claude/phase3-batch9-integration`; worker PRs #60 #61; no migrations)
 - Veto digest: each scheduled email is listed in exactly one digest (key: pitch + scheduled time, stored in the digest's audit row); no email when nothing is new; one "N still waiting" line; truthful subject. Old digests without `items` cause one more mention of the current queue after the deploy.

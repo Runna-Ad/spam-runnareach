@@ -78,7 +78,7 @@ test("inbox_paused fires for a connected, capped, paused inbox: which inbox, sin
   assert.match(p.detail, /since 2026-10-19T15:45:00Z, reason: Autopilot breaker \(hard_bounces\)/);
   assert.match(p.stops, /All cold sending/);
   assert.match(p.action, /Settings → Sending: https:\/\/app\.test\/settings\/sending/);
-  assert.match(p.action, /repeats every 24h/);
+  assert.match(p.action, /repeats about once a day/);
 });
 
 test("inbox_paused: one of two paused says the other keeps sending; a breaker pause with no trip on record says so", () => {

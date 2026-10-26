@@ -3,8 +3,9 @@
  *
  * Pedro puts a Google Calendar appointment-schedule link in front of
  * interested prospects. A booking is an event on the booking inbox's primary
- * calendar with the prospect as an attendee. Every hour (pg_cron, migration
- * 0044) this reads the last 48 hours of event changes and:
+ * calendar with the prospect as an attendee. Hourly in the send window, then
+ * once a day (pg_cron, migrations 0044, 0053), this reads the last 48 hours of
+ * event changes and:
  *
  *   confirmed event WE organize, a non-declined attendee is a known contact,
  *   no opportunity yet

@@ -34,6 +34,11 @@ WHAT HAPPENED: autopilot_stopped alarmed when no tick ran for 2 hours. With the 
 RULE: Express "silent too long" as missed runs of the job's own schedule, never as hours. When a schedule changes, grep every health rule and comment that states the old pace (every 15 min, hourly, half-hourly).
 TAGS: #lesson #health #cron
 
+[2026-10-26] LESSON: a 24h alert dedupe keyed on the kind swallows alerts once its job runs daily
+WHAT HAPPENED: the health check dedupes each alert kind for 24h. Hourly, a suppressed run was followed by another an hour later. With the quiet-hours health check (0053), an emails_stuck alert about Thursday's window recorded Friday afternoon hid Friday's window from all three runs that judge it, and on weekends a run exactly 24h after an alert was suppressed by the few seconds between reading `now` and recording the row. The Opus reviewer reproduced both with the real functions. Fixed: emails_stuck dedupes per window (`dedupeAfter` = the window's close) and the dedupe ends 5 minutes early.
+RULE: When a job's runs get further apart, check every dedupe, cooldown and "retry next run" against the new gaps. Key a dedupe on what the alert is about (the window, the inbox), not only its kind, and give a time cutoff a few minutes of slack for runs on a fixed minute.
+TAGS: #lesson #health #cron #dedupe
+
 ## Merged from lessons-inbox, batch 9 (2026-10-26)
 
 <!-- from digest-once -->
