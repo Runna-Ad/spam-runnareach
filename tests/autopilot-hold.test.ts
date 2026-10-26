@@ -277,7 +277,7 @@ test("digest: every line gets its own hold link that verifies for its pitch, wit
   const digest = buildVetoDigest({ items: ITEMS, tenantId: TENANT, appUrl: "https://spam-runnareach.vercel.app/", secret: SECRET, now: NOW });
   // Printed so the PR body can show a rendered digest (node --test shows stdout).
   console.log(`--- digest subject ---\n${digest.subject}\n--- digest body ---\n${digest.body}\n--- end ---`);
-  assert.equal(digest.subject, "Autopilot: 2 emails will send in the next 24h unless held");
+  assert.equal(digest.subject, "Autopilot: 2 new emails scheduled to send (hold any before they go)");
   const links = [...digest.body.matchAll(/Hold: (https:\/\/spam-runnareach\.vercel\.app\/api\/autopilot\/hold\?t=(\S+))/g)];
   assert.equal(links.length, 2);
   const ids = links.map((m) => verifyHoldToken(decodeURIComponent(m[2]!), SECRET, NOW)?.pitchId);
@@ -317,7 +317,7 @@ test("digest without a key: no hold links, /pitches instructions kept", () => {
 
 test("digest subject is singular for one email", () => {
   const digest = buildVetoDigest({ items: ITEMS.slice(0, 1), tenantId: TENANT, appUrl: "https://x.test", secret: SECRET, now: NOW });
-  assert.equal(digest.subject, "Autopilot: 1 email will send in the next 24h unless held");
+  assert.equal(digest.subject, "Autopilot: 1 new email scheduled to send (hold any before they go)");
 });
 
 // ── Digest slots: twice a day, never per tick ────────────────────────────────
