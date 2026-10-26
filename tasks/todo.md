@@ -13,11 +13,12 @@ Why: Vercel's free team hit 75% of its 4h Fluid Active CPU. pg_cron woke this ap
 - [x] Health check reads several schedules per job; autopilot_stopped counts missed scheduled ticks, not hours
 - [x] Sentry includeLocalVariables off (measured 0.95s vs 0.67s CPU per cold start)
 - [x] Review fixes: Monday 01:15 digest tick, 23:15 close tick (UTC-day breakers), 14:45 pre-window tick (kill switch), /inbox reply asks Gmail for unread mail first, unsubscribe page says "within 24 hours"
-- [ ] Ship (needs Pedro's "ship it", in this order): deploy the code, THEN apply 0053. Tell the batch 9 conductor that 0053 is taken.
-- [ ] Decision for Pedro: BOUNCE_REPAIR_WINDOW_MS (lib/replies/optout-repair.ts) is 2h, sized for a 10-minute poll. addEmailToDnc swallows insert errors, so this sweep is the only retry; bounces stored by the 23:05 or weekend 13:05 polls now get none. Widening it (about 26h) lets a bounced address someone removed on /compliance come back within that time.
+- [x] BOUNCE_REPAIR_WINDOW_MS widened to 26h (Pedro, 2026-10-26: keeping dead addresses off sends wins over a /compliance removal sticking)
+- [x] Calendar sync and health check: hourly 15–23 UTC on weekdays + once a day at 13:05 / 13:25 (168 → 52 a week each, Pedro 2026-10-26)
+- [x] Docs carry the new pace (project-state.md tick + scheduler lines, briefs/_core-context.md)
+- [ ] Ship (Pedro said "ship it" 2026-10-26), in this order: merge, deploy READY, THEN apply 0053 and verify the twelve schedules. Tell the batch 9 conductor that 0053 is taken.
+- [ ] After ship: read `net._http_response` for the first quiet runs (23:05 poll, 23:15 tick, 23:25 health, 01:15 tick)
 - [ ] Not checked: per-project CPU and the reset date (Vercel dashboard Usage page, needs Pedro's login)
-- [ ] Docs carry the old pace (tasks/project-state.md :76 :79 :132, tasks/briefs/_core-context.md :14): update at integration; batch 9 is editing project-state.md
-- [ ] Optional: calendar sync and health check still run hourly around the clock (336 calls a week)
 
 Not fixing (review 2026-10-26): dropping the 13:05 pg_cron poll because vercel.json also polls at 13:00 (Vercel's free plan fires that cron at a fixed random minute inside the hour, so it can land after the 13:15 tick).
 

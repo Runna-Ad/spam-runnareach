@@ -11,7 +11,8 @@ inboxes, runs the reply/follow-up funnel. Owner: Pedro De Velasco. The reputatio
 real agency rides on every email: quality beats speed.
 
 **The autopilot is LIVE in production** (veto stage): `pg_cron` calls `/api/autopilot/tick`
-every 15 min, reply poll every 30 min, send-queue every 10 min on weekdays. Nothing you
+every 15 min and the reply poll every 10 min inside the weekday send window (15-22 UTC),
+then a few quiet-hours runs (0053); send-queue every 10 min on weekdays. Nothing you
 build runs in prod until Pedro says "ship it", but the Vercel preview of any branch
 shares the prod database. So: never run SQL or migrations against the database, never
 add or change `cron.schedule` jobs outside a reserved migration, never touch
@@ -159,7 +160,7 @@ lib/discover/  (33)    sources, dedupe, chain filter, DNC, enrich-contacts, pipe
 lib/research/  (19)    scraper, scrape/deep-research/score stages, SnapVerify, verify-recipient
 lib/pitches/   (25)    composer, review, gate, send-gate, queries, events, stages   THE HUB
 lib/replies/   ( 8)    classify, bounce parse, draft, send-reply, intent-actions
-lib/opportunities/ (5) calendar-sync (hourly), google-calendar, outcome, actions, queries
+lib/opportunities/ (5) calendar-sync (0053 pace), google-calendar, outcome, actions, queries
 lib/prospects/  ( 2)  detail actions + queries (status writers live in several modules)
 lib/hunter/     ( 3)  hunter_scans → prospects (table shared with runna-hunter)
 lib/benchmarks/ ( 2)  sourced statistics: lookup for the writer (queries), approve action; wanted_facts (0050)
