@@ -418,7 +418,7 @@ test("a run with one old and one new problem sends only the new one to Sentry", 
   assert.deepEqual(h.captured, ["S.P.A.M. health: Sending paused on henry@runna.ca", "S.P.A.M. health: Scheduled job autopilot-tick stopped completing"]);
 });
 
-test("an undelivered alert still reaches Sentry (and retries hourly like the email)", async () => {
+test("an undelivered alert still reaches Sentry (and retries at the next run like the email)", async () => {
   const h = harness({ snapshot: pausedAndSilent, deliver: false });
   await h.call(NOW);
   assert.equal(h.captured.length, 2);

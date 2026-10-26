@@ -1,5 +1,6 @@
 /**
- * The hourly health check: emails ONLY when something is wrong, at most once
+ * The health check (hourly in the send window and right after it, then once a
+ * day: 0053): emails ONLY when something is wrong, at most once
  * per problem per 24h, and is silent otherwise. Every alert email also goes to
  * Sentry (a warning, deduped like the email), so a dead Gmail token cannot
  * hide its own alarm.
@@ -44,6 +45,12 @@ import { isTestAddress } from "../compliance/test-addresses.ts";
 const HOUR = 3_600_000;
 
 export const ALERT_DEDUPE_HOURS = 24;
+/**
+ * The health check's own weekday runs (0053 spam-health-check 25 15-23 * * 1-5
+ * and spam-health-check-morning 25 13 * * *), for its Sentry monitor, which
+ * takes a single crontab. Weekend runs are extra check-ins it does not expect.
+ */
+export const HEALTH_CHECK_WEEKDAY_CRON = "25 13,15-23 * * 1-5";
 /**
  * Eight missed ticks is not a blip: 2h inside the send window, where the tick
  * runs every 15 min. Counted in scheduled ticks, not hours, because outside the
@@ -514,7 +521,7 @@ export function formatHealthAlert(problems: HealthProblem[]): { subject: string;
     [`${i + 1}. ${p.title}`, p.detail, `Stops: ${p.stops}`, `Do: ${p.action}`].join("\n"),
   );
   const body = [
-    "The hourly health check found a problem the platform cannot fix by itself.",
+    "The health check found a problem the platform cannot fix by itself.",
     "",
     blocks.join("\n\n"),
     "",

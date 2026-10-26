@@ -1,5 +1,5 @@
 /**
- * Hourly health check: each emergency rule fires on its bad snapshot and not on
+ * Health check: each emergency rule fires on its bad snapshot and not on
  * a healthy one, a healthy run sends nothing, the 24h dedupe, undelivered
  * alerts retry, dry runs, route auth, and migration 0045.
  */

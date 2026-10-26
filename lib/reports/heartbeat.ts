@@ -1,6 +1,6 @@
 /**
  * Cron heartbeats (migration 0051): each scheduled job writes one row at the
- * end of every authorized run, and the hourly health check (rule job_silent in
+ * end of every authorized run, and the health check (rule job_silent in
  * health.ts) alerts when a job stopped completing runs inside its window.
  *
  * Sentry cron monitors would do this too, but beyond one monitor they are a

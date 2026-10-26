@@ -44,7 +44,7 @@
  *      token check and before listing events, and again at the END for this
  *      run's changes. A row is claimed only while that much (60s) remains before
  *      maxDuration (counted from the route's start); otherwise it is left for
- *      the next run's start sweep (hourly). The start sweep stops 40s earlier
+ *      the next run's start sweep (hourly in the send window, 0053). The start sweep stops 40s earlier
  *      still, so the sync's own writes keep their time.
  *   D6 An alert failure never fails the sync: it lands in report.alerts.failed.
  * Without a working Google token no sweep is attempted.

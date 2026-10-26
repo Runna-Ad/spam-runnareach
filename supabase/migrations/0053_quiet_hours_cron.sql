@@ -1,4 +1,4 @@
--- 0053 — The autopilot tick and the reply poll keep their pace only while emails send.
+-- 0053 — The tick, the reply poll, the calendar sync and the health check keep their pace only while emails send.
 --
 -- Vercel's free plan includes 4 hours of function CPU a month (Fluid Active
 -- CPU), and every project on the team pauses when it runs out. On 2026-10-26
@@ -19,6 +19,18 @@
 --   spam-autopilot-tick-evening    15 1 * * 1-6            the 01:00 veto digest, Mon-Sat in UTC
 --   spam-autopilot-tick-morning    15 13 * * *             once a day, every day: the 13:00 digest
 --   spam-autopilot-tick-prewindow  45 14 * * 1-5           the last pass before the first send
+--   spam-calendar-sync             5 15-23 * * 1-5         hourly in the window and right after it (was 5 * * * *, 0044)
+--   spam-calendar-sync-morning     5 13 * * *              once a day, every day
+--   spam-health-check              25 15-23 * * 1-5        hourly in the window and right after it (was 25 * * * *, 0045)
+--   spam-health-check-morning      25 13 * * *             once a day, every day
+--
+-- The health check's 23:25 run comes after the 23:15 tick, so it judges the
+-- window that just closed (emails_stuck) with the day's last bounces counted.
+-- Its Sentry monitor (app/api/reports/health/route.ts) expects the weekday runs
+-- only; the weekend 13:25 runs are extra check-ins, as Vercel's daily 12:40 run
+-- already is. The calendar sync reads events updated in the last 48 hours
+-- (lib/opportunities/google-calendar.ts LOOKBACK_MS), so a 24-hour gap misses
+-- no booking.
 --
 -- Why each extra tick:
 --   close      the bounces_today and gmail_api breakers count from UTC midnight
@@ -44,9 +56,10 @@
 -- (lib/replies/send-reply-action.ts), so an opt-out the poll hasn't read yet
 -- still stops it.
 --
--- Calls a week: polls 1,008 → 252, ticks 672 → 183. Send-queue and follow-up
--- are unchanged. 1,245 fewer cold starts a week × 0.67-0.95s CPU each (measured
--- locally 2026-10-26) ≈ 14-20 minutes of CPU a week, against 4 hours a month.
+-- Calls a week: polls 1,008 → 252, ticks 672 → 183, calendar syncs 168 → 52,
+-- health checks 168 → 52. Send-queue and follow-up are unchanged. 1,477 fewer
+-- cold starts a week × 0.67-0.95s CPU each (measured locally 2026-10-26) ≈
+-- 16-23 minutes of CPU a week, against 4 hours a month.
 --
 -- Switching the autopilot back on by hand: update autonomy_state set
 -- enabled = true, updated_at = now(). A tick with the switch off never writes
@@ -62,7 +75,7 @@
 --
 -- Idempotent by construction: each job's schedule is set by job id (any owner),
 -- or the job is created when it is missing. Running it twice leaves the same
--- eight jobs. Drops and unschedules nothing.
+-- twelve jobs. Drops and unschedules nothing.
 
 do $$
 declare
@@ -79,7 +92,11 @@ begin
       ('spam-autopilot-tick-close', '15 23 * * 1-5', '/api/autopilot/tick'),
       ('spam-autopilot-tick-evening', '15 1 * * 1-6', '/api/autopilot/tick'),
       ('spam-autopilot-tick-morning', '15 13 * * *', '/api/autopilot/tick'),
-      ('spam-autopilot-tick-prewindow', '45 14 * * 1-5', '/api/autopilot/tick')
+      ('spam-autopilot-tick-prewindow', '45 14 * * 1-5', '/api/autopilot/tick'),
+      ('spam-calendar-sync', '5 15-23 * * 1-5', '/api/opportunities/calendar-sync'),
+      ('spam-calendar-sync-morning', '5 13 * * *', '/api/opportunities/calendar-sync'),
+      ('spam-health-check', '25 15-23 * * 1-5', '/api/reports/health'),
+      ('spam-health-check-morning', '25 13 * * *', '/api/reports/health')
     ) as s(jobname, schedule, route)
   loop
     v_found := false;

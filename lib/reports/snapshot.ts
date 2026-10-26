@@ -1,5 +1,5 @@
 /**
- * Reads for the weekly report and the hourly health check. Plain SQL through
+ * Reads for the weekly report and the health check. Plain SQL through
  * the service role, no AI. A failed query becomes null (the report prints
  * "n/a"), never an empty list that would read as 0. Test addresses are
  * filtered in weekly.ts, so every row here carries the address it went to.
@@ -507,7 +507,7 @@ export async function recentHealthAlerts(tenantId: string, since: Date): Promise
 
 /**
  * The dedupe row. A direct insert rather than writeAuditLog, which swallows
- * the error: a missing row means the next hourly run repeats the email, so a
+ * the error: a missing row means the next health check repeats the email, so a
  * failure goes to Sentry.
  */
 export async function recordHealthAlert(tenantId: string, problem: HealthProblem): Promise<void> {
@@ -520,7 +520,7 @@ export async function recordHealthAlert(tenantId: string, problem: HealthProblem
     metadata: { kind: problem.kind, title: problem.title, detail: problem.detail },
   });
   if (error) {
-    // Without the row the next hourly run emails the same problem again: say so loudly.
+    // Without the row the next health check emails the same problem again: say so loudly.
     console.error("[reports] health alert not recorded:", error.message);
     Sentry.captureMessage(`S.P.A.M. health alert dedupe row not recorded (${problem.kind}): ${error.message}`, { level: "error" });
   }

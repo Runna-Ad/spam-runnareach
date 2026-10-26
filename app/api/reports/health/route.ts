@@ -1,6 +1,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 // app/api/reports/health/route.ts
-// Hourly health check. Supabase pg_cron calls it at :25 (migration 0045).
+// Health check. Supabase pg_cron calls it at :25, hourly in the send window and
+// right after it, then once a day at 13:25 (migrations 0045, 0053).
 // Emails the ops list ONLY when an emergency rule fires (lib/reports/health.ts),
 // at most once per problem per 24h; silent otherwise. ?dry=1 (still authorized)
 // returns the text it would send without sending or recording anything.
@@ -13,7 +14,7 @@ import * as Sentry from "@sentry/nextjs";
 import { type NextRequest } from "next/server";
 import { isSchedulerAuthorized } from "@/lib/cron-auth";
 import { sendNotification } from "@/lib/notify/send";
-import { handleHealthCheck, type HealthRouteDeps } from "@/lib/reports/health";
+import { HEALTH_CHECK_WEEKDAY_CRON, handleHealthCheck, type HealthRouteDeps } from "@/lib/reports/health";
 import { gatherHealthSnapshot, recentHealthAlerts, recordHealthAlert, reportTenantIds } from "@/lib/reports/snapshot";
 import { createServiceRoleClient } from "@/lib/supabase/service-role";
 import { HOBBY_CHECKIN_MARGIN, withCronMonitor } from "@/lib/sentry/cron";
@@ -37,7 +38,7 @@ export async function GET(req: NextRequest) {
   const run = () => handleHealthCheck(req, { ...deps, authorize: async () => authorized });
   if (!authorized || req.nextUrl.searchParams.get("dry") === "1") return run();
   return withCronMonitor("spam-health-check", run, {
-    schedule: { type: "crontab", value: "25 * * * *" },
+    schedule: { type: "crontab", value: HEALTH_CHECK_WEEKDAY_CRON },
     checkinMargin: HOBBY_CHECKIN_MARGIN,
     maxRuntime: 2,
     timezone: "UTC",
