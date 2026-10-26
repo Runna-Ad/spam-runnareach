@@ -47,11 +47,13 @@ import { optOutMetrics } from "./opt-out-count";
 import {
   buildVetoDigest,
   DIGEST_HORIZON_HOURS,
+  DIGEST_LOOKBACK_DAYS,
   digestDue,
   demotionHoldReason,
   holdAutoApprovals,
   KILL_SWITCH_HOLD_REASON,
   lastDigestSlot,
+  planVetoDigest,
   pullbackSentence,
   pullsBackApprovals,
   relabelFinderDrafts,
@@ -986,22 +988,29 @@ async function scheduleAuto(actor: Actor, db: Db, stage: Stage, now: Date, deadl
 }
 
 /**
- * Twice a day (lib/autopilot/hold.ts DIGEST_SLOTS_UTC), one email listing every
- * approved autopilot email that will send in the next 24h, each with its hold
- * link. The slot is recorded (audit_log autopilot.digest) only once the digest
- * reached at least one inbox, so a failed send is retried on the next tick
- * (sendNotification also reports it to Sentry); an empty slot is recorded as is.
+ * Twice a day (lib/autopilot/hold.ts DIGEST_SLOTS_UTC), one email listing the
+ * approved autopilot emails scheduled in the next 24h that no earlier digest
+ * listed (planVetoDigest), each with its hold link, plus one line counting the
+ * ones still waiting from earlier digests. Nothing new → no email. The slot is
+ * recorded (audit_log autopilot.digest, with the listed pairs in metadata.items)
+ * only once the digest reached at least one inbox, so a failed send is retried
+ * on the next tick (sendNotification also reports it to Sentry); an empty slot
+ * is recorded as is.
  */
 async function sendVetoDigest(db: Db, tenantId: string, now: Date): Promise<number> {
-  const { data: last, error: lastErr } = await db
+  const since = new Date(now.getTime() - DIGEST_LOOKBACK_DAYS * 86_400_000).toISOString();
+  const { data: prior, error: lastErr } = await db
     .from("audit_log")
-    .select("created_at")
+    .select("created_at, metadata")
     .eq("tenant_id", tenantId)
     .eq("action", "autopilot.digest")
+    .gte("created_at", since)
     .order("created_at", { ascending: false })
-    .limit(1);
+    .limit(200);
   if (lastErr) throw new Error(`digest slot lookup: ${lastErr.message}`);
-  const lastAt = ((last ?? []) as Array<{ created_at: string }>)[0]?.created_at ?? null;
+  const priorDigests = (prior ?? []) as Array<{ created_at: string; metadata: unknown }>;
+  // No row in the lookback window is older than the last slot, so null (due) is right.
+  const lastAt = priorDigests[0]?.created_at ?? null;
   if (!digestDue(now, lastAt)) return 0;
 
   const horizon = new Date(now.getTime() + DIGEST_HORIZON_HOURS * 3_600_000).toISOString();
@@ -1019,9 +1028,10 @@ async function sendVetoDigest(db: Db, tenantId: string, now: Date): Promise<numb
   const items: DigestItem[] = ((data ?? []) as Array<{ id: string; subject: string; scheduled_send_at: string; prospects: { company_name: string } | null }>).map(
     (p) => ({ pitchId: p.id, company: p.prospects?.company_name ?? "?", subject: p.subject, sendAt: p.scheduled_send_at }),
   );
+  const plan = planVetoDigest(items, priorDigests);
 
-  if (items.length > 0) {
-    const digest = buildVetoDigest({ items, tenantId, appUrl: appUrl(), secret: holdSecret(), now });
+  if (plan.fresh.length > 0) {
+    const digest = buildVetoDigest({ items: plan.fresh, waiting: plan.waiting, tenantId, appUrl: appUrl(), secret: holdSecret(), now });
     const result = await notify(db, tenantId, digest.subject, digest.body);
     if (result.sent === 0) throw new Error(`digest not delivered, retrying next tick: ${result.failed.join(" | ").slice(0, 300)}`);
   }
@@ -1031,10 +1041,10 @@ async function sendVetoDigest(db: Db, tenantId: string, now: Date): Promise<numb
     action: "autopilot.digest",
     entity_type: "tenant",
     entity_id: tenantId,
-    metadata: { count: items.length, slot: lastDigestSlot(now).toISOString() },
+    metadata: { count: plan.fresh.length, slot: lastDigestSlot(now).toISOString(), items: plan.record },
   });
   if (insErr) throw new Error(`digest slot not recorded: ${insErr.message}`);
-  return items.length;
+  return plan.fresh.length;
 }
 
 // ── 6. Autonomy stage ─────────────────────────────────────────────────────────

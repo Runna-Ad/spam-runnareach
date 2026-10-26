@@ -315,8 +315,58 @@ export type DigestItem = { pitchId: string; company: string; subject: string; se
 export const DIGEST_SLOTS_UTC: readonly number[] = [1, 13];
 /** Veto stage: how long a person has to hold an AUTO pitch before it sends. Must stay above the 12h slot gap. */
 export const VETO_WINDOW_HOURS = 18;
-/** A digest lists every approved email scheduled within this many hours, overdue ones included. */
+/** A digest looks at every approved email scheduled within this many hours, overdue ones included. */
 export const DIGEST_HORIZON_HOURS = 24;
+/** How far back earlier digests count when deciding whether an email was already announced. */
+export const DIGEST_LOOKBACK_DAYS = 14;
+
+/** One email as recorded in an autopilot.digest audit row (metadata.items). */
+export type DigestRecordItem = { pitch_id: string; send_at: string };
+
+const announceKey = (pitchId: string, sendAt: string): string | null => {
+  const ms = Date.parse(sendAt);
+  return Number.isNaN(ms) ? null : `${pitchId}|${ms}`;
+};
+
+/**
+ * The (pitch, scheduled time) pairs earlier digests listed, from their audit
+ * metadata. Rows written before 2026-10-26 have no `items`: their emails count
+ * as not announced, so they are listed once more and then never again.
+ */
+export function announcedKeys(rows: ReadonlyArray<{ metadata: unknown }>): Set<string> {
+  const keys = new Set<string>();
+  for (const r of rows) {
+    const items = (r.metadata as { items?: unknown } | null)?.items;
+    if (!Array.isArray(items)) continue;
+    for (const it of items as Array<Partial<DigestRecordItem> | null>) {
+      if (typeof it?.pitch_id !== "string" || typeof it.send_at !== "string") continue;
+      const k = announceKey(it.pitch_id, it.send_at);
+      if (k) keys.add(k);
+    }
+  }
+  return keys;
+}
+
+/**
+ * What one digest slot lists (Pedro, 2026-10-26: the same queue in 6-8 digests
+ * over a weekend was too many). An email is listed once per scheduled time: a
+ * pitch held and re-approved gets a new time and is listed again. `waiting`
+ * counts the emails earlier digests already listed that have not sent yet.
+ */
+export function planVetoDigest(
+  items: DigestItem[],
+  priorDigests: ReadonlyArray<{ metadata: unknown }>,
+): { fresh: DigestItem[]; waiting: number; record: DigestRecordItem[] } {
+  const announced = announcedKeys(priorDigests);
+  const fresh: DigestItem[] = [];
+  let waiting = 0;
+  for (const it of items) {
+    const k = announceKey(it.pitchId, it.sendAt);
+    if (k && announced.has(k)) waiting++;
+    else fresh.push(it);
+  }
+  return { fresh, waiting, record: fresh.map((it) => ({ pitch_id: it.pitchId, send_at: it.sendAt })) };
+}
 
 /** The most recent digest slot at or before `now`. */
 export function lastDigestSlot(now: Date): Date {
@@ -345,12 +395,15 @@ const when = (iso: string) => `${new Date(iso).toISOString().slice(0, 16).replac
  */
 export function buildVetoDigest(opts: {
   items: DigestItem[];
+  /** Emails earlier digests listed that have not sent yet (one line, no list). */
+  waiting?: number;
   tenantId: string;
   appUrl: string;
   secret: string | null;
   now?: Date;
 }): { subject: string; body: string } {
   const { items, tenantId, secret } = opts;
+  const waiting = opts.waiting ?? 0;
   const nowMs = (opts.now ?? new Date()).getTime();
   const appUrl = opts.appUrl.replace(/\/+$/, "");
   const lines = items.map((s) => {
@@ -364,12 +417,18 @@ export function buildVetoDigest(opts: {
   const how = secret
     ? "To hold one, tap its Hold link (or move it back to draft on /pitches) before it sends."
     : "To hold one, move it back to draft on /pitches before it sends.";
+  const n = items.length;
+  const still =
+    waiting > 0
+      ? `\n\n${waiting} email${waiting === 1 ? "" : "s"} from earlier digests ${waiting === 1 ? "is" : "are"} still waiting to send (sending runs weekdays 15:00-23:00 UTC): ${appUrl}/pitches`
+      : "";
   return {
-    subject: `Autopilot: ${items.length} email${items.length === 1 ? "" : "s"} will send in the next ${DIGEST_HORIZON_HOURS}h unless held`,
+    subject: `Autopilot: ${n} new email${n === 1 ? "" : "s"} scheduled to send (hold any before they go)`,
     body:
-      `These passed every check and are scheduled to send in the next ${DIGEST_HORIZON_HOURS} hours. ` +
+      `These passed every check and are scheduled to send at the time shown. ` +
       `Sending runs every 10 minutes 15:00–23:00 UTC, Monday to Friday only; anything scheduled outside those hours goes out the next time sending runs.\n\n` +
       lines.join("\n") +
+      still +
       `\n\n${how} Holding one counts as a veto; few vetoes over two weeks lets the autopilot send without the wait.\n\n${appUrl}/pitches`,
   };
 }
