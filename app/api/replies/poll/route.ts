@@ -126,8 +126,9 @@ export async function GET(req: NextRequest) {
 async function runPoll(req: NextRequest) {
   const startTime = Date.now();
   const supabase = createServiceRoleClient() as AnySupabase;
-  // The daily Vercel cron (user agent vercel-cron/1.0) reads every thread;
-  // the half-hourly pg_cron run reads only threads with recent inbound mail.
+  // The daily Vercel cron (user agent vercel-cron/1.0) reads every thread; the
+  // pg_cron runs (every 10 min in the send window, after it and once a day:
+  // 0053) read only threads with inbound mail in the last RECENT_INBOUND_DAYS.
   const fullSweep =
     req.nextUrl.searchParams.get("full") === "1" || (req.headers.get("user-agent") ?? "").startsWith("vercel-cron");
 

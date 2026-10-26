@@ -20,7 +20,7 @@ import {
   type HealthRouteDeps,
   type HealthSnapshot,
 } from "../lib/reports/health.ts";
-import { CRON_JOBS, withHeartbeat, type HeartbeatOutcome } from "../lib/reports/heartbeat.ts";
+import { CRON_JOBS, cronsOf, withHeartbeat, type HeartbeatOutcome } from "../lib/reports/heartbeat.ts";
 
 const HOUR = 3_600_000;
 // Wednesday 2026-10-21 18:25 UTC: inside the send window.
@@ -235,32 +235,49 @@ const at = (iso: string) => new Date(iso);
 const silentAt = (now: Date, ...beats: Beat[]) => jobSilent(snap(now, { heartbeats: beats }));
 
 test("each job's schedule is the one its migration sets", () => {
+  const files: Record<string, string> = {
+    "0041": "0041_autopilot_scheduler.sql",
+    "0052": "0052_follow_up_every_10min.sql",
+    "0053": "0053_quiet_hours_cron.sql",
+  };
   for (const [job, spec] of Object.entries(CRON_JOBS)) {
-    const files: Record<string, string> = {
-      "0041": "0041_autopilot_scheduler.sql",
-      "0048": "0048_replies_poll_every_10min.sql",
-      "0052": "0052_follow_up_every_10min.sql",
-    };
-    const file = files[spec.migration];
-    assert.ok(file, `${job}: unknown migration ${spec.migration}`);
-    const sql = readFileSync(new URL(`../supabase/migrations/${file}`, import.meta.url), "utf8");
-    assert.ok(sql.includes(`'${spec.pgJob}', '${spec.cron}'`) || sql.includes(`schedule := '${spec.cron}'`), job);
-    assert.ok(sql.includes(spec.route), job);
+    for (const s of spec.schedules) {
+      const file = files[s.migration];
+      assert.ok(file, `${job}: unknown migration ${s.migration}`);
+      const sql = readFileSync(new URL(`../supabase/migrations/${file}`, import.meta.url), "utf8");
+      assert.ok(sql.includes(`'${s.pgJob}', '${s.cron}'`) || sql.includes(`schedule := '${s.cron}'`), `${job} ${s.pgJob}`);
+      assert.ok(sql.includes(spec.route), job);
+    }
   }
 });
 
 test("scheduledRuns counts only runs inside the window", () => {
   const t = (iso: string) => new Date(iso).getTime();
-  assert.equal(scheduledRuns(CRON_JOBS["autopilot-tick"].cron, t("2026-10-21T14:02:00Z"), t("2026-10-21T14:50:00Z"), 10), 3);
-  assert.equal(scheduledRuns(CRON_JOBS["replies-poll"].cron, t("2026-10-21T14:06:00Z"), t("2026-10-21T14:44:00Z"), 10), 3); // :15 :25 :35
+  // Wednesday in the window: tick :15 :30 :45, poll :15 :25 :35.
+  assert.equal(scheduledRuns(cronsOf("autopilot-tick"), t("2026-10-21T15:02:00Z"), t("2026-10-21T15:50:00Z"), 10), 3);
+  assert.equal(scheduledRuns(cronsOf("replies-poll"), t("2026-10-21T15:06:00Z"), t("2026-10-21T15:44:00Z"), 10), 3);
   // Friday 22:51 → Monday 15:05: only Monday 15:00 is a send-queue run.
-  assert.equal(scheduledRuns(CRON_JOBS["send-queue"].cron, t("2026-10-23T22:51:00Z"), t("2026-10-26T15:05:00Z"), 10), 1);
+  assert.equal(scheduledRuns(cronsOf("send-queue"), t("2026-10-23T22:51:00Z"), t("2026-10-26T15:05:00Z"), 10), 1);
   // Follow-ups: :07/:17/…, 15:07…22:57 weekdays only (0052). Wed 22:27…22:57 (4) + Thu 15:07…16:27 (9).
-  assert.equal(scheduledRuns(CRON_JOBS["follow-up"].cron, t("2026-10-21T22:21:00Z"), t("2026-10-22T16:30:00Z"), 20), 13);
+  assert.equal(scheduledRuns(cronsOf("follow-up"), t("2026-10-21T22:21:00Z"), t("2026-10-22T16:30:00Z"), 20), 13);
   // Friday 22:58 → Monday 15:06: none.
-  assert.equal(scheduledRuns(CRON_JOBS["follow-up"].cron, t("2026-10-23T22:58:00Z"), t("2026-10-26T15:06:00Z"), 10), 0);
+  assert.equal(scheduledRuns(cronsOf("follow-up"), t("2026-10-23T22:58:00Z"), t("2026-10-26T15:06:00Z"), 10), 0);
   // The run at exactly `from` is the one that succeeded: never counted.
-  assert.equal(scheduledRuns(CRON_JOBS["autopilot-tick"].cron, t("2026-10-21T14:00:00Z"), t("2026-10-21T14:14:00Z"), 10), 0);
+  assert.equal(scheduledRuns(cronsOf("autopilot-tick"), t("2026-10-21T15:00:00Z"), t("2026-10-21T15:14:00Z"), 10), 0);
+});
+
+test("scheduledRuns: the tick and the poll outside the window run after it and once a day (0053)", () => {
+  const t = (iso: string) => new Date(iso).getTime();
+  // Wednesday before the window: the morning tick ran at 13:15, nothing until 15:00.
+  assert.equal(scheduledRuns(cronsOf("autopilot-tick"), t("2026-10-21T13:16:00Z"), t("2026-10-21T14:59:00Z"), 10), 0);
+  // Wednesday 22:46 → Thursday 14:59: Thu 01:15 (evening) and 13:15 (morning).
+  assert.equal(scheduledRuns(cronsOf("autopilot-tick"), t("2026-10-21T22:46:00Z"), t("2026-10-22T14:59:00Z"), 10), 2);
+  // Friday 22:46 → Monday 15:14: Sat 01:15, Sat 13:15, Sun 13:15, Mon 13:15, Mon 15:00.
+  assert.equal(scheduledRuns(cronsOf("autopilot-tick"), t("2026-10-23T22:46:00Z"), t("2026-10-26T15:14:00Z"), 10), 5);
+  // Friday 22:56 → Monday 15:06: Fri 23:05, Sat 13:05, Sun 13:05, Mon 13:05, Mon 15:05.
+  assert.equal(scheduledRuns(cronsOf("replies-poll"), t("2026-10-23T22:56:00Z"), t("2026-10-26T15:06:00Z"), 10), 5);
+  // A minute two schedules both match counts once.
+  assert.equal(scheduledRuns(["*/15 * * * *", "0 * * * *"], t("2026-10-21T14:00:00Z"), t("2026-10-21T15:00:00Z"), 10), 4);
 });
 
 test("job_silent fires when the tick missed 3 runs, naming the job, schedule and where to look", () => {
@@ -268,8 +285,11 @@ test("job_silent fires when the tick missed 3 runs, naming the job, schedule and
   assert.ok(p);
   assert.equal(p.kind, "job_silent");
   assert.equal(p.title, "Scheduled job autopilot-tick stopped completing");
-  assert.match(p.detail, /spam-autopilot-tick, \*\/15 \* \* \* \* UTC/);
-  assert.match(p.action, /cron\.job_run_details for spam-autopilot-tick/);
+  assert.match(
+    p.detail,
+    /spam-autopilot-tick, \*\/15 15-22 \* \* 1-5; spam-autopilot-tick-evening, 15 1 \* \* 2-6; spam-autopilot-tick-morning, 15 13 \* \* \* UTC/,
+  );
+  assert.match(p.action, /cron\.job_run_details for spam-autopilot-tick, spam-autopilot-tick-evening, spam-autopilot-tick-morning/);
   assert.match(p.action, /\/api\/autopilot\/tick/);
 });
 
@@ -313,6 +333,16 @@ test("job_silent is silent for every designed state", () => {
   ];
   for (const [name, now, beats] of cases) assert.equal(jobSilent(snap(now, { heartbeats: beats })), null, name);
   assert.equal(jobSilent(snap(NOW, { heartbeats: null })), null, "not read (null)");
+});
+
+test("job_silent outside the window: silent overnight and at weekends, fires once the quiet runs are missed", () => {
+  // Thursday 12:25: the tick last ran Wed 22:45, only Thu 01:15 was due since.
+  assert.equal(silentAt(at("2026-10-22T12:25:00Z"), beat("autopilot-tick", "2026-10-21T22:45:30Z")), null);
+  // Sunday 12:25: the poll last ran Fri 23:05, only Sat 13:05 was due since.
+  assert.equal(silentAt(at("2026-10-25T12:25:00Z"), beat("replies-poll", "2026-10-23T23:05:30Z")), null);
+  // Sunday 13:25: Sat 01:15, Sat 13:15 and Sun 13:15 missed (a run counts once its 5-minute grace is over).
+  assert.equal(silentAt(at("2026-10-25T13:19:00Z"), beat("autopilot-tick", "2026-10-23T22:45:30Z")), null);
+  assert.ok(silentAt(at("2026-10-25T13:25:00Z"), beat("autopilot-tick", "2026-10-23T22:45:30Z")));
 });
 
 test("job_silent: follow-up fires on the third missed run (15:07, 15:17, 15:27)", () => {

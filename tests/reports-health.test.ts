@@ -23,6 +23,8 @@ import {
 const HOUR = 3_600_000;
 // Monday 2026-10-19 14:25 UTC.
 const NOW = new Date("2026-10-19T14:25:00Z");
+// Monday 2026-10-19 17:25 UTC, inside the send window (the tick runs every 15 min).
+const IN_WINDOW = new Date("2026-10-19T17:25:00Z");
 const ago = (h: number, from: Date = NOW) => new Date(from.getTime() - h * HOUR).toISOString();
 
 type Inbox = HealthSnapshot["inboxes"][number];
@@ -89,9 +91,9 @@ test("E1 ignores a transient token failure (timeout, Google 5xx) and retries nex
 
 // ── E2 Autopilot stopped ─────────────────────────────────────────────────────
 
-test("E2 fires when the autopilot is on and no tick wrote autonomy_state for over 2h", () => {
-  const s = healthy();
-  s.autopilot = { enabled: true, stage: "veto", updatedAt: ago(3) };
+test("E2 fires when the autopilot is on and no tick wrote autonomy_state for 8 scheduled ticks (2h in the window)", () => {
+  const s = healthy(IN_WINDOW);
+  s.autopilot = { enabled: true, stage: "veto", updatedAt: ago(3, IN_WINDOW) };
   const p = autopilotStopped(s);
   assert.ok(p);
   assert.equal(p.kind, "autopilot_stopped");
@@ -101,10 +103,20 @@ test("E2 fires when the autopilot is on and no tick wrote autonomy_state for ove
   assert.ok(autopilotStopped(s));
 });
 
-test("E2 is quiet when the tick ran within 2h, or the autopilot is switched off", () => {
-  const s = healthy();
-  s.autopilot = { enabled: true, stage: "veto", updatedAt: ago(1.9) };
-  assert.equal(autopilotStopped(s), null);
+test("E2 is quiet when the tick ran within 8 scheduled ticks, or the autopilot is switched off", () => {
+  const s = healthy(IN_WINDOW);
+  s.autopilot = { enabled: true, stage: "veto", updatedAt: ago(1.9, IN_WINDOW) };
+  assert.equal(autopilotStopped(s), null, "7 ticks due since 15:31");
+  // Outside the window the tick runs after it and once a day (0053): hours without one are by design.
+  for (const [now, last] of [
+    ["2026-10-19T14:25:00Z", "2026-10-19T01:15:20Z"], // Monday before the window: only 13:15 was due
+    ["2026-10-24T12:25:00Z", "2026-10-23T22:45:20Z"], // Saturday: only Sat 01:15 was due
+    ["2026-10-26T12:25:00Z", "2026-10-25T13:15:20Z"], // Monday morning after Sunday's run: none due
+  ] as const) {
+    const q = healthy(new Date(now));
+    q.autopilot = { enabled: true, stage: "veto", updatedAt: last };
+    assert.equal(autopilotStopped(q), null, now);
+  }
   s.autopilot = { enabled: false, stage: "veto", updatedAt: ago(48) };
   assert.equal(autopilotStopped(s), null);
   s.autopilot = { enabled: true, stage: "off", updatedAt: ago(48) };
@@ -199,8 +211,8 @@ test("budget cap, breaker trips and a quiet day are not emergencies", () => {
 // ── Format ─────────────────────────────────────────────────────────────────────
 
 test("the alert names each problem, what it stops, and the one thing to do", () => {
-  const s = healthy();
-  s.autopilot = { enabled: true, stage: "veto", updatedAt: ago(5) };
+  const s = healthy(IN_WINDOW);
+  s.autopilot = { enabled: true, stage: "veto", updatedAt: ago(5, IN_WINDOW) };
   s.inboxes[0] = inbox("henry@runna.ca", { tokenOk: false, error: "Token refresh failed (400): invalid_grant" });
   const { subject, body } = formatHealthAlert(findProblems(s));
   assert.match(subject, /EMERGENCY: 2 problems/);
@@ -291,9 +303,9 @@ test("one email lists every new problem of the run; an older one stays deduped",
       return s;
     },
   });
-  await h.call(NOW);
+  await h.call(IN_WINDOW);
   both = true;
-  const out = await h.call(new Date(NOW.getTime() + HOUR));
+  const out = await h.call(new Date(IN_WINDOW.getTime() + HOUR));
   assert.equal(h.sent.length, 2);
   assert.deepEqual(out.results[0]?.emailed, ["autopilot_stopped"]);
   assert.match(h.sent[1]?.subject ?? "", /Autopilot stopped/);
