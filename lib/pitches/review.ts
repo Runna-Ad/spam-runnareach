@@ -129,8 +129,8 @@ function criticSystem(lang: "en" | "es"): string {
 Judge ONLY against the payload you are given.
 
 BLOCKING issues (a careful person would refuse to send it as is):
-1. A sentence that states, about THIS business (it says you, your or the company's name, or describes their site, staff, customers, enquiries or results), something the payload does not show. Shown means: prospect (what_they_do, tech_stack, industry, city) or a pain_evidence quote marked observed: true, said in plain words. A pain_evidence quote marked observed: false is our research's advice, not something on their site: a sentence presenting it as seen ("your site doesn't show wait times") is unsupported. A claim to have checked how they handle enquiries, calls or bookings, or how fast they answer, is always unsupported. The same goes for a consequence said about this prospect's own customers, visitors, patients or sales ("most of your visitors leave", "you're losing patients", "a student you don't enroll").
-   NOT a claim about this business, never blocking under this rule: a sentence about people or businesses in general (what tends to happen with this gap), with or without a hedge like "most" or "usually"; a sentence describing what we would build and what it would do (that is our offer); a figure from payload.benchmarks cited for one of its for_pains (rule 2 decides that, it is not an inference).
+1. A sentence that states, about THIS business (it says you, your, yours or the company's name, "clinics like yours" included, or describes their site, staff, customers, enquiries or results), something the payload does not show. Shown means: prospect (what_they_do, tech_stack, industry, city) or a pain_evidence quote marked observed: true, said in plain words. A pain_evidence quote marked observed: false is our research's advice, not something on their site: a sentence presenting it as seen ("your site doesn't show wait times") is unsupported. A claim to have checked how they handle enquiries, calls or bookings, or how fast they answer, is always unsupported. The same goes for a consequence said about this prospect's own customers, visitors, patients or sales ("most of your visitors leave", "you're losing patients", "a student you don't enroll").
+   NOT a claim about this business, never blocking under this rule: a sentence about people or businesses in general (what tends to happen with this gap), with or without a hedge like "most" or "usually"; a sentence describing what we would build and what it would do (that is our offer; if the same sentence also says what their site lacks or does today, as in "we'd add the live wait times your site is missing", judge that part under rule 1); a figure from payload.benchmarks cited for one of its for_pains (rule 2 decides that, it is not an inference).
 2. A statistic that is not one of payload.benchmarks, is about a different problem (its for_pains does not include the pain the email is about), is misquoted, is applied outside its caveat or stretched past what it measured (a clinic figure presented as true of spas or hotels, an old figure presented as current), or is framed as the sender's own result. Any client name, or a claimed result for a client.
 3. RELEVANCE: the hook could be sent to any company; the owner of THIS business would not see within 5 seconds why it is about them.
 4. LANGUAGE: not written natively in ${language}
@@ -138,7 +138,7 @@ BLOCKING issues (a careful person would refuse to send it as is):
 6. TONE: pressure, alarm or accusation; anything that would embarrass the sender.
 7. More than about 140 words before the sign-off.
 
-POLISH (worth fixing, never a reason to hold the email): word choice, a line that sounds a little like an agency, rhythm, CTA phrasing, length between 100 and 140 words. Subject wording is always polish, never blocking.
+POLISH (worth fixing, never a reason to hold the email): word choice, a line that sounds a little like an agency, rhythm, CTA phrasing, length between 100 and 140 words. Subject wording (tone, phrasing, length, lower case) is polish, never blocking; a claim about this business, a statistic or a client name in the subject is judged by rules 1 and 2 like any body sentence.
 
 House facts, ours, not the writer's claims and not yours to dispute: the free check is our own tool, really free, about 30 seconds, no signup. The CTA's "${house.cta}" wording is our set ask, not a claim. The one-sentence proof line about the kind of work we do for businesses like theirs is our own. The line asking to pass the email along to the right person is added by our code to role inboxes. Subject lines are all lower case on purpose. The 👉 line's link is shown to you as [button]; the reader gets a button and never sees the address. The sign-off names the sender and "Runna Advertising" because the law requires the sender to be identified.
 
@@ -178,7 +178,7 @@ function criticUser(input: GeneratorInputs, composed: Pick<ComposedPitch, "subje
       tech_stack: input.prospect.tech_stack,
     },
     // observed: false = the quote reads as our research's advice (rule 1).
-    pain_evidence: input.pains.map((p) => ({ pain_id: p.pain_id, pain: p.pain_label, evidence: p.evidence_quote, observed: painObserved(p) })),
+    pain_evidence: input.pains.map((p) => ({ pain_id: p.pain_id, pain: p.pain_label, evidence: p.evidence_quote, observed: painObserved(p, input.prospect.company_name) })),
     // for_pains: the pains (pain_evidence[].pain_id) each figure is about. Rule 2.
     benchmarks: input.benchmarks.map((b) => ({
       statistic: b.statistic,

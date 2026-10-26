@@ -89,7 +89,7 @@ test("writer prompt v3.3: the honesty rules are in every language and register",
     // Never claim to have checked how they handle enquiries.
     assert.match(sys, /never claim to have checked how they handle enquiries, calls or bookings, or how fast they answer/, label);
     // The cost line is about businesses in general.
-    assert.match(sys, /it never says you, your or the company's name/, label);
+    assert.match(sys, /it never says you, your, yours or the company's name \("clinics like yours lose patients"/, label);
     // A benchmark never stretches.
     assert.match(sys, /Never stretch a figure to another industry or past what it measured/, label);
     // The rules that used to be loose ("reads like a real given name") are gone.
@@ -130,19 +130,25 @@ test("critic prompt: blocks only claims about THIS business; general lines, our 
   for (const lang of ["en", "es"] as const) {
     const sys = sysText(await criticOf(inputs({}, lang)));
     // The rule.
-    assert.ok(sys.includes("1. A sentence that states, about THIS business (it says you, your or the company's name"), lang);
+    assert.ok(sys.includes("1. A sentence that states, about THIS business (it says you, your, yours or the company's name"), lang);
     assert.ok(sys.includes("A pain_evidence quote marked observed: false is our research's advice"), lang);
     assert.ok(sys.includes("A claim to have checked how they handle enquiries, calls or bookings, or how fast they answer, is always unsupported."), lang);
     // What it is not.
     assert.ok(sys.includes('a sentence about people or businesses in general (what tends to happen with this gap), with or without a hedge like "most" or "usually"'), lang);
-    assert.ok(sys.includes("a sentence describing what we would build and what it would do (that is our offer)"), lang);
+    assert.ok(sys.includes("a sentence describing what we would build and what it would do (that is our offer;"), lang);
     assert.ok(sys.includes("a figure from payload.benchmarks cited for one of its for_pains (rule 2 decides that, it is not an inference)"), lang);
     // House facts.
     assert.ok(sys.includes("The one-sentence proof line about the kind of work we do for businesses like theirs is our own."), lang);
     assert.ok(sys.includes("The line asking to pass the email along to the right person is added by our code to role inboxes."), lang);
     assert.ok(sys.includes(lang === "es" ? 'The CTA\'s "dónde [el dolor] te está costando" wording' : 'The CTA\'s "where [the pain] is costing you" wording'), lang);
     // Subject never blocks; greeting; quote + field.
-    assert.ok(sys.includes("Subject wording is always polish, never blocking."), lang);
+    // Subject: wording is polish, a claim in it is not (review #61, blocking 1).
+    assert.ok(sys.includes("Subject wording (tone, phrasing, length, lower case) is polish, never blocking; a claim about this business, a statistic or a client name in the subject is judged by rules 1 and 2 like any body sentence."), lang);
+    assert.ok(!sys.includes("Subject wording is always polish"), lang);
+    // An offer sentence that also says what their site lacks is judged under rule 1.
+    assert.ok(sys.includes(`if the same sentence also says what their site lacks or does today, as in "we'd add the live wait times your site is missing", judge that part under rule 1`), lang);
+    // "yours" is about this business.
+    assert.ok(sys.includes(`it says you, your, yours or the company's name, "clinics like yours" included`), lang);
     assert.ok(sys.includes('Never suggest "Hi there" or "Hola there".'), lang);
     assert.ok(sys.includes("Who the recipient is (a department inbox, maybe not the decision-maker) is not the writer's issue: never raise it."), lang);
     assert.ok(sys.includes(lang === "es" ? 'with first_name null it is "Hola, equipo de [company],"' : 'with first_name null it is "Hi [company] team,"'), lang);
@@ -200,6 +206,18 @@ test("isAdviceQuote: recommendation quotes (EN + ES) are advice; real site quote
     "El sitio debería mostrar los horarios",
     "Se recomienda agregar un botón de WhatsApp",
     "Considere un sistema de citas en línea",
+    // Review #61.
+    "El sitio debe mostrar precios",
+    "Deben agregar un formulario de citas",
+    "Sugerimos un botón de WhatsApp",
+    "Recomendamos reservaciones en línea",
+    "The homepage needs a clear call to action",
+    "A booking widget is needed",
+    "Offer online booking for new patients",
+    "Enable live chat on the contact page",
+    "Launch an email newsletter for repeat customers",
+    "A faster site would be better for mobile visitors",
+    "Online booking would help reduce phone calls",
   ];
   const seen = [
     "contact form only, no online booking",
@@ -214,7 +232,18 @@ test("isAdviceQuote: recommendation quotes (EN + ES) are advice; real site quote
     "Llámanos al 55 1234 5678 para agendar tu cita",
     "Crea tu cuenta para ver tus pedidos",
     "Horario: lunes a viernes de 9 a 18 h",
+    // Review #61: a verb followed by the business itself is the site's own copy.
+    "Use our online form to request a quote",
+    "Consider us for your next kitchen renovation",
+    "Leverage our 30 years of experience",
+    "Utilizar nuestro formulario para cotizar",
+    "Agregar al carrito",
+    "Añadir al carrito",
+    "Need a quote? Call us today",
   ];
+  // The company's own name after the verb is site copy too.
+  assert.equal(isAdviceQuote("Consider ECOF Cabinets for your next kitchen", "ECOF Cabinets"), false);
+  assert.equal(isAdviceQuote("Consider ECOF Cabinets for your next kitchen"), true, "without the company name it reads as advice");
   for (const q of advice) assert.equal(isAdviceQuote(q), true, `advice: ${q}`);
   for (const q of seen) assert.equal(isAdviceQuote(q), false, `seen: ${q}`);
   assert.equal(isAdviceQuote(null), false);
@@ -270,6 +299,10 @@ test("greetingName: the study's failures greet no one; real names are unchanged"
   assert.equal(greetingName(null, "vfournier@law.ca", false), null);
   assert.equal(isRoleInbox("john.sipos@waglaw.net"), false);
   assert.equal(isRoleInbox("pparker@acme.com"), false);
+  // Review #61: a full_name that is the company's own name greets no one; a real name inside a company name still greets.
+  assert.equal(greetingName("ECOF Cabinets", "ecof@ecofcabinets.ca", false, "ECOF Cabinets"), null);
+  assert.equal(greetingName("ECOF", "sales@ecofcabinets.ca", true, "ECOF Cabinets"), null);
+  assert.equal(greetingName("Sarah Lee", "sarah@sarahsbakery.ca", false, "Sarah's Bakery"), "Sarah");
   assert.equal(emailGreetingName("ana.lopez@clinica.mx"), "Ana");
 });
 
@@ -288,6 +321,16 @@ test("forwarding line: follows the recipient, not 'the first person anywhere in 
   r = await composePitchWithClaude(inputs({ contacts: [person("reginfo@sfu.ca")] }));
   assert.equal(r.ok && r.result.composed.body.split(FWD_EN).length - 1, 1);
   // A person as the recipient: no line, even with a role inbox listed below.
+  calls = install(() => answer());
+  r = await composePitchWithClaude(inputs({ contacts: [person("sarah@ecofcabinets.ca", "Sarah Lee"), person("info@ecofcabinets.ca", null, true)] }));
+  assert.equal(r.ok && r.result.composed.body.includes(FWD_EN), false);
+  // Review #61: ceo@/owner@/director@ … reach the decision-maker: team greeting, no forwarding line.
+  for (const e of ["ceo@ecofcabinets.ca", "owner@ecofcabinets.ca", "director@ecofcabinets.ca", "president@ecofcabinets.ca", "manager@ecofcabinets.ca"]) {
+    assert.equal(addressContact(inputs({ contacts: [person(e)] }))?.first_name, null, e);
+    install(() => answer());
+    r = await composePitchWithClaude(inputs({ contacts: [person(e)] }));
+    assert.equal(r.ok && r.result.composed.body.includes(FWD_EN), false, e);
+  }
   calls = install(() => answer());
   r = await composePitchWithClaude(inputs({ contacts: [person("sarah@ecofcabinets.ca", "Sarah Lee"), person("info@ecofcabinets.ca", null, true)] }));
   assert.equal(r.ok && r.result.composed.body.includes(FWD_EN), false);

@@ -112,7 +112,7 @@ test("critic prompt: every blocking rule is still there; rule 1 blocks only clai
   const r = await composeWithReview(inputs(), { deadline: Date.now() + 48_000 });
   assert.equal(r.ok, true);
   for (const rule of [
-    "1. A sentence that states, about THIS business (it says you, your or the company's name",
+    "1. A sentence that states, about THIS business (it says you, your, yours or the company's name",
     "2. A statistic that is not one of payload.benchmarks",
     "3. RELEVANCE:",
     "4. LANGUAGE:",

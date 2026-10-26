@@ -53,6 +53,17 @@ function localParts(email: string): { local: string; segments: string[]; compact
   return { local, segments, compact: letters(local), domainLabel: letters(host.split(".")[0] ?? "") };
 }
 
+// Role inboxes that reach the decision-maker: greeted as the team (no name to
+// use), but never asked to forward the email to "the right person".
+const DECISION_MAKER_LOCALS = new Set(["ceo", "owner", "director", "president", "presidente", "manager", "gerencia", "direccion"]);
+
+/** ceo@, owner@, director@ …: a role inbox whose reader IS the decision-maker. */
+export function isDecisionMakerInbox(email: string | null | undefined): boolean {
+  if (!email || !email.includes("@")) return false;
+  const { segments, compact } = localParts(email);
+  return DECISION_MAKER_LOCALS.has(compact) || segments.some((s) => DECISION_MAKER_LOCALS.has(letters(s)));
+}
+
 /**
  * The address names a department or function, not a person (reginfo@,
  * ucwlibrary@, manus-sales@, or.international@, ceo@). Independent of the
@@ -84,7 +95,13 @@ export function greetingName(
   companyName?: string | null,
 ): string | null {
   const cap = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
-  if (fullName && fullName.trim()) {
+  // A full_name that is the company's own name ("ECOF Cabinets" stored as the
+  // contact) is not a person; a real name inside a company name ("Sarah Lee"
+  // at Sarah's Bakery) still is, so the WHOLE name is compared.
+  const company = letters(companyName ?? "");
+  const whole = letters(fullName ?? "");
+  const isCompany = Boolean(company && whole && (company.includes(whole) || (company.length >= 4 && whole.includes(company))));
+  if (fullName && fullName.trim() && !isCompany) {
     const tok = fullName.trim().split(/\s+/)[0] ?? "";
     if (/^\p{L}[\p{L}'’-]*\p{L}$/u.test(tok)) return cap(tok);
   }

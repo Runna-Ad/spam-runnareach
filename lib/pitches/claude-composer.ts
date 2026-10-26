@@ -24,7 +24,7 @@ import { pickAddressContact } from "../research/email-utils.ts";
 import { findBannedTerms } from "./content-rules.ts";
 import { senderIdentity } from "./sender-identity.ts";
 import { writerExemplarSection } from "./exemplars.ts";
-import { greetingName, isRoleInbox } from "./greeting-name.ts";
+import { greetingName, isDecisionMakerInbox, isRoleInbox } from "./greeting-name.ts";
 import type { ComposedPitch, GeneratorInputs } from "./generator.ts";
 
 // Who the intro line names. Resolved once at module load so each language's
@@ -212,8 +212,9 @@ export async function composePitchWithClaude(
   // pitch stage has made chooseRecipient's answer: it used to be "the first
   // non-role contact anywhere in the list", so info@ got no forwarding line
   // whenever a person was listed below it.
+  // Not for an owner/CEO inbox: that is the right person (team greeting all the same).
   const recipient = addressContact(input);
-  const forwardingLine = recipient?.role_based ? `\n\n${FORWARDING_LINE[lang]}` : "";
+  const forwardingLine = recipient?.role_based && !isDecisionMakerInbox(recipient.email) ? `\n\n${FORWARDING_LINE[lang]}` : "";
   // Hard-strip em dashes regardless of Claude's compliance.
   // Replace "— " with ", " and standalone "—" with " " to preserve flow.
   const cleanBody = (call.data.body + forwardingLine)
@@ -510,7 +511,7 @@ Length: 60 to 100 words from the salutation to the CTA. Past 100, replies drop s
 
 SAY WHAT YOU SAW, THEN WHAT IT TENDS TO COST
 pain_candidates are raw audit findings in technical, usually English, language. Before writing, pick the best one (prefer one with pain_id, evidence_quote and observed: true) and say what was found in the plain words the owner would use with a friend. No jargon, never a quote from the audit. That plain observation is your hook, and it may be stated as fact because the payload shows it (FACTS 1 says what counts as seen).
-What it costs them is NOT in the payload: you have not seen their customers, their traffic or their inbox. Say it as what tends to happen to businesses with this gap in general, never as a fact about their own customers, visitors or sales. Word that in your own way each time, not with a stock phrase. That sentence is about people or businesses in general: it never says you, your or the company's name ("a student you don't enroll", "te cuesta clientes" are guesses about them).
+What it costs them is NOT in the payload: you have not seen their customers, their traffic or their inbox. Say it as what tends to happen to businesses with this gap in general, never as a fact about their own customers, visitors or sales. Word that in your own way each time, not with a stock phrase. That sentence is about people or businesses in general: it never says you, your, yours or the company's name ("clinics like yours lose patients", "a student you don't enroll", "te cuesta clientes" are guesses about them).
   NOT: ${p.pain.wrong}
   OK:  ${p.pain.right}
   NOT: ${p.pain.guess}
@@ -604,6 +605,7 @@ const ADVICE_START_EN = [
   "integrate", "develop", "redesign", "upgrade", "set up", "introduce", "deploy", "optimize",
   "optimise", "improve", "adopt", "modernize", "modernise", "automate", "establish", "invest in",
   "rebuild", "revamp", "ensure", "leverage", "streamline", "prioritize", "prioritise",
+  "offer", "enable", "launch",
 ];
 // Spanish research notes use the infinitive ("Implementar un chatbot") or the
 // usted imperative ("Considere"); the tu imperative is what sites say.
@@ -614,13 +616,21 @@ const ADVICE_START_ES = [
   "incorporar", "habilitar", "invertir en", "establecer", "modernizar", "ofrecer",
 ];
 // Noun phrases that open with one of the verbs above and describe the site.
-const OBSERVATION_OPENINGS = ["add to cart", "add to bag", "add to basket", "use of"];
+const OBSERVATION_OPENINGS = [
+  "add to cart", "add to bag", "add to basket", "use of",
+  "agregar al carrito", "anadir al carrito", "agregar a la bolsa", "anadir a la bolsa",
+];
+// A verb followed by the business itself is the site selling, not our advice:
+// "Use our online form", "Consider us for your next renovation", "Leverage
+// our 30 years", "Utilice nuestro formulario", or the company's own name.
+const SELF_REFERENCE = ["our", "us", "nuestro", "nuestra", "nuestros", "nuestras", "nos"];
 const ADVICE_PHRASES = [
   /\bshould\b/, /\bneeds? to\b/, /\brecommend/, /\bought to\b/, /\bwould benefit\b/,
   /\bcould benefit\b/, /\bit is advisable\b/, /\bopportunity to\b/,
   /\bdeberian?\b/, /\bnecesitan? (?:un|una|mejorar|implementar|actualizar|agregar|crear)\b/,
   /\bse recomienda\b/, /\brecomendamos\b/, /\brecomendable\b/, /\bconvendria\b/,
   /\bseria (?:bueno|conveniente|ideal|recomendable)\b/,
+  /\bdeben?\b/, /\bsugerimos\b/, /\bneeds an?\b/, /\bneeded\b/, /\bwould be better\b/, /\bwould help\b/,
 ];
 
 function foldText(s: string): string {
@@ -632,26 +642,35 @@ function foldText(s: string): string {
  * imperative or infinitive like Build/Replace/Implementar, or says should /
  * needs to / recommend / debería / se recomienda) rather than something seen
  * on their site. Such a pain stays usable, marked observed: false, and may
- * only be framed as a general pattern, never as a fact about them.
+ * only be framed as a general pattern, never as a fact about them. A verb
+ * followed by the business itself (our/us/nuestro, or `companyName`) is the
+ * site's own copy, so it counts as seen.
  */
-export function isAdviceQuote(quote: string | null | undefined): boolean {
+export function isAdviceQuote(quote: string | null | undefined, companyName?: string | null): boolean {
   if (!quote) return false;
   const t = foldText(quote).replace(/^[\s"'“”‘’«»*\-•·:]+/, "").trim();
   if (!t) return false;
   if (ADVICE_PHRASES.some((re) => re.test(t))) return true;
   if (OBSERVATION_OPENINGS.some((o) => t.startsWith(o))) return false;
-  return [...ADVICE_START_EN, ...ADVICE_START_ES].some((v) => t === v || t.startsWith(`${v} `) || t.startsWith(`${v},`));
+  const verb = [...ADVICE_START_EN, ...ADVICE_START_ES].find((v) => t === v || t.startsWith(`${v} `) || t.startsWith(`${v},`));
+  if (!verb) return false;
+  const rest = t.slice(verb.length).trim();
+  const next = rest.split(/[^a-z0-9ñ]+/)[0] ?? "";
+  if (SELF_REFERENCE.includes(next)) return false;
+  const company = foldText(companyName ?? "").trim();
+  if (company && rest.startsWith(company)) return false;
+  return true;
 }
 
 /** A pain's evidence was seen on their site (normalizePains marks it; anything unmarked is classified here). */
-export function painObserved(p: GeneratorInputs["pains"][number] & { observed?: boolean }): boolean {
-  return p.observed ?? !isAdviceQuote(p.evidence_quote);
+export function painObserved(p: GeneratorInputs["pains"][number] & { observed?: boolean }, companyName?: string | null): boolean {
+  return p.observed ?? !isAdviceQuote(p.evidence_quote, companyName);
 }
 
 function buildStage2UserPrompt(input: GeneratorInputs): string {
   const lang = input.prospect.language;
   // Resolve solution hint for the top pain so Claude has a concrete starting point.
-  const topPain = input.pains.find((p) => p.pain_id && p.evidence_quote && painObserved(p))
+  const topPain = input.pains.find((p) => p.pain_id && p.evidence_quote && painObserved(p, input.prospect.company_name))
     ?? input.pains.find((p) => p.pain_id && p.evidence_quote)
     ?? input.pains.find((p) => p.pain_id)
     ?? input.pains[0]
@@ -678,7 +697,7 @@ function buildStage2UserPrompt(input: GeneratorInputs): string {
       pain_id: p.pain_id,
       pain_label: p.pain_label,
       evidence_quote: p.evidence_quote,
-      observed: painObserved(p),
+      observed: painObserved(p, input.prospect.company_name),
     })),
     // The single contact to address, resolved + with a derived first name so the
     // model greets the decision-maker by name instead of defaulting to "team".

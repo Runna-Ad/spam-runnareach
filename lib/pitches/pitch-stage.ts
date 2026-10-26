@@ -168,7 +168,7 @@ export async function generatePitchWith(
   if (prospectErr) return { ok: false, error: `Lookup failed: ${prospectErr.message}` };
   if (!prospect) return { ok: false, error: "Prospect not found." };
 
-  const pains: GeneratorInputResearchPain[] = normalizePains(research?.pain_points ?? null);
+  const pains: GeneratorInputResearchPain[] = normalizePains(research?.pain_points ?? null, prospect.company_name);
 
   // Load contacts — include role_title so Claude can address "as founder/GM of..."
   type ContactRow = VerdictContact & {
@@ -877,7 +877,7 @@ export async function rewritePitchWithAngleWith(
   // Same benchmark lookup as first generation — the rewrite path must follow
   // the same rules, or "rewrite with this angle" quietly produces a pitch the
   // normal path could not.
-  const rewritePains = normalizePains(research?.pain_points ?? null);
+  const rewritePains = normalizePains(research?.pain_points ?? null, prospect.company_name);
   const rewriteBenchmarks = await fetchBenchmarksForPitch(supabase, user.tenantId, {
     painIds: rewritePains.map((p) => p.pain_id).filter((v): v is string => Boolean(v)),
     industry: prospect.industry,
@@ -1361,7 +1361,7 @@ function normalizeMeasurableResults(
   });
 }
 
-export function normalizePains(raw: unknown): Array<GeneratorInputResearchPain & { observed: boolean }> {
+export function normalizePains(raw: unknown, companyName?: string | null): Array<GeneratorInputResearchPain & { observed: boolean }> {
   if (!Array.isArray(raw)) return [];
   return raw.flatMap((entry) => {
     if (!entry || typeof entry !== "object") return [];
@@ -1383,7 +1383,7 @@ export function normalizePains(raw: unknown): Array<GeneratorInputResearchPain &
     // A quote that reads as advice ("Build chatbots for 24/7 inquiry
     // handling") stays usable but is never something seen on their site: the
     // writer may only frame it as a general pattern (claude-composer FACTS 1).
-    return [{ pain_id, pain_label, evidence_quote, observed: !isAdviceQuote(evidence_quote) }];
+    return [{ pain_id, pain_label, evidence_quote, observed: !isAdviceQuote(evidence_quote, companyName) }];
   });
 }
 
