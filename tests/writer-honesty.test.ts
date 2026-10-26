@@ -138,7 +138,9 @@ test("critic prompt: blocks only claims about THIS business; general lines, our 
     assert.ok(sys.includes("a sentence describing what we would build and what it would do (that is our offer;"), lang);
     assert.ok(sys.includes("a figure from payload.benchmarks cited for one of its for_pains (rule 2 decides that, it is not an inference)"), lang);
     // House facts.
-    assert.ok(sys.includes("The one-sentence proof line about the kind of work we do for businesses like theirs is our own."), lang);
+    // A house line still carries no unchecked claim (batch 9 audit): its pain and any result are judged.
+    assert.ok(sys.includes("The one-sentence proof line about the kind of work we do for businesses like theirs is our own, as long as it names no client, claims no result"), lang);
+    assert.ok(sys.includes("the pain it names is still judged by rule 1"), lang);
     assert.ok(sys.includes("The line asking to pass the email along to the right person is added by our code to role inboxes."), lang);
     assert.ok(sys.includes(lang === "es" ? 'The CTA\'s "dónde [el dolor] te está costando" wording' : 'The CTA\'s "where [the pain] is costing you" wording'), lang);
     // Subject never blocks; greeting; quote + field.

@@ -462,6 +462,23 @@ test("presendReview: a champion with too few drafts decides nothing", async () =
   assert.equal(db.tables.learning_arms?.find((a) => a.key === "g-bad")?.status, "challenger");
 });
 
+test("presendReview: only drafts of the newest writer prompt count (a prompt change restarts the comparison)", async () => {
+  // The challenger's held drafts are on the old prompt; the newest rows are on the new one.
+  const v = (r: Row, pv: string) => ({ ...r, decision: { ...(r.decision as Row), prompt_version: pv } });
+  const db = fakeDb({
+    learning_arms: [arm("none", "champion"), arm("g-bad", "challenger")],
+    pitches: [
+      ...many(12, () => v(pitch("g-bad", "auto_rejected", WRITING, 5), "pitch-v3.2")),
+      ...many(12, () => v(pitch("none", "sent", null, 5), "pitch-v3.2")),
+      ...many(12, () => v(pitch("none", "sent", null, 1), "pitch-v3.3")),
+      ...many(3, () => v(pitch("g-bad", "sent", null, 1), "pitch-v3.3")),
+    ],
+    learning_insights: [],
+  });
+  assert.deepEqual(await presendReview(db, TENANT, T0), []);
+  assert.equal(db.tables.learning_arms?.find((a) => a.key === "g-bad")?.status, "challenger");
+});
+
 test("describePresend: plain sentence with both rates", () => {
   const [r] = decide({ drafts: 16, held: 8 }, { drafts: 12, held: 3 });
   assert.ok(r);
