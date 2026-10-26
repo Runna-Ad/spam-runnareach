@@ -15,7 +15,7 @@ import { readFileSync } from "node:fs";
 import { register } from "node:module";
 import test, { mock } from "node:test";
 import { NOT_REVIEWED_ISSUE, WRITER_FIXABLE, composeWithReview, revisionIssues } from "../lib/pitches/review.ts";
-import { PITCH_PROMPT_VERSION, composePitchWithClaude, heldBodyForRevision } from "../lib/pitches/claude-composer.ts";
+import { PITCH_PROMPT_VERSION, composePitchWithClaude, heldBodyForRevision, isAdviceQuote } from "../lib/pitches/claude-composer.ts";
 import { DECISION_VERSION, type DecisionRecord } from "../lib/pitches/decision.ts";
 import { __test__ } from "../lib/anthropic/client.ts";
 import { cleanWantedFact, recordWantedFacts, wantedFactKey } from "../lib/benchmarks/wanted-facts.ts";
@@ -286,7 +286,7 @@ test("schema: any wanted_fact shape (number, object, empty, absent) parses; the 
   }
 });
 
-test("prompts: the writer is told when to name a wanted fact and how; the critic too; version v3.2", async () => {
+test("prompts: the writer is told when to name a wanted fact and how; the critic too; version v3.3", async () => {
   const seen: Req[] = [];
   __test__.setClient({
     messages: {
@@ -305,7 +305,7 @@ test("prompts: the writer is told when to name a wanted fact and how; the critic
   assert.match(critic, /WANTED FACT:/);
   assert.match(critic, /"wanted_fact": string \| null/);
   assert.match(critic, /never changes the score or the issues/);
-  assert.equal(PITCH_PROMPT_VERSION, "pitch-v3.2-2026-10-22");
+  assert.equal(PITCH_PROMPT_VERSION, "pitch-v3.3-2026-10-26");
 });
 
 test("rewrite directive: no blanket number ban; the angle's pain_id pairs with the benchmark tagged for it", async () => {
@@ -459,6 +459,7 @@ async function stage(opts: { rpc?: RpcMode; wishes?: boolean; rewrite?: boolean;
     senderForGenerator: () => ({ full_name: "Henry", tenant_display_name: "Runna Advertising" }),
     buildHunterUrlForPitch: () => "https://runna-hunter.vercel.app/?market=ca&r=code",
     heldBodyForRevision,
+    isAdviceQuote,
     fetchTopUsableContact: async () => null,
     chooseRecipient: (rows: Array<{ email?: unknown }> | null) => rows?.find((c) => typeof c.email === "string" && c.email.includes("@")) ?? null,
     refreshGateAfterChange: async () => null,
@@ -502,7 +503,7 @@ test("stage: one writer and one critic call, draft three's text, the pitch id, t
   assert.deepEqual(resolved, [[PAIN]], "the writer's chosen pain_id, resolved once");
   const decision = pitch.decision as DecisionRecord;
   assert.equal(decision.wanted_fact, "writer wish from draft three");
-  assert.equal(decision.prompt_version, "pitch-v3.2-2026-10-22");
+  assert.equal(decision.prompt_version, PITCH_PROMPT_VERSION);
 });
 
 test("stage: the saved pitch and its decision are the same with and without wishes", async () => {

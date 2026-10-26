@@ -809,7 +809,8 @@ export function scrubExemplar(text: string, prospect: ExemplarProspect): string 
   // "O’Brien"), then each piece of those. A particle or two-letter word as the
   // last name ("Minh Le", "Minh To") goes only where it cannot open a sentence.
   // The name the greeting uses (greeting-name.ts) is a name too: "J Torres" + memo.torres@ is greeted "Memo".
-  const greetedName = greetingName(prospect.recipient_name ?? null, prospect.recipient_email ?? null, false);
+  // Same company rule as the composer (ecof@ at ECOF Cabinets greets no one).
+  const greetedName = greetingName(prospect.recipient_name ?? null, prospect.recipient_email ?? null, false, prospect.company_name);
   const given = prospect.recipient_name?.trim() ?? "";
   const fullName = (greetedName && !pieces(given).includes(fold(greetedName)) ? `${given} ${greetedName}` : given).trim() || null;
   if (fullName) {
