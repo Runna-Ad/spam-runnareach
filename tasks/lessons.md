@@ -1,5 +1,34 @@
 # S.P.A.M. — Lessons (newest first)
 
+## Quiet hours for the scheduled jobs (2026-10-26, branch perf/quiet-hours-cron)
+
+[2026-10-26] PEDRO_OVERRIDE: off-hours pace for the tick and the reply poll
+CLAUDE SUGGESTED: outside the send window, poll every 30 minutes and tick hourly (about a third fewer calls).
+PEDRO'S APPROACH: one check right after the window closes, then once a day.
+WHY IT WAS BETTER: outside the window nothing sends, so frequent runs change almost nothing before the next send. The 2-day reply lookback (RECENT_INBOUND_DAYS) already covers a 24h gap, and the morning runs land before the first send. Polls 1,008 → 252 a week, ticks 672 → 173: about half of all scheduled calls, against a third for my suggestion.
+TECHNICAL ROOT CAUSE: I sized the slowdown by "how stale may it get" instead of asking what a run outside the window can act on before the next send.
+RULE: For a scheduled job, list what each run can act on before the next moment it matters (here, the next send window). If nothing, run it once before that moment, not on a clock.
+TAGS: #override #cron #cost #vercel
+
+[2026-10-26] PEDRO_OVERRIDE: measure the Sentry cost before removing it
+CLAUDE SUGGESTED: turn off Sentry includeLocalVariables because every Vercel log line showed "Debugger listening".
+PEDRO'S APPROACH: measure first; remove it only if the saving is significant.
+WHY IT WAS BETTER: it turned a symptom into a number that justifies losing local variables in Sentry reports: 0.95s vs 0.67s CPU per cold start (12 alternating runs each, built app, ranges 0.92-1.03 vs 0.65-0.73).
+TECHNICAL ROOT CAUSE: a visible symptom (the debugger line) felt like proof of cost.
+RULE: Before trading away a debugging feature for speed, measure it on the built app: cold start, same routes, on vs off, alternating runs.
+TAGS: #override #sentry #performance #measure
+
+[2026-10-26] LESSON: every pg_cron call is a billed Vercel cold start
+WHAT HAPPENED: Vercel emailed that the free team had used 75% of its 4h of Fluid Active CPU. pg_cron called this app about 2,300 times a week (poll every 10 min, tick every 15 min, all day). With 10 minutes between calls each one started from cold: every log line came from a fresh process. Locally a cold start of the tick route costs 0.67s CPU (0.95s with Sentry local variables).
+ROOT CAUSE: each job's pace was chosen for responsiveness with no budget; nobody multiplied calls a week by the cost of a start.
+RULE: When adding or speeding up a scheduled job on Vercel's free plan, write calls a week × about 1s CPU in the migration header and compare it with 4h a month (14,400s). The free plan has no per-project CPU in the API (Observability Plus is paid); the dashboard's Usage page is the only per-project view.
+TAGS: #lesson #vercel #cost #cron
+
+[2026-10-26] LESSON: a health rule written in clock hours breaks when its job's schedule stops being regular
+WHAT HAPPENED: autopilot_stopped alarmed when no tick ran for 2 hours. With the tick running only after the window and once a day, it would have emailed every night (the new test fails on the old code). Now it counts 8 missed scheduled ticks with the cron matcher job_silent uses: still 2h inside the window.
+RULE: Express "silent too long" as missed runs of the job's own schedule, never as hours. When a schedule changes, grep every health rule and comment that states the old pace (every 15 min, hourly, half-hourly).
+TAGS: #lesson #health #cron
+
 ## Merged from lessons-inbox, batch 8 (2026-10-22)
 
 <!-- from reply-on-root -->

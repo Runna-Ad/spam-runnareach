@@ -15,20 +15,25 @@
 --   spam-replies-poll-evening    5 23 * * 1-5            right after it: the last sends' bounces and replies
 --   spam-replies-poll-morning    5 13 * * *              once a day, every day
 --   spam-autopilot-tick          */15 15-22 * * 1-5      in the window (was */15 * * * *, 0041)
---   spam-autopilot-tick-evening  15 1 * * 2-6            after each weekday's window (Tue-Sat in UTC)
+--   spam-autopilot-tick-evening  15 1 * * 1-6            Mon-Sat in UTC: after each weekday's window, and Sunday evening
 --   spam-autopilot-tick-morning  15 13 * * *             once a day, every day
 --
 -- The minutes: each tick runs after a poll (a bounce is recorded before the
 -- breakers read it), and after a veto digest slot (lib/autopilot/hold.ts
--- DIGEST_SLOTS_UTC, 01:00 and 13:00), so both digests still go out on weekdays:
--- a draft approved in the afternoon is announced the evening before it sends.
--- The morning runs end at 13:15, before the first send at 15:00. In Calgary
--- 13:05 is 7:05 in summer time and 6:05 from 2026-11-01.
+-- DIGEST_SLOTS_UTC, 01:00 and 13:00). A tick sends the digest BEFORE it
+-- schedules, so an email it schedules waits for the next digest tick; with an
+-- evening tick before every send day (Monday 01:15 included: Sunday's morning
+-- tick schedules Monday's emails), each one is listed at least 6 hours before
+-- it can send, as hold.ts promises. The morning runs end at 13:15, before the
+-- first send at 15:00. In Calgary 13:05 is 7:05 in summer time and 6:05 from
+-- 2026-11-01.
 --
 -- The poll misses nothing: a normal run reads threads with inbound mail from
 -- the last 2 days (RECENT_INBOUND_DAYS) and the longest gap is now 24 hours.
--- Calls a week: polls 1,008 → 252, ticks 672 → 172. Send-queue and follow-up
--- are unchanged.
+-- A person's reply sent from /inbox asks Gmail for unread messages first
+-- (lib/replies/send-reply-action.ts), so an opt-out the poll hasn't read yet
+-- still stops it. Calls a week: polls 1,008 → 252, ticks 672 → 173.
+-- Send-queue and follow-up are unchanged.
 --
 -- SHIP ORDER: deploy the code that goes with it FIRST, then apply this
 -- migration. The new health check (lib/reports/heartbeat.ts CRON_JOBS,
@@ -53,7 +58,7 @@ begin
       ('spam-replies-poll-evening', '5 23 * * 1-5', '/api/replies/poll'),
       ('spam-replies-poll-morning', '5 13 * * *', '/api/replies/poll'),
       ('spam-autopilot-tick', '*/15 15-22 * * 1-5', '/api/autopilot/tick'),
-      ('spam-autopilot-tick-evening', '15 1 * * 2-6', '/api/autopilot/tick'),
+      ('spam-autopilot-tick-evening', '15 1 * * 1-6', '/api/autopilot/tick'),
       ('spam-autopilot-tick-morning', '15 13 * * *', '/api/autopilot/tick')
     ) as s(jobname, schedule, route)
   loop

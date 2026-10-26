@@ -272,8 +272,8 @@ test("scheduledRuns: the tick and the poll outside the window run after it and o
   assert.equal(scheduledRuns(cronsOf("autopilot-tick"), t("2026-10-21T13:16:00Z"), t("2026-10-21T14:59:00Z"), 10), 0);
   // Wednesday 22:46 → Thursday 14:59: Thu 01:15 (evening) and 13:15 (morning).
   assert.equal(scheduledRuns(cronsOf("autopilot-tick"), t("2026-10-21T22:46:00Z"), t("2026-10-22T14:59:00Z"), 10), 2);
-  // Friday 22:46 → Monday 15:14: Sat 01:15, Sat 13:15, Sun 13:15, Mon 13:15, Mon 15:00.
-  assert.equal(scheduledRuns(cronsOf("autopilot-tick"), t("2026-10-23T22:46:00Z"), t("2026-10-26T15:14:00Z"), 10), 5);
+  // Friday 22:46 → Monday 15:14: Sat 01:15, Sat 13:15, Sun 13:15, Mon 01:15, Mon 13:15, Mon 15:00.
+  assert.equal(scheduledRuns(cronsOf("autopilot-tick"), t("2026-10-23T22:46:00Z"), t("2026-10-26T15:14:00Z"), 10), 6);
   // Friday 22:56 → Monday 15:06: Fri 23:05, Sat 13:05, Sun 13:05, Mon 13:05, Mon 15:05.
   assert.equal(scheduledRuns(cronsOf("replies-poll"), t("2026-10-23T22:56:00Z"), t("2026-10-26T15:06:00Z"), 10), 5);
   // A minute two schedules both match counts once.
@@ -287,7 +287,7 @@ test("job_silent fires when the tick missed 3 runs, naming the job, schedule and
   assert.equal(p.title, "Scheduled job autopilot-tick stopped completing");
   assert.match(
     p.detail,
-    /spam-autopilot-tick, \*\/15 15-22 \* \* 1-5; spam-autopilot-tick-evening, 15 1 \* \* 2-6; spam-autopilot-tick-morning, 15 13 \* \* \* UTC/,
+    /spam-autopilot-tick, \*\/15 15-22 \* \* 1-5; spam-autopilot-tick-evening, 15 1 \* \* 1-6; spam-autopilot-tick-morning, 15 13 \* \* \* UTC/,
   );
   assert.match(p.action, /cron\.job_run_details for spam-autopilot-tick, spam-autopilot-tick-evening, spam-autopilot-tick-morning/);
   assert.match(p.action, /\/api\/autopilot\/tick/);

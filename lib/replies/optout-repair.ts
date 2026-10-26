@@ -47,8 +47,8 @@ type AnySupabase = any;
 /**
  * Repairs started per run (opt-outs first, then bounces). Each recordOptOut is
  * ~7 small queries, so 10 is a few seconds at worst; the poll runs every 10
- * minutes, so even a backlog of 100 clears within two hours, while the thread
- * polling and the lead alerts keep their budget.
+ * minutes in the send window (0053), so even a backlog of 100 clears within its
+ * first two hours, while the thread polling and the lead alerts keep their budget.
  */
 export const REPAIRS_PER_RUN = 10;
 /** No repair is STARTED after this deadline offset; leftovers wait for the next run. */
@@ -67,7 +67,11 @@ export const REPAIR_SETTLE_MS = 5 * 60_000;
 export const REPAIR_SCAN_LIMIT = 1000;
 /**
  * Bounces are repaired only within this long of being stored (classified_at, so
- * a late-imported NDR still qualifies): ~10 sweep attempts after the settle wait.
+ * a late-imported NDR still qualifies): ~10 sweep attempts after the settle wait
+ * inside the send window. Outside it the poll runs after the window and once a
+ * day (0053), so a bounce stored by one of those runs gets no repair pass if
+ * that run died before the DNC write. Widening this trades against the
+ * /compliance hard delete above (open decision, 2026-10-26).
  */
 export const BOUNCE_REPAIR_WINDOW_MS = 2 * 60 * 60_000;
 /** PostgREST puts `in` lists in the URL; keep each one short. */

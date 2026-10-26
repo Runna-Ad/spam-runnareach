@@ -26,7 +26,7 @@ export const CRON_JOBS = {
     route: "/api/autopilot/tick",
     schedules: [
       { pgJob: "spam-autopilot-tick", cron: "*/15 15-22 * * 1-5", migration: "0053" },
-      { pgJob: "spam-autopilot-tick-evening", cron: "15 1 * * 2-6", migration: "0053" },
+      { pgJob: "spam-autopilot-tick-evening", cron: "15 1 * * 1-6", migration: "0053" },
       { pgJob: "spam-autopilot-tick-morning", cron: "15 13 * * *", migration: "0053" },
     ],
   },
