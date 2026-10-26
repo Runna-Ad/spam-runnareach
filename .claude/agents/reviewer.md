@@ -124,4 +124,5 @@ cannot, it is optional. A finding you are unsure of is optional with "unsure" in
   a back-off.
 - An alert rule: run it against each state a PERSON can enter on purpose (a manual pause, a
   kill switch, a holiday), not only the automatic ones.
-
+- A reviewer/critic prompt that exempts "house text": does any exempted line contain a part the
+  writer fills in (a [pain], a result, a subject)? That part must still be judged (batch 9).
