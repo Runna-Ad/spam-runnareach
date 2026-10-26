@@ -46,25 +46,28 @@ test("inside the window nothing changes: tick every 15 min, poll every 10 at :05
 
 test("outside the window: one run right after it, then once a day, weekends included", () => {
   const count = (job: "autopilot-tick" | "replies-poll", from: string, to: string) => scheduledRuns(cronsOf(job), t(from), t(to), 1000);
-  // A full week (Mon → Sun): the poll 48 in each window, 5 evenings, 7 mornings; the tick 32, 6 evenings
-  // (Sunday's included, for Monday's digest), 7 mornings.
-  assert.equal(count("autopilot-tick", "2026-10-25T23:59:00Z", "2026-11-01T23:59:00Z"), 5 * 32 + 6 + 7);
+  // A full week (Mon → Sun). Poll: 48 in each window, 5 closes, 7 mornings. Tick: 32 in each window,
+  // 5 closes, 6 evenings (Sunday's included, for Monday's digest), 7 mornings, 5 pre-window.
+  assert.equal(count("autopilot-tick", "2026-10-25T23:59:00Z", "2026-11-01T23:59:00Z"), 5 * 32 + 5 + 6 + 7 + 5);
   assert.equal(count("replies-poll", "2026-10-25T23:59:00Z", "2026-11-01T23:59:00Z"), 5 * 48 + 5 + 7);
 });
 
 test("each quiet tick follows a quiet poll, and the morning runs end before the first send", () => {
-  const minuteOf = (cron: string) => {
-    const [m, h] = cron.split(" ");
-    return Number(h) * 60 + Number(m);
+  const at = (cron: string) => {
+    const [m, h, , , dow] = cron.split(" ");
+    return { minute: Number(h) * 60 + Number(m), dow };
   };
-  const poll = Object.fromEntries(CRON_JOBS["replies-poll"].schedules.map((s) => [s.pgJob, s.cron]));
-  const tick = Object.fromEntries(CRON_JOBS["autopilot-tick"].schedules.map((s) => [s.pgJob, s.cron]));
-  // Morning: poll 13:05, tick 13:15, both before the send-queue's 15:00.
-  assert.ok(minuteOf(poll["spam-replies-poll-morning"] as string) < minuteOf(tick["spam-autopilot-tick-morning"] as string));
-  assert.ok(minuteOf(tick["spam-autopilot-tick-morning"] as string) < 15 * 60);
-  // Evening: the weekday's poll at 23:05; the tick at 01:15 the next UTC day, Sunday evening's included.
-  assert.equal(poll["spam-replies-poll-evening"], "5 23 * * 1-5");
-  assert.equal(tick["spam-autopilot-tick-evening"], "15 1 * * 1-6");
+  const poll = Object.fromEntries(CRON_JOBS["replies-poll"].schedules.map((s) => [s.pgJob, at(s.cron)]));
+  const tick = Object.fromEntries(CRON_JOBS["autopilot-tick"].schedules.map((s) => [s.pgJob, at(s.cron)]));
+  const pollClose = poll["spam-replies-poll-close"]!;
+  const tickClose = tick["spam-autopilot-tick-close"]!;
+  // Close: the same weekdays, the tick after the poll (23:05, 23:15), so the day's last bounces count today.
+  assert.equal(pollClose.dow, tickClose.dow);
+  assert.ok(pollClose.minute < tickClose.minute);
+  // Morning: poll 13:05, tick 13:15, pre-window tick 14:45, all before the send-queue's 15:00.
+  assert.ok(poll["spam-replies-poll-morning"]!.minute < tick["spam-autopilot-tick-morning"]!.minute);
+  assert.ok(tick["spam-autopilot-tick-morning"]!.minute < tick["spam-autopilot-tick-prewindow"]!.minute);
+  assert.ok(tick["spam-autopilot-tick-prewindow"]!.minute < 15 * 60);
 });
 
 test("every email a tick schedules is in a veto digest at least 6h before it can send (hold.ts)", () => {
@@ -112,7 +115,7 @@ test("the unsubscribe page promises what the reply poll keeps: within 24 hours",
   assert.match(s, /te quitaremos en menos de 24 horas/);
 });
 
-test("Sentry includeLocalVariables stays off: it opens the inspector on every cold start", () => {
+test("Sentry includeLocalVariables is off: it opens the inspector on every cold start", () => {
   const cfg = src("sentry.server.config.ts").replace(/\/\/.*$/gm, "");
-  assert.doesNotMatch(cfg, /includeLocalVariables/);
+  assert.doesNotMatch(cfg, /includeLocalVariables\s*:\s*true/);
 });

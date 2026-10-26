@@ -268,12 +268,12 @@ test("scheduledRuns counts only runs inside the window", () => {
 
 test("scheduledRuns: the tick and the poll outside the window run after it and once a day (0053)", () => {
   const t = (iso: string) => new Date(iso).getTime();
-  // Wednesday before the window: the morning tick ran at 13:15, nothing until 15:00.
-  assert.equal(scheduledRuns(cronsOf("autopilot-tick"), t("2026-10-21T13:16:00Z"), t("2026-10-21T14:59:00Z"), 10), 0);
-  // Wednesday 22:46 → Thursday 14:59: Thu 01:15 (evening) and 13:15 (morning).
-  assert.equal(scheduledRuns(cronsOf("autopilot-tick"), t("2026-10-21T22:46:00Z"), t("2026-10-22T14:59:00Z"), 10), 2);
-  // Friday 22:46 → Monday 15:14: Sat 01:15, Sat 13:15, Sun 13:15, Mon 01:15, Mon 13:15, Mon 15:00.
-  assert.equal(scheduledRuns(cronsOf("autopilot-tick"), t("2026-10-23T22:46:00Z"), t("2026-10-26T15:14:00Z"), 10), 6);
+  // Wednesday before the window: after the 13:15 morning tick, only the 14:45 pre-window one.
+  assert.equal(scheduledRuns(cronsOf("autopilot-tick"), t("2026-10-21T13:16:00Z"), t("2026-10-21T14:59:00Z"), 10), 1);
+  // Wednesday 22:46 → Thursday 14:59: Wed 23:15 (close), Thu 01:15 (evening), 13:15 (morning), 14:45 (pre-window).
+  assert.equal(scheduledRuns(cronsOf("autopilot-tick"), t("2026-10-21T22:46:00Z"), t("2026-10-22T14:59:00Z"), 10), 4);
+  // Friday 22:46 → Monday 15:14: Fri 23:15, Sat 01:15, Sat 13:15, Sun 13:15, Mon 01:15, Mon 13:15, Mon 14:45, Mon 15:00.
+  assert.equal(scheduledRuns(cronsOf("autopilot-tick"), t("2026-10-23T22:46:00Z"), t("2026-10-26T15:14:00Z"), 10), 8);
   // Friday 22:56 → Monday 15:06: Fri 23:05, Sat 13:05, Sun 13:05, Mon 13:05, Mon 15:05.
   assert.equal(scheduledRuns(cronsOf("replies-poll"), t("2026-10-23T22:56:00Z"), t("2026-10-26T15:06:00Z"), 10), 5);
   // A minute two schedules both match counts once.
@@ -287,9 +287,12 @@ test("job_silent fires when the tick missed 3 runs, naming the job, schedule and
   assert.equal(p.title, "Scheduled job autopilot-tick stopped completing");
   assert.match(
     p.detail,
-    /spam-autopilot-tick, \*\/15 15-22 \* \* 1-5; spam-autopilot-tick-evening, 15 1 \* \* 1-6; spam-autopilot-tick-morning, 15 13 \* \* \* UTC/,
+    /spam-autopilot-tick, \*\/15 15-22 \* \* 1-5; spam-autopilot-tick-close, 15 23 \* \* 1-5; spam-autopilot-tick-evening, 15 1 \* \* 1-6; spam-autopilot-tick-morning, 15 13 \* \* \*; spam-autopilot-tick-prewindow, 45 14 \* \* 1-5 UTC/,
   );
-  assert.match(p.action, /cron\.job_run_details for spam-autopilot-tick, spam-autopilot-tick-evening, spam-autopilot-tick-morning/);
+  assert.match(
+    p.action,
+    /cron\.job_run_details for spam-autopilot-tick, spam-autopilot-tick-close, spam-autopilot-tick-evening, spam-autopilot-tick-morning, spam-autopilot-tick-prewindow/,
+  );
   assert.match(p.action, /\/api\/autopilot\/tick/);
 });
 
@@ -320,7 +323,7 @@ test("job_silent is silent for every designed state", () => {
     ["no heartbeat rows yet (first hours after deploy)", NOW, []],
     ["the tick ran 20 minutes ago", NOW, [beat("autopilot-tick", ago(20 / 60))]],
     ["two missed ticks only", NOW, [beat("autopilot-tick", ago(35 / 60))]],
-    ["third tick run still inside its grace", at("2026-10-21T14:48:00Z"), [beat("autopilot-tick", "2026-10-21T14:02:00Z")]],
+    ["third tick run still inside its grace", at("2026-10-21T15:48:00Z"), [beat("autopilot-tick", "2026-10-21T15:02:00Z")]],
     ["send-queue on Saturday after Friday's last run", at("2026-10-24T12:25:00Z"), [beat("send-queue", "2026-10-23T22:51:00Z")]],
     ["send-queue Monday before the window", at("2026-10-26T14:25:00Z"), [beat("send-queue", "2026-10-23T22:51:00Z")]],
     ["send-queue Monday 15:24, the 15:20 run still in its grace", at("2026-10-26T15:24:00Z"), [beat("send-queue", "2026-10-23T22:51:00Z")]],
@@ -336,13 +339,19 @@ test("job_silent is silent for every designed state", () => {
 });
 
 test("job_silent outside the window: silent overnight and at weekends, fires once the quiet runs are missed", () => {
-  // Thursday 12:25: the tick last ran Wed 22:45, only Thu 01:15 was due since.
+  // Thursday 12:25: the tick last ran Wed 22:45; only Wed 23:15 and Thu 01:15 were due since.
   assert.equal(silentAt(at("2026-10-22T12:25:00Z"), beat("autopilot-tick", "2026-10-21T22:45:30Z")), null);
   // Sunday 12:25: the poll last ran Fri 23:05, only Sat 13:05 was due since.
   assert.equal(silentAt(at("2026-10-25T12:25:00Z"), beat("replies-poll", "2026-10-23T23:05:30Z")), null);
-  // Sunday 13:25: Sat 01:15, Sat 13:15 and Sun 13:15 missed (a run counts once its 5-minute grace is over).
-  assert.equal(silentAt(at("2026-10-25T13:19:00Z"), beat("autopilot-tick", "2026-10-23T22:45:30Z")), null);
-  assert.ok(silentAt(at("2026-10-25T13:25:00Z"), beat("autopilot-tick", "2026-10-23T22:45:30Z")));
+  // Sunday 13:25: after Friday's 23:15 close, Sat 01:15, Sat 13:15 and Sun 13:15 missed (a run counts once its
+  // 5-minute grace is over).
+  assert.equal(silentAt(at("2026-10-25T13:19:00Z"), beat("autopilot-tick", "2026-10-23T23:15:30Z")), null);
+  assert.ok(silentAt(at("2026-10-25T13:25:00Z"), beat("autopilot-tick", "2026-10-23T23:15:30Z")));
+});
+
+test("job_silent: the tick fires once its third missed run (15:45) is past its grace", () => {
+  assert.equal(silentAt(at("2026-10-21T15:48:00Z"), beat("autopilot-tick", "2026-10-21T15:02:00Z")), null);
+  assert.ok(silentAt(at("2026-10-21T15:51:00Z"), beat("autopilot-tick", "2026-10-21T15:02:00Z")));
 });
 
 test("job_silent: follow-up fires on the third missed run (15:07, 15:17, 15:27)", () => {

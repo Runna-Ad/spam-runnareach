@@ -5,6 +5,22 @@ Deck: `/Users/work/Downloads/SPAM_Partner_Deck.pdf`
 
 ---
 
+## Quiet hours: Vercel CPU (branch perf/quiet-hours-cron, 2026-10-26)
+
+Why: Vercel's free team hit 75% of its 4h Fluid Active CPU. pg_cron woke this app ~2,300 times a week.
+
+- [x] 0053: tick and reply poll keep their pace in the send window; outside it, close / evening / morning / pre-window runs (polls 1,008 → 252 a week, ticks 672 → 183)
+- [x] Health check reads several schedules per job; autopilot_stopped counts missed scheduled ticks, not hours
+- [x] Sentry includeLocalVariables off (measured 0.95s vs 0.67s CPU per cold start)
+- [x] Review fixes: Monday 01:15 digest tick, 23:15 close tick (UTC-day breakers), 14:45 pre-window tick (kill switch), /inbox reply asks Gmail for unread mail first, unsubscribe page says "within 24 hours"
+- [ ] Ship (needs Pedro's "ship it", in this order): deploy the code, THEN apply 0053. Tell the batch 9 conductor that 0053 is taken.
+- [ ] Decision for Pedro: BOUNCE_REPAIR_WINDOW_MS (lib/replies/optout-repair.ts) is 2h, sized for a 10-minute poll. addEmailToDnc swallows insert errors, so this sweep is the only retry; bounces stored by the 23:05 or weekend 13:05 polls now get none. Widening it (about 26h) lets a bounced address someone removed on /compliance come back within that time.
+- [ ] Not checked: per-project CPU and the reset date (Vercel dashboard Usage page, needs Pedro's login)
+- [ ] Docs carry the old pace (tasks/project-state.md :76 :79 :132, tasks/briefs/_core-context.md :14): update at integration; batch 9 is editing project-state.md
+- [ ] Optional: calendar sync and health check still run hourly around the clock (336 calls a week)
+
+Not fixing (review 2026-10-26): dropping the 13:05 pg_cron poll because vercel.json also polls at 13:00 (Vercel's free plan fires that cron at a fixed random minute inside the hour, so it can land after the 13:15 tick).
+
 ## Phase 0 — Foundation (shipped)
 
 ### Code scaffolding (complete)

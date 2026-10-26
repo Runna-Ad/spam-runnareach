@@ -110,7 +110,7 @@ test("E2 is quiet when the tick ran within 8 scheduled ticks, or the autopilot i
   // Outside the window the tick runs after it and once a day (0053): hours without one are by design.
   for (const [now, last] of [
     ["2026-10-19T14:25:00Z", "2026-10-19T01:15:20Z"], // Monday before the window: only 13:15 was due
-    ["2026-10-24T12:25:00Z", "2026-10-23T22:45:20Z"], // Saturday: only Sat 01:15 was due
+    ["2026-10-24T12:25:00Z", "2026-10-23T22:45:20Z"], // Saturday: only Fri 23:15 and Sat 01:15 were due
     ["2026-10-26T12:25:00Z", "2026-10-25T13:15:20Z"], // Monday morning after Sunday's run: only Mon 01:15 due
   ] as const) {
     const q = healthy(new Date(now));

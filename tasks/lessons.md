@@ -5,7 +5,7 @@
 [2026-10-26] PEDRO_OVERRIDE: off-hours pace for the tick and the reply poll
 CLAUDE SUGGESTED: outside the send window, poll every 30 minutes and tick hourly (about a third fewer calls).
 PEDRO'S APPROACH: one check right after the window closes, then once a day.
-WHY IT WAS BETTER: outside the window nothing sends, so frequent runs change almost nothing before the next send. The 2-day reply lookback (RECENT_INBOUND_DAYS) already covers a 24h gap, and the morning runs land before the first send. Polls 1,008 → 252 a week, ticks 672 → 173: about half of all scheduled calls, against a third for my suggestion.
+WHY IT WAS BETTER: outside the window nothing sends, so frequent runs change almost nothing before the next send. The 2-day reply lookback (RECENT_INBOUND_DAYS) already covers a 24h gap, and the morning runs land before the first send. Polls 1,008 → 252 a week, ticks 672 → 183: about half of all scheduled calls, against a third for my suggestion.
 TECHNICAL ROOT CAUSE: I sized the slowdown by "how stale may it get" instead of asking what a run outside the window can act on before the next send.
 RULE: For a scheduled job, list what each run can act on before the next moment it matters (here, the next send window). If nothing, run it once before that moment, not on a clock.
 TAGS: #override #cron #cost #vercel
@@ -23,6 +23,11 @@ WHAT HAPPENED: Vercel emailed that the free team had used 75% of its 4h of Fluid
 ROOT CAUSE: each job's pace was chosen for responsiveness with no budget; nobody multiplied calls a week by the cost of a start.
 RULE: When adding or speeding up a scheduled job on Vercel's free plan, write calls a week × about 1s CPU in the migration header and compare it with 4h a month (14,400s). The free plan has no per-project CPU in the API (Observability Plus is paid); the dashboard's Usage page is the only per-project view.
 TAGS: #lesson #vercel #cost #cron
+
+[2026-10-26] LESSON: a counter that resets at UTC midnight needs a run after the day's last event
+WHAT HAPPENED: the first quiet-hours draft ended the tick's day at 22:45 and next ran at 01:15. The bounces_today and gmail_api breakers count from UTC midnight, and the last sends' bounces land at 22:55 and 23:05, so no tick would ever have counted them (code review caught it). Fixed with a 23:15 tick after the 23:05 poll.
+RULE: When thinning a schedule, list every reader that windows by calendar day (UTC midnight, "today") and keep one run after the day's last write and before midnight.
+TAGS: #lesson #cron #breakers #time-windows
 
 [2026-10-26] LESSON: a health rule written in clock hours breaks when its job's schedule stops being regular
 WHAT HAPPENED: autopilot_stopped alarmed when no tick ran for 2 hours. With the tick running only after the window and once a day, it would have emailed every night (the new test fails on the old code). Now it counts 8 missed scheduled ticks with the cron matcher job_silent uses: still 2h inside the window.

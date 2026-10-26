@@ -160,7 +160,9 @@ export function autopilotStopped(s: HealthSnapshot): HealthProblem | null {
     title: "Autopilot stopped running",
     detail: `The autopilot is switched on (stage ${a.stage}); it runs every 15 minutes in the send window, after it and once a day outside it, but ${observed} (autonomy_state.updated_at).`,
     stops: "New drafts, AUTO scheduling, breakers and learning. Already-approved emails still send.",
-    action: "Check the spam-autopilot-tick job in Supabase (cron.job_run_details, net._http_response) and the latest /api/autopilot/tick logs in Vercel.",
+    action:
+      "Check the spam-autopilot-tick jobs in Supabase (cron.job_run_details, net._http_response) and the latest /api/autopilot/tick logs in Vercel. " +
+      "If it was just switched back on by hand, set autonomy_state.updated_at = now() as well; otherwise this clears at the next tick.",
   };
 }
 
@@ -289,8 +291,9 @@ export function inboxPaused(s: HealthSnapshot): HealthProblem | null {
 
 /**
  * Ticks run every 15 min in the send window (0053): 3 erroring ticks in 2h is a
- * pattern, one is a blip. Outside the window no two ticks fall within 2h, so
- * errors there are judged with the window's first ticks.
+ * pattern, one is a blip. Outside the window at most two ticks fall within 2h
+ * (14:45 and 15:00, or 22:45 and 23:15), so this rule judges the window's ticks;
+ * a step that fails every tick is reported within the window's first hour.
  */
 export const TICK_ERROR_WINDOW_HOURS = 2;
 export const TICK_ERROR_MIN_TICKS = 3;
@@ -477,7 +480,7 @@ export function jobSilent(s: HealthSnapshot): HealthProblem | null {
     detail: silent.map((x) => x.line).join("\n"),
     stops: silent.map((x) => `${x.job}: ${JOB_STOPS[x.job]}`).join(" "),
     action:
-      `In Supabase, cron.job_run_details for ${silent.flatMap((x) => CRON_JOBS[x.job].schedules.map((s) => s.pgJob)).join(", ")} and net._http_response (what the app answered); ` +
+      `In Supabase, cron.job_run_details for ${silent.flatMap((x) => CRON_JOBS[x.job].schedules.map((y) => y.pgJob)).join(", ")} and net._http_response (what the app answered); ` +
       `in Vercel, the logs of ${silent.map((x) => CRON_JOBS[x.job].route).join(", ")}. A 5xx run records its error above; a run that never reached the app records nothing.`,
   };
 }

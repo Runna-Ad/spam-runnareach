@@ -203,7 +203,8 @@ async function runPoll(req: NextRequest) {
   const errors: string[] = [...repair.errors];
 
   // Rate-limited reads wait and retry, so stop starting threads well inside
-  // maxDuration (120s). Threads run newest first; the oldest wait 30 minutes.
+  // maxDuration (120s). Threads run newest first; the oldest wait for the next
+  // run (10 minutes in the send window, longer outside it: 0053).
   let deferred = 0;
   for (const thread of threadMap.values()) {
     if (Date.now() - startTime > POLL_BUDGET_MS) {

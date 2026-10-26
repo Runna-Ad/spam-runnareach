@@ -11,29 +11,47 @@
 -- Pedro 2026-10-26: keep the pace inside the window; after it, one check right
 -- after it closes, then once a day.
 --
---   spam-replies-poll            5-59/10 15-22 * * 1-5   in the window (was 5-59/10 * * * *, 0048)
---   spam-replies-poll-evening    5 23 * * 1-5            right after it: the last sends' bounces and replies
---   spam-replies-poll-morning    5 13 * * *              once a day, every day
---   spam-autopilot-tick          */15 15-22 * * 1-5      in the window (was */15 * * * *, 0041)
---   spam-autopilot-tick-evening  15 1 * * 1-6            Mon-Sat in UTC: after each weekday's window, and Sunday evening
---   spam-autopilot-tick-morning  15 13 * * *             once a day, every day
+--   spam-replies-poll              5-59/10 15-22 * * 1-5   in the window (was 5-59/10 * * * *, 0048)
+--   spam-replies-poll-close        5 23 * * 1-5            right after it: the last sends' bounces and replies
+--   spam-replies-poll-morning      5 13 * * *              once a day, every day
+--   spam-autopilot-tick            */15 15-22 * * 1-5      in the window (was */15 * * * *, 0041)
+--   spam-autopilot-tick-close      15 23 * * 1-5           right after it, after the poll
+--   spam-autopilot-tick-evening    15 1 * * 1-6            the 01:00 veto digest, Mon-Sat in UTC
+--   spam-autopilot-tick-morning    15 13 * * *             once a day, every day: the 13:00 digest
+--   spam-autopilot-tick-prewindow  45 14 * * 1-5           the last pass before the first send
 --
--- The minutes: each tick runs after a poll (a bounce is recorded before the
--- breakers read it), and after a veto digest slot (lib/autopilot/hold.ts
--- DIGEST_SLOTS_UTC, 01:00 and 13:00). A tick sends the digest BEFORE it
--- schedules, so an email it schedules waits for the next digest tick; with an
--- evening tick before every send day (Monday 01:15 included: Sunday's morning
--- tick schedules Monday's emails), each one is listed at least 6 hours before
--- it can send, as hold.ts promises. The morning runs end at 13:15, before the
--- first send at 15:00. In Calgary 13:05 is 7:05 in summer time and 6:05 from
--- 2026-11-01.
+-- Why each extra tick:
+--   close      the bounces_today and gmail_api breakers count from UTC midnight
+--              (lib/autopilot/bounce-breaker.ts, send-failures.ts). The last
+--              sends' bounces are recorded at 22:55 and 23:05, after the 22:45
+--              tick; a tick that waits for 01:15 counts them as yesterday.
+--   evening    a tick sends the veto digest BEFORE it schedules, so what it
+--   morning    schedules waits for the next digest tick. A tick after each slot
+--              (lib/autopilot/hold.ts DIGEST_SLOTS_UTC, 01:00 and 13:00) on the
+--              evening before every send day (Monday 01:15 included: Sunday's
+--              morning tick schedules Monday's emails) lists every email at
+--              least 6 hours before it can send, as hold.ts promises.
+--   prewindow  the kill switch's pull-back happens in a tick (the send routes do
+--              not read the switch). Switched off between 13:15 and 14:45, it
+--              still acts before the 15:00 send, as it did with 15-minute ticks;
+--              and a failed 13:15 tick gets a retry.
+-- Each tick runs after a poll, so a bounce is recorded before the breakers read
+-- it. In Calgary 13:05 is 7:05 in summer time and 6:05 from 2026-11-01.
 --
 -- The poll misses nothing: a normal run reads threads with inbound mail from
 -- the last 2 days (RECENT_INBOUND_DAYS) and the longest gap is now 24 hours.
 -- A person's reply sent from /inbox asks Gmail for unread messages first
 -- (lib/replies/send-reply-action.ts), so an opt-out the poll hasn't read yet
--- still stops it. Calls a week: polls 1,008 → 252, ticks 672 → 173.
--- Send-queue and follow-up are unchanged.
+-- still stops it.
+--
+-- Calls a week: polls 1,008 → 252, ticks 672 → 183. Send-queue and follow-up
+-- are unchanged. 1,245 fewer cold starts a week × 0.67-0.95s CPU each (measured
+-- locally 2026-10-26) ≈ 14-20 minutes of CPU a week, against 4 hours a month.
+--
+-- Switching the autopilot back on by hand: update autonomy_state set
+-- enabled = true, updated_at = now(). A tick with the switch off never writes
+-- updated_at, and the next tick can now be hours away: without it the health
+-- check reports "Autopilot stopped running" until then.
 --
 -- SHIP ORDER: deploy the code that goes with it FIRST, then apply this
 -- migration. The new health check (lib/reports/heartbeat.ts CRON_JOBS,
@@ -44,7 +62,7 @@
 --
 -- Idempotent by construction: each job's schedule is set by job id (any owner),
 -- or the job is created when it is missing. Running it twice leaves the same
--- six jobs. Drops and unschedules nothing.
+-- eight jobs. Drops and unschedules nothing.
 
 do $$
 declare
@@ -55,11 +73,13 @@ begin
   for v_spec in
     select * from (values
       ('spam-replies-poll', '5-59/10 15-22 * * 1-5', '/api/replies/poll'),
-      ('spam-replies-poll-evening', '5 23 * * 1-5', '/api/replies/poll'),
+      ('spam-replies-poll-close', '5 23 * * 1-5', '/api/replies/poll'),
       ('spam-replies-poll-morning', '5 13 * * *', '/api/replies/poll'),
       ('spam-autopilot-tick', '*/15 15-22 * * 1-5', '/api/autopilot/tick'),
+      ('spam-autopilot-tick-close', '15 23 * * 1-5', '/api/autopilot/tick'),
       ('spam-autopilot-tick-evening', '15 1 * * 1-6', '/api/autopilot/tick'),
-      ('spam-autopilot-tick-morning', '15 13 * * *', '/api/autopilot/tick')
+      ('spam-autopilot-tick-morning', '15 13 * * *', '/api/autopilot/tick'),
+      ('spam-autopilot-tick-prewindow', '45 14 * * 1-5', '/api/autopilot/tick')
     ) as s(jobname, schedule, route)
   loop
     v_found := false;

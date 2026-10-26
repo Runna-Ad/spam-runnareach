@@ -17,24 +17,27 @@ import { createServiceRoleClient } from "../supabase/service-role.ts";
 
 /**
  * Each job's pg_cron schedules, quoted from their migrations (a test reads them
- * back). The tick and the reply poll keep their pace inside the send window and
- * run after it and once a day outside it (0053): every run is a cold start
- * Vercel bills, and outside the window nothing sends.
+ * back). The tick and the reply poll keep their pace inside the send window;
+ * outside it they run right after it closes and once a day, plus the ticks the
+ * digests and the kill switch need (0053 explains each). Every run is a cold
+ * start Vercel bills, and outside the window nothing sends.
  */
 export const CRON_JOBS = {
   "autopilot-tick": {
     route: "/api/autopilot/tick",
     schedules: [
       { pgJob: "spam-autopilot-tick", cron: "*/15 15-22 * * 1-5", migration: "0053" },
+      { pgJob: "spam-autopilot-tick-close", cron: "15 23 * * 1-5", migration: "0053" },
       { pgJob: "spam-autopilot-tick-evening", cron: "15 1 * * 1-6", migration: "0053" },
       { pgJob: "spam-autopilot-tick-morning", cron: "15 13 * * *", migration: "0053" },
+      { pgJob: "spam-autopilot-tick-prewindow", cron: "45 14 * * 1-5", migration: "0053" },
     ],
   },
   "replies-poll": {
     route: "/api/replies/poll",
     schedules: [
       { pgJob: "spam-replies-poll", cron: "5-59/10 15-22 * * 1-5", migration: "0053" },
-      { pgJob: "spam-replies-poll-evening", cron: "5 23 * * 1-5", migration: "0053" },
+      { pgJob: "spam-replies-poll-close", cron: "5 23 * * 1-5", migration: "0053" },
       { pgJob: "spam-replies-poll-morning", cron: "5 13 * * *", migration: "0053" },
     ],
   },
