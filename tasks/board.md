@@ -381,7 +381,7 @@ Workers: writer-honesty (1-3, pitches hub, opus/high), digest-once (4, lib/autop
 
 | Slug | Module | Model/effort | Branch | Session | PR | Depends on | Status | Turns | Review findings | CI reds | Rework |
 |---|---|---|---|---|---|---|---|---|---|---|---|
-| digest-once | veto digest: each email announced once, no empty digest, truthful subject | opus/high | claude/digest-once | — | — | — | queued | | | | |
+| digest-once | veto digest: each email announced once, no empty digest, truthful subject | opus/high | claude/digest-once | session_01F9yRiYtBRPzsFF8VqUReoQ | — | — | running | | | | |
 | writer-honesty | writer + critic calibration on guesses, greeting rules, fresh rewrites, prompt v3.3 | opus/high | claude/writer-honesty | — | — | calibration study | briefing | | | | |
 
 Log:
