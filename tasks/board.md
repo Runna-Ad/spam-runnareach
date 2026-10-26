@@ -382,7 +382,7 @@ Workers: writer-honesty (1-3, pitches hub, opus/high), digest-once (4, lib/autop
 | Slug | Module | Model/effort | Branch | Session | PR | Depends on | Status | Turns | Review findings | CI reds | Rework |
 |---|---|---|---|---|---|---|---|---|---|---|---|
 | digest-once | veto digest: each email announced once, no empty digest, truthful subject | opus/high | claude/digest-once | session_01F9yRiYtBRPzsFF8VqUReoQ | #60 | — | MERGED c733ecb (0 blocking) | | | | |
-| writer-honesty | writer + critic calibration on guesses, greeting rules, fresh rewrites, prompt v3.3 | opus/high | claude/writer-honesty | session_01HVDrD3T9YACnHYzGea5QkE | #61 | calibration study | in review | | | | |
+| writer-honesty | writer + critic calibration on guesses, greeting rules, fresh rewrites, prompt v3.3 | opus/high | claude/writer-honesty | session_01HVDrD3T9YACnHYzGea5QkE | #61 | calibration study | MERGED bf05f9a (r1: 2 blocking fixed, verified) | | | | |
 
 Log:
 - 2026-10-26 15:20 UTC — Pedro picked all three + digest fix. Integration cut (main merged into batch 8 notes; code identical to main). digest-once brief written; calibration study running.
@@ -390,3 +390,4 @@ Log:
 - 2026-10-26 15:55 UTC — #60 digest-once (15:29) and #61 writer-honesty (15:45) opened; subscribed; two Opus reviewers running.
 - 2026-10-26 16:00 UTC — #60 review (Opus): merge, 0 blocking (every send path traced; property test 672 emails over a week each listed exactly once before send; 1537 tests, build). Merged c733ecb. Optional noted, not taken: pitches query .limit(200) could hide a fresh item only above 200 total daily cap (1 inbox, cap 30 today).
 - 2026-10-26 16:10 UTC — #61 review (Opus): fix-then-merge, 2 blocking (subject rule 'always polish' lets a claim in the subject reach AUTO; PR-body SQL uses a non-existent enum value 'queued'). Optional taken: offer-sentence loophole, 'yours', isAdviceQuote gaps both ways (debe/sugerimos/needs a; 'Use our…' is site copy), full_name company rule, no forwarding line to ceo@/owner@. Noted: template fallback still uses advice quotes (review lane only); role-inbox predicate in two places (next batch).
+- 2026-10-26 16:20 UTC — #61 fix verified (subject claims judged like body, offer/yours, advice list both ways, owner inboxes, full_name company rule): 1548 tests, build → merged bf05f9a. digest-once archived ($1.54). Batch audit (Opus) running.
