@@ -302,12 +302,12 @@ const PRESEND_MAX_PAGES = 10;
  * arms are read out of the decision record. null on any error.
  */
 async function presendDrafts(db: Db, tenantId: string, since: string): Promise<PresendDraft[] | null> {
-  const out: PresendDraft[] = [];
+  const out: Array<PresendDraft & { pv: string | null }> = [];
   for (let page = 0; page < PRESEND_MAX_PAGES; page++) {
     const from = page * PRESEND_PAGE;
     const { data, error } = await db
       .from("pitches")
-      .select("id, arms:decision->arms, status, auto_rejected_reason")
+      .select("id, arms:decision->arms, pv:decision->prompt_version, status, auto_rejected_reason")
       .eq("tenant_id", tenantId)
       .is("parent_pitch_id", null)
       .gte("created_at", since)
@@ -315,11 +315,23 @@ async function presendDrafts(db: Db, tenantId: string, since: string): Promise<P
       .order("id", { ascending: false })
       .range(from, from + PRESEND_PAGE - 1);
     if (error) return null;
-    const rows = (data ?? []) as Array<{ arms: Record<string, string> | null; status: string; auto_rejected_reason: string | null }>;
-    out.push(...rows.map((r) => ({ arms: r.arms, status: r.status, auto_rejected_reason: r.auto_rejected_reason })));
-    if (rows.length < PRESEND_PAGE) return out;
+    const rows = (data ?? []) as Array<{ arms: Record<string, string> | null; pv: string | null; status: string; auto_rejected_reason: string | null }>;
+    out.push(...rows.map((r) => ({ arms: r.arms, pv: r.pv ?? null, status: r.status, auto_rejected_reason: r.auto_rejected_reason })));
+    if (rows.length < PRESEND_PAGE) return latestPromptOnly(out);
   }
-  return out;
+  return latestPromptOnly(out);
+}
+
+/**
+ * Only drafts written on the newest writer prompt in the window (rows are newest
+ * first). A prompt change shifts every arm's held rate at once while the bandit
+ * gives the champion most of the new drafts, so mixing versions would judge a
+ * challenger on the old prompt (batch 9 audit). Rows without a version (older
+ * records, templates) count only while no versioned row exists.
+ */
+function latestPromptOnly(rows: Array<PresendDraft & { pv: string | null }>): PresendDraft[] {
+  const latest = rows.find((r) => r.pv)?.pv ?? null;
+  return rows.filter((r) => latest === null || r.pv === latest).map(({ pv: _pv, ...d }) => d);
 }
 
 /**

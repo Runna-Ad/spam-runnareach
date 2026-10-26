@@ -1473,3 +1473,12 @@ marketing-context only if it bites.
 **Decisions:** batch 6 option 1; polish premise corrected (0 polish-only drops, not 9); batch 7 = statistic matching fix + "wanted facts" library loop (Pedro 2026-10-21 "go with 1 and 3").
 **Waiting on Pedro:** start the next conductor session (line in tasks/board.md "Hand-off 2026-10-21"); approve or delete the 3 held drafts on the Pitches page if wanted.
 **Next:** batch 7; Fri 2026-10-23 21:30 UTC 3-day rewrite comparison (early: 3/12 vs 14/34).
+
+## 2026-10-22 21:55 UTC — conductor session_01HtEg7XG4MPQU4omrd2BX69 (batch 7 ship + readiness check + batch 8 ship)
+**Shipped:** batch 7 (main 4418e8d, PR #51, 0050) and batch 8 (main 7e55e1b, PR #59, 0051 + 0052 applied first; deploy dpl_EUKKsrXEEpBCy5euBDAX61Sb2KRk READY). Batch 8: replies/bounces/clicks on the first email; tracked free-check link /r/<code> on runna-check.vercel.app in every email and follow-up; pre-send guardrail retires a bad writing instruction; clicks 0.25 for writer learners; veto clock restart instead of shadow; live Gmail breaker; tick-errors rows; health alarms (breaker pause daily, failing ticks, stalled learning, silent cron jobs, Sentry copy); 1 email per inbox per 10 min, follow-ups every 10 min at :07 with a 60-min back-off; one recipient chooser; doubted address → next contact; one re-draft after 14 days (10/day).
+**Prod config (Pedro "option 2, set it up"):** alias runna-check.vercel.app + Production UNSUBSCRIBE_BASE_URL=https://runna-check.vercel.app.
+**Verified in prod:** heartbeats 4/4 ok, follow-up ran on the new :07 schedule, /r/ redirect safe, 0 misfiled reply/bounce (backfill not needed), 0 tick errors / Gmail failures / alerts since deploy.
+**Decisions:** decision 12 option 1 (AI guidance hands-off, guarded); Sentry cron monitors dropped (paid) → own heartbeats; clicks writer-only; deliberate inbox pause stays silent.
+**Not checked:** health dry run (needs CRON_SECRET); whether Sentry warning alerts reach Pedro; tracked links in real bodies (first send window tomorrow).
+**Waiting on Pedro:** nothing.
+**Next:** 2026-10-23 16:20 UTC first-send-window check (armed); Fri 2026-10-23 21:30 UTC rewrite comparison; Wed 2026-10-28 14:35 UTC first fact-research check; 2026-10-31 first re-drafts possible. Next batch candidates (board/audit): prospect-local send windows, veto day-skip (audit item 12), wanted-fact dedupe across wordings, Gmail send timeouts not counted, send-queue .limit(50) starvation.

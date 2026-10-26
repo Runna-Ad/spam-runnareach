@@ -1,5 +1,35 @@
 # S.P.A.M. — Lessons (newest first)
 
+## Merged from lessons-inbox, batch 9 (2026-10-26)
+
+<!-- from digest-once -->
+[2026-10-26] A recurring notice must remember what it already said, keyed on the thing that can change
+WHAT HAPPENED: The veto digest (lib/autopilot/tick.ts sendVetoDigest) listed every approved AUTO email within 24h at each slot, so an email waiting out a weekend for sending hours appeared in up to 6-8 digests. The fix records the listed (pitch_id, scheduled_send_at) pairs in the digest's own audit_log metadata and lists only pairs no earlier digest listed (lib/autopilot/hold.ts planVetoDigest). Keying on the pair, not the pitch, keeps "held then re-approved" announced again.
+RULE: A periodic notification that lists a backlog stores what it listed in the same record it already writes after delivery, and the next run lists only the difference plus one count line for the rest. Key the "already announced" set on the fields whose change makes the item news again (here the scheduled time), and compare timestamps as instants (Date.parse), never as strings: Postgres returns "+00:00" where JS writes "Z".
+TAGS: autopilot, notifications, digest
+
+<!-- from writer-honesty -->
+[2026-10-26] A field named "evidence" can hold advice: label what it is before a writer reads it
+WHAT HAPPENED: the research step wrote recommendations into `pain_points[].evidence_quote` ("Replace outdated WordPress with … live wait times", "Build chatbots for 24/7 inquiry handling"), and the writer, told evidence may be stated as fact, repeated them as things it saw. 11 of the study's 16 writer errors came from that one cause. `normalizePains` (lib/pitches/pitch-stage.ts) only checked length and "not the label". Fix: `isAdviceQuote` (lib/pitches/claude-composer.ts) marks each pain `observed`, and both the writer and the critic get the mark in their payloads.
+RULE: When a prompt says "X may be stated as fact", check what actually lands in X in prod, not what the field name promises. A stored field another model wrote is that model's opinion until a check says otherwise. Mark it in the payload (observed: true/false) instead of dropping it, so the downstream model can still use it as a general pattern.
+TAGS: pitches, prompts, research, evidence
+
+[2026-10-26] A critic that is stricter than the writer's own rules burns good drafts
+WHAT HAPPENED: 31 of the 64 blocking issues in the calibration study were the critic blocking things the writer prompt REQUIRES: the general "what tends to happen" line, our own CTA wording, the proof line, the forwarding line our code appends, and subject wording. It even blocked the correct "Hi [company] team," and suggested "Hi there", which the writer prompt bans. The critic prompt didn't know which lines were house text.
+RULE: Every sentence the writer is told to write, and every line code appends, is listed in the critic prompt as house text or as allowed. When a writer rule changes, grep the critic prompt for the same rule in the same commit. A study of real failures (the critic's verdict next to the payload) is the only way to see this. The pass rate alone can't tell you who was wrong.
+TAGS: pitches, critic, prompts, calibration
+
+<!-- conductor, batch 9 audit -->
+[2026-10-26] A learner that compares arms over a time window must restart at a prompt change
+WHAT HAPPENED: the pre-send guardrail compared held rates per writer.guidance arm over 14 days. A new writer prompt (v3.3) lowers every arm's held rate at once while the bandit sends most new drafts to the champion, so a challenger would be judged mostly on the old prompt and retired for nothing. Fixed: only drafts of the newest prompt_version in the window count (lib/autopilot/learn.ts latestPromptOnly).
+RULE: Any comparison of arms or segments over a window keys its sample on the version of everything that changes all arms at once (prompt, critic, gate). Changing that version restarts the comparison.
+TAGS: learning, presend, prompts
+
+[2026-10-26] "House text, not yours to dispute" must say which part of the line is still checked
+WHAT HAPPENED: to stop the critic blocking our own CTA and proof line, #61 told it they are house text. The writer fills the CTA's [pain] and writes the proof line fresh each time, so "where your slow replies are costing you" or "we've helped clinics like yours cut no-shows in half" would have passed unchecked into the AUTO lane. Caught by the batch audit.
+RULE: When a reviewer is told a template line is ours, name the slots the writer fills in and say they are still judged by the normal rules.
+TAGS: pitches, critic, prompts
+
 ## Merged from lessons-inbox, batch 8 (2026-10-22)
 
 <!-- from reply-on-root -->
