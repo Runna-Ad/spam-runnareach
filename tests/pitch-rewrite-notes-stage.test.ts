@@ -14,7 +14,7 @@ import { register } from "node:module";
 import test from "node:test";
 import { DO_NOT_SEND_STATUSES } from "../lib/prospects/status.ts";
 import { NOT_REVIEWED_ISSUE, WRITER_FIXABLE, composeWithReview, revisionIssues } from "../lib/pitches/review.ts";
-import { PITCH_PROMPT_VERSION, heldBodyForRevision } from "../lib/pitches/claude-composer.ts";
+import { PITCH_PROMPT_VERSION, heldBodyForRevision, isAdviceQuote } from "../lib/pitches/claude-composer.ts";
 import { DECISION_VERSION } from "../lib/pitches/decision.ts";
 import { __test__ } from "../lib/anthropic/client.ts";
 
@@ -169,6 +169,8 @@ async function run(opts: {
   /** Run the real write → review loop (SDK mocked) instead of the throwing stub. */
   realCompose?: boolean;
   roleInbox?: boolean;
+  /** prospect_research.pain_points when realCompose (default: one contact-form pain). */
+  painPoints?: Row[];
   /** The prospect's contacts (default: one, Ana) and the recipient rule's pick (default: the first usable). */
   contacts?: Row[];
   pick?: (rows: Row[]) => Row | null;
@@ -176,7 +178,7 @@ async function run(opts: {
 }) {
   const calls: string[] = [];
   const composerContacts: unknown[] = [];
-  const seen: Array<{ reviseFirst: unknown; deadline: number; startedAt: number; heldStillThere: boolean }> = [];
+  const seen: Array<{ reviseFirst: unknown; revision: unknown; deadline: number; startedAt: number; heldStillThere: boolean }> = [];
   const db: Db = {
     tables: {
       prospects: [{
@@ -185,7 +187,7 @@ async function run(opts: {
         status: opts.status ?? "pitched",
       }],
       prospect_research: opts.realCompose
-        ? [{ tenant_id: "t1", prospect_id: PROSPECT_ID, what_they_do: "family dental clinic", tech_stack: [], pain_points: [{ pain_id: "p1", pain_label: "Lead response time", evidence_quote: "contact form only, no online booking" }] }]
+        ? [{ tenant_id: "t1", prospect_id: PROSPECT_ID, what_they_do: "family dental clinic", tech_stack: [], pain_points: opts.painPoints ?? [{ pain_id: "p1", pain_label: "Lead response time", evidence_quote: "contact form only, no online booking" }] }]
         : [],
       prospect_contacts: opts.contacts ?? [opts.roleInbox
         ? { tenant_id: "t1", prospect_id: PROSPECT_ID, email: "info@clinicasur.ca", email_is_role_based: true, full_name: null, role_title: null, priority_rank: 1 }
@@ -214,6 +216,7 @@ async function run(opts: {
     senderForGenerator: () => ({ name: "Henry" }),
     buildHunterUrlForPitch: () => NEW_LINK,
     heldBodyForRevision,
+    isAdviceQuote,
     fetchTopUsableContact: async () => null,
     chooseRecipient: (rows: Row[] | null) =>
       opts.pick ? opts.pick(rows ?? []) : (rows?.find((c) => typeof c.email === "string" && c.email.includes("@")) ?? null),
@@ -230,7 +233,9 @@ async function run(opts: {
       composerContacts.push(input.contacts);
       if (opts.realCompose) return composeWithReview(input, o);
       seen.push({
-        reviseFirst: o.reviseFirst,
+        // Gone since writer-honesty; recorded so a reintroduction shows up here.
+        reviseFirst: (o as { reviseFirst?: unknown }).reviseFirst,
+        revision: input.revision,
         deadline: o.deadline,
         startedAt,
         heldStillThere: (db.tables.pitches ?? []).some((p) => p.id === HELD_ID),
@@ -260,35 +265,16 @@ async function run(opts: {
   return { result, thrown, seen, calls, log: db.log, db, composerContacts };
 }
 
-test("rewrite of a Claude draft: the first compose revises it with its notes, gate details first, max 8", async () => {
+test("rewrite of a Claude draft held with notes composes FRESH: no held text, no notes (writer-honesty)", async () => {
   const { seen, thrown } = await run({ held: claudeHeld() });
   assert.equal((thrown as Error).message, REACHED);
   assert.equal(seen.length, 1);
-  assert.equal(seen[0]!.heldStillThere, true, "the held draft is read before it is deleted");
-  assert.deepEqual(seen[0]!.reviseFirst, {
-    subject: "clinica sur loses patients at night",
-    // The old link back to the slot (its r= code belongs to the held row), no forwarding line.
-    body: "Hi Ana,\n\nMost of your traffic is mobile now.\n\n👉 See it for yourself: {hunter_url}\n\nHenry\nRunna Advertising",
-    issues: [
-      // Writing findings only (the recipient check is not the writer's), gate first.
-      'Unsourced number "three seconds"',
-      'Banned word "leads"',
-      "Inference stated as fact: 'Most of your traffic is mobile now'",
-      "(polish) subject is long",
-    ],
-  });
+  assert.equal(seen[0]!.heldStillThere, true, "the held draft is read (for its re-draft mark) before it is deleted");
+  assert.equal(seen[0]!.reviseFirst, undefined);
+  assert.equal(seen[0]!.revision, undefined);
 });
 
-test("rewrite: at most 8 notes; the 'not reviewed' sentinel is not a note", async () => {
-  const many = Array.from({ length: 10 }, (_, i) => `critic note ${i}`);
-  const { seen } = await run({ held: claudeHeld({ decision: { path: "claude", critic: { issues: [...many, NOT_REVIEWED_ISSUE] } } }) });
-  const r = seen[0]!.reviseFirst as { issues: string[] };
-  assert.equal(r.issues.length, 8);
-  assert.deepEqual(r.issues.slice(0, 2), ['Unsourced number "three seconds"', 'Banned word "leads"']);
-  assert.ok(!r.issues.includes(NOT_REVIEWED_ISSUE));
-});
-
-test("rewrite falls back to a fresh compose: template, no notes, read error, gone, other tenant or prospect", async () => {
+test("every other held draft composes fresh too: template, no notes, read error, gone, other tenant or prospect", async () => {
   const cases: Array<[string, Parameters<typeof run>[0]]> = [
     ["template", { held: claudeHeld({ decision: { path: "template", critic: null } }) }],
     ["edited by a person", { held: claudeHeld({ body_edited: "Hi Ana, my own words." }) }],
@@ -320,7 +306,7 @@ test("deadline: two rewrites in one tick each get startedAt + 48 s (fake clock)"
   for (const [label, r] of [["first", a], ["second", b]] as const) {
     assert.equal(r.seen.length, 1, label);
     assert.equal(r.seen[0]!.deadline - r.seen[0]!.startedAt, 48_000, label);
-    assert.ok(r.seen[0]!.reviseFirst, label);
+    assert.equal(r.seen[0]!.reviseFirst, undefined, label);
   }
   assert.ok(b.seen[0]!.startedAt >= a.seen[0]!.deadline - 2_000, "the second rewrite starts after the first");
 });
@@ -348,7 +334,7 @@ function echoWriter() {
   process.env.ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY ?? "test-key";
 }
 
-test("full path: a writer that keeps the held 👉 line ends with the NEW attribution code, the forwarding line once, retry_mode revised", async () => {
+test("full path: a Claude held draft is rewritten fresh: the writer never sees the held text, NEW attribution code, forwarding line once, retry_mode fresh", async () => {
   echoWriter();
   const { result, db, thrown } = await run({ held: claudeHeld(), realCompose: true, roleInbox: true });
   assert.equal(thrown, null, String((thrown as Error)?.stack));
@@ -359,11 +345,12 @@ test("full path: a writer that keeps the held 👉 line ends with the NEW attrib
   const body = String(created.body_original);
   assert.ok(body.includes(NEW_LINK), body);
   assert.doesNotMatch(body, /OLD123/);
+  assert.doesNotMatch(body, /Most of your traffic is mobile now/, "the held draft's claim never reaches the rewrite");
   assert.equal(body.split(FWD_EN).length - 1, 1, "forwarding line exactly once");
   assert.equal(created.attribution_code, "code");
   const decision = created.decision as { retry_of?: string; retry_mode?: string; prompt_version?: string };
   assert.equal(decision.retry_of, HELD_ID);
-  assert.equal(decision.retry_mode, "revised");
+  assert.equal(decision.retry_mode, "fresh");
   assert.equal(decision.prompt_version, PITCH_PROMPT_VERSION);
 });
 
@@ -373,6 +360,39 @@ test("full path: a template held draft is rewritten fresh and says so (retry_mod
   assert.equal(result?.ok, true, result?.error);
   const created = db.tables.pitches!.find((p) => p.id !== HELD_ID)!;
   assert.equal((created.decision as { retry_mode?: string }).retry_mode, "fresh");
+});
+
+test("normalizePains (writer-honesty): a recommendation quote reaches the writer and critic as observed: false, a site quote as true, none dropped", async () => {
+  const writerPayloads: string[] = [];
+  const criticPayloads: string[] = [];
+  __test__.setClient({
+    messages: {
+      create: async (r: { system?: { text: string }[] | string; messages: { content: string }[] }) => {
+        const sys = typeof r.system === "string" ? r.system : (r.system ?? []).map((b) => b.text).join("\n");
+        const critic = sys.includes("You review a cold email");
+        (critic ? criticPayloads : writerPayloads).push(r.messages[0]!.content);
+        const text = critic
+          ? JSON.stringify({ score: 0.95, issues: [] })
+          : JSON.stringify({
+              subject: "contact form only at clinica sur", preview_text: "the only way in after hours is a contact form", body: FRESH_BODY,
+              pain_id: null, contact_email: "ana@clinicasur.ca", measurable_result_included: false, quality_self_score: 0.8, reasoning: "x",
+            });
+        return { content: [{ type: "text", text }], usage: { input_tokens: 100, output_tokens: 50 } };
+      },
+    },
+  } as never);
+  const { result } = await run({
+    held: null, retryOf: null, realCompose: true,
+    painPoints: [
+      { pain_id: "p1", pain_label: "Website", evidence_quote: "Replace outdated WordPress with a site that shows live ED wait times" },
+      { pain_id: "p2", pain_label: "AI", evidence_quote: "Implementar un chatbot para atender consultas 24/7" },
+      { pain_id: "p3", pain_label: "Lead response time", evidence_quote: "contact form only, no online booking" },
+    ],
+  });
+  assert.equal(result?.ok, true, result?.error);
+  const json = (s: string) => JSON.parse(/```json\n([\s\S]*?)\n```/.exec(s)![1]!) as Record<string, Array<Record<string, unknown>>>;
+  assert.deepEqual(json(writerPayloads[0]!).pain_candidates!.map((p) => [p.pain_id, p.observed]), [["p1", false], ["p2", false], ["p3", true]]);
+  assert.deepEqual(json(criticPayloads[0]!).pain_evidence!.map((p) => [p.pain_id, p.observed]), [["p1", false], ["p2", false], ["p3", true]]);
 });
 
 test("guard: an emailed company (sent, replied, bounced, ghosted) is refused before any Claude call", async () => {
@@ -428,13 +448,14 @@ test("recipient: no usable contact in the top five is refused as before, whateve
   assert.equal(composerContacts.length, 0);
 });
 
-test("recipient: a rewrite to another contact composes fresh; to the same contact it revises as before", async () => {
+test("recipient: a rewrite composes fresh whether it goes to another contact or the same one", async () => {
   const rows = [person("a", 1, "ana@clinicasur.ca", "Ana"), person("b", 2, "bo@clinicasur.ca", "Bo")];
   const toBo = (r: Row[]) => r.find((c) => c.id === "b") ?? null;
   const moved = await run({ held: claudeHeld({ contact_id: "a" } as Held), contacts: rows, pick: toBo });
   assert.equal(moved.seen[0]!.reviseFirst, undefined, "the held text greets Ana; Bo gets a fresh draft");
   const same = await run({ held: claudeHeld({ contact_id: "b" } as Held), contacts: rows, pick: toBo });
-  assert.notEqual(same.seen[0]!.reviseFirst, undefined);
+  assert.equal(same.seen[0]!.reviseFirst, undefined);
+  assert.equal(same.seen[0]!.revision, undefined);
 });
 
 test("redraft_of is written with the decision record (write-once), and a rewrite carries the held draft's", async () => {

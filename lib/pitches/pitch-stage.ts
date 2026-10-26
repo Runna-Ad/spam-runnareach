@@ -12,8 +12,8 @@ import { isUnderDailyCap, recordClaudeCall } from "@/lib/anthropic/cost-tracking
 import { writeAuditLog } from "@/lib/audit/log";
 import type { Actor } from "@/lib/actor";
 import type { Database } from "@/lib/supabase/types";
-import { PITCH_PROMPT_VERSION, heldBodyForRevision } from "./claude-composer";
-import { NOT_REVIEWED_ISSUE, WRITER_FIXABLE, composeWithReview, revisionIssues, type ReviewCall, type WantedFacts } from "./review";
+import { PITCH_PROMPT_VERSION, isAdviceQuote } from "./claude-composer";
+import { composeWithReview, type ReviewCall, type WantedFacts } from "./review";
 import {
   DECISION_VERSION,
   detectCitedBenchmark,
@@ -168,7 +168,7 @@ export async function generatePitchWith(
   if (prospectErr) return { ok: false, error: `Lookup failed: ${prospectErr.message}` };
   if (!prospect) return { ok: false, error: "Prospect not found." };
 
-  const pains: GeneratorInputResearchPain[] = normalizePains(research?.pain_points ?? null);
+  const pains: GeneratorInputResearchPain[] = normalizePains(research?.pain_points ?? null, prospect.company_name);
 
   // Load contacts — include role_title so Claude can address "as founder/GM of..."
   type ContactRow = VerdictContact & {
@@ -428,25 +428,23 @@ export async function generatePitchWith(
   // The kept draft's wishes for a statistic the library lacks (Claude path only).
   let wanted: WantedFacts | null = null;
 
-  // ── The autopilot's rewrite revises the held draft ─────────────────────
-  // Read BEFORE the draft delete below clears it. A Claude draft held with
-  // notes is revised against those notes; anything else (a template, no
-  // notes, a read error, a row that is gone) composes fresh, as before. So
-  // does a rewrite to a different contact than the held draft's (the
-  // verifier doubted that address): its text greets the old recipient.
-  let reviseFirst: NonNullable<GeneratorInputs["revision"]> | undefined;
+  // ── The autopilot's rewrite composes FRESH (writer-honesty, 2026-10-26) ──
+  // It used to revise the held draft's text against its notes: since batch 6
+  // revised rewrites were sent or approved 7 of 59 times (12%), fresh ones 3
+  // of 11 (27%), and a revision carries the held text's claims (and its
+  // attribution code) into the new draft. The held row is read only for its
+  // re-draft mark, BEFORE the draft delete below clears it.
   // A re-draft's rewrite is still that re-draft: its mark comes with it.
   let redraftOf: string | undefined = opts.redraftOf;
   if (opts.retryOf) {
     const { data: held, error: heldErr } = await supabase
       .from("pitches")
-      .select("subject, body_original, body_edited, decision, gate_verdict, contact_id")
+      .select("decision")
       .eq("id", opts.retryOf)
       .eq("tenant_id", user.tenantId)
       .eq("prospect_id", parsed.data.prospect_id)
-      .maybeSingle<HeldDraftRow>();
-    if (heldErr) console.warn("[generatePitch] held draft not read, composing fresh:", heldErr.message || "no message");
-    else if (!held || !held.contact_id || held.contact_id === recipient?.id) reviseFirst = heldDraftRevision(held) ?? undefined;
+      .maybeSingle<{ decision: unknown }>();
+    if (heldErr) console.warn("[generatePitch] held draft not read:", heldErr.message || "no message");
     const heldMark = (held?.decision as { redraft_of?: unknown } | null | undefined)?.redraft_of;
     if (!redraftOf && typeof heldMark === "string" && heldMark) redraftOf = heldMark;
   }
@@ -478,7 +476,7 @@ export async function generatePitchWith(
     if (!cap.under) {
       claudeFallbackReason = `daily cap hit (spent $${cap.spent_today_usd.toFixed(2)} of $${cap.cap_usd.toFixed(2)})`;
     } else {
-      const reviewed = await composeWithReview(generatorInputs, { deadline: startedAt + 48_000, reviseFirst });
+      const reviewed = await composeWithReview(generatorInputs, { deadline: startedAt + 48_000 });
       reviewCalls = reviewed.calls;
       if (reviewed.ok) {
         composed = reviewed.composed;
@@ -656,7 +654,7 @@ export async function generatePitchWith(
     // A template uses no exemplars, even when some were loaded for the AI path.
     ...decisionExemplarFields(method === "claude" ? "claude" : "template", exemplars),
     ...(opts.retryOf
-      ? { retry_of: opts.retryOf, retry_mode: reviseFirst && method === "claude" ? ("revised" as const) : ("fresh" as const) }
+      ? { retry_of: opts.retryOf, retry_mode: "fresh" as const }
       : {}),
     ...(redraftOf ? { redraft_of: redraftOf } : {}),
     ...(method === "claude" ? { wanted_fact: composed.wanted_fact ?? null } : {}),
@@ -879,7 +877,7 @@ export async function rewritePitchWithAngleWith(
   // Same benchmark lookup as first generation — the rewrite path must follow
   // the same rules, or "rewrite with this angle" quietly produces a pitch the
   // normal path could not.
-  const rewritePains = normalizePains(research?.pain_points ?? null);
+  const rewritePains = normalizePains(research?.pain_points ?? null, prospect.company_name);
   const rewriteBenchmarks = await fetchBenchmarksForPitch(supabase, user.tenantId, {
     painIds: rewritePains.map((p) => p.pain_id).filter((v): v is string => Boolean(v)),
     industry: prospect.industry,
@@ -1363,47 +1361,7 @@ function normalizeMeasurableResults(
   });
 }
 
-type HeldDraftRow = {
-  contact_id?: string | null;
-  subject: string | null;
-  body_original: string | null;
-  body_edited: string | null;
-  decision: unknown;
-  gate_verdict: unknown;
-};
-
-/**
- * The revision input for a held draft: its subject, body and the notes that
- * held it (the gate's writing findings first, then the critic's issues, polish
- * included, as stored; at most 8). Null when it is not a Claude draft, has
- * no notes, or a person edited it (the notes describe the original, and a
- * person's draft stays theirs): that rewrite composes fresh. The body goes
- * back with its {hunter_url} slot and without the forwarding line, so the new
- * pitch gets its own attribution code and the line once.
- */
-export function heldDraftRevision(row: HeldDraftRow | null): NonNullable<GeneratorInputs["revision"]> | null {
-  if (!row) return null;
-  const decision = (row.decision ?? {}) as { path?: unknown; critic?: { issues?: unknown } | null };
-  if (decision.path !== "claude") return null;
-  if (row.body_edited !== null) return null;
-  const body = row.body_original ? heldBodyForRevision(row.body_original) : "";
-  if (!row.subject || !body) return null;
-  const gate = (row.gate_verdict ?? {}) as { failures?: unknown };
-  const writing = (Array.isArray(gate.failures) ? gate.failures : []).filter(
-    (f): f is GateFailure =>
-      typeof f === "object" && f !== null && WRITER_FIXABLE.has((f as GateFailure).code) &&
-      typeof (f as GateFailure).detail === "string",
-  );
-  const stored = decision.critic?.issues;
-  const criticIssues = (Array.isArray(stored) ? stored : []).filter(
-    (i): i is string => typeof i === "string" && i.trim() !== "" && i !== NOT_REVIEWED_ISSUE,
-  );
-  const issues = revisionIssues({ writing, review: { pass: false, score: 0, issues: criticIssues } });
-  if (issues.length === 0) return null;
-  return { subject: row.subject, body, issues };
-}
-
-function normalizePains(raw: unknown): GeneratorInputResearchPain[] {
+export function normalizePains(raw: unknown, companyName?: string | null): Array<GeneratorInputResearchPain & { observed: boolean }> {
   if (!Array.isArray(raw)) return [];
   return raw.flatMap((entry) => {
     if (!entry || typeof entry !== "object") return [];
@@ -1422,7 +1380,10 @@ function normalizePains(raw: unknown): GeneratorInputResearchPain[] {
     }
 
     if (!pain_id && !pain_label) return [];
-    return [{ pain_id, pain_label, evidence_quote }];
+    // A quote that reads as advice ("Build chatbots for 24/7 inquiry
+    // handling") stays usable but is never something seen on their site: the
+    // writer may only frame it as a general pattern (claude-composer FACTS 1).
+    return [{ pain_id, pain_label, evidence_quote, observed: !isAdviceQuote(evidence_quote, companyName) }];
   });
 }
 

@@ -149,6 +149,11 @@ rework in retros traces to a missing sentence in the brief. Before spawning, che
   brief and the migration header (batch 8 #57).
 - A brief that runs a job more often: list every exit that leaves the item due after paid
   work and ask for a back-off (batch 8 #57: 48 recomposes/day).
+- A brief that changes a writer or reviewer PROMPT: say what the change does to every learner
+  that compares arms over a window (presend guardrail, bandit) and require the sample to be
+  keyed on the prompt version (batch 9 audit).
+- A brief that tells a reviewer model "this line is ours, not a claim": name the slots the
+  writer fills in that line and say they are still judged (batch 9: CTA pain, proof line).
 - "Brain lessons": run `tasks/tools/brain-recall-for.sh "<the brief's goal in a sentence>"`
   and paste the RULE of each article that really applies (skip weak matches). Worker
   sessions do not get the brain; the brief is how its lessons reach them.

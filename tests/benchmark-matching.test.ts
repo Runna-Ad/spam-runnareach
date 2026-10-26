@@ -494,11 +494,11 @@ test("writer and critic payloads carry for_pains; FACTS and rule 2 say how to us
     { statistic: "About 70.22% of online carts are abandoned.", figure: "70.22%", publisher: "Baymard Institute", caveat: null, for_pains: [{ pain_id: "pain-cart", pain: "No cart or browse abandonment recovery" }] },
   ]);
   assert.deepEqual(payloadOf(critic).pain_evidence, [
-    { pain_id: "pain-cart", pain: "No cart or browse abandonment recovery", evidence: "no abandoned cart email flow detected on checkout" },
+    { pain_id: "pain-cart", pain: "No cart or browse abandonment recovery", evidence: "no abandoned cart email flow detected on checkout", observed: true },
   ]);
 
   assert.match(sysText(writer), /cite a benchmark ONLY if one of its for_pains is the pain you lead with \(the same pain_id\), otherwise use no number at all/);
   assert.match(writer.messages[0]?.content ?? "", /Use one only if one of its for_pains has the pain_id you lead with \(see FACTS\); if none does, the email has no statistic\./);
   assert.match(sysText(critic), /2\. A statistic that is not one of payload\.benchmarks, is about a different problem \(its for_pains does not include the pain the email is about\)/);
-  assert.equal(PITCH_PROMPT_VERSION, "pitch-v3.2-2026-10-22");
+  assert.equal(PITCH_PROMPT_VERSION, "pitch-v3.3-2026-10-26");
 });
