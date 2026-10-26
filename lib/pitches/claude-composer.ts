@@ -20,11 +20,11 @@ import {
 import { RUNNA_CAPABILITIES_FOR_PITCHES } from "../runna/capabilities.ts";
 import { HUNTER_URL } from "./industry-templates.ts";
 import { trackedLinkPatternSource } from "./tracked-links.ts";
-import { hasUsableEmail } from "../research/email-utils.ts";
+import { pickAddressContact } from "../research/email-utils.ts";
 import { findBannedTerms } from "./content-rules.ts";
 import { senderIdentity } from "./sender-identity.ts";
 import { writerExemplarSection } from "./exemplars.ts";
-import { greetingName } from "./greeting-name.ts";
+import { greetingName, isRoleInbox } from "./greeting-name.ts";
 import type { ComposedPitch, GeneratorInputs } from "./generator.ts";
 
 // Who the intro line names. Resolved once at module load so each language's
@@ -206,13 +206,14 @@ export async function composePitchWithClaude(
     Math.round((call.data.quality_self_score - violations * 0.15) * 100) / 100,
   );
 
-  // If the primary contact is a role-based inbox (contact@, info@, hello@, etc.),
+  // If the recipient is a role-based inbox (contact@, info@, reginfo@, etc.),
   // append a one-line forwarding ask so the gatekeeper has an easy action.
-  const primaryContact =
-    input.contacts.find((c) => !c.email_is_role_based && c.full_name) ??
-    input.contacts.find((c) => !c.email_is_role_based) ??
-    input.contacts[0];
-  const forwardingLine = primaryContact?.email_is_role_based ? `\n\n${FORWARDING_LINE[lang]}` : "";
+  // The recipient is the one the greeting uses (addressContact), which the
+  // pitch stage has made chooseRecipient's answer: it used to be "the first
+  // non-role contact anywhere in the list", so info@ got no forwarding line
+  // whenever a person was listed below it.
+  const recipient = addressContact(input);
+  const forwardingLine = recipient?.role_based ? `\n\n${FORWARDING_LINE[lang]}` : "";
   // Hard-strip em dashes regardless of Claude's compliance.
   // Replace "— " with ", " and standalone "—" with " " to preserve flow.
   const cleanBody = (call.data.body + forwardingLine)
@@ -320,8 +321,17 @@ export function heldBodyForRevision(body: string): string {
  * (wanted_fact, recorded in wanted_facts for research). The rewrite-with-angle
  * directive no longer bans every number: a benchmark tagged with the angle's
  * pain is allowed, as FACTS 2 says, and the directive names that pain_id.
+ *
+ * v3.3 (2026-10-26, writer-honesty): a calibration study of 30 failed v3.2
+ * drafts. Only what is visible on their site, in tech_stack or what_they_do is
+ * an observation; an evidence_quote marked observed: false (it reads as the
+ * research step's advice) is never turned into something seen; never claim to
+ * have checked how they handle enquiries; the cost line is about businesses in
+ * general and never says you/your/[company]; a benchmark never stretches to
+ * another industry; the salutation is exactly "Hi [first name]," or "Hi
+ * [company] team,", never a name or team built from the address.
  */
-export const PITCH_PROMPT_VERSION = "pitch-v3.2-2026-10-22";
+export const PITCH_PROMPT_VERSION = "pitch-v3.3-2026-10-26";
 
 /** Everything that differs by language. The rules themselves do not. */
 type LanguagePack = {
@@ -351,13 +361,13 @@ function englishPack(): LanguagePack {
       "Direct, understated, confident: Canadian, not American marketing energy. Contractions always (you're, it's, don't).",
     verbs: "answer, reach, fix, lose, miss, book",
     salutation:
-      '"Hi [first name]," when address_contact.first_name is set and reads like a real given name. Otherwise "Hi [company] team,". Never "Hi there,".',
+      'exactly "Hi [address_contact.first_name]," when address_contact.first_name is set. When it is null, exactly "Hi [company] team," with the company_name. Never a name, team or department read from the email address, the full_name or the role ("Hi Manus,", "Hi admissions team,", "Hi Liaisons team,"), never a single initial, never a bare "Hi,", never "Hi there,".',
     intro: [
       `${s.firstName} from ${s.agency} here. We help independent businesses grow without burning money on ads.`,
       `Quick note from ${s.firstName} at ${s.agency}. We work with [industry] businesses on exactly this.`,
     ],
     hook: {
-      good: "Checked your store: nothing follows up when someone leaves without buying",
+      good: "Checked your site: the only way to book is to call during office hours",
       bad: "I noticed an opportunity",
     },
     mechanism: "a few emails that go out on their own to everyone who left something in their cart",
@@ -409,14 +419,14 @@ function spanishPack(size: SizeSignal): LanguagePack {
       : 'Tutea (tú) en todo el correo. Directo y cálido: "tu sitio no tiene forma de agendar", no "hay oportunidades de conversión".',
     verbs: "contestar, llegar, arreglar, perder, agendar, vender",
     salutation: usted
-      ? '"Estimado [nombre]," o "Estimada [nombre]," según el nombre (si no estás seguro, "Hola [nombre],") cuando address_contact.first_name existe y parece un nombre real. Si no, "Hola, equipo de [empresa],". Nunca "Hola there,".'
-      : '"Hola [nombre]," cuando address_contact.first_name existe y parece un nombre real. Si no, "Hola, equipo de [empresa],". Nunca "Hola there,".',
+      ? 'cuando address_contact.first_name existe, exactamente "Estimado [address_contact.first_name]," o "Estimada [address_contact.first_name]," según el nombre (si no estás seguro, "Hola [address_contact.first_name],"). Cuando es null, exactamente "Hola, equipo de [empresa]," con el company_name. Nunca un nombre, equipo o departamento sacado del correo, del full_name o del puesto ("Hola Informes,", "Hola, equipo de reservaciones,"), nunca una inicial sola, nunca "Hola," a secas, nunca "Hola there,".'
+      : 'exactamente "Hola [address_contact.first_name]," cuando address_contact.first_name existe. Cuando es null, exactamente "Hola, equipo de [empresa]," con el company_name. Nunca un nombre, equipo o departamento sacado del correo, del full_name o del puesto ("Hola Informes,", "Hola, equipo de reservaciones,"), nunca una inicial sola, nunca "Hola," a secas, nunca "Hola there,".',
     intro: [
       `Soy ${s.firstName}, de ${s.agency}. Ayudamos a negocios independientes a crecer sin quemar dinero en anuncios.`,
       `${s.firstName}, de ${s.agency}. Trabajamos con negocios de [industria] justo en esto.`,
     ],
     hook: {
-      good: "Revisé tu tienda: nadie le da seguimiento a quien se va sin comprar",
+      good: "Revisé tu sitio: la única forma de agendar es llamar en horario de oficina",
       bad: "Vi una oportunidad",
     },
     mechanism: "unos correos que le llegan solos a quien dejó algo en el carrito",
@@ -472,10 +482,12 @@ Make them curious enough to run the free check or reply. Not to close a deal. On
 
 FACTS: EVERYTHING COMES FROM THE PAYLOAD
 1. About the prospect, say only what the payload says (company_name, industry, city, what_they_do, tech_stack, pain_candidates). Never guess their size, revenue, customers, location or tools.
+   What you may state as something you saw: only what is visible on their site, in tech_stack or in what_they_do, and a pain_candidates evidence_quote marked observed: true. An evidence_quote marked observed: false reads as advice or opinion from our research ("Replace the site with one that shows live wait times"), not as something on their site: never turn it into an observation ("your site doesn't show wait times"); use it only as a general pattern about businesses like theirs, or lead with another pain.
+   You have not contacted them, sent them an enquiry or timed their replies: never claim to have checked how they handle enquiries, calls or bookings, or how fast they answer.
 2. Numbers. A real number makes a cold email more believable; an invented one kills it. Allowed:
    - "about 30 seconds" for the free check;
    - facts about THEM that are in the payload (what_they_do, evidence_quote), e.g. how many locations they run;
-   - statistics from payload.benchmarks: real, sourced research on what businesses that make this kind of change typically see (more enquiries won, hours saved, sales recovered, fewer no-shows). We don't need numbers of our own; this is how the outcome gets a size. Each benchmark lists for_pains, the pains it is about: cite a benchmark ONLY if one of its for_pains is the pain you lead with (the same pain_id), otherwise use no number at all, because a figure about a different problem is worse than none. When one matches, USE it: it is usually the line that makes the reader stop. Keep the figure exactly as given, say where it comes from in a few words (${p.benchmark.attribution}), and frame it as what businesses like theirs experience, saying exactly what the source measured ("get a real conversation" is not "win the client"). Each benchmark carries a caveat: follow it. One per email; two only if they make the same point.
+   - statistics from payload.benchmarks: real, sourced research on what businesses that make this kind of change typically see (more enquiries won, hours saved, sales recovered, fewer no-shows). We don't need numbers of our own; this is how the outcome gets a size. Each benchmark lists for_pains, the pains it is about: cite a benchmark ONLY if one of its for_pains is the pain you lead with (the same pain_id), otherwise use no number at all, because a figure about a different problem is worse than none. When one matches, USE it: it is usually the line that makes the reader stop. Keep the figure exactly as given, say where it comes from in a few words (${p.benchmark.attribution}), and frame it as what businesses like theirs experience, saying exactly what the source measured ("get a real conversation" is not "win the client"). Each benchmark carries a caveat: follow it. Never stretch a figure to another industry or past what it measured ("the same happens in hotels" about a clinic figure). One per email; two only if they make the same point.
    If a statistic would make this email stronger and none of payload.benchmarks has the pain you lead with in for_pains, write no number in the email and put the fact you wish you had in wanted_fact, in plain words, as a question or a description, never a number.
    How to frame it matters: in cold-email data, percentage and ROI claims made by the sender LOWER replies (Gong: -15%), while a number that describes the reader's world reads as insight. So a statistic describes what happens out there or sizes their problem ("most firms never reply to a web enquiry at all"); it never promises the reader a result ("you'll get 30% more").
    Never: a figure you remember, estimate, round or combine; a benchmark presented as OUR result; a percentage promised to the reader; any number in the subject line. benchmarks may be empty, and then the email has no statistic: the pain and the fix carry it.
@@ -497,8 +509,8 @@ THE EMAIL, IN THIS ORDER (nothing added, nothing reordered)
 Length: 60 to 100 words from the salutation to the CTA. Past 100, replies drop sharply (Gong, 2026); the best emails run 50 to 100.
 
 SAY WHAT YOU SAW, THEN WHAT IT TENDS TO COST
-pain_candidates are raw audit findings in technical, usually English, language. Before writing, pick the best one (prefer one with both pain_id and evidence_quote) and say what was found in the plain words the owner would use with a friend. No jargon, never a quote from the audit. That plain observation is your hook, and it may be stated as fact because the payload shows it.
-What it costs them is NOT in the payload: you have not seen their customers, their traffic or their inbox. Say it as what tends to happen to businesses with this gap in general, never as a fact about their own customers, visitors or sales. Word that in your own way each time, not with a stock phrase.
+pain_candidates are raw audit findings in technical, usually English, language. Before writing, pick the best one (prefer one with pain_id, evidence_quote and observed: true) and say what was found in the plain words the owner would use with a friend. No jargon, never a quote from the audit. That plain observation is your hook, and it may be stated as fact because the payload shows it (FACTS 1 says what counts as seen).
+What it costs them is NOT in the payload: you have not seen their customers, their traffic or their inbox. Say it as what tends to happen to businesses with this gap in general, never as a fact about their own customers, visitors or sales. Word that in your own way each time, not with a stock phrase. That sentence is about people or businesses in general: it never says you, your or the company's name ("a student you don't enroll", "te cuesta clientes" are guesses about them).
   NOT: ${p.pain.wrong}
   OK:  ${p.pain.right}
   NOT: ${p.pain.guess}
@@ -552,10 +564,95 @@ OUTPUT: one JSON object with exactly these fields, all required (null only where
 /** The greeting's first name: the rule lives in greeting-name.ts, shared with the exemplar scrubber. */
 export const firstNameGuess = greetingName;
 
+/**
+ * The person this email is addressed to, as the writer and the critic are
+ * shown it: pickAddressContact (the first usable contact, which the pitch
+ * stage makes chooseRecipient's answer) with the greeting's first name and
+ * whether the address is a role inbox (the contact's flag, or a department
+ * address it missed). The forwarding line uses the same answer.
+ */
+export function addressContact(input: Pick<GeneratorInputs, "contacts" | "prospect">): {
+  first_name: string | null;
+  full_name: string | null;
+  email: string | null;
+  role_title: string | null;
+  role_based: boolean;
+} | null {
+  const c = pickAddressContact(input.contacts);
+  if (!c) return null;
+  const roleBased = c.email_is_role_based || isRoleInbox(c.email);
+  return {
+    first_name: firstNameGuess(c.full_name, c.email, roleBased, input.prospect.company_name),
+    full_name: c.full_name,
+    email: c.email,
+    role_title: c.role_title ?? null,
+    role_based: roleBased,
+  };
+}
+
+// ── Evidence: seen, or advice ─────────────────────────────────────────────────
+
+// The research step sometimes writes its RECOMMENDATION into evidence_quote
+// ("Replace outdated WordPress with … live wait times", "Build chatbots for
+// 24/7 inquiry handling"), and the writer repeated it as something it saw
+// ("doesn't show live ED wait times"): 11 of the study's 16 writer errors.
+// Agency verbs a research note opens with. Kept to verbs a site's own call
+// to action rarely uses ("Book now", "Start your free trial", "Crea tu
+// cuenta" are what a site says, so start/book/crea are not here).
+const ADVICE_START_EN = [
+  "build", "replace", "implement", "add", "create", "use", "migrate", "consider", "install",
+  "integrate", "develop", "redesign", "upgrade", "set up", "introduce", "deploy", "optimize",
+  "optimise", "improve", "adopt", "modernize", "modernise", "automate", "establish", "invest in",
+  "rebuild", "revamp", "ensure", "leverage", "streamline", "prioritize", "prioritise",
+];
+// Spanish research notes use the infinitive ("Implementar un chatbot") or the
+// usted imperative ("Considere"); the tu imperative is what sites say.
+const ADVICE_START_ES = [
+  "implementar", "implemente", "crear", "agregar", "anadir", "usar", "utilizar", "migrar",
+  "considerar", "considere", "construir", "reemplazar", "sustituir", "desarrollar", "instalar",
+  "integrar", "lanzar", "redisenar", "actualizar", "mejorar", "optimizar", "automatizar",
+  "incorporar", "habilitar", "invertir en", "establecer", "modernizar", "ofrecer",
+];
+// Noun phrases that open with one of the verbs above and describe the site.
+const OBSERVATION_OPENINGS = ["add to cart", "add to bag", "add to basket", "use of"];
+const ADVICE_PHRASES = [
+  /\bshould\b/, /\bneeds? to\b/, /\brecommend/, /\bought to\b/, /\bwould benefit\b/,
+  /\bcould benefit\b/, /\bit is advisable\b/, /\bopportunity to\b/,
+  /\bdeberian?\b/, /\bnecesitan? (?:un|una|mejorar|implementar|actualizar|agregar|crear)\b/,
+  /\bse recomienda\b/, /\brecomendamos\b/, /\brecomendable\b/, /\bconvendria\b/,
+  /\bseria (?:bueno|conveniente|ideal|recomendable)\b/,
+];
+
+function foldText(s: string): string {
+  return s.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
+}
+
+/**
+ * True when an evidence quote reads as advice or opinion (it starts with an
+ * imperative or infinitive like Build/Replace/Implementar, or says should /
+ * needs to / recommend / debería / se recomienda) rather than something seen
+ * on their site. Such a pain stays usable, marked observed: false, and may
+ * only be framed as a general pattern, never as a fact about them.
+ */
+export function isAdviceQuote(quote: string | null | undefined): boolean {
+  if (!quote) return false;
+  const t = foldText(quote).replace(/^[\s"'“”‘’«»*\-•·:]+/, "").trim();
+  if (!t) return false;
+  if (ADVICE_PHRASES.some((re) => re.test(t))) return true;
+  if (OBSERVATION_OPENINGS.some((o) => t.startsWith(o))) return false;
+  return [...ADVICE_START_EN, ...ADVICE_START_ES].some((v) => t === v || t.startsWith(`${v} `) || t.startsWith(`${v},`));
+}
+
+/** A pain's evidence was seen on their site (normalizePains marks it; anything unmarked is classified here). */
+export function painObserved(p: GeneratorInputs["pains"][number] & { observed?: boolean }): boolean {
+  return p.observed ?? !isAdviceQuote(p.evidence_quote);
+}
+
 function buildStage2UserPrompt(input: GeneratorInputs): string {
   const lang = input.prospect.language;
   // Resolve solution hint for the top pain so Claude has a concrete starting point.
-  const topPain = input.pains.find((p) => p.pain_id && p.evidence_quote)
+  const topPain = input.pains.find((p) => p.pain_id && p.evidence_quote && painObserved(p))
+    ?? input.pains.find((p) => p.pain_id && p.evidence_quote)
     ?? input.pains.find((p) => p.pain_id)
     ?? input.pains[0]
     ?? null;
@@ -575,36 +672,22 @@ function buildStage2UserPrompt(input: GeneratorInputs): string {
     },
     // Baseline solution to propose — tailor this using what_they_do, tech_stack, and industry.
     solution_hint: solutionHint,
+    // observed: false means the quote reads as the research step's advice,
+    // not as something on their site (FACTS 1).
     pain_candidates: input.pains.map((p) => ({
       pain_id: p.pain_id,
       pain_label: p.pain_label,
       evidence_quote: p.evidence_quote,
+      observed: painObserved(p),
     })),
     // The single contact to address, resolved + with a derived first name so the
     // model greets the decision-maker by name instead of defaulting to "team".
-    address_contact: (() => {
-      // MUST be the contact the email will actually be SENT to. `contacts` is
-      // ordered by priority_rank, so the first with a usable email is exactly
-      // what pickTopUsableContact (the send path) resolves.
-      //
-      // This previously preferred "any non-role contact that has a full_name",
-      // which on a prospect with several contacts greeted a DIFFERENT person
-      // than the recipient — a real pitch went to john.sipos@waglaw.net opening
-      // "Hi Mark,". Same class as the Acadian failure: two code paths choosing
-      // "the contact" by different rules.
-      const c =
-        input.contacts.find((x) => hasUsableEmail(x.email)) ??
-        input.contacts[0] ??
-        null;
-      if (!c) return null;
-      return {
-        first_name: firstNameGuess(c.full_name, c.email, c.email_is_role_based),
-        full_name: c.full_name,
-        email: c.email,
-        role_title: c.role_title ?? null,
-        role_based: c.email_is_role_based,
-      };
-    })(),
+    // The single contact to address (addressContact: the recipient), with a
+    // derived first name so the model greets the decision-maker by name
+    // instead of defaulting to "team". It MUST be the contact the email will
+    // actually be SENT to: a real pitch went to john.sipos@waglaw.net opening
+    // "Hi Mark," when this preferred "any non-role contact with a full_name".
+    address_contact: addressContact(input),
     // Sourced benchmarks matching this prospect's pain AND industry: real
     // research on what businesses see after this kind of change (Pedro,
     // 2026-10-16: "base those numbers on facts… even if we personally don't
@@ -667,6 +750,7 @@ ${JSON.stringify(payload, null, 2)}
 
 Using the payload:
 - address_contact is the person who will receive this email. Greet them as the salutation rule says, and set contact_email to address_contact.email.
+- pain_candidates[].observed: true when the evidence_quote reads as something on their site, false when it reads as our research's advice. Only an observed one is something you saw (FACTS 1).
 - prospect.what_they_do: base the hook on what they actually do, not on a generic observation.
 - prospect.tech_stack: see "Their platform" under WORDS.
 - prospect.city: mention it only if it fits naturally, and never claim anything about their city or market that is not in the payload.

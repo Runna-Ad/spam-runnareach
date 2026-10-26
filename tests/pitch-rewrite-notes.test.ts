@@ -3,7 +3,7 @@
  *   - the writer prompt no longer teaches guesses stated as fact (v3);
  *   - an answer that only lacks pain_id or contact_email is no longer thrown
  *     away for a template, while the strict fields stay strict;
- *   - a rewrite's first compose revises the held draft, and two rewrites in
+ *   - a rewrite composes fresh (writer-honesty, was: revises the held draft); two rewrites in
  *     one tick each stay inside the 48 s compose deadline (fake clock).
  */
 
@@ -100,7 +100,7 @@ test("prompt v3: the retired guess-as-fact lines are gone in every language and 
   }
 });
 
-test("critic prompt: every blocking rule is still there, plus the one framing sentence", async () => {
+test("critic prompt: every blocking rule is still there; rule 1 blocks only claims about THIS business", async () => {
   let critic = "";
   install((r) => {
     if (isCritic(r)) {
@@ -112,7 +112,7 @@ test("critic prompt: every blocking rule is still there, plus the one framing se
   const r = await composeWithReview(inputs(), { deadline: Date.now() + 48_000 });
   assert.equal(r.ok, true);
   for (const rule of [
-    "1. A claim about the prospect (what they do, how they work, their customers, their problem) that the payload does not support, or an inference stated as fact.",
+    "1. A sentence that states, about THIS business (it says you, your or the company's name",
     "2. A statistic that is not one of payload.benchmarks",
     "3. RELEVANCE:",
     "4. LANGUAGE:",
@@ -120,8 +120,9 @@ test("critic prompt: every blocking rule is still there, plus the one framing se
     "6. TONE:",
     "7. More than about 140 words before the sign-off.",
   ]) assert.ok(critic.includes(rule), `blocking rule missing: ${rule}`);
-  // The added sentence names both halves: in general it is not an inference; said about THEM it still is.
-  assert.match(critic, /what tends to happen to businesses with that gap in general, is not an inference stated as fact; the same consequence said about this prospect's own customers, visitors, patients or sales \("most of your visitors leave", "you're losing patients"\) still is\.\n/);
+  // Both halves: in general it is allowed; said about THEM it still blocks.
+  assert.match(critic, /a sentence about people or businesses in general \(what tends to happen with this gap\), with or without a hedge/);
+  assert.match(critic, /The same goes for a consequence said about this prospect's own customers, visitors, patients or sales \("most of your visitors leave", "you're losing patients"/);
   for (const cue of CUES) assert.ok(!critic.includes(cue), `critic carries the cue "${cue}"`);
 });
 
@@ -157,43 +158,13 @@ test("the strict fields stay strict: missing quality_self_score or measurable_re
   assert.equal((await composePitchWithClaude(inputs())).ok, false);
 });
 
-// ── Revise the held draft first ───────────────────────────────────────────────
+// ── A rewrite composes fresh (writer-honesty) ──────────────────────────────────
 
-const HELD = {
-  subject: "clinica sur loses patients at night",
-  body: "Hi Sarah,\n\nEveryone who finds you on their phone after hours just leaves.\n\nHenry\nRunna Advertising",
-  issues: ["Unsourced number: 3 seconds", "Inference stated as fact: 'everyone who finds you after hours just leaves'", "(polish) subject is long"],
-};
-
-test("reviseFirst: the first composer call carries the held draft and its notes; no reviseFirst composes fresh", async () => {
+test("the first compose is always fresh: no REVISION block, no held text (writer-honesty: reviseFirst is gone)", async () => {
   const calls = install((r) => (isCritic(r) ? JSON.stringify({ score: 0.9, issues: [] }) : answer()));
-  const r = await composeWithReview(inputs(), { deadline: Date.now() + 48_000, reviseFirst: HELD });
+  const r = await composeWithReview(inputs(), { deadline: Date.now() + 48_000 });
   assert.equal(r.ok, true);
-  const firstUser = calls[0]!.messages[0]!.content;
-  assert.match(firstUser, /⚑ REVISION/);
-  assert.ok(firstUser.includes(`Subject: ${HELD.subject}`));
-  assert.ok(firstUser.includes(HELD.body));
-  for (const i of HELD.issues) assert.ok(firstUser.includes(`- ${i}`), i);
-
-  const fresh = install((r2) => (isCritic(r2) ? JSON.stringify({ score: 0.9, issues: [] }) : answer()));
-  await composeWithReview(inputs(), { deadline: Date.now() + 48_000 });
-  assert.doesNotMatch(fresh[0]!.messages[0]!.content, /⚑ REVISION/);
-});
-
-test("reviseFirst: a later revision in the loop uses the new draft's notes, not the held draft", async () => {
-  let n = 0;
-  const calls = install((r) => {
-    if (isCritic(r)) return JSON.stringify({ score: 0.6, issues: [{ issue: `note ${n}`, blocking: true }] });
-    n++;
-    return answer({ subject: `draft number ${n}` });
-  });
-  const r = await composeWithReview(inputs(), { deadline: Date.now() + 120_000, reviseFirst: HELD });
-  assert.equal(r.ok, true);
-  const composes = calls.filter((c) => !isCritic(c));
-  assert.equal(composes.length, 3); // revise-held + MAX_REVISIONS (2)
-  const second = composes[1]!.messages[0]!.content;
-  assert.ok(second.includes("Subject: draft number 1"));
-  assert.ok(!second.includes(HELD.body));
+  assert.doesNotMatch(calls[0]!.messages[0]!.content, /⚑ REVISION/);
 });
 
 test("deadline: two rewrites in one tick each stay inside their 48 s compose deadline (fake clock)", async () => {
@@ -212,9 +183,9 @@ test("deadline: two rewrites in one tick each stay inside their 48 s compose dea
     const startedAt = clock;
     const deadline = startedAt + 48_000;
     ends.length = 0;
-    const r = await composeWithReview(inputs(), { deadline, now, reviseFirst: HELD });
+    const r = await composeWithReview(inputs(), { deadline, now });
     assert.equal(r.ok, true);
-    // One compose (the revision of the held draft) and one critic fit; no second compose starts.
+    // One compose (the fresh rewrite) and one critic fit; no second compose starts.
     assert.deepEqual(ends.map((e) => e.kind), ["compose", "critic"], `rewrite ${rewrite}`);
     for (const e of ends) assert.ok(e.at <= deadline, `rewrite ${rewrite}: ${e.kind} ended ${e.at - deadline} ms past the deadline`);
   }
