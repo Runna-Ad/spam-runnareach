@@ -5,6 +5,7 @@ file alone. Update it on every spawn, every status change, every merge. Keep clo
 for the current phase; move older ones to the retro.
 
 ## Current phase
+`phase3-batch9` ACTIVE since 2026-10-26 15:20 UTC on `claude/phase3-batch9-integration` (main 7e55e1b + batch 8 notes). **Owner: session_01HtEg7XG4MPQU4omrd2BX69.** Rows and log: "Batch 9" section at the end.
 `phase3-batch8` SHIPPED 2026-10-22 21:31 UTC (main 7e55e1b, PR #59; 0051 + 0052 applied first) — active since 2026-10-22 16:20 UTC on `claude/phase3-batch8-integration` (main 4418e8d + batch 7 notes). **Owner: session_01HtEg7XG4MPQU4omrd2BX69.** Rows and log: "Batch 8" section at the end.
 `phase3-batch7` SHIPPED 2026-10-21 21:57 UTC (main 4418e8d, PR #51, migration 0050 applied first; deploy READY). Was active since 2026-10-21 20:17 UTC on `claude/phase3-batch7-integration` (cut from main c548bc0 + batch 6 notes/vercel-ignore fix). **Owner: session_01HtEg7XG4MPQU4omrd2BX69.** Rows and log: "Batch 7" section at the end. `phase3-batch6` SHIPPED 2026-10-20 21:24 UTC (main c548bc0, PR #46, no migrations). `phase3-batch5` SHIPPED 2026-10-20 17:08 UTC (main 6ab2d62, PR #43). Previous owner session_017nqBxLFFXKbhDwKiPi6xLf (handed off 2026-10-21 20:16). Older lines below.
 `phase3-batch3` SHIPPED 2026-10-19 00:19 UTC (main 9c98448, PR #25); Q1 follow-up SHIPPED 2026-10-19 (merged 01:14 UTC, READY by 01:19; main 729b299, PR #27, deploy dpl_J3tEospxUg8mzz27FkAuGdUTcuPv READY). **Owner: session_017nqBxLFFXKbhDwKiPi6xLf.** #17 SHIPPED switched off 04:24 UTC (main 3808b56, PR #28). Weekly report HTML + exemplar readiness SHIPPED 13:58 UTC (main 45519c8, PR #29). Integration branch = main via merge commits (no force push).
@@ -372,3 +373,16 @@ Log:
 - 2026-10-22 21:55 UTC — Prod deploy dpl_EUKKsrXEEpBCy5euBDAX61Sb2KRk READY for 7e55e1b (aliases incl. runna-check.vercel.app). Checks: cron_heartbeats 4 rows, all ok, no errors (tick 21:45, poll 21:45, follow-up 21:47 = :07 schedule live, send-queue 21:50); misfiled reply/bounce on follow-ups = 0 → backfill not needed (would move 0 rows); /r/zzzzzzzz on runna-check → 302 to runna-hunter with params, no r, attacker param dropped, no-store; stage veto/enabled, 0 paused inboxes; 0 tick_errors / gmail.send_failed / health.alert rows since deploy. Not checked: health dry run (needs CRON_SECRET), Sentry warning routing. First-send-window check armed 2026-10-23 16:20 UTC. Batch 8 CLOSED.
 - 2026-10-26 15:00 UTC — (session idle over the weekend; checks run late.) First send window after batch 8 (Fri 10-23): 3 first emails 15:00/15:10/15:20 (pacing: 10-min gaps, none < 3 min); all 3 drafted BEFORE the deploy so they carry the old direct link with r=code (attribution still works via scans; clicks not counted); all 73 drafts written since the deploy carry runna-check.vercel.app/r/. 0 follow-ups sent. Heartbeats 4/4 fresh, no errors; 0 health.alert / tick_errors / gmail.send_failed / redraft_failed rows; 0 clicks yet.
 - 2026-10-26 15:00 UTC — Batch 6 three-day rewrite check (results in project-state batch 6): rewrites got WORSE, 10/68 sent-or-approved (14%) vs 41% baseline; revised 12% vs fresh 27%. 79% of critic failures = a guess stated as fact about the prospect. Proposed to Pedro as batch 9 scope.
+
+## Batch 9 (phase3) — started 2026-10-26 15:20 UTC
+Scope (Pedro 2026-10-26 "go with all three and run batch 9", plus the digest noise): (1) stop guesses stated as fact (writer and/or critic calibration, measured on real failed drafts); (2) rewrites compose fresh instead of revising the held draft (fresh 27% vs revised 12% sent/approved); (3) greeting rules (role inbox → "Hi <company> team", no "pass this along"); (4) the veto digest announces each email once (Pedro: 6-8 digests listing the same prospects; "1 or 2 heads up is more than enough").
+Evidence: batch 6 three-day check (project-state batch 6): rewrites 10/68 sent/approved vs 41% baseline; 79% of critic failures = guess stated as fact. Digest audit rows 10-21..26: 12 digests, same queue repeated over the weekend.
+Workers: writer-honesty (1-3, pitches hub, opus/high), digest-once (4, lib/autopilot, opus/high), parallel (disjoint files). Writer brief waits for a 30-draft calibration study (Opus subagent, running) so it fixes the right side.
+
+| Slug | Module | Model/effort | Branch | Session | PR | Depends on | Status | Turns | Review findings | CI reds | Rework |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| digest-once | veto digest: each email announced once, no empty digest, truthful subject | opus/high | claude/digest-once | — | — | — | queued | | | | |
+| writer-honesty | writer + critic calibration on guesses, greeting rules, fresh rewrites, prompt v3.3 | opus/high | claude/writer-honesty | — | — | calibration study | briefing | | | | |
+
+Log:
+- 2026-10-26 15:20 UTC — Pedro picked all three + digest fix. Integration cut (main merged into batch 8 notes; code identical to main). digest-once brief written; calibration study running.
