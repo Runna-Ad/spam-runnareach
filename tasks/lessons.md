@@ -2,6 +2,13 @@
 
 > Sections older than phase 3 batch 8 (batch 7 back to April 2026) moved to `tasks/archive/lessons-2026-10.md` on 2026-10-27. Grep it; do not load it whole.
 
+## Conductor v2 (2026-10-27)
+
+[2026-10-27] LESSON: a notes-only merge to main still rebuilds production
+WHAT HAPPENED: I told Pedro twice that PR #64 (only tasks/, .claude/, *.md) would deploy nothing because scripts/vercel-ignore.sh skips notes. The script's first line exits 1 (build) for every production deploy; it only skips previews. Merging #64 started production build dpl_AicBFtzynf3dEaNvpFxmiG21c87N of unchanged app code.
+RULE: Before saying what a merge will or will not deploy, read the ignore script's production branch, not just its comment. A notes-only merge to main = a production rebuild of the same code (harmless, but it is a deploy and costs a build).
+TAGS: #lesson #vercel #deploy #claims
+
 ## Overrides from archived sections (copied verbatim; the originals are in `tasks/archive/lessons-2026-10.md`)
 Every PEDRO_OVERRIDE stays readable here. Newer overrides are in the sections below.
 
