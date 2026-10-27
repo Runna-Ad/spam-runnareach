@@ -1,6 +1,6 @@
 ---
 name: conductor
-description: Operating procedure for a conductor session, the one agent that decides whether work should be split at all, then briefs workers on the right model, reviews and integrates their PRs, runs the retro, and talks to the owner once per batch. Use when asked to run a phase, a batch, or to "conduct" work, or when resuming a conductor session from tasks/board.md.
+description: Operating procedure for a conductor session, the one agent that decides whether work should be split at all, then briefs workers on the right model, reviews and integrates their PRs, runs the retro, and talks to the owner once per batch. Use when asked to run a phase, a batch, or to "conduct" work, or when resuming a conductor session from tasks/board.md. Also SUGGEST it in one line, without starting it, when a request has 3 or more separable parts, spans several modules, or would take more than a couple of hours; the person decides.
 ---
 
 # Conductor procedure
