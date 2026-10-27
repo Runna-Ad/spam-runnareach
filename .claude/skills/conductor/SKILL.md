@@ -47,11 +47,20 @@ Check which tools exist before planning; never promise a mechanism you do not ha
 | Second brain | the owner's hooks (see config) | ask the owner to attach it before planning |
 
 ## 1. Setup (once per project)
-Copy the skeletons from this skill's `templates/` folder into `tasks/`: `board.md`,
+Copy the skeletons from `${CLAUDE_SKILL_DIR}/templates/` (this skill's own folder) into `tasks/`: `board.md`,
 `routing.md`, `conductor-config.md`, `briefs/TEMPLATE.md`, `briefs/_core-context.md`,
 `retros/README.md`, `lessons-inbox/README.md`, `checklists/brief-misses.md`,
 `checklists/review-misses.md`. Fill `conductor-config.md` and `_core-context.md` from the
-repo (stack, commands, rules); ask the owner only what the repo cannot answer. Commit.
+repo (stack, commands, rules); ask the owner only what the repo cannot answer.
+Cloud sessions load only what is in the repo (never `~/.claude` skills or plugins). If
+this project will run a cloud conductor or cloud workers, also copy the `conductor`,
+`worker` and `steward` skills and the `reviewer`, `opus-worker` and `sonnet-worker` agents
+into the repo's `.claude/skills/` and `.claude/agents/`, unchanged. Commit.
+
+**Two copies, one text.** The owner keeps these skills and agents at user level
+(`~/.claude/`, synced between their machines) and projects may carry repo copies. They stay
+identical: when a retro edits one, apply the same edit to the other. A commit to
+`~/.claude` reaches every machine, so it needs the owner's OK first.
 
 ## 2. Decide whether to conduct (every batch, before any brief)
 **Separability test.** For each task, list what it WRITES: files, tables, shared state
@@ -125,7 +134,7 @@ Rung 3, cloud:
 create_session(
   title: "<slug>", model: "<from routing>",
   source_url: <repo>, source_revision: "claude/<phase>-integration",
-  prompt: "Read .claude/skills/worker/SKILL.md, then tasks/briefs/<slug>.md. Conductor session: <your id>. Do the task."
+  prompt: "Use the worker skill (.claude/skills/worker/SKILL.md in this repo), then read tasks/briefs/<slug>.md. Conductor session: <your id>. Do the task."
 )
 ```
 Do not pass `permission_mode` (the inherited mode runs install, tests, push and PR without
