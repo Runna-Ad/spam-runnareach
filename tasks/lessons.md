@@ -39,6 +39,11 @@ WHAT HAPPENED: the health check dedupes each alert kind for 24h. Hourly, a suppr
 RULE: When a job's runs get further apart, check every dedupe, cooldown and "retry next run" against the new gaps. Key a dedupe on what the alert is about (the window, the inbox), not only its kind, and give a time cutoff a few minutes of slack for runs on a fixed minute.
 TAGS: #lesson #health #cron #dedupe
 
+[2026-10-26] LESSON: read the clock right before a step whose safety depends on the time
+WHAT HAPPENED: I told Pedro "it's 16:48 UTC, inside the send window, the right time to apply 0053". He logged in to Vercel about ten hours later; the merge record said 02:59 UTC. Applying 0053 then, outside the window and before any new-code health run, would have left Sentry on the old health-check schedule overnight (one false "missed" issue). Caught only because `gh pr view` printed mergedAt.
+RULE: Before any step whose safety depends on the hour (migrations that move cron jobs, send windows, deploy order), run `date -u` in the same turn. A time read earlier in the session is a fact about then, not now.
+TAGS: #lesson #time #ship #cron
+
 ## Merged from lessons-inbox, batch 9 (2026-10-26)
 
 <!-- from digest-once -->

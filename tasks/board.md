@@ -36,7 +36,7 @@ Previous: `phase3-batch2` CLOSED (main e10a326). Rows, log and hand-off in `task
 | 0050 | batch 7: `0050_wanted_facts.sql` | APPLIED 2026-10-21 21:56 UTC via connector before the merge, verified, version normalised to 0050 |
 | 0051 | batch 8 health-alarms: `0051_cron_heartbeats.sql` | APPLIED 2026-10-22 21:28 UTC via connector, verified (6 cols, RLS on, 0 policies), version normalised to 0051 |
 | 0052 | batch 8 send-pacing: `0052_follow_up_every_10min.sql` | APPLIED 2026-10-22 21:29 UTC via connector, verified (spam-follow-up = 7-59/10 15-22 * * 1-5, active), version normalised to 0052 |
-| 0053 | quiet hours (branch `perf/quiet-hours-cron`, PR #63, outside the batch flow): `0053_quiet_hours_cron.sql` (moves 12 pg_cron jobs) | used; apply AFTER the deploy |
+| 0053 | quiet hours (branch `perf/quiet-hours-cron`, PR #63, outside the batch flow): `0053_quiet_hours_cron.sql` (moves 12 pg_cron jobs) | APPLIED 2026-10-27 03:28 UTC via connector after the deploy was READY, verified (12 schedules), version normalised to 0053 |
 | 0054 | — | free |
 
 ## Active and queued tasks

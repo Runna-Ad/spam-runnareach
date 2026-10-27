@@ -16,9 +16,11 @@ Why: Vercel's free team hit 75% of its 4h Fluid Active CPU. pg_cron woke this ap
 - [x] BOUNCE_REPAIR_WINDOW_MS widened to 26h (Pedro, 2026-10-26: keeping dead addresses off sends wins over a /compliance removal sticking)
 - [x] Calendar sync and health check: hourly 15–23 UTC on weekdays + once a day at 13:05 / 13:25 (168 → 52 a week each, Pedro 2026-10-26)
 - [x] Docs carry the new pace (project-state.md tick + scheduler lines, briefs/_core-context.md)
-- [ ] Ship (Pedro said "ship it" 2026-10-26), in this order: merge, deploy READY, THEN apply 0053 and verify the twelve schedules. Tell the batch 9 conductor that 0053 is taken.
-- [ ] After ship: read `net._http_response` for the first quiet runs (23:05 poll, 23:15 tick, 23:25 health, 01:15 tick)
-- [ ] Not checked: per-project CPU and the reset date (Vercel dashboard Usage page, needs Pedro's login)
+- [x] Shipped 2026-10-27: PR #63 merged (fe770ee), deploy READY ~03:01 UTC, 0053 applied 03:28 UTC and verified (12 schedules). 0053 marked on tasks/board.md (the batch 9 conductor runs elsewhere).
+- [ ] After ship: read `net._http_response` for the first quiet runs (Tue 2026-10-27 13:05 poll + calendar, 13:15 tick, 13:25 health, 14:45 pre-window; 23:05 / 23:15 / 23:25; Wed 01:15 tick)
+- [ ] After a week: spam-runnareach Fluid Active CPU on the Vercel Usage page (was 1h 44m of 3h 8m, Sep 26 to Oct 26)
+- [ ] These notes reach `main` with the next batch's integration branch (from `perf/quiet-hours-cron`; a notes-only merge would rebuild production)
+- [x] Vercel Usage (Pedro logged in 2026-10-26): Sep 26 to Oct 26 period, team 3h 8m of 4h; spam-runnareach 1h 44m, greenlight 35m, social-influencers 30m, runna-barcode-studio 15.5m, runna-pitch 3.5m. Resets on the 26th at 8pm.
 
 Not fixing (review 2026-10-26): dropping the 13:05 pg_cron poll because vercel.json also polls at 13:00 (Vercel's free plan fires that cron at a fixed random minute inside the hour, so it can land after the 13:15 tick).
 

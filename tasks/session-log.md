@@ -1482,3 +1482,12 @@ marketing-context only if it bites.
 **Not checked:** health dry run (needs CRON_SECRET); whether Sentry warning alerts reach Pedro; tracked links in real bodies (first send window tomorrow).
 **Waiting on Pedro:** nothing.
 **Next:** 2026-10-23 16:20 UTC first-send-window check (armed); Fri 2026-10-23 21:30 UTC rewrite comparison; Wed 2026-10-28 14:35 UTC first fact-research check; 2026-10-31 first re-drafts possible. Next batch candidates (board/audit): prospect-local send windows, veto day-skip (audit item 12), wanted-fact dedupe across wordings, Gmail send timeouts not counted, send-queue .limit(50) starvation.
+
+## 2026-10-27 03:35 UTC — quiet hours (branch perf/quiet-hours-cron, PR #63)
+**Shipped:** main fe770ee (PR #63) on Pedro's "ship it": pg_cron keeps its pace in the weekday send window and runs a few times outside it (0053, about 1,477 fewer Vercel cold starts a week); Sentry includeLocalVariables off (0.95s → 0.67s CPU per cold start, measured); health rules count scheduled runs; emails_stuck dedupes per window; bounce repair looks back 26h; /inbox replies check Gmail for unread mail first; unsubscribe page says "within 24 hours". Deploy dpl_FQ15N1GERsfssWG4NvDxbc9fsfY4 READY ~03:01 UTC, then 0053 applied 03:28 UTC, verified (12 schedules), version normalised.
+**Why:** Vercel's free team hit 75% of its 4h Fluid Active CPU. Usage page (Sep 26 to Oct 26): 3h 8m used; spam-runnareach 1h 44m, greenlight 35m, social-influencers 30m, runna-barcode-studio 15.5m, runna-pitch 3.5m.
+**Decisions (Pedro):** off-hours pace = one run after the window + once a day (PEDRO_OVERRIDE); measure Sentry before removing it (PEDRO_OVERRIDE); 26h bounce-repair window; calendar sync and health check get the same treatment; no Vercel Pro.
+**Review:** Opus reviewer on the last delta: merge, nothing blocking; its one real regression (emails_stuck dedupe) fixed before the merge.
+**Not checked:** first quiet runs (Tue 13:05-14:45 UTC, 23:05-23:25, Wed 01:15); real CPU saving (after a week, Usage page); whether Sentry still keeps cron monitors at all.
+**Waiting on Pedro:** nothing.
+**Next:** check net._http_response for the first quiet runs; notes on perf/quiet-hours-cron go to main with the next batch's integration branch.
