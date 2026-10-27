@@ -1,6 +1,6 @@
 ---
 name: worker
-description: Operating procedure for a S.P.A.M. worker session or sub-agent that was given a brief in tasks/briefs/. Use when the prompt names a brief file. Covers what to read, what not to read, how to work, how to open the PR and how to report.
+description: Operating procedure for a worker session or sub-agent that was given a brief in tasks/briefs/ by a conductor. Use when the prompt names a brief file. Covers what to read, what not to read, how to work, how to open the PR and how to report.
 ---
 
 # Worker procedure
@@ -15,17 +15,19 @@ You were given one brief. Your job is that brief, done well, with the fewest tok
 3. Only the files the brief lists. Prefer `Grep` and ranged `Read` over whole-file reads.
 
 All paths are relative to the repo root your prompt names (your worktree or clone).
-Never open `tasks/lessons.md`, `tasks/session-log.md`, `tasks/todo.md`,
-`tasks/audit-2026-10-16.md` or `tasks/project-state.md` unless the brief names a section.
-The CLAUDE.md line that says to read them first does not apply to workers.
+Never open project history (`tasks/lessons.md`, `tasks/session-log.md`, `tasks/todo.md`,
+`tasks/project-state.md`, `tasks/archive/`, audit docs, `tasks/conductor-config.md`) unless
+the brief names a section. A CLAUDE.md line that says to read them first does not apply
+to workers.
 
 ## 2. Set up
 ```
 git fetch origin <integration-branch>
 git checkout -B claude/<slug> origin/<integration-branch>
-ls node_modules >/dev/null 2>&1 || npm ci
 ```
-Run `npm test` once before changing anything and note the passing count. If it is not
+Install dependencies and run the checks exactly as `_core-context.md` "Stack and commands"
+says (for example `npm ci`, then typecheck, lint, test). Run the
+tests once before changing anything and note the passing count. If it is not
 green on a clean checkout, report that to the conductor immediately and stop.
 
 ## 3. Work
@@ -44,14 +46,11 @@ green on a clean checkout, report that to the conductor immediately and stop.
   say so in your report's first lines, not only in the lessons inbox.
 
 ## 4. Verify before the PR
-```
-npm run typecheck && npm run lint && npm test
-```
-All three green, locally, every time. Then re-run each acceptance check from the brief
+Run the project's checks (from `_core-context.md`). All green, locally, every time. Then re-run each acceptance check from the brief
 and capture the output for the PR body. For a bug fix or a review fix, prove the new
 tests guard something: run them against the code they guard against (the base branch for
 a bug fix, your own earlier commit for a review fix) and record the fail count in the PR body.
-Re-read your own diff once, adversarially: what would the reviewer's checklist in `.claude/agents/reviewer.md` flag?
+Re-read your own diff once, adversarially: what would the reviewer's principles (`.claude/agents/reviewer.md`) and the project lines in `tasks/checklists/review-misses.md` flag?
 
 ## 5. Write the lessons inbox
 `tasks/lessons-inbox/<slug>.md`, format in `tasks/lessons-inbox/README.md`. Include
@@ -69,9 +68,11 @@ landed reinvents it otherwise (phase 3 batch 1: two PRs each wrote their own
 ```
 git fetch origin <integration-branch>
 git merge --no-edit origin/<integration-branch>
-npm run typecheck && npm run lint && npm test
+<the project's checks>
 git push -u origin claude/<slug>
 ```
+No GitHub in this session (the brief or the conductor says "local mode"): commit to
+`claude/<slug>`, skip the push and the PR, and return the PR body below as your output.
 Open the PR against the branch named in the brief (never `main`). The PR body IS your
 report: the conductor is woken by the PR-opened event and reads the top block first.
 PR body:
@@ -116,7 +117,7 @@ tasks/briefs/<slug>.md
 
 ## 7. Stop
 Do NOT `send_message` the conductor when you are done: the PR-opened event already wakes
-it, and the message is the only step that prompts Pedro for permission. Message the
+it, and the message is the only step that prompts the owner for permission. Message the
 conductor only when you are BLOCKED (`BLOCKED <slug> | tried … | need … | meanwhile …`).
 
 If you are an in-session sub-agent rather than a remote session, return the PR body's

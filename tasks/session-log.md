@@ -1489,3 +1489,9 @@ marketing-context only if it bites.
 **Not checked:** whether drafts improve (2-day check armed 2026-10-28 17:00 UTC).
 **Waiting on Pedro:** nothing.
 **Next:** 2026-10-28 17:00 UTC v3.3 check; Wed 10-28 14:35 UTC fact-research check; 10-31 first re-drafts. Next-batch notes in project-state batch 9 (research advice at the source, one greeting predicate for the send gate, numbers in advice quotes, digest limit 200).
+
+## 2026-10-27 03:42 UTC — conductor session_01HtEg7XG4MPQU4omrd2BX69 (conductor v2, branch claude/conductor-v2)
+**Done:** conductor/worker/steward skills and reviewer/worker agents made project-neutral (plugin-ready); S.P.A.M. specifics moved to tasks/conductor-config.md. New in the conductor skill: environment check with fallbacks (Mac without cloud tools), "decide whether to conduct" (separability test + 4-rung size ladder), measure-before-briefing step, 8 brief principles (35 old lines kept as examples in tasks/checklists/brief-misses.md), reliability section, memory hygiene at each retro, check for work shipped outside the flow (PR #63 took 0053). Reviewer: principles + tasks/checklists/review-misses.md (all 43 old lines kept). Templates for a new project in .claude/skills/conductor/templates/. Board 396 → 145 lines, lessons.md 2,238 → 319 (archives in tasks/archive/, every PEDRO_OVERRIDE kept in lessons.md; line-by-line check: nothing lost).
+**Checks run:** npm test 1566/1566 (notes-only change; scripts/vercel-ignore.sh skips the Vercel build for it).
+**Not checked:** the new skills in a real batch; whether Pedro's Stop hook re-captures the 14 copied overrides as new lessons.
+**Waiting on Pedro:** review + merge of the conductor-v2 PR; then the plugin step.
