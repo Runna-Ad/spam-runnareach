@@ -5,6 +5,23 @@ Deck: `/Users/work/Downloads/SPAM_Partner_Deck.pdf`
 
 ---
 
+## Quiet hours: Vercel CPU (branch perf/quiet-hours-cron, 2026-10-26)
+
+Why: Vercel's free team hit 75% of its 4h Fluid Active CPU. pg_cron woke this app ~2,300 times a week.
+
+- [x] 0053: tick and reply poll keep their pace in the send window; outside it, close / evening / morning / pre-window runs (polls 1,008 → 252 a week, ticks 672 → 183)
+- [x] Health check reads several schedules per job; autopilot_stopped counts missed scheduled ticks, not hours
+- [x] Sentry includeLocalVariables off (measured 0.95s vs 0.67s CPU per cold start)
+- [x] Review fixes: Monday 01:15 digest tick, 23:15 close tick (UTC-day breakers), 14:45 pre-window tick (kill switch), /inbox reply asks Gmail for unread mail first, unsubscribe page says "within 24 hours"
+- [x] BOUNCE_REPAIR_WINDOW_MS widened to 26h (Pedro, 2026-10-26: keeping dead addresses off sends wins over a /compliance removal sticking)
+- [x] Calendar sync and health check: hourly 15–23 UTC on weekdays + once a day at 13:05 / 13:25 (168 → 52 a week each, Pedro 2026-10-26)
+- [x] Docs carry the new pace (project-state.md tick + scheduler lines, briefs/_core-context.md)
+- [ ] Ship (Pedro said "ship it" 2026-10-26), in this order: merge, deploy READY, THEN apply 0053 and verify the twelve schedules. Tell the batch 9 conductor that 0053 is taken.
+- [ ] After ship: read `net._http_response` for the first quiet runs (23:05 poll, 23:15 tick, 23:25 health, 01:15 tick)
+- [ ] Not checked: per-project CPU and the reset date (Vercel dashboard Usage page, needs Pedro's login)
+
+Not fixing (review 2026-10-26): dropping the 13:05 pg_cron poll because vercel.json also polls at 13:00 (Vercel's free plan fires that cron at a fixed random minute inside the hour, so it can land after the 13:15 tick).
+
 ## Phase 0 — Foundation (shipped)
 
 ### Code scaffolding (complete)

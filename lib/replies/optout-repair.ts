@@ -22,9 +22,9 @@
 //   bounced  → the NDR body is stored, so the dead address is re-parsed with the
 //              same parser the poll uses (lib/replies/bounce-parse.ts) and the
 //              address goes on the list as "bounced". Only bounces STORED in the
-//              last BOUNCE_REPAIR_WINDOW_MS: the gap is minutes wide, and a person
-//              who removes a bounced row in /compliance (a hard delete) must not
-//              see it come back.
+//              last BOUNCE_REPAIR_WINDOW_MS (26h: the longest gap between polls
+//              plus a margin), so a bounced row a person removes in /compliance
+//              (a hard delete) after that does not come back.
 //
 // "On the list" is the send gate's own predicate (lib/discover/dnc-check.ts):
 // the lowercased address or its lowercased domain, exact match. A legacy
@@ -47,8 +47,8 @@ type AnySupabase = any;
 /**
  * Repairs started per run (opt-outs first, then bounces). Each recordOptOut is
  * ~7 small queries, so 10 is a few seconds at worst; the poll runs every 10
- * minutes, so even a backlog of 100 clears within two hours, while the thread
- * polling and the lead alerts keep their budget.
+ * minutes in the send window (0053), so even a backlog of 100 clears within its
+ * first two hours, while the thread polling and the lead alerts keep their budget.
  */
 export const REPAIRS_PER_RUN = 10;
 /** No repair is STARTED after this deadline offset; leftovers wait for the next run. */
@@ -67,9 +67,14 @@ export const REPAIR_SETTLE_MS = 5 * 60_000;
 export const REPAIR_SCAN_LIMIT = 1000;
 /**
  * Bounces are repaired only within this long of being stored (classified_at, so
- * a late-imported NDR still qualifies): ~10 sweep attempts after the settle wait.
+ * a late-imported NDR still qualifies). addEmailToDnc swallows its own errors,
+ * so this sweep is the only retry of a failed insert. Outside the send window
+ * the poll runs after it and once a day (0053): the longest gap is 24h, so 26h
+ * gives every stored bounce at least one pass. The cost (Pedro 2026-10-26):
+ * a bounced row someone removes in /compliance within 26h can come back;
+ * keeping a dead address off our sends wins.
  */
-export const BOUNCE_REPAIR_WINDOW_MS = 2 * 60 * 60_000;
+export const BOUNCE_REPAIR_WINDOW_MS = 26 * 60 * 60_000;
 /** PostgREST puts `in` lists in the URL; keep each one short. */
 const IN_CHUNK = 100;
 

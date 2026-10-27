@@ -1,7 +1,8 @@
 // ─────────────────────────────────────────────────────────────────────────────
 // app/api/autopilot/tick/route.ts
-// The autopilot's heartbeat. Supabase pg_cron calls it every 15 minutes
-// (migration 0041); it can also be called by hand with the cron secret.
+// The autopilot's heartbeat. Supabase pg_cron calls it every 15 minutes in the
+// send window, after it and once a day (migrations 0041, 0053); it can also be
+// called by hand with the cron secret.
 //
 // For every tenant with an autonomy_state row, runs one tick as that tenant's
 // system actor (lib/autopilot/tick.ts): breakers, watchdog, scout, labels,

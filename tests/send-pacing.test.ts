@@ -23,7 +23,7 @@ import {
   PER_RUN_TOTAL,
   RUN_LIMIT_REASON,
 } from "../lib/pitches/send-pacing.ts";
-import { CRON_JOBS } from "../lib/reports/heartbeat.ts";
+import { CRON_JOBS, cronsOf } from "../lib/reports/heartbeat.ts";
 
 type Due = { id: string; inbox: string | null; fails?: "skip" | "throw" | "after-compose" };
 type Outcome = { id: string; status: "sent" | "skipped" | "error"; reason?: string };
@@ -169,11 +169,10 @@ test("0052 moves spam-follow-up to every 10 minutes at :07, by job id, idempoten
   assert.match(code, /cron\.alter_job\(job_id := v_job, schedule := '7-59\/10 15-22 \* \* 1-5'\)/);
   assert.match(code, /cron\.schedule\('spam-follow-up', '7-59\/10 15-22 \* \* 1-5', \$job\$select public\.spam_cron_call\('\/api\/pitches\/follow-up'\)\$job\$\)/);
   assert.doesNotMatch(code, /unschedule|drop /i);
-  assert.equal(CRON_JOBS["follow-up"].cron, "7-59/10 15-22 * * 1-5");
-  assert.equal(CRON_JOBS["follow-up"].migration, "0052");
+  assert.deepEqual(CRON_JOBS["follow-up"].schedules, [{ pgJob: "spam-follow-up", cron: "7-59/10 15-22 * * 1-5", migration: "0052" }]);
   // Same window as the send-queue (:00), 2 minutes after the reply poll (:05).
-  assert.equal(CRON_JOBS["send-queue"].cron, "*/10 15-22 * * 1-5");
-  assert.equal(CRON_JOBS["replies-poll"].cron, "5-59/10 * * * *");
+  assert.deepEqual(cronsOf("send-queue"), ["*/10 15-22 * * 1-5"]);
+  assert.equal(CRON_JOBS["replies-poll"].schedules[0].cron, "5-59/10 15-22 * * 1-5");
   // Ship order is written where the conductor applies it.
   assert.match(sql, /SHIP ORDER: apply this migration BEFORE deploying/);
 });

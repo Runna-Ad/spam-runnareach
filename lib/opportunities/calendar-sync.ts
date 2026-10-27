@@ -3,8 +3,9 @@
  *
  * Pedro puts a Google Calendar appointment-schedule link in front of
  * interested prospects. A booking is an event on the booking inbox's primary
- * calendar with the prospect as an attendee. Every hour (pg_cron, migration
- * 0044) this reads the last 48 hours of event changes and:
+ * calendar with the prospect as an attendee. Hourly in the send window, then
+ * once a day (pg_cron, migrations 0044, 0053), this reads the last 48 hours of
+ * event changes and:
  *
  *   confirmed event WE organize, a non-declined attendee is a known contact,
  *   no opportunity yet
@@ -44,7 +45,7 @@
  *      token check and before listing events, and again at the END for this
  *      run's changes. A row is claimed only while that much (60s) remains before
  *      maxDuration (counted from the route's start); otherwise it is left for
- *      the next run's start sweep (hourly). The start sweep stops 40s earlier
+ *      the next run's start sweep (hourly in the send window, 0053). The start sweep stops 40s earlier
  *      still, so the sync's own writes keep their time.
  *   D6 An alert failure never fails the sync: it lands in report.alerts.failed.
  * Without a working Google token no sweep is attempted.

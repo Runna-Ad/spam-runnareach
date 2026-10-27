@@ -28,6 +28,7 @@ import { writeAuditLog } from "@/lib/audit/log";
 import { requireUser } from "@/lib/auth";
 import { getAccessToken, sendGmailMessage } from "@/lib/gmail/client";
 import { getOutboundCompliance } from "@/lib/compliance/outbound";
+import { threadBlocksSend } from "@/lib/pitches/send-guards";
 import { reconcileSignOff, senderIdentity } from "@/lib/pitches/sender-identity";
 import { isEmailOnDncList, type DncClient } from "@/lib/discover/dnc-check";
 import { createServiceRoleClient } from "@/lib/supabase/service-role";
@@ -88,12 +89,13 @@ export async function approveAndSendReply(
     draft_subject: string | null;
     draft_status: string | null;
     handled_at: string | null;
+    received_at: string | null;
   };
 
   const { data: replyData } = await supabase
     .from("replies")
     .select(
-      "id, tenant_id, prospect_id, pitch_id, from_email, subject, gmail_rfc_message_id, draft_thread_id, auto_draft_body, draft_subject, draft_status, handled_at",
+      "id, tenant_id, prospect_id, pitch_id, from_email, subject, gmail_rfc_message_id, draft_thread_id, auto_draft_body, draft_subject, draft_status, handled_at, received_at",
     )
     .eq("id", reply_id)
     .eq("tenant_id", user.tenantId)
@@ -197,6 +199,20 @@ export async function approveAndSendReply(
   const threadId = reply.draft_thread_id ?? pitch.gmail_thread_id ?? undefined;
   // Reply TO their message: prefer their RFC Message-ID for In-Reply-To.
   const originalMessageId = reply.gmail_rfc_message_id ?? pitch.gmail_message_id ?? undefined;
+
+  // Outside the send window the reply poll runs only after it and once a day
+  // (0053), so a "remove me" written after this reply can sit unread, and off
+  // the DNC list, for hours. Ask Gmail, as the follow-up and nudge paths do.
+  if (threadId) {
+    const threadBlock = await threadBlocksSend(supabase, tokenResult.accessToken, {
+      tenantId: user.tenantId,
+      threadId,
+      ourEmail: inbox.email,
+      sinceIso: reply.received_at,
+      mode: "unseen_only",
+    });
+    if (threadBlock) return { ok: false, error: `${threadBlock}. Read it in Gmail before sending this reply.` };
+  }
 
   const sendResult = await sendGmailMessage({
     accessToken: tokenResult.accessToken,

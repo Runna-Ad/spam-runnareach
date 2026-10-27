@@ -26,7 +26,7 @@ const COPY = {
     button: "Unsubscribe",
     done: (email: string) => `Done. ${email} won't receive any more emails from us.`,
     invalid: "This unsubscribe link isn't valid. Reply to the email with the word \"unsubscribe\" and we'll remove you.",
-    failed: "Something went wrong on our side. Reply to the email with the word \"unsubscribe\" and we'll remove you right away.",
+    failed: "Something went wrong on our side. Reply to the email with the word \"unsubscribe\" and we'll remove you within 24 hours.",
   },
   es: {
     title: "Darse de baja",
@@ -34,7 +34,7 @@ const COPY = {
     button: "Darme de baja",
     done: (email: string) => `Listo. ${email} no recibirá más correos de nuestra parte.`,
     invalid: "Este enlace no es válido. Responde al correo con la palabra \"baja\" y te quitaremos de la lista.",
-    failed: "Algo falló de nuestro lado. Responde al correo con la palabra \"baja\" y te quitaremos de inmediato.",
+    failed: "Algo falló de nuestro lado. Responde al correo con la palabra \"baja\" y te quitaremos en menos de 24 horas.",
   },
 } as const;
 

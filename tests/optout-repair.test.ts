@@ -582,14 +582,22 @@ test("bounces: a bounced row a person removed in /compliance after the window is
   assert.equal(db.log.filter((l) => l.op !== "select").length, 0);
 });
 
-test("bounces: the repair window is about 2 hours, pinned at a fixed age (a lift 3 h after the bounce sticks)", async () => {
+test("bounces: the repair window is about a day, pinned at a fixed age (a lift 27 h after the bounce sticks)", async () => {
   // Fixed ages, not relative to the constant: setting the window back to 14 days must fail here.
-  assert.ok(BOUNCE_REPAIR_WINDOW_MS <= 3 * 60 * 60_000, "window must stay a few hours, not days");
-  const t = world({ replies: [bounce("b1", "full@acme.ca", { classified_at: ago(3 * 60 * 60_000) })] });
+  assert.ok(BOUNCE_REPAIR_WINDOW_MS <= 27 * 60 * 60_000, "window must stay about a day, not days");
+  const t = world({ replies: [bounce("b1", "full@acme.ca", { classified_at: ago(27 * 60 * 60_000) })] });
   const db = fakeDb(t);
   const r = await repairMissedOptOuts(db, deps(spy()));
   assert.deepEqual(r.bounces, { repaired: 0, failed: 0, pending: 0 });
   assert.equal(db.log.filter((l) => l.op !== "select").length, 0);
+});
+
+test("bounces: one stored by a quiet-hours poll is still repaired by the next poll, up to 24 h later (0053)", async () => {
+  // Saturday 13:05's poll stored it and its DNC insert failed; the next poll is Sunday 13:05.
+  assert.ok(BOUNCE_REPAIR_WINDOW_MS >= 25 * 60 * 60_000, "window must cover the longest poll gap (24 h) plus the settle wait");
+  const t = world({ replies: [bounce("b1", "dead@acme.ca", { classified_at: ago(24 * 60 * 60_000) })] });
+  const r = await repairMissedOptOuts(fakeDb(t), deps(spy()));
+  assert.deepEqual(r.bounces, { repaired: 1, failed: 0, pending: 0 });
 });
 
 test("bounces: an NDR imported late (old received_at, fresh classified_at) is still repaired", async () => {

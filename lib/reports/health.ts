@@ -1,5 +1,6 @@
 /**
- * The hourly health check: emails ONLY when something is wrong, at most once
+ * The health check (hourly in the send window and right after it, then once a
+ * day: 0053): emails ONLY when something is wrong, at most once
  * per problem per 24h, and is silent otherwise. Every alert email also goes to
  * Sentry (a warning, deduped like the email), so a dead Gmail token cannot
  * hide its own alarm.
@@ -9,7 +10,8 @@
  * because the 24h dedupe would turn a false positive into a daily email.
  * Each is a pure rule over a snapshot that snapshot.ts gathers:
  *   google_disconnected  a connected inbox's refresh token no longer works
- *   autopilot_stopped    the kill switch is on but no tick has run for 2h
+ *   autopilot_stopped    the kill switch is on but no tick has run for 8
+ *                        scheduled ticks (2h inside the send window)
  *   emails_stuck         the last closed send window had sendable pitches due
  *                        and their inbox sent nothing, or a pitch stayed in
  *                        "sending" through a whole window
@@ -37,14 +39,30 @@
  * tests/health-alarms.test.ts.
  */
 
-import { CRON_JOBS, type CronJob } from "./heartbeat.ts";
+import { CRON_JOBS, cronsOf, type CronJob } from "./heartbeat.ts";
 import { isTestAddress } from "../compliance/test-addresses.ts";
 
 const HOUR = 3_600_000;
 
 export const ALERT_DEDUPE_HOURS = 24;
-/** The tick runs every 15 min (0041); eight missed ticks is not a blip. */
-export const TICK_SILENCE_HOURS = 2;
+/**
+ * A run reads `now` seconds before the previous run records its alert, so a run
+ * exactly 24h later would still see that alert. Outside the send window the next
+ * run can be a day away (0053), so the dedupe ends a few minutes early.
+ */
+const ALERT_DEDUPE_SLACK_MS = 5 * 60_000;
+/**
+ * The health check's own weekday runs (0053 spam-health-check 25 15-23 * * 1-5
+ * and spam-health-check-morning 25 13 * * *), for its Sentry monitor, which
+ * takes a single crontab. Weekend runs are extra check-ins it does not expect.
+ */
+export const HEALTH_CHECK_WEEKDAY_CRON = "25 13,15-23 * * 1-5";
+/**
+ * Eight missed ticks is not a blip: 2h inside the send window, where the tick
+ * runs every 15 min. Counted in scheduled ticks, not hours, because outside the
+ * window it runs only after the window and once a day (0053).
+ */
+export const TICK_SILENCE_RUNS = 8;
 
 /**
  * The send-queue runs weekdays every 10 min from 15:00 to 22:50 UTC (0041:
@@ -117,11 +135,17 @@ export type HealthProblem = {
   detail: string;
   stops: string;
   action: string;
+  /**
+   * An earlier alert of the same kind recorded before this time does not
+   * suppress this one. emails_stuck sets the judged window's close, so each
+   * window gets its own alert even when the previous window alerted <24h ago.
+   */
+  dedupeAfter?: number;
 };
 
 /**
  * A token failure that says nothing about the connection (Google down or rate
- * limiting, a timeout) is retried next hour instead of raising
+ * limiting, a timeout) is retried at the next run instead of raising
  * "disconnected". Anything else, including errors we haven't seen, counts.
  */
 export function isTransientTokenError(error: string | null): boolean {
@@ -145,16 +169,19 @@ export function autopilotStopped(s: HealthSnapshot): HealthProblem | null {
   if (!a || !a.enabled || a.stage === "off") return null;
   const now = new Date(s.now).getTime();
   const last = a.updatedAt ? new Date(a.updatedAt).getTime() : NaN;
-  if (Number.isFinite(last) && now - last <= TICK_SILENCE_HOURS * HOUR) return null;
+  const due = now - JOB_GRACE_MINUTES * 60_000;
+  if (Number.isFinite(last) && scheduledRuns(cronsOf("autopilot-tick"), last, due, TICK_SILENCE_RUNS) < TICK_SILENCE_RUNS) return null;
   const observed = Number.isFinite(last)
     ? `the last tick recorded is ${new Date(last).toISOString()}, ${Math.floor((now - last) / HOUR)}h ago`
     : "no tick has been recorded";
   return {
     kind: "autopilot_stopped",
     title: "Autopilot stopped running",
-    detail: `The autopilot is switched on (stage ${a.stage}); it runs every 15 minutes, but ${observed} (autonomy_state.updated_at).`,
+    detail: `The autopilot is switched on (stage ${a.stage}); it runs every 15 minutes in the send window, after it and once a day outside it, but ${observed} (autonomy_state.updated_at).`,
     stops: "New drafts, AUTO scheduling, breakers and learning. Already-approved emails still send.",
-    action: "Check the spam-autopilot-tick job in Supabase (cron.job_run_details, net._http_response) and the latest /api/autopilot/tick logs in Vercel.",
+    action:
+      "Check the spam-autopilot-tick jobs in Supabase (cron.job_run_details, net._http_response) and the latest /api/autopilot/tick logs in Vercel. " +
+      "If it was just switched back on by hand, set autonomy_state.updated_at = now() as well; otherwise this clears at the next tick.",
   };
 }
 
@@ -232,6 +259,7 @@ export function emailsStuck(s: HealthSnapshot): HealthProblem | null {
     detail: parts.join("\n"),
     stops: "Those emails (and their follow-ups) are not going out.",
     action: `Look at the send-queue run (Vercel logs for /api/pitches/send-queue) and the pitches on ${s.appUrl}/pitches. A pitch stuck in "sending" needs checking in Gmail Sent before moving it back to approved.`,
+    dedupeAfter: w.end,
   };
 }
 
@@ -275,13 +303,18 @@ export function inboxPaused(s: HealthSnapshot): HealthProblem | null {
     stops: all
       ? "All cold sending: no first email or follow-up goes out from any inbox."
       : "Cold sending from that inbox (first emails and follow-ups). The other inboxes keep sending.",
-    action: `Once the cause is fixed, resume it in Settings → Sending: ${s.appUrl}/settings/sending. This reminder repeats every ${ALERT_DEDUPE_HOURS}h while the pause lasts.`,
+    action: `Once the cause is fixed, resume it in Settings → Sending: ${s.appUrl}/settings/sending. This reminder repeats about once a day while the pause lasts.`,
   };
 }
 
 // ── Tick errors ──────────────────────────────────────────────────────────────
 
-/** Ticks run every 15 min (0041): 3 erroring ticks in 2h is a pattern, one is a blip. */
+/**
+ * Ticks run every 15 min in the send window (0053): 3 erroring ticks in 2h is a
+ * pattern, one is a blip. Outside the window at most two ticks fall within 2h
+ * (14:45 and 15:00, or 22:45 and 23:15), so this rule judges the window's ticks;
+ * a step that fails every tick is reported within the window's first hour.
+ */
 export const TICK_ERROR_WINDOW_HOURS = 2;
 export const TICK_ERROR_MIN_TICKS = 3;
 
@@ -307,7 +340,7 @@ export function tickErrors(s: HealthSnapshot): HealthProblem | null {
     kind: "tick_errors",
     title: "Autopilot ticks are failing",
     detail:
-      `${rows.length} autopilot ticks in the last ${TICK_ERROR_WINDOW_HOURS}h recorded errors (it ticks every 15 minutes). ` +
+      `${rows.length} autopilot ticks in the last ${TICK_ERROR_WINDOW_HOURS}h recorded errors (it ticks every 15 minutes in the send window). ` +
       `Failing steps: ${steps.map(([k, n]) => `${k} (${n} ticks)`).join(", ")}.` +
       (latest?.errors[0] ? `\nLatest (${latest.at}): ${latest.errors[0].slice(0, 200)}` : ""),
     stops: "The failing steps of every tick (see the step names); the other steps keep running.",
@@ -323,7 +356,7 @@ export const LEARNING_DUE_MIN = 5;
 export const LEARNING_STALE_DAYS = 7;
 /** Tick step names of the learning step: lib/autopilot/tick.ts step("learn") (settling and the pre-send guardrail run inside it). */
 export const LEARNING_STEPS: ReadonlySet<string> = new Set(["learn"]);
-/** One failed learning step is a blip: the learner reruns every 15 minutes. */
+/** One failed learning step is a blip: the learner reruns on the next tick. */
 export const LEARNING_ERROR_MIN_TICKS = 2;
 
 export function learningStalled(s: HealthSnapshot): HealthProblem | null {
@@ -420,19 +453,23 @@ export function cronMatcher(expr: string): (t: number) => boolean {
   };
 }
 
-/** Scheduled runs after `from` and at or before `to`, counted up to `cap`. */
-export function scheduledRuns(expr: string, from: number, to: number, cap: number = JOB_MISSED_RUNS): number {
-  const match = cronMatcher(expr);
+/**
+ * Scheduled runs after `from` and at or before `to`, counted up to `cap`. A job
+ * with several schedules counts a minute once, however many of them match it.
+ */
+export function scheduledRuns(expr: string | readonly string[], from: number, to: number, cap: number = JOB_MISSED_RUNS): number {
+  const matchers = (typeof expr === "string" ? [expr] : expr).map(cronMatcher);
   let n = 0;
-  for (let t = Math.floor(from / 60_000) * 60_000 + 60_000; t <= to && n < cap; t += 60_000) if (match(t)) n++;
+  for (let t = Math.floor(from / 60_000) * 60_000 + 60_000; t <= to && n < cap; t += 60_000) if (matchers.some((m) => m(t))) n++;
   return n;
 }
 
 /**
  * A job is silent when it missed JOB_MISSED_RUNS scheduled runs in a row since
- * its last success: 45 min for the tick, 30 for the poll, the send-queue and
- * the follow-ups. Runs outside a job's window (weekends,
- * before 15:00 UTC) are not scheduled, so they never count. A job with no
+ * its last success: in the send window 45 min for the tick, 30 for the poll,
+ * the send-queue and the follow-ups. Outside the window the send-queue and the
+ * follow-ups are not scheduled, and the tick and the poll run only after it and
+ * once a day (0053), so their 3 missed runs take a day or more. A job with no
  * heartbeat row yet is silent; one that never succeeded counts from when it
  * was first seen.
  */
@@ -448,11 +485,12 @@ export function jobSilent(s: HealthSnapshot): HealthProblem | null {
     const base = hb.lastOkAt ?? hb.createdAt;
     if (!base) continue;
     const baseMs = new Date(base).getTime();
-    if (!Number.isFinite(baseMs) || scheduledRuns(spec.cron, baseMs, due) < JOB_MISSED_RUNS) continue;
+    if (!Number.isFinite(baseMs) || scheduledRuns(cronsOf(job), baseMs, due) < JOB_MISSED_RUNS) continue;
     const since = hb.lastOkAt ? `last successful run ${hb.lastOkAt}` : `no successful run since it was first seen ${hb.createdAt}`;
     const lastError =
       hb.lastErrorAt && new Date(hb.lastErrorAt).getTime() > baseMs ? `; last error ${hb.lastErrorAt}: ${(hb.lastError ?? "").slice(0, 200)}` : "";
-    silent.push({ job, line: `${job} (pg_cron ${spec.pgJob}, ${spec.cron} UTC): ${since}, ${JOB_MISSED_RUNS}+ scheduled runs since without a success${lastError}.` });
+    const crons = spec.schedules.map((x) => `${x.pgJob}, ${x.cron}`).join("; ");
+    silent.push({ job, line: `${job} (pg_cron ${crons} UTC): ${since}, ${JOB_MISSED_RUNS}+ scheduled runs since without a success${lastError}.` });
   }
   if (silent.length === 0) return null;
   const first = silent[0] as (typeof silent)[number];
@@ -462,7 +500,7 @@ export function jobSilent(s: HealthSnapshot): HealthProblem | null {
     detail: silent.map((x) => x.line).join("\n"),
     stops: silent.map((x) => `${x.job}: ${JOB_STOPS[x.job]}`).join(" "),
     action:
-      `In Supabase, cron.job_run_details for ${silent.map((x) => CRON_JOBS[x.job].pgJob).join(", ")} and net._http_response (what the app answered); ` +
+      `In Supabase, cron.job_run_details for ${silent.flatMap((x) => CRON_JOBS[x.job].schedules.map((y) => y.pgJob)).join(", ")} and net._http_response (what the app answered); ` +
       `in Vercel, the logs of ${silent.map((x) => CRON_JOBS[x.job].route).join(", ")}. A 5xx run records its error above; a run that never reached the app records nothing.`,
   };
 }
@@ -481,11 +519,13 @@ export function findProblems(s: HealthSnapshot): HealthProblem[] {
   return HEALTH_RULES.map((rule) => rule(s)).filter((p): p is HealthProblem => p !== null);
 }
 
-/** Problems with no alert of the same kind in the last 24h. */
+/** Problems with no alert of the same kind in the last 24h (and since `dedupeAfter`, when set). */
 export function newProblems(problems: HealthProblem[], recentAlerts: Array<{ kind: string; at: string }>, now: Date): HealthProblem[] {
-  const cutoff = now.getTime() - ALERT_DEDUPE_HOURS * HOUR;
-  const recent = new Set(recentAlerts.filter((a) => new Date(a.at).getTime() > cutoff).map((a) => a.kind));
-  return problems.filter((p) => !recent.has(p.kind));
+  const cutoff = now.getTime() - ALERT_DEDUPE_HOURS * HOUR + ALERT_DEDUPE_SLACK_MS;
+  return problems.filter((p) => {
+    const after = Math.max(cutoff, p.dedupeAfter ?? cutoff);
+    return !recentAlerts.some((a) => a.kind === p.kind && new Date(a.at).getTime() > after);
+  });
 }
 
 export function formatHealthAlert(problems: HealthProblem[]): { subject: string; body: string } {
@@ -496,11 +536,11 @@ export function formatHealthAlert(problems: HealthProblem[]): { subject: string;
     [`${i + 1}. ${p.title}`, p.detail, `Stops: ${p.stops}`, `Do: ${p.action}`].join("\n"),
   );
   const body = [
-    "The hourly health check found a problem the platform cannot fix by itself.",
+    "The health check found a problem the platform cannot fix by itself.",
     "",
     blocks.join("\n\n"),
     "",
-    `You get this at most once per problem per ${ALERT_DEDUPE_HOURS}h. No email means healthy.`,
+    "You get this about once a day per problem while it lasts. No email means healthy.",
   ].join("\n");
   return { subject, body };
 }
@@ -553,7 +593,7 @@ export async function handleHealthCheck(req: Request, deps: HealthRouteDeps): Pr
         Object.assign(row, message);
         continue;
       }
-      // Once per new problem, deduped like the email: an undelivered one retries next hour.
+      // Once per new problem, deduped like the email: an undelivered one retries at the next run.
       for (const p of fresh) {
         try {
           deps.capture(`S.P.A.M. health: ${p.title}`);
@@ -564,7 +604,7 @@ export async function handleHealthCheck(req: Request, deps: HealthRouteDeps): Pr
       const res = await deps.send(tenantId, message);
       sent += res.sent;
       failed.push(...res.failed.map((f) => `${tenantId}: ${f}`));
-      // Dedupe only what was delivered; an undelivered alert is retried next hour.
+      // Dedupe only what was delivered; an undelivered alert is retried at the next run.
       if (res.sent > 0) {
         for (const p of fresh) await deps.recordAlert(tenantId, p);
         row.emailed = fresh.map((p) => p.kind);

@@ -12,8 +12,10 @@ Sentry.init({
   // Required for AI monitoring — streams GenAI spans so token counts appear in traces
   streamGenAiSpans: true,
 
-  // Attach local variable values to stack frames — makes debugging pipeline failures much easier
-  includeLocalVariables: true,
+  // includeLocalVariables is off (it was on until 2026-10-26). It opens the Node
+  // inspector and starts a worker thread on every cold start: +0.28s CPU per
+  // start (0.95s vs 0.67s, measured 2026-10-26), and every cron call is a cold
+  // start Vercel bills.
 
   // Enable Sentry Logs product (structured log capture)
   enableLogs: true,

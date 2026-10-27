@@ -40,7 +40,7 @@ export type AuditAction =
   | "pitch.held"
   // The follow-up's last-moment recheck paused a sequence (do-not-send or DNC).
   | "pitch.sequence_paused"
-  // The hourly health check emailed an emergency (lib/reports; 24h dedupe per kind).
+  // The health check emailed an emergency (lib/reports; 24h dedupe per kind).
   | "health.alert"
   // The twice-daily veto digest slot was handled (lib/autopilot/tick.ts sendVetoDigest).
   | "autopilot.digest";

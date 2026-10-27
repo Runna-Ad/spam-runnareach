@@ -1,7 +1,8 @@
 // ─────────────────────────────────────────────────────────────────────────────
 // app/api/opportunities/calendar-sync/route.ts
-// Hourly Google Calendar booking sync. Supabase pg_cron calls it at :05
-// (migration 0044); it can also be called by hand with the cron secret.
+// Google Calendar booking sync. Supabase pg_cron calls it at :05, hourly in the
+// send window and right after it, then once a day at 13:05 (migrations 0044,
+// 0053); it can also be called by hand with the cron secret.
 //
 // For every tenant with a Google-connected inbox, runs one sync as that
 // tenant's system actor (lib/opportunities/calendar-sync.ts): bookings become
