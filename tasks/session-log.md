@@ -1482,3 +1482,16 @@ marketing-context only if it bites.
 **Not checked:** health dry run (needs CRON_SECRET); whether Sentry warning alerts reach Pedro; tracked links in real bodies (first send window tomorrow).
 **Waiting on Pedro:** nothing.
 **Next:** 2026-10-23 16:20 UTC first-send-window check (armed); Fri 2026-10-23 21:30 UTC rewrite comparison; Wed 2026-10-28 14:35 UTC first fact-research check; 2026-10-31 first re-drafts possible. Next batch candidates (board/audit): prospect-local send windows, veto day-skip (audit item 12), wanted-fact dedupe across wordings, Gmail send timeouts not counted, send-queue .limit(50) starvation.
+
+## 2026-10-26 16:30 UTC — conductor session_01HtEg7XG4MPQU4omrd2BX69 (batch 9)
+**Shipped:** batch 9 (main 7a76b66, PR #62, no migrations; deploy READY): veto digest lists each email once (no email when nothing new); writer prompt v3.3 (only seen facts, research advice marked unobserved, no "you" in cost lines); critic calibrated (study: 31 of 64 blocks were the critic over-strict) while still judging the CTA's pain, proof-line results and subject claims; greeting fixes (no names from addresses, department inboxes = team greeting); rewrites always fresh; presend guardrail counts only the newest prompt version.
+**Checks run:** batch 8 first send window (pacing 10-min gaps; 73/73 new drafts carry the tracked link; 3 pre-deploy drafts didn't); batch 6 rewrite check (rewrites 14% vs 41% → drove batch 9).
+**Not checked:** whether drafts improve (2-day check armed 2026-10-28 17:00 UTC).
+**Waiting on Pedro:** nothing.
+**Next:** 2026-10-28 17:00 UTC v3.3 check; Wed 10-28 14:35 UTC fact-research check; 10-31 first re-drafts. Next-batch notes in project-state batch 9 (research advice at the source, one greeting predicate for the send gate, numbers in advice quotes, digest limit 200).
+
+## 2026-10-27 03:42 UTC — conductor session_01HtEg7XG4MPQU4omrd2BX69 (conductor v2, branch claude/conductor-v2)
+**Done:** conductor/worker/steward skills and reviewer/worker agents made project-neutral (plugin-ready); S.P.A.M. specifics moved to tasks/conductor-config.md. New in the conductor skill: environment check with fallbacks (Mac without cloud tools), "decide whether to conduct" (separability test + 4-rung size ladder), measure-before-briefing step, 8 brief principles (35 old lines kept as examples in tasks/checklists/brief-misses.md), reliability section, memory hygiene at each retro, check for work shipped outside the flow (PR #63 took 0053). Reviewer: principles + tasks/checklists/review-misses.md (all 43 old lines kept). Templates for a new project in .claude/skills/conductor/templates/. Board 396 → 145 lines, lessons.md 2,238 → 319 (archives in tasks/archive/, every PEDRO_OVERRIDE kept in lessons.md; line-by-line check: nothing lost).
+**Checks run:** npm test 1566/1566 (notes-only change; scripts/vercel-ignore.sh skips the Vercel build for it).
+**Not checked:** the new skills in a real batch; whether Pedro's Stop hook re-captures the 14 copied overrides as new lessons.
+**Waiting on Pedro:** review + merge of the conductor-v2 PR; then the plugin step.
