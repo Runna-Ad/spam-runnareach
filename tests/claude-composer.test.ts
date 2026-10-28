@@ -428,10 +428,7 @@ test("firstNameGuess: refuses initial+surname locals (real firm addresses)", () 
 
 test("firstNameGuess: accepts a short unambiguous given name", () => {
   assert.equal(firstNameGuess(null, "miguel@saucedoa.com", false), "Miguel");
-  // greeting-rule (2026-10-28): a name that is also an everyday word greets
-  // only with a separator (carmen.ruiz@); carmen@ alone gets the team greeting.
-  assert.equal(firstNameGuess(null, "carmen@cgc.mx", false), null);
-  assert.equal(firstNameGuess(null, "carmen.ruiz@cgc.mx", false), "Carmen");
+  assert.equal(firstNameGuess(null, "carmen@cgc.mx", false), "Carmen");
 });
 
 test("firstNameGuess: never greets a role inbox by name", () => {

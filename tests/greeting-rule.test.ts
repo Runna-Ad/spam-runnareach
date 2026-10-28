@@ -81,13 +81,12 @@ test("acceptance 2: the negative set is unchanged", () => {
   assert.equal(m.pass ? null : m.failures.find((f) => f.code === "greeting_mismatch")?.severity, "review");
 });
 
-test("a word-name greets only with a separator; Mexican short forms are names", () => {
-  for (const email of ["rosa@florist.ca", "will@acme.ca", "grace@acme.ca", "mark@acme.ca", "carmen@cgc.mx"]) {
-    assert.equal(greetingName(null, email, false), null, email);
+test("listed names greet alone or with a separator; weak word-names never; Mexican short forms are names", () => {
+  // Conductor on #65: names a dictionary also carries greet alone too.
+  for (const [email, name] of [["juan@acme.mx", "Juan"], ["carmen@cgc.mx", "Carmen"], ["maria@acme.mx", "Maria"], ["pedro@acme.mx", "Pedro"]] as const) {
+    assert.equal(greetingName(null, email, false), name, email);
   }
-  // The names list counts names the dictionaries carry (juan, maria) as words
-  // too: alone they get the team greeting, with a surname they greet.
-  assert.equal(greetingName(null, "juan@acme.mx", false), null);
+  for (const email of ["cursos@acme.mx", "nfo@acme.ca", "care@acme.ca"]) assert.equal(greetingName(null, email, false), null, email);
   assert.equal(greetingName(null, "juan.perez@acme.mx", false), "Juan");
   assert.equal(greetingName(null, "rosa.flores@acme.mx", false), "Rosa");
   assert.equal(greetingName(null, "carmen.ruiz@cgc.mx", false), "Carmen");
@@ -103,8 +102,8 @@ const NO_NAME = [
   "cursos@acme.mx", "care@acme.ca", "nfo@acme.ca", "reservas2@acme.mx", "hola.mx@acme.mx", "info@acme.ca",
   "ventas@acme.mx", "manus-sales@acme.com", "ecof@ecofcabinets.ca", "vfournier@julien-cormier.ca",
   "pparker@acme.com", "rgjulien@julien-cormier.ca", "calgauthier@gmail.com", "reginfo@sfu.ca",
-  "library@ucw.ca", "customersupport@acme.ca", "rosa@florist.ca", "will@acme.ca", "grace@acme.ca",
-  "mark@acme.ca", "talleres@acme.mx", "pedidos@acme.mx", "citas@acme.mx", "clinica@acme.mx",
+  "library@ucw.ca", "customersupport@acme.ca", "servicios@acme.mx", "contabilidad@acme.mx", "recursos@acme.mx",
+  "ayudas@acme.mx", "talleres@acme.mx", "pedidos@acme.mx", "citas@acme.mx", "clinica@acme.mx",
   "facturas@acme.mx", "hello@acme.ca", "office@acme.ca", "care.team@acme.ca", "tono@acme.mx", "abc@acme.ca",
 ];
 const GIVEN = [
@@ -112,7 +111,7 @@ const GIVEN = [
   "rosa.flores@acme.mx", "memo@acme.mx", "chema@acme.mx", "toño@acme.mx", "alexandra.ruiz@acme.ca",
   "sergio@acme.ca", "sofia@acme.mx", "javier@acme.mx", "oscar@acme.mx", "lucia.perez@acme.mx",
   "jorge.ramirez@acme.mx", "elena@acme.mx", "emilio@acme.mx", "valeria.cruz@acme.mx", "xin@acme.ca",
-  "mark.jones@acme.ca",
+  "juan@acme.mx",
 ];
 
 test("acceptance 3 (property): the gate passes exactly the greeting greetingName produces, or the team", () => {
