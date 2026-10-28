@@ -155,8 +155,9 @@ External prerequisite: Pedro creates a free Google API key with the PageSpeed In
 
 | Slug | Module | Rung | Model/effort | Branch | Session | PR | Depends on | Status | Turns | Review findings | CI reds | Rework |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|
-| study | conductor | 0 | opus/high | — | this | — | — | running | | | | |
+| study | conductor | 0 | opus/high | — | this | — | — | blocked: session network policy refuses prospect sites (403 CONNECT); PageSpeed keyless = 429 | | | | |
+| greeting-rule | lib/pitches greeting + send-gate | 3 | opus/high | claude/greeting-rule | session_01XYnsss9MDXbKnz7oCzk2MW | — | — | spawned 20:58 UTC | | | | |
 
 Log
 - 2026-10-28 19:12 UTC — Batch 10 started; integration cut from the notes branch (main 1bd256b + 4 notes commits). 0054 reserved.
-
+- 2026-10-28 20:58 UTC — Study blocked (cloud network policy: prospect hosts 403; PageSpeed without key 429). greeting-rule spawned (session_01XYnsss9MDXbKnz7oCzk2MW). Asked Pedro to set this environment's network to Full (or accept a study run from a Vercel preview).
