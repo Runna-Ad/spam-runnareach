@@ -31,9 +31,10 @@ import { greetingName, isRoleInbox } from "./greeting-name.ts";
  * rules that produced it. v1 was the dry run (2026-07-21): logged, enforced
  * nothing. v2 (2026-10-16) is enforced at approve, queue and send on every path,
  * scans every number in subject and body, and adds the client-name, internal-
- * name, jargon and em-dash rules.
+ * name, jargon and em-dash rules. v3 (2026-10-28): with no stored name, the
+ * greeting must be exactly the name greetingName derives from the address.
  */
-export const GATE_VERSION = 2;
+export const GATE_VERSION = 3;
 
 /**
  * block  — objectively broken or untrue; nobody can send it until it's fixed.

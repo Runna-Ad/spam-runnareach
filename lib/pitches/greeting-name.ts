@@ -104,6 +104,9 @@ const SPANISH_SHORT_NAMES = new Set([
   "lalo", "rafa", "lupe", "lupita", "tere", "maru", "quique", "nando",
 ]);
 
+// Job words that are also listed names: doctor@ is the practice, not Doctor.
+const JOB_WORDS = new Set(["doctor", "doc", "dr", "dra", "doctora", "chef", "coach", "nurse", "rev"]);
+
 /**
  * Is this address token a name we may greet? Not a name at all (cursos, nfo,
  * reservas) or a weak word-name (care) → no.
@@ -112,7 +115,7 @@ function isGreetableName(token: string): boolean {
   if (SPANISH_SHORT_NAMES.has(token)) return true;
   const { names: all, weak } = names();
   const t = letters(token);
-  return all.has(t) && !weak.has(t);
+  return all.has(t) && !weak.has(t) && !JOB_WORDS.has(t);
 }
 
 /**

@@ -87,6 +87,11 @@ test("listed names greet alone or with a separator; weak word-names never; Mexic
     assert.equal(greetingName(null, email, false), name, email);
   }
   for (const email of ["cursos@acme.mx", "nfo@acme.ca", "care@acme.ca"]) assert.equal(greetingName(null, email, false), null, email);
+  // Job words that are listed names are the inbox, not a person.
+  for (const email of ["doctor@clinic.ca", "doc@clinic.ca", "doctora@clinica.mx", "chef@bistro.ca", "coach@gym.ca", "nurse@clinic.ca", "rev@church.ca"]) {
+    assert.equal(greetingName(null, email, false), null, email);
+  }
+  assert.deepEqual(greetingCodes(gateInput("doctor@clinic.ca", "Hi Doctor,")), ["greeting_not_a_name"]);
   assert.equal(greetingName(null, "juan.perez@acme.mx", false), "Juan");
   assert.equal(greetingName(null, "rosa.flores@acme.mx", false), "Rosa");
   assert.equal(greetingName(null, "carmen.ruiz@cgc.mx", false), "Carmen");
