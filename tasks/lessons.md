@@ -9,6 +9,13 @@ WHAT HAPPENED: I told Pedro twice that PR #64 (only tasks/, .claude/, *.md) woul
 RULE: Before saying what a merge will or will not deploy, read the ignore script's production branch, not just its comment. A notes-only merge to main = a production rebuild of the same code (harmless, but it is a deploy and costs a build).
 TAGS: #lesson #vercel #deploy #claims
 
+[2026-10-28] PEDRO_OVERRIDE: approve or reject research statistics yourself when Pedro has decided
+CLAUDE SUGGESTED: Pedro clicks Approve on /benchmarks himself, because approval stamps who vouched for the number.
+PEDRO'S APPROACH: "the 4 statistics you do it, don't give me grief about this." He decides which ones; Claude applies it.
+WHY IT WAS BETTER: the decision is the human step, not the click. Claude applied it exactly like the app's action (approve: is_active, verified_by = Pedro's user id, verified_at; reject: rejected_at, only rows still open) and reported the result.
+RULE: When Pedro has made the call on a review item, apply it for him with the app's own write rules and his user id; do not push the click back to him.
+TAGS: #override #benchmarks #review-ui
+
 ## Overrides from archived sections (copied verbatim; the originals are in `tasks/archive/lessons-2026-10.md`)
 Every PEDRO_OVERRIDE stays readable here. Newer overrides are in the sections below.
 
