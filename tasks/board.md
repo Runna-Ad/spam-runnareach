@@ -5,6 +5,7 @@ file alone. Update it on every spawn, every status change, every merge. Batches 
 previous one move to `tasks/archive/board-<YYYY-MM>.md` at each retro (batches 1-7: `tasks/archive/board-2026-10.md`).
 
 ## Current phase
+`phase3-batch10` ACTIVE since 2026-10-28 19:12 UTC on `claude/phase3-batch10-integration` (main 1bd256b + notes branch). **Owner: session_01HtEg7XG4MPQU4omrd2BX69.** Rows and log: "Batch 10" section at the end.
 `phase3-batch9` SHIPPED 2026-10-26 16:21 UTC (main 7a76b66, PR #62; no migrations) — active since 2026-10-26 15:20 UTC on `claude/phase3-batch9-integration` (main 7e55e1b + batch 8 notes). **Owner: session_01HtEg7XG4MPQU4omrd2BX69.** Rows and log: "Batch 9" section at the end.
 `phase3-batch8` SHIPPED 2026-10-22 21:31 UTC (main 7e55e1b, PR #59; 0051 + 0052 applied first) — active since 2026-10-22 16:20 UTC on `claude/phase3-batch8-integration` (main 4418e8d + batch 7 notes). **Owner: session_01HtEg7XG4MPQU4omrd2BX69.** Rows and log: "Batch 8" section at the end.
 
@@ -32,7 +33,8 @@ previous one move to `tasks/archive/board-<YYYY-MM>.md` at each retro (batches 1
 | 0051 | batch 8 health-alarms: `0051_cron_heartbeats.sql` | APPLIED 2026-10-22 21:28 UTC via connector, verified (6 cols, RLS on, 0 policies), version normalised to 0051 |
 | 0052 | batch 8 send-pacing: `0052_follow_up_every_10min.sql` | APPLIED 2026-10-22 21:29 UTC via connector, verified (spam-follow-up = 7-59/10 15-22 * * 1-5, active), version normalised to 0052 |
 | 0053 | quiet hours (branch `perf/quiet-hours-cron`, PR #63, outside the batch flow): `0053_quiet_hours_cron.sql` (moves 12 pg_cron jobs) | used; apply AFTER the deploy |
-| 0054 | — | free |
+| 0054 | batch 10 site-crawler: `0054_site_observations.sql` (table for crawl + PageSpeed results) | reserved |
+| 0055 | — | free |
 
 ## Worktrees to clean up (in-session workers only)
 | Path | Branch | Remove after |
@@ -145,3 +147,16 @@ Log:
 - 2026-10-26 16:28 UTC — Pedro "ship it". PR #62 squash-merged → main 7a76b66; production deploy dpl_81vTsJt74z2kQYXm5BpYJ78q2dLd READY. writer-honesty archived ($7.09). Two-day check armed 2026-10-28 17:00 UTC (v3.3 critic pass rate, rewrites, digest rows, greetings). Batch 9 CLOSED except that check.
 - 2026-10-28 17:20 UTC — First fact-research run (cron 14:20 Wed): /api/benchmarks/research 200, 2 calls, $0.43 (4 web searches each), 4 proposals on /benchmarks (all inactive + unverified; market GLOBAL; pain_codes set). 2 of 4 are vendor-sourced (85% Mikla.ai, 78% "MIT" via Conduit.ai: weak sources); 53% Forrester via LeadResponse, ~35% Expedia instant-booking conversion. No Sentry issues in 24h. Wanted facts: 86 open, near-duplicates exist (law-firm lead response ×3, restaurant social ×3) but the two researched were distinct gaps.
 - 2026-10-28 17:20 UTC — Batch 9 two-day check: v3.3 critic pass 8/34 (24%) vs v3.2 18/81 (22%) = no real change. Rewrites now fresh: 4/18 approved (22%) vs 14% before. Digests since deploy: 4 slots, 1 email listed once, empty slots sent nothing. Greetings: 29/34 "[company] team" or a name; 3 built from the address ("Hola Cursos", "Hi Care", "Hi Nfo"), all auto_rejected, none sent. No presend retire rows. Remaining v3.3 blockers: writer still claims site checks it did not make; the CTA/subject templates ("where [pain] is costing you", "dónde X pierde clientes") assert a loss about the business; critic still blocks some allowed general lines; 2 "ran out of time" reviews.
+
+## Batch 10 (phase3) — started 2026-10-28 19:12 UTC
+Scope (Pedro 2026-10-28, "go"): option 1 = smarter crawler in the app + Google PageSpeed Insights (free); prospect dossier for pitch candidates; writer/critic state only dossier facts; closing line (a) "see what a customer sees on their phone", subject (a) "what I noticed on [company]'s site"; one greeting rule. Statistics: 53% + ~35% approved, 85% + 78% rejected (conductor, on Pedro's call).
+Waves: 0 study (conductor, free) → 1 site-crawler (lib/research, 0054) ∥ greeting-rule (lib/pitches greeting + send-gate) → 2 dossier + writer/critic/CTA (pitches hub).
+External prerequisite: Pedro creates a free Google API key with the PageSpeed Insights API enabled, Vercel env `PAGESPEED_API_KEY` (before wave 1 ships).
+
+| Slug | Module | Rung | Model/effort | Branch | Session | PR | Depends on | Status | Turns | Review findings | CI reds | Rework |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| study | conductor | 0 | opus/high | — | this | — | — | running | | | | |
+
+Log
+- 2026-10-28 19:12 UTC — Batch 10 started; integration cut from the notes branch (main 1bd256b + 4 notes commits). 0054 reserved.
+
