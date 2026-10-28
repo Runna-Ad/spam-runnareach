@@ -156,10 +156,11 @@ External prerequisite: Pedro creates a free Google API key with the PageSpeed In
 | Slug | Module | Rung | Model/effort | Branch | Session | PR | Depends on | Status | Turns | Review findings | CI reds | Rework |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|
 | study | conductor | 0 | opus/high | — | this | — | — | blocked: session network policy refuses prospect sites (403 CONNECT); PageSpeed keyless = 429 | | | | |
-| greeting-rule | lib/pitches greeting + send-gate | 3 | opus/high | claude/greeting-rule | session_01XYnsss9MDXbKnz7oCzk2MW | #65 | — | merged 4631556 (1570 tests) | | | | |
+| greeting-rule | lib/pitches greeting + send-gate | 3 | opus/high | claude/greeting-rule | session_01XYnsss9MDXbKnz7oCzk2MW | #65 | — | merged 4631556 (1570 tests); wrapped + archived ($3.46) | | | | |
 
 Log
 - 2026-10-28 19:12 UTC — Batch 10 started; integration cut from the notes branch (main 1bd256b + 4 notes commits). 0054 reserved.
 - 2026-10-28 20:58 UTC — Study blocked (cloud network policy: prospect hosts 403; PageSpeed without key 429). greeting-rule spawned (session_01XYnsss9MDXbKnz7oCzk2MW). Asked Pedro to set this environment's network to Full (or accept a study run from a Vercel preview).
 - 2026-10-28 21:12 UTC — #65 opened (1566→1570 tests). Conductor decision: drop the NAME_WORDS exclusion for single tokens (NAME_WORDS holds dictionary proper nouns: juan@, maria@, pedro@ lost their names); NAME_WEAK stays refused. Reviewer running.
 - 2026-10-28 21:25 UTC — #65 reviewer: merge, 0 blocking. Follow-up commit (job words never greet, GATE_VERSION 3) verified by conductor: typecheck, lint, 1570 tests → merged 4631556. Wrap up + archive next.
+- 2026-10-28 21:24 UTC — greeting-rule wrapped + archived ($3.46). Late lesson for the retro: before adding stop-set entries, check which the existing refusals already catch (only doctor/doc carried weight). Follow-up noted: names.ts has no given-name-only export, so surname-only locals (lopez@) still greet by surname.
