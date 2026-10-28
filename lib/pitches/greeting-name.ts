@@ -4,8 +4,12 @@
  * with it (claude-composer.ts firstNameGuess), the critic is shown it
  * (review.ts) and the exemplar scrubber blanks it (exemplars.ts), so all must
  * agree: greetingName is the whole rule, emailGreetingName its address half,
- * isRoleInbox its "this address is a department, not a person" half. Pure.
+ * isRoleInbox its "this address is a department, not a person" half. The send
+ * gate checks a no-stored-name greeting against greetingName too
+ * (send-gate.ts rule 2), so writer and gate cannot disagree. Pure.
  */
+
+import { NAME_CAPITAL_ONLY, NAME_LIST, NAME_WEAK, NAME_WORDS } from "./wordlists/names.ts";
 
 // Generic inbox local-parts that are NOT a person's name — never greet these.
 // Department words since writer-honesty (2026-10-26): the calibration study
@@ -79,6 +83,40 @@ export function isRoleInbox(email: string | null | undefined): boolean {
   return DEPARTMENT_INFIXES.some((w) => compact.includes(w));
 }
 
+// The names net (wordlists/names.ts): given names and surnames, folded. It does
+// not split given names from surnames, so this is "a name", with two refusals:
+// NAME_WEAK words are names of no one we greet ("care", "more"), and any other
+// everyday-word name (rosa, will, carmen; NAME_CAPITAL_ONLY: vikram, per)
+// counts only with a separator, where the first segment is reliably the given name.
+type NameSets = { names: Set<string>; words: Set<string>; weak: Set<string> };
+let nameSets: NameSets | null = null;
+function names(): NameSets {
+  const set = (...lists: string[]) => new Set(lists.flatMap((l) => l.split("\n")).filter(Boolean));
+  nameSets ??= { names: set(NAME_LIST, NAME_CAPITAL_ONLY), words: set(NAME_WORDS, NAME_CAPITAL_ONLY), weak: set(NAME_WEAK) };
+  return nameSets;
+}
+
+// Mexican short forms the SSA-based list lacks (Guillermo → Memo, José María →
+// Chema). Matched with the accent: toño@ is Antonio, tono@ is a word.
+const SPANISH_SHORT_NAMES = new Set([
+  "memo", "chema", "nacho", "toño", "paco", "pancho", "poncho", "pepe", "beto", "chuy",
+  "lalo", "rafa", "lupe", "lupita", "tere", "maru", "quique", "nando",
+]);
+
+/**
+ * Is this address token a name we may greet? Not a name at all (cursos, nfo,
+ * reservas) or a weak word-name (care) → no. An everyday-word name (carmen,
+ * rosa, will) → only when `separated` (rosa.flores@), never alone (rosa@ may
+ * be the rose shop).
+ */
+function isGreetableName(token: string, separated: boolean): boolean {
+  if (SPANISH_SHORT_NAMES.has(token)) return true;
+  const { names: all, words, weak } = names();
+  const t = letters(token);
+  if (!all.has(t) || weak.has(t)) return false;
+  return separated || !words.has(t);
+}
+
 /**
  * Best-effort first name to greet. Prefers the contact's full_name (its first
  * token, when it is a word of 2+ letters: "P. Parker" greets no one);
@@ -127,6 +165,9 @@ export function emailGreetingName(email: string | null | undefined, companyName?
   const folded = letters(seg);
   const company = letters(companyName ?? "");
   if (domainLabel.includes(folded) || (company && company.includes(folded))) return null;
+  // A word of the address is not a name: cursos@ greeted "Hola Cursos,",
+  // care@ "Hi Care," (prod, 2026-10-28). Only a listed name is greeted.
+  if (!isGreetableName(seg, segments.length > 1)) return null;
 
   // With an explicit separator the first segment is reliably the given name
   // (john.sipos -> John, ana.lopez -> Ana).

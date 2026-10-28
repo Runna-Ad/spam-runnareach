@@ -24,6 +24,7 @@ import {
   findUnsourcedNumbers,
   fold,
 } from "./content-rules.ts";
+import { greetingName, isRoleInbox } from "./greeting-name.ts";
 
 /**
  * Bump on any rule change, so a stored verdict can be compared against the
@@ -313,7 +314,6 @@ export function evaluateSendGate(input: GateInput): GateResult {
     const knownTokens = input.recipientFullName
       ? fold(input.recipientFullName).split(/\s+/).filter(Boolean)
       : [];
-    const localPart = fold((input.recipientEmail ?? "").split("@")[0] ?? "");
 
     if (knownTokens.length > 0) {
       // Any token of the stored name: "Hi Juan," and "Estimado Lic. García,"
@@ -324,15 +324,23 @@ export function evaluateSendGate(input: GateInput): GateResult {
           `Email greets "${greeted}" but is addressed to ${input.recipientFullName} <${input.recipientEmail}>.`,
         );
       }
-    } else if (isRoleBasedEmail(input.recipientEmail ?? "")) {
-      // info@/ventas@ has no person behind it — greeting a name is invention.
-      fail(
-        "greeting_not_a_name",
-        `Email greets "${greeted}" but ${input.recipientEmail} is a role inbox with no known person.`,
-      );
-    } else if (!localPart.includes(greetedTok) && greetedTok.length > 0) {
-      // No stored name: the greeting must at least be derivable from the address.
-      fail("greeting_mismatch", `Email greets "${greeted}" but nothing in ${input.recipientEmail} supports that name.`);
+    } else {
+      // No stored name: the writer's own rule (greeting-name.ts) decides the
+      // only name the address supports, so the gate cannot accept "Hola
+      // Cursos," from cursos@ when the writer would never derive it.
+      const email = input.recipientEmail ?? "";
+      const roleBased = isRoleBasedEmail(email) || isRoleInbox(email);
+      const expected = greetingName(null, email, roleBased, input.companyName);
+      if (!expected) {
+        fail(
+          "greeting_not_a_name",
+          roleBased
+            ? `Email greets "${greeted}" but ${input.recipientEmail} is a role inbox with no known person.`
+            : `Email greets "${greeted}" but ${input.recipientEmail} names no person: greet the team instead.`,
+        );
+      } else if (fold(expected) !== greetedTok) {
+        fail("greeting_mismatch", `Email greets "${greeted}" but ${input.recipientEmail} supports only "${expected}".`);
+      }
     }
   }
 
