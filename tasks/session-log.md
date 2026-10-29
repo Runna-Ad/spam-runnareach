@@ -1495,3 +1495,11 @@ marketing-context only if it bites.
 **Checks run:** npm test 1566/1566 (notes-only change; scripts/vercel-ignore.sh skips the Vercel build for it).
 **Not checked:** the new skills in a real batch; whether Pedro's Stop hook re-captures the 14 copied overrides as new lessons.
 **Waiting on Pedro:** review + merge of the conductor-v2 PR; then the plugin step.
+
+## 2026-10-29 — session_01XYnssrenjbTpXLbGH4spox (Vercel deployment cleanup, not a conductor batch)
+**Shipped:** PR #66 (main 6a2c81e, Pedro "ship it"): scripts/vercel-ignore.sh skips previews on `claude/*` worker branches; integration branches, main and production build as before. Prod deploy dpl_6b5E8RNi5Q7KjfxiFhcBvUcTTAZN READY, 0 runtime errors in the 15 min after.
+**Cleanup (Pedro ran the scripts with the Vercel CLI on his Mac):** round 1 removed 350 old spam previews; round 2 removed 38 old spam production versions (newest 5 kept), 78 finished-branch spam previews and 13 greenlight previews (no prisma). spam-runnareach: 491 → 48 deployments. No failures logged in either round.
+**Retention:** Pedro set Canceled/Errored to 1 week (team default + spam, social-influencers, snappad-launch-tool). Production retention untouched everywhere (max offered is 30 days; unverified whether the live version is protected). greenlight left as it was (pre-production already showed 30 days; a 57-day-old greenlight preview still existed that morning, so it did not look enforced).
+**Not checked:** whether the "function storage" number dropped (30-day recovery window); whether the retention rule protects the live production version; live site from this session (*.vercel.app blocked by the session network).
+**Waiting on Pedro:** check Vercel → Usage in a day or two; copy the prisma PEDRO_OVERRIDE into greenlight's tasks/lessons.md.
+**Note:** the GitHub repo Runna-Ad/spam-runnareach is public.

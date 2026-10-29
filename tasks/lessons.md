@@ -144,6 +144,23 @@ RULE: Keep the two kinds of trust separate. Deliverability trips (bounces, Gmail
 TAGS: autopilot, stages, breakers, pedro-override
 
 
+## Vercel deployment cleanup (2026-10-29, session_01XYnssrenjbTpXLbGH4spox)
+
+[2026-10-29] PEDRO_OVERRIDE: Never delete greenlight `prisma` previews
+WHAT HAPPENED: Planning a second cleanup round across the team's Vercel projects, the session listed "older greenlight previews (mostly prisma)" as safe to delete. Pedro: "prisma is in preview on purpose while we finish building so dont delete that or we are fucked."
+RULE: Any Vercel cleanup or retention change on greenlight excludes every deployment on branch `prisma` until Pedro says prisma has shipped. Check the delete list with grep before handing it over. Applies to greenlight's own tasks/lessons.md too (not attached that day; copy it there next greenlight session).
+TAGS: vercel, greenlight, prisma, cleanup, pedro-override
+
+[2026-10-29] Preview pile-up: every push to a claude/* worker branch built a Vercel preview
+WHAT HAPPENED: spam-runnareach reached 491 deployments in two weeks (452 previews, 79 from one worker branch). Pedro suspected they were filling the team's function storage. Fix: scripts/vercel-ignore.sh now skips previews on `claude/*` branches; `claude/*integration*`, main and production still build (PR #66, verified: that PR's own preview came back "Canceled by Ignored Build Step"). Two delete rounds (run with the Vercel CLI on Pedro's Mac) left spam at 48 deployments (43 previews, 5 production); greenlight lost 13 non-prisma previews.
+RULE: vercel.json `ignoreCommand` overrides the dashboard's Ignored Build Step, so a build-skip change goes in the script, not the dashboard. Whether deleting deployments lowers the storage number was not verified; deleted deployments sit in a 30-day recovery window first.
+TAGS: vercel, previews, ignore-build-step, storage
+
+[2026-10-29] `vercel remove` inside a `while read` loop can hang; the MCP deployment list can repeat and truncate rows
+WHAT HAPPENED: The first delete script froze at #201 of 358 on "Found 1 deployment for removal" (a preview with a branch alias, removed with --safe). Separately, list_deployments returned 512 rows for 491 unique ids, and a few rows came back "...[truncated]" with unusable URLs.
+RULE: In a delete loop, give each `vercel remove` `< /dev/null` and a per-call time limit (`perl -e "alarm 60; exec @ARGV" vercel remove ...`, since macOS has no `timeout`), log skips to a file, and print a counter. Dedupe by deployment id and drop truncated rows before counting or deleting.
+TAGS: vercel, cli, scripts, mcp
+
 ## Quiet hours for the scheduled jobs (2026-10-26, branch perf/quiet-hours-cron)
 
 [2026-10-26] PEDRO_OVERRIDE: off-hours pace for the tick and the reply poll
