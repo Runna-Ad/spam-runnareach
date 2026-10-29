@@ -1502,4 +1502,5 @@ marketing-context only if it bites.
 **Prod data (Pedro: "turn it back on"):** DNS sweep of all 41 queued recipients (only themethodyyc.com dead, already suppressed + DNC). Released the stale Supabase claim from session dd7a67c7 (2026-10-26, wrapped up, work merged). Inbox resumed 21:02:36 UTC with the same audit row the Settings page writes.
 **Measured:** 30 days, 118 sends, 5 hard bounces (~4%); 4 of 5 dead mailboxes on live domains, which no free check sees. autonomy_state.autoBounceRate 0.079.
 **Not checked:** that the next autopilot tick keeps the inbox on; Vercel preview build of PR #67.
-**Waiting on Pedro:** "ship it" for PR #67; a decision on dead mailboxes (paid mailbox check vs role addresses to review vs keep resuming by hand).
+**Pedro:** "Ship it" for PR #67 (2026-10-29). PEDRO_OVERRIDE: no paid services, so the paid mailbox check is out.
+**Waiting on Pedro:** a free choice for dead mailboxes (generic inboxes to hand approval, or build-it options).
