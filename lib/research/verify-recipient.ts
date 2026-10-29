@@ -7,7 +7,8 @@
  *   1. format      — the existing usable-address gate (glue, placeholders, TLDs)
  *   2. never-pitch — privacy/HR/careers/volunteer/no-reply desks, regulators
  *   3. DNS         — the domain exists and accepts mail (MX, or A fallback;
- *                    a null MX or a missing domain can only bounce)
+ *                    a null MX, a missing domain or an MX whose hosts don't
+ *                    exist can only bounce)
  *   4. ownership   — the address belongs to the prospect's own domain
  *   5. provenance  — published on their site > verified finder > guess;
  *                    an unverified finder's address ("anymail" legacy rows,
@@ -30,7 +31,7 @@ import { hasUsableEmail, isNeverPitchEmail, isRegulatorEmail } from "./email-uti
 
 export type Verdict = "send" | "review" | "drop";
 export type Provenance = "high" | "medium" | "low";
-export type DnsStatus = "mx" | "a_only" | "no_mail" | "null_mx" | "nxdomain" | "unknown";
+export type DnsStatus = "mx" | "a_only" | "no_mail" | "null_mx" | "dead_mx" | "nxdomain" | "unknown";
 
 export type VerifyResult = {
   verdict: Verdict;
@@ -164,6 +165,9 @@ export function verifyEmailPure(input: VerifyInput, dns: DnsStatus): VerifyResul
     case "null_mx":
       drop.push(`${domain} declares it accepts no email (null MX)`);
       break;
+    case "dead_mx":
+      drop.push(`${domain}'s mail server doesn't exist (its MX host has no address)`);
+      break;
     case "no_mail":
       drop.push(`${domain} has no mail server (no MX, no A record)`);
       break;
@@ -245,10 +249,32 @@ async function resolverIsHealthy(r: MxResolver): Promise<boolean> {
 }
 
 /**
+ * Does every MX host answer "no such host"? A domain can still list a mail
+ * server that is gone: themethodyyc.com pointed at a Microsoft 365 host that
+ * no longer existed and hard-bounced on 2026-10-29. With an MX there is no A
+ * fallback, so that mail can only bounce. Only definite answers count: any
+ * address, empty answer or flaky lookup means the host may be reachable.
+ */
+async function mailHostsAllMissing(r: MxResolver, hosts: string[]): Promise<boolean> {
+  for (const host of hosts) {
+    for (const lookup of [r.resolve4.bind(r), r.resolve6.bind(r)]) {
+      try {
+        await lookup(host);
+        return false;
+      } catch (err) {
+        const c = code(err);
+        if (c !== "ENODATA" && c !== "ENOTFOUND") return false;
+      }
+    }
+  }
+  return true;
+}
+
+/**
  * Can this domain receive mail? System resolver (never pinned to public DNS —
  * see the Spamhaus lesson), short timeout, and only DEFINITE answers from a
- * resolver that passes the control query become nxdomain / null_mx / no_mail;
- * anything flaky is "unknown".
+ * resolver that passes the control query become nxdomain / null_mx / dead_mx /
+ * no_mail; anything flaky is "unknown" (or "mx" when the MX itself answered).
  */
 export async function checkDomainMail(domain: string, resolver?: MxResolver): Promise<DnsStatus> {
   const r: MxResolver = resolver ?? (defaultResolver ??= new Resolver({ timeout: 3000, tries: 2 }));
@@ -256,7 +282,10 @@ export async function checkDomainMail(domain: string, resolver?: MxResolver): Pr
   try {
     const mx = await r.resolveMx(domain);
     if (mx.length === 1 && (mx[0]?.exchange === "" || mx[0]?.exchange === ".")) status = "null_mx";
-    else if (mx.length > 0) return "mx";
+    else if (mx.length > 0) {
+      if (!(await mailHostsAllMissing(r, mx.map((m) => m.exchange)))) return "mx";
+      status = "dead_mx";
+    }
   } catch (err) {
     const c = code(err);
     if (c === "ENOTFOUND") status = "nxdomain";
