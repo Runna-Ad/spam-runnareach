@@ -317,3 +317,51 @@ TAGS: pitches, rewrite, recipient
 WHAT HAPPENED: The re-draft step marked pitches.decision after generatePitchWith had written it. Migration 0038 makes decision write-once (trigger raises), so in prod every mark would fail silently: the 10/day cap would never bind, a failing re-draft would retry every tick. All tests passed because the fake db accepted the update. Fix: the mark goes in at the first write (`generatePitchWith(…, { redraftOf })`), a failed try is an audit_log row, and the test fake now refuses a second decision write.
 RULE: Before writing to an existing column, grep the migrations for triggers on that table (`create trigger … on public.<table>`); a fake db must enforce every such trigger the code path can hit, the same way it must reject a column the table lacks.
 TAGS: autopilot, migrations, fake-db, decision
+
+## AI showcase email (2026-10-29, branch feat/showcase-email)
+
+[2026-10-29] LESSON: an illustrative sample email described a build feature that does not exist
+WHAT HAPPENED: To show Pedro what a showcase email could look like, I wrote "a dashboard that shows who's selling and who went quiet, updated every morning" for the SnapPad dealer map, from the repo's one-line GitHub description. The repo survey later showed the map has no "gone quiet" flag and no daily update. Had the sample become a prompt example, the writer would have sent that claim to real businesses.
+ROOT CAUSE: I treated a sample as low-stakes and wrote it from a repo title instead of the repo's docs. Samples are exactly what people (and models) copy.
+RULE: Any sentence about what one of our builds does, sample or final, comes from that build's own docs or code. Prompt examples for past work are shape-only placeholders ("For [for_whom], we built [does]"), never a real-sounding build.
+TAGS: #pitches #showcase #fabrication #samples
+
+[2026-10-29] PEDRO_OVERRIDE: keep the barcode generator in the showcase library
+CLAUDE SUGGESTED: leave the barcode generator out of the build library because it runs on test data (a pilot), while keeping the factory-floor tracker, also a pilot.
+PEDRO'S APPROACH: "keep the barcode generator its a good idea that works well for retail but can be used for other things that require multiple same rule following generations… like tracking labels or that type of stuff"
+WHY IT WAS BETTER: the email says "we built", which is true of a working pilot; what persuades is the capability (turn a list into many files that all follow the same rules), and that applies to any business that repeats a rule-bound job from data. My cut was also inconsistent: it removed one pilot and kept another.
+TECHNICAL ROOT CAUSE: I judged builds by usage evidence ("is a customer using it daily?") instead of by what the email claims ("we built X that does Y"). The 2026-06-23 override already said the capability is the proof.
+RULE: A build qualifies for the library when it exists and does what the entry says (deployed, working), even with no daily users yet; the copy then claims only "we built" and what it does, never usage or results. Exclude only plans, scaffolds and shadow-mode work. Where the same idea fits other jobs, say so in `same_idea` (an offer), never in `does`.
+TAGS: #override #pitches #showcase #capabilities
+
+[2026-10-29] LESSON: a prompt step applied to every library entry claimed a feature most entries don't have
+WHAT HAPPENED: The showcase prompt had a fixed step "how the AI learns from the business's own information" for every email, and the library field was called `ai`. Only one of eight builds learns from feedback; the rest are plain tools or automation. A machine shop would have been told our floor tracker learns from its data. Both reviewers caught it.
+ROOT CAUSE: I wrote the email structure from Pedro's pitch ("AI learning and improving with your data") and the library from the repos, and never checked that every entry could support every step. A field named `ai` invited the model to call automation AI.
+RULE: When a prompt has a fixed step that makes a claim about a library item, give each item a field that says whether the claim is true for it (here `learns`), name fields by what they hold (`how_it_works`, not `ai`), and test the library against the claim. A capability we can build for THEM is said as an offer (would/could), never attached to a past item that lacks it.
+TAGS: #pitches #showcase #fabrication #prompts #reap
+
+[2026-10-29] PEDRO_OVERRIDE: Greenlight learns, and offers of what we can build don't need a strict proof bar
+CLAUDE SUGGESTED: mark Greenlight as "does not learn" (its style lessons wait for an admin to switch them on) and have the reviewer block any "learns" wording on a build whose entry said false; a reviewer also proposed softening every offer to "could be set up to learn".
+PEDRO'S APPROACH: "greenlight learns too. and in general dont be to strict with that as long as the potential is real an plausible and we can build it then we are good to go"
+WHY IT WAS BETTER: the learning is built and works (it learns from starred pieces and from people's edits); an admin switch is a control, not a missing feature. And the email's job is to show what Rünna can build: an offer of something real and buildable for THEM (a tool that learns from their own data) is honest. Blocking it, or hedging it into "could be set up to", weakens every email to guard against a risk that isn't there.
+TECHNICAL ROOT CAUSE: I applied the fact bar for past work (what a finished build does) to offers of future work too, and read "gated behind a switch" as "not built".
+RULE: Two bars. Past work: say only what the build really does (no invented build, feature, result, number or client). Offers for the prospect: anything real and plausible that we can build is fine, said as would/could. The reviewer blocks invented past work and never blocks a buildable offer; overstated wording about a real build is polish.
+TAGS: #override #pitches #showcase #capabilities #reviewer
+
+[2026-10-29] LESSON: one real sample run found two blockers that 1,588 faked-model tests could not
+WHAT HAPPENED: With every test green, Pedro ran scripts/showcase-samples.ts (real Claude, nothing saved or sent). The reviewer held a correct pilates email for naming the studio in our own CTA and for offering to handle "bookings, cancellations, enquiries"; it held the showcase follow-up for its thread subject ("Re: no way to book online…"), which every follow-up inherits from the first email. In production the first would have thrown away "showcase first" drafts after one rewrite, and the second would have sent the plain note in place of nearly every showcase follow-up: the test would have measured nothing.
+ROOT CAUSE: the tests fake the model, so they prove the wiring, never how a real reviewer reads the rules; and the follow-up check reused a first-email reviewer without asking what it would see that a first email never has (an inherited subject).
+RULE: Before shipping a new prompt or a reviewer on a new path, run real-model samples for every arm and read them, including the reviewer's verdict. When a reviewer built for one path checks another, list what the new path's input carries that the old one never did, and strip or explain it.
+TAGS: #pitches #showcase #reviewer #verification #samples
+
+[2026-10-29] LESSON: a small reviewer model can't hold a fine "past work vs. our offer" distinction, so take the judgement away
+WHAT HAPPENED: After the "learns" flag was added, the Haiku reviewer held a correct follow-up for an offer ("the same idea could… learning from your case notes"), reading it as a claim about the daily briefing, and scored a correct first email 0.62 for the same confusion. The writers also ignored "one build, 70-110 words": 124, 137 and 167 words, mostly by copying long library sentences.
+ROOT CAUSE: the rule asked a cheap model to keep two kinds of sentence apart in one paragraph of the email; and the library entries were longer than the sentence budget the prompt gave the writer.
+RULE: When Pedro has said a judgement is not needed (plausible, buildable potential is fine), remove it from the reviewer entirely instead of refining it. Keep library entries shorter than the sentence you want in the email (a test caps their length), and say "exactly one", not "one or two".
+TAGS: #pitches #showcase #reviewer #length
+
+[2026-10-29] LESSON: a rule the reviewer ignored after two rewordings belongs in code, keyed to the reviewer's own label
+WHAT HAPPENED: Sample run 4. Both showcase first emails passed the send gate and were held at 0.75 for the sentence offering what we'd build for them, which Pedro's rule allows and the reviewer's prompt said in two places. It had done the same in runs 1 and 2. It also held our own CTA ("los clientes") for a manufacturer. The pilates email spent 6 calls and 33 of its 48 seconds rewriting a sentence that was fine. Separately, the showcase follow-up had no second try at all: one invented line ("most family law practices we talk to say...") and "intake" sent the plain template every time, so that half of the test could never send.
+ROOT CAUSE: asking the model to apply a policy (offers never block) in the same step where it judges the email. A small model keeps applying its own idea of "unsupported". And the follow-up path skipped the rewrite loop the first email has, the same second-path gap as 2026-07-22.
+RULE: Let the model classify and let code decide. The reviewer now tags each issue (past_build, offer, set_wording, this_business, number, other), and criticVerdict never lets offer or set_wording hold a showcase email; untagged stays blocking. When a prompt rule fails twice, move it to code before a third rewording. Any path that auto-sends gets the same write, check, rewrite-once loop as the first email.
+TAGS: #pitches #showcase #reviewer #prompt-plus-deterministic-guard #followup

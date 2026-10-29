@@ -66,6 +66,12 @@ export type DecisionRecord = {
    */
   arms?: Record<string, string>;
   /**
+   * Showcase email only (arms["writer.showcase"] = "first"): the build ids
+   * offered (lib/runna/builds.ts) and the ones the email describes.
+   */
+  builds_offered?: string[];
+  builds_used?: string[];
+  /**
    * Our own past pitches shown to the writer and critic as exemplars
    * (lib/pitches/exemplars.ts), with the outcome score that qualified each.
    * Empty when none were shown; absent before exemplar memory existed.
