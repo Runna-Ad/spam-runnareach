@@ -156,7 +156,7 @@ External prerequisite: Pedro creates a free Google API key with the PageSpeed In
 | Slug | Module | Rung | Model/effort | Branch | Session | PR | Depends on | Status | Turns | Review findings | CI reds | Rework |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|
 | study | conductor | 0 | opus/high | — | this | — | — | blocked: session network policy refuses prospect sites (403 CONNECT); PageSpeed keyless = 429 | | | | |
-| site-crawler | lib/research/site-crawl + observe route + 0054 | 3 | opus/high | claude/site-crawler | session_01XYnsst3eC4Z2opXkGNEubD | — | — | spawned 03:31 UTC 10-30 | | | | |
+| site-crawler | lib/research/site-crawl + observe route + 0054 | 3 | opus/high | claude/site-crawler | session_01XYnsst3eC4Z2opXkGNEubD | #70 | — | in review (1570→1622 tests; $8.48) | | | | |
 | greeting-rule | lib/pitches greeting + send-gate | 3 | opus/high | claude/greeting-rule | session_01XYnsss9MDXbKnz7oCzk2MW | #65 | — | merged 4631556 (1570 tests); wrapped + archived ($3.46) | | | | |
 
 Log
@@ -166,3 +166,4 @@ Log
 - 2026-10-28 21:25 UTC — #65 reviewer: merge, 0 blocking. Follow-up commit (job words never greet, GATE_VERSION 3) verified by conductor: typecheck, lint, 1570 tests → merged 4631556. Wrap up + archive next.
 - 2026-10-28 21:24 UTC — greeting-rule wrapped + archived ($3.46). Late lesson for the retro: before adding stop-set entries, check which the existing refusals already catch (only doctor/doc carried weight). Follow-up noted: names.ts has no given-name-only export, so surname-only locals (lopez@) still greet by surname.
 - 2026-10-30 03:31 UTC — site-crawler spawned (session_01XYnsst3eC4Z2opXkGNEubD); PR discovery armed.
+- 2026-10-30 04:26 UTC — #70 opened 04:04 (found 22 min late: L-task discovery at +20 min). Study table: booking found 7/33 (4 external engines incl. the 'Wix' lodge = WebRezPro, so its v3.3 'no easy way to book' line was false), WhatsApp-only 1. Two one-line edits outside the allow-list (health.ts JOB_STOPS, health-alarms test). Reviewer running.
