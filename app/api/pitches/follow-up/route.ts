@@ -35,14 +35,23 @@ import {
   buildFollowup2,
   type FollowupContext,
 } from "@/lib/pitches/followup-templates";
-import { composeFollowupWithClaude } from "@/lib/pitches/followup-composer";
+import {
+  composeFollowupWithClaude,
+  followupEvidenceQuote,
+  followupMode,
+  reviseShowcaseFollowup,
+  type FollowupComposerInput,
+} from "@/lib/pitches/followup-composer";
+import { pickBuilds } from "@/lib/runna/builds";
 import { buildHunterUrlForPitch } from "@/lib/pitches/hunter-mapping";
 import { followupHunterLink } from "@/lib/pitches/tracked-links";
 import {
   effectiveSendsToday,
+  CLAIM_RESERVE_MS,
   hasTimeToClaim,
   hasTimeToCompose,
   releaseSendSlot,
+  SEND_ROUTE_MAX_MS,
   reserveSendSlot,
   TIME_BUDGET_REASON,
   type SlotClient,
@@ -58,7 +67,7 @@ import {
 } from "@/lib/pitches/send-pacing";
 import { ANTHROPIC_DEFAULT_MODEL, claudeIsAvailable } from "@/lib/anthropic/client";
 import { isUnderDailyCap, recordClaudeCall } from "@/lib/anthropic/cost-tracking";
-import { hasUsableEmail } from "@/lib/research/email-utils";
+import { hasUsableEmail, isRoleBasedEmail } from "@/lib/research/email-utils";
 import { isEmailOnDncList, type DncClient } from "@/lib/discover/dnc-check";
 import { DO_NOT_SEND_STATUSES } from "@/lib/prospects/status";
 import {
@@ -97,6 +106,12 @@ type DuePitchRow = {
   pain_id: string | null;
   /** The root's code: the follow-up's link is the root's tracked link. */
   attribution_code: string | null;
+  /**
+   * decision.arms, whole: the key "writer.showcase" has a dot, so it is read in
+   * code (like learn.ts does), never as a PostgREST JSON path. It says what
+   * follow-up #1 does (followupMode).
+   */
+  arms: Record<string, unknown> | null;
 };
 
 type ProspectRow = {
@@ -273,15 +288,16 @@ async function processFollowup(pitch: DuePitchRow, bounceBlocks: BounceBlocks, s
     .eq("prospect_id", pitch.prospect_id)
     .maybeSingle() as { data: ResearchRow | null };
 
-  if (research?.pain_points && research.pain_points.length > 0) {
-    const firstPain = research.pain_points[0];
-    const quote = firstPain?.evidence_quote ?? firstPain?.quote ?? null;
-    // Same evidence bar as the first pitch: a real quote, not a recycled label.
-    if (quote && quote.trim().length >= 20) {
-      evidenceQuote = quote;
-      // Trim to a concise phrase — max 80 chars
-      painSummary = quote.slice(0, 80).replace(/\.$/, "");
-    }
+  // The showcase test (writer.showcase): follow-up #1 shows real builds after
+  // today's first email, or leads with the pain after a showcase first email.
+  const showcaseArm = pitch.arms?.["writer.showcase"];
+  let mode = followupMode(nextStep, typeof showcaseArm === "string" ? showcaseArm : null);
+
+  const quote = followupEvidenceQuote(research?.pain_points ?? null, mode, prospect.company_name);
+  if (quote) {
+    evidenceQuote = quote;
+    // Trim to a concise phrase — max 80 chars
+    painSummary = quote.slice(0, 80).replace(/\.$/, "");
   }
   whatTheyDo = research?.what_they_do ?? null;
   techStack = research?.tech_stack ?? [];
@@ -415,14 +431,35 @@ async function processFollowup(pitch: DuePitchRow, bounceBlocks: BounceBlocks, s
   }
   let email = template;
   let composedBy: "claude" | "template" = "template";
+  // The template knows neither the showcase nor the pain note, so a fallback is
+  // recorded (followup_mode + composed_by on the sent event), never silent.
+  const builds = mode === "showcase" ? pickBuilds({ industry: prospect.industry, what_they_do: whatTheyDo, lang }) : [];
+  // The builds a sent showcase follow-up described, for the sent event.
+  let showcaseBuildsUsed: string[] | null = null;
+  if (mode === "showcase" && builds.length === 0) mode = "standard";
+  // The gate's context, read once when first needed: by the showcase rewrite
+  // (inside the Claude branch) or by the send gate below.
+  let gateCtxRead: ReturnType<typeof loadGateContext> | null = null;
+  const gateContext = () => (gateCtxRead ??= loadGateContext(supabase, pitch.tenant_id, pitch.prospect_id));
+  const gateFor = (ctx: Awaited<ReturnType<typeof loadGateContext>>, e: { subject: string; body: string }): GateResult | null =>
+    ctx
+      ? evaluateSendGate(
+          gateInputFor(ctx, {
+            subject: e.subject,
+            body: e.body,
+            recipient: { email: contactEmail, full_name: contactFullName, selected_by: null },
+            checkRecipientSource: false,
+          }),
+        )
+      : null;
   if (claudeIsAvailable()) {
     const cap = await isUnderDailyCap(pitch.tenant_id);
     if (cap.under) {
-      const ai = await composeFollowupWithClaude({
+      const followupInput: FollowupComposerInput = {
         step: nextStep as 2 | 3,
         companyName: prospect.company_name,
         contactFirstName,
-        language: prospect.language === "es" ? "es" : "en",
+        language: lang,
         market: resolveMarket(prospect.market),
         industry: prospect.industry,
         city: prospect.city,
@@ -436,7 +473,10 @@ async function processFollowup(pitch: DuePitchRow, bounceBlocks: BounceBlocks, s
         senderFirstName: sender.firstName,
         agencyName: sender.agency,
         hunterUrl,
-      });
+        mode,
+        builds,
+      };
+      const ai = await composeFollowupWithClaude(followupInput);
       if (ai.ok) {
         email = { subject: ai.followup.subject, body: ai.followup.body };
         composedBy = "claude";
@@ -448,6 +488,46 @@ async function processFollowup(pitch: DuePitchRow, bounceBlocks: BounceBlocks, s
           usage: ai.usage,
           metadata: { kind: "followup", step: nextStep, prospect_id: pitch.prospect_id },
         });
+        // The showcase follow-up auto-sends with claims about our own work, so
+        // it gets the first email's checks and its one rewrite: offered builds
+        // only, the send gate's writing rules, and the AI reviewer must pass it.
+        // Anything else sends the template instead.
+        if (mode === "showcase") {
+          const gateCtx = await gateContext();
+          const showcase = await reviseShowcaseFollowup(
+            followupInput,
+            ai.followup,
+            { email: contactEmail, full_name: contactFullName, role_based: isRoleBasedEmail(contactEmail) },
+            {
+              // The gate context is read: what's left is room for the cost writes before the claim's reserve.
+              deadline: startTime + SEND_ROUTE_MAX_MS - CLAIM_RESERVE_MS - 2_000,
+              writingFailures: (f) => {
+                const g = gateFor(gateCtx, f);
+                return g && !g.pass ? g.failures.map((x) => x.detail) : [];
+              },
+            },
+          );
+          for (const c of showcase.calls) {
+            await recordClaudeCall({
+              tenantId: pitch.tenant_id,
+              model: c.model,
+              entity_type: "pitch",
+              entity_id: pitch.id,
+              usage: c.usage,
+              metadata: { kind: c.kind, step: nextStep, prospect_id: pitch.prospect_id, ...(c.kind === "followup" ? { revision: 1 } : {}) },
+            });
+          }
+          if (!showcase.ok) {
+            console.warn(`[follow-up/cron] showcase follow-up for pitch ${pitch.id} not sent as written: ${showcase.reason}`);
+            email = template;
+            composedBy = "template";
+          } else {
+            email = { subject: showcase.followup.subject, body: showcase.followup.body };
+            if (Array.isArray(showcase.followup.builds_used)) {
+              showcaseBuildsUsed = showcase.followup.builds_used.filter((x): x is string => typeof x === "string");
+            }
+          }
+        }
       } else if (ai.usage) {
         // Parse/timeout failures can still cost tokens — keep the cap honest.
         await recordClaudeCall({
@@ -468,23 +548,15 @@ async function processFollowup(pitch: DuePitchRow, bounceBlocks: BounceBlocks, s
   // re-checked (the first email already went to this address). Nobody reviews
   // a follow-up before it goes, so any failure counts: a failing AI draft falls
   // back to the template; a failing template pauses the sequence for a person.
-  const gateCtx = await loadGateContext(supabase, pitch.tenant_id, pitch.prospect_id);
-  const gateFor = (e: { subject: string; body: string }): GateResult | null =>
-    gateCtx
-      ? evaluateSendGate(
-          gateInputFor(gateCtx, {
-            subject: e.subject,
-            body: e.body,
-            recipient: { email: contactEmail, full_name: contactFullName, selected_by: null },
-            checkRecipientSource: false,
-          }),
-        )
-      : null;
-  let gate = gateFor(email);
+  const gateCtx = await gateContext();
+  let gate = gateFor(gateCtx, email);
   if (composedBy === "claude" && !gate?.pass) {
     email = template;
     composedBy = "template";
-    gate = gateFor(email);
+    gate = gateFor(gateCtx, email);
+  }
+  if (mode !== "standard" && composedBy === "template") {
+    console.warn(`[follow-up/cron] ${mode} follow-up for pitch ${pitch.id} fell back to the template`);
   }
   // An exit from here on that leaves the follow-up due waits FOLLOWUP_RETRY_MS:
   // the next run would compose it again (a Claude call). Except out of time at
@@ -676,6 +748,7 @@ async function processFollowup(pitch: DuePitchRow, bounceBlocks: BounceBlocks, s
       gmail_message_id: sendResult.gmailMessageId,
       gmail_thread_id: pitch.gmail_thread_id,
       composed_by: composedBy,
+      followup_mode: mode,
     },
   });
 
@@ -689,6 +762,10 @@ async function processFollowup(pitch: DuePitchRow, bounceBlocks: BounceBlocks, s
       step: nextStep,
       follow_up_pitch_id: newPitch?.id ?? null,
       composed_by: composedBy,
+      // The showcase test: which follow-up #1 this was meant to be. With
+      // composed_by "template" the showcase or pain note never went out.
+      followup_mode: mode,
+      ...(showcaseBuildsUsed ? { builds_used: showcaseBuildsUsed } : {}),
       lang,
       recipient_domain: contactEmail.split("@")[1]?.toLowerCase() ?? null,
     },
@@ -727,7 +804,7 @@ async function runFollowUps() {
     .select(
       "id, tenant_id, prospect_id, contact_id, sender_inbox_id, subject, " +
       "gmail_thread_id, gmail_message_id, sequence_step, next_followup_at, sent_at, " +
-      "case_study_id, service_id, pain_id, attribution_code",
+      "case_study_id, service_id, pain_id, attribution_code, arms:decision->arms",
     )
     .eq("status", "sent")
     .is("parent_pitch_id", null)

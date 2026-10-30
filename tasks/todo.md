@@ -5,6 +5,34 @@ Deck: `/Users/work/Downloads/SPAM_Partner_Deck.pdf`
 
 ---
 
+## AI showcase email (branch feat/showcase-email, 2026-10-29)
+
+Why (Pedro, 2026-10-29, from a TCN "AI with compliance built in" email): an email that opens on "want to use AI but not sure where it helps?" and shows real builds, picked for the prospect's industry, with how the AI learns from their own data. Test: "as first email and in the other half as a follow up email."
+
+Decisions: plain text, same length rules as the first email; builds described by what they do, never by name (2026-07-22 override); the CTA stays the free check. The test is the ORDER: arm `first` = showcase → pain-led nudge → breakup; arm `followup` = today's first email → showcase → breakup. Half and half (uniform among active arms), so the learner's retire rule can still end a loser automatically.
+
+- [x] `lib/runna/builds.ts`: the build library (EN + ES, industries, universal flag) + `pickBuilds` (pure)
+- [x] `INTERNAL_NAMES`: every build's product name (Greenlight, Brookbook, SnapTrack, MatchBot, Command Center…)
+- [x] Learner `writer.showcase` (arms `followup` champion, `first` challenger): seeded, chosen half and half, scored by `learnFromOutcomes`, shown on /learning
+- [x] Composer: showcase variant prompt (`SHOWCASE_PROMPT_VERSION`), builds in the payload, `builds_used` checked against the offer; no benchmarks, guidance or exemplars on it
+- [x] Critic: builds in its payload; a past-work sentence must match one; relevance = their industry / what they do
+- [x] Pitch stage: arm chosen (a rewrite keeps the held draft's arm); decision record carries the arm, builds offered and used
+- [x] Follow-up step 2: `followup` arm → showcase follow-up; `first` arm → pain-led nudge; fallback recorded on the sent event (no silent fallback)
+- [x] Exemplars never mix the two styles; presend guardrail picks the newest prompt among guidance-arm drafts only
+- [x] Tests for each piece; `npm test`, typecheck, lint, build
+
+Verification: unit tests (library rules: no digits, no banned words, no product names; pickBuilds per industry; arm choice half and half; follow-up mode per arm); one real showcase email EN + ES per arm through the composer + critic + gate with a test prospect (not sent), shown to Pedro before any ship.
+- [x] Reap: code-health + security reviews; fixed: false "learns" claims, unreviewed showcase follow-up, advice quote in the pain note, internal-name gate vs the prospect's own name, fallback dilution, silent arms read, length, CTA wording, subjects implying work done for them, dealer map for dealerships
+- [ ] Follow-ups from the security review (pre-existing for the pain prompt too): escape ``` in payload strings, cap what_they_do (~400 chars), a gate rule that blocks any URL other than the tracked Hunter link
+- [ ] Pedro: Runna-Ad/greenlight, runna-barcode-studio, runna-hunter, runna-pitch, runna-website are PUBLIC repos; greenlight and barcode-studio docs name clients, barcode-studio documents an unauthenticated download link (survey 2026-10-29)
+- [x] Pedro read the sample emails (`scripts/showcase-samples.ts`, five runs). Run 5: Spanish first email pass 0.92, law-firm showcase follow-up pass on its first try, pilates first email held 0.72 (goes to the approval queue). Pedro: "Commit as is".
+- [x] Reviewer tags each issue (`about`); in a showcase email code never lets `offer` or `set_wording` hold it (criticVerdict). Showcase follow-ups get one rewrite with the gate's and the reviewer's reasons (reviseShowcaseFollowup)
+- [ ] Optional, Pedro declined for now (2026-10-29): count what a tool would catch or prevent ("before someone slips through") as `offer`, not `this_business`; print each issue's tag in the sample script
+- [ ] Not enforced: house style says subjects are lower case; the showcase writer sometimes capitalizes ("where AI fits at Core Lab Pilates"). Reviewer calls it polish only
+- [ ] PR from feat/showcase-email, then ship on Pedro's "ship it": merge, deploy READY. No migration: the arms seed themselves on the first pitch.
+
+Next Step: open the PR when Pedro says so.
+
 ## Quiet hours: Vercel CPU (branch perf/quiet-hours-cron, 2026-10-26)
 
 Why: Vercel's free team hit 75% of its 4h Fluid Active CPU. pg_cron woke this app ~2,300 times a week.

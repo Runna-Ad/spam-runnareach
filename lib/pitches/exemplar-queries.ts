@@ -43,7 +43,7 @@ export const EXEMPLAR_FETCH_BUDGET_MS = 3_000;
  * (lib/reports/snapshot.ts) reads the same ones, so both map rows alike.
  */
 export const EXEMPLAR_CANDIDATE_COLUMNS =
-  "id, prospect_id, parent_pitch_id, status, sent_at, critic_pass:decision->critic->pass, gate_override, prospects!inner(industry, market, language, status), prospect_contacts:contact_id(email)";
+  "id, prospect_id, parent_pitch_id, status, sent_at, critic_pass:decision->critic->pass, arms:decision->arms, gate_override, prospects!inner(industry, market, language, status), prospect_contacts:contact_id(email)";
 
 export type CandidateRow = {
   id: string;
@@ -52,6 +52,11 @@ export type CandidateRow = {
   status: string;
   sent_at: string | null;
   critic_pass: boolean | null;
+  /**
+   * decision.arms, whole (its keys have dots, so they are read in code):
+   * arms["writer.showcase"] = "first" is a showcase email, a different style.
+   */
+  arms?: Record<string, unknown> | null;
   gate_override: unknown;
   prospects: { industry: string | null; market: string | null; language: string; status: string | null } | null;
   prospect_contacts: { email: string | null } | null;
@@ -75,10 +80,13 @@ function overridden(v: unknown): boolean {
 
 /**
  * One candidate row as the selector sees it; null when the prospect was
- * suppressed since (opt-out, bounce, a person): never anyone's example.
+ * suppressed since (opt-out, bounce, a person): never anyone's example. A
+ * showcase first email is another style of email, so it never models the
+ * pain-led writer (the showcase writer uses no exemplars).
  */
 export function candidateFromRow(r: CandidateRow): ExemplarCandidate | null {
   if (r.prospects?.status === "suppressed") return null;
+  if (r.arms?.["writer.showcase"] === "first") return null;
   return {
     pitch_id: r.id,
     prospect_id: r.prospect_id,

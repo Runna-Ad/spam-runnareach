@@ -424,7 +424,8 @@ test("the no_benchmark arm still sends an empty list (pitch-stage.ts, first gene
   // Source guard: the stage needs a loader-hook harness to run (see
   // tests/pipeline-guards.test.ts); this pins the one line that decides it.
   const src = readFileSync(new URL("../lib/pitches/pitch-stage.ts", import.meta.url), "utf8");
-  assert.match(src, /const offeredBenchmarks = writerArms\.evidence === "no_benchmark" \? \[\] : benchmarks;/);
+  // The showcase first email (writer.showcase "first") is offered none either.
+  assert.match(src, /const offeredBenchmarks = showcaseFirst \|\| writerArms\.evidence === "no_benchmark" \? \[\] : benchmarks;/);
   assert.match(src, /benchmarks: offeredBenchmarks,/);
 });
 

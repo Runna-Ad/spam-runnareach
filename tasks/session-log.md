@@ -1495,3 +1495,12 @@ marketing-context only if it bites.
 **Checks run:** npm test 1566/1566 (notes-only change; scripts/vercel-ignore.sh skips the Vercel build for it).
 **Not checked:** the new skills in a real batch; whether Pedro's Stop hook re-captures the 14 copied overrides as new lessons.
 **Waiting on Pedro:** review + merge of the conductor-v2 PR; then the plugin step.
+
+## 2026-10-29 21:10 UTC: bounce pause fixed, sending resumed (branch fix/dead-mail-server, PR #67)
+**Cause:** inbox_bounces breaker paused pedro@runnareach.com at 19:30 UTC on 2 hard bounces: a dead mailbox on milestoneinmobiliaria.com (550) and themethodyyc.com, whose MX host no longer exists. The send gate only checked that an MX record existed.
+**Fix (PR #67, not merged):** checkDomainMail resolves each MX host; all hosts definitely gone → dead_mx → drop. npm test 1568/1568, typecheck + lint clean, new tests fail on the old code, live DNS check correct.
+**Prod data (Pedro: "turn it back on"):** DNS sweep of all 41 queued recipients (only themethodyyc.com dead, already suppressed + DNC). Released the stale Supabase claim from session dd7a67c7 (2026-10-26, wrapped up, work merged). Inbox resumed 21:02:36 UTC with the same audit row the Settings page writes.
+**Measured:** 30 days, 118 sends, 5 hard bounces (~4%); 4 of 5 dead mailboxes on live domains, which no free check sees. autonomy_state.autoBounceRate 0.079.
+**Not checked:** that the next autopilot tick keeps the inbox on; Vercel preview build of PR #67.
+**Pedro:** "Ship it" for PR #67 (2026-10-29). PEDRO_OVERRIDE: no paid services, so the paid mailbox check is out.
+**Waiting on Pedro:** a free choice for dead mailboxes (generic inboxes to hand approval, or build-it options).

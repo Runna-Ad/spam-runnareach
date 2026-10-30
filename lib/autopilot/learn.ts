@@ -11,6 +11,7 @@ import "server-only";
  *                      that drives opt-outs (bandit.reviewArms).
  *                        writer.evidence  cite a sourced statistic or not
  *                        writer.guidance  learned writing instructions
+ *                        writer.showcase  real builds in the first email or in follow-up #1
  *                        scout.cell       ICP × keyword × region searches
  *                      Then the pre-send guardrail (lib/learning/presend.ts):
  *                      a guidance challenger whose drafts the autopilot throws
@@ -35,9 +36,16 @@ import "server-only";
 import { z } from "zod";
 import { ANTHROPIC_DEFAULT_MODEL, claudeIsAvailable, structuredCall } from "@/lib/anthropic/client";
 import { isUnderDailyCap, recordClaudeCall } from "@/lib/anthropic/cost-tracking";
-import { chooseArm, meanReward, reviewArms, type Arm, type ArmAction } from "@/lib/learning/bandit";
+import { chooseArm, chooseEvenly, meanReward, reviewArms, type Arm, type ArmAction } from "@/lib/learning/bandit";
 import { WRITER_FIXABLE } from "@/lib/pitches/review";
-import { armStats, funnelForProspect, GUIDANCE_MAX_CHARS, sanitizeGuidance, type PitchOutcomeInput } from "@/lib/learning/outcomes";
+import {
+  armStats,
+  funnelForProspect,
+  GUIDANCE_MAX_CHARS,
+  sanitizeGuidance,
+  showcaseFollowupFellBack,
+  type PitchOutcomeInput,
+} from "@/lib/learning/outcomes";
 import { hunterDemand, industryScore, proposeCells, type IcpForCells, type IndustryEvidence } from "@/lib/learning/icp";
 import {
   PRESEND_REASON,
@@ -77,9 +85,22 @@ const SEEDS: Array<{ learner: string; key: string; status: Arm["status"]; config
   { learner: "writer.evidence", key: "benchmark", status: "champion", config: { description: "may cite one sourced benchmark" } },
   { learner: "writer.evidence", key: "no_benchmark", status: "challenger", config: { description: "no statistics; their own evidence only" } },
   { learner: "writer.guidance", key: "none", status: "champion", config: { text: null } },
+  // Pedro, 2026-10-29: "test as first email and in the other half as a follow up email".
+  { learner: "writer.showcase", key: "followup", status: "champion", config: { description: "today's first email; real builds in follow-up #1" } },
+  { learner: "writer.showcase", key: "first", status: "challenger", config: { description: "real builds in the first email; the observed pain in follow-up #1" } },
 ];
 
-export type WriterArms = { evidence: string; guidance: { key: string; text: string } | null };
+/** Where the showcase email goes in the sequence (lib/runna/builds.ts). */
+export type ShowcaseArm = "first" | "followup";
+export const SHOWCASE_ARMS: readonly ShowcaseArm[] = ["first", "followup"];
+
+export type WriterArms = { evidence: string; guidance: { key: string; text: string } | null; showcase: ShowcaseArm };
+
+const TODAYS_WRITER: WriterArms = { evidence: "benchmark", guidance: null, showcase: "followup" };
+
+export function isShowcaseArm(v: unknown): v is ShowcaseArm {
+  return typeof v === "string" && (SHOWCASE_ARMS as readonly string[]).includes(v);
+}
 
 /** Never throws: with no arms table or any error, today's behaviour. */
 export async function chooseWriterArms(db: Db, tenantId: string): Promise<WriterArms> {
@@ -88,8 +109,12 @@ export async function chooseWriterArms(db: Db, tenantId: string): Promise<Writer
       .from("learning_arms")
       .select("learner, key, status, reward, trials, negatives, config")
       .eq("tenant_id", tenantId)
-      .in("learner", ["writer.evidence", "writer.guidance"]);
-    if (error) return { evidence: "benchmark", guidance: null };
+      .in("learner", ["writer.evidence", "writer.guidance", "writer.showcase"]);
+    if (error) {
+      // Visible on purpose: every pitch written now goes to the "followup" arm.
+      console.warn("[chooseWriterArms] arms not read, today's writer:", error.message || "no message");
+      return TODAYS_WRITER;
+    }
     let rows = (data ?? []) as ArmRow[];
     const missing = SEEDS.filter((s) => !rows.some((r) => r.learner === s.learner));
     if (missing.length) {
@@ -101,9 +126,13 @@ export async function chooseWriterArms(db: Db, tenantId: string): Promise<Writer
     const evidence = pick("writer.evidence")?.key ?? "benchmark";
     const g = pick("writer.guidance");
     const text = g ? (rows.find((r) => r.learner === "writer.guidance" && r.key === g.key)?.config?.text as string | null) : null;
-    return { evidence, guidance: g && text ? { key: g.key, text } : null };
-  } catch {
-    return { evidence: "benchmark", guidance: null };
+    // Half and half while both arms are active (Pedro asked for an even split);
+    // the learner's reviewArms still retires a clear loser, and then all go to the winner.
+    const s = chooseEvenly(rows.filter((r) => r.learner === "writer.showcase").map(toArm))?.key;
+    return { evidence, guidance: g && text ? { key: g.key, text } : null, showcase: isShowcaseArm(s) ? s : "followup" };
+  } catch (e) {
+    console.warn("[chooseWriterArms] arms not read, today's writer:", e instanceof Error ? e.message : String(e));
+    return TODAYS_WRITER;
   }
 }
 
@@ -208,9 +237,10 @@ export async function learnFromOutcomes(db: Db, tenantId: string, now: Date = ne
   );
   const events = await eventsFor(db, tenantId, pitches.map((p) => p.id));
   const inputs: PitchOutcomeInput[] = pitches.map((p) => ({ arms: p.decision?.arms, events: events.get(p.id) ?? [] }));
-  for (const learner of ["writer.evidence", "writer.guidance"]) {
+  for (const learner of ["writer.evidence", "writer.guidance", "writer.showcase"]) {
     // Only the writer learners count clicks (lib/learning/reward.ts).
-    await settleLearner(db, tenantId, learner, armStats(inputs, learner, now, { clicks: true }), 30);
+    const counted = learner === "writer.showcase" ? inputs.filter((p) => !showcaseFollowupFellBack(p.events)) : inputs;
+    await settleLearner(db, tenantId, learner, armStats(counted, learner, now, { clicks: true }), 30);
   }
   await presendReview(db, tenantId, now);
 
@@ -330,7 +360,10 @@ async function presendDrafts(db: Db, tenantId: string, since: string): Promise<P
  * records, templates) count only while no versioned row exists.
  */
 function latestPromptOnly(rows: Array<PresendDraft & { pv: string | null }>): PresendDraft[] {
-  const latest = rows.find((r) => r.pv)?.pv ?? null;
+  // Only drafts that tested a guidance arm set the version: a template
+  // ("industry-templates") or a showcase draft (its own prompt, no guidance)
+  // as the newest row would otherwise hide every draft the guardrail judges.
+  const latest = rows.find((r) => r.pv && r.arms?.["writer.guidance"])?.pv ?? null;
   return rows.filter((r) => latest === null || r.pv === latest).map(({ pv: _pv, ...d }) => d);
 }
 
