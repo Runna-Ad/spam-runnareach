@@ -32,7 +32,7 @@ previous one move to `tasks/archive/board-<YYYY-MM>.md` at each retro (batches 1
 | 0051 | batch 8 health-alarms: `0051_cron_heartbeats.sql` | APPLIED 2026-10-22 21:28 UTC via connector, verified (6 cols, RLS on, 0 policies), version normalised to 0051 |
 | 0052 | batch 8 send-pacing: `0052_follow_up_every_10min.sql` | APPLIED 2026-10-22 21:29 UTC via connector, verified (spam-follow-up = 7-59/10 15-22 * * 1-5, active), version normalised to 0052 |
 | 0053 | quiet hours (branch `perf/quiet-hours-cron`, PR #63, outside the batch flow): `0053_quiet_hours_cron.sql` (moves 12 pg_cron jobs) | used; apply AFTER the deploy |
-| 0054 | batch 10 site-crawler: `0054_site_observations.sql` (table + claim fn + cron spam-site-observe) | APPLIED 2026-10-30 ~06:30 UTC via connector after deploy READY; verified (15 cols, RLS on, 1 policy, claim fn, cron active 12,42 15-22 * * 1-5); version normalised to 0054 |
+| 0054 | batch 10 site-crawler: `0054_site_observations.sql` (table + claim fn + cron spam-site-observe) | APPLIED 2026-10-30 13:29 UTC via connector after deploy READY (06:25); verified (15 cols, RLS on, 1 policy, claim fn, cron active 12,42 15-22 * * 1-5); version normalised to 0054 |
 | 0055 | — | free |
 
 ## Worktrees to clean up (in-session workers only)
@@ -121,4 +121,4 @@ Log
 - 2026-10-30 06:10 UTC — #71 delta verified by conductor (site match via the crawler's bareHost, newest finished crawl decides, wording fixes, exemplar carry-over line, template subject): typecheck, lint, 1724 tests → merged into integration. All batch 10 tasks merged; next: wrap-up, batch audit, retro, integration → main PR.
 - 2026-10-30 06:25 UTC — Batch audit (Fable): merge, 0 blocking; button label fix add2f7f. site-facts-writer wrapped + archived ($10.56). Retro tasks/retros/2026-10-30-phase3-batch10.md, lessons merged, checklists + conductor §E network row + core-context updated, batch 8 archived. Integration → main PR next.
 - 2026-10-30 06:30 UTC — Integration → main PR #72 opened; subscribed. Waiting for Pedro's "ship it".
-- 2026-10-30 06:32 UTC — Pedro "ship it". PR #72 squash-merged → main a9c0d30; production deploy dpl_CmNd9Ywd4pUDTdyQ1XKaxhoXT91D READY; then 0054 applied and verified. First crawler run check armed 15:16 UTC; early prod check Mon 11-02 17:05 UTC.
+- 2026-10-30 13:32 UTC — Pedro "ship it" (06:21). PR #72 squash-merged → main a9c0d30; production deploy dpl_CmNd9Ywd4pUDTdyQ1XKaxhoXT91D READY; then 0054 applied and verified. First crawler run check armed 15:16 UTC; early prod check Mon 11-02 17:05 UTC.
