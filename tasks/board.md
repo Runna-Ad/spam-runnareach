@@ -156,7 +156,7 @@ External prerequisite: Pedro creates a free Google API key with the PageSpeed In
 | Slug | Module | Rung | Model/effort | Branch | Session | PR | Depends on | Status | Turns | Review findings | CI reds | Rework |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|
 | study | conductor | 0 | opus/high | — | this | — | — | blocked: session network policy refuses prospect sites (403 CONNECT); PageSpeed keyless = 429 | | | | |
-| site-crawler | lib/research/site-crawl + observe route + 0054 | 3 | opus/high | claude/site-crawler | session_01XYnsst3eC4Z2opXkGNEubD | #70 | — | in review (1570→1622 tests; $8.48) | | | | |
+| site-crawler | lib/research/site-crawl + observe route + 0054 | 3 | opus/high | claude/site-crawler | session_01XYnsst3eC4Z2opXkGNEubD | #70 | — | fix round 1 (1 blocking: booking forms invisible → false 'no online booking'; + 6 optionals for wave 2 truth) | | | | |
 | greeting-rule | lib/pitches greeting + send-gate | 3 | opus/high | claude/greeting-rule | session_01XYnsss9MDXbKnz7oCzk2MW | #65 | — | merged 4631556 (1570 tests); wrapped + archived ($3.46) | | | | |
 
 Log
@@ -168,3 +168,4 @@ Log
 - 2026-10-30 03:31 UTC — site-crawler spawned (session_01XYnsst3eC4Z2opXkGNEubD); PR discovery armed.
 - 2026-10-30 04:26 UTC — #70 opened 04:04 (found 22 min late: L-task discovery at +20 min). Study table: booking found 7/33 (4 external engines incl. the 'Wix' lodge = WebRezPro, so its v3.3 'no easy way to book' line was false), WhatsApp-only 1. Two one-line edits outside the allow-list (health.ts JOB_STOPS, health-alarms test). Reviewer running.
 - 2026-10-30 04:35 UTC — Out-of-flow work found (resume check): main moved 1bd256b → 97bb3a0 (#66 vercel-ignore skips claude/* previews; #67 drop addresses with dead mail servers, lib/research/verify-recipient.ts; no migration). Open on main from another session: #68 (notes) and #69 AI showcase email (claude-composer, review, pitch-stage, send-gate, followup-composer, learn.ts): same files as wave 2 and #65's gate → wave 2 waits for Pedro's call on #69. Integration will merge main before the batch PR.
+- 2026-10-30 04:50 UTC — #70 review: fix-then-merge, 1 blocking (availability forms posting to an engine read as 'no booking' + 'contact form'; live repro hotelzed.com). Sent with 6 optionals that wave 2 will read as facts (online/channel fields, Cloudflare email, too_large/blocked status, abandoned retry 1 day, cart text, tracking params).
