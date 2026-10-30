@@ -8,6 +8,7 @@
 
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
+import { readFileSync } from "node:fs";
 import test from "node:test";
 import { __test__ } from "../lib/anthropic/client.ts";
 import { PITCH_PROMPT_VERSION, SHOWCASE_PROMPT_VERSION, composePitchWithClaude } from "../lib/pitches/claude-composer.ts";
@@ -235,4 +236,29 @@ test("showcase: writer and critic system prompts are byte-identical to before; n
     assert.equal(payloadOf(writer).site_facts, undefined);
     assert.equal(payloadOf(critic).site_facts, undefined);
   }
+});
+
+// ── Review fixes (#71): hook example, CTA naming, exemplars, template subject ─
+
+test("writer: the hook example ends at 'on your site' (no 'only a phone number'); the CTA names '[company]'s site', never 'your site'", async () => {
+  for (const [lang, size] of CASES) {
+    const sys = sysText(await writerCall(inputs({}, lang, size)));
+    const label = `${lang}/${size}`;
+    assert.ok(sys.includes(lang === "en" ? `"I didn't see a way to book online on your site" beats` : `"No vi forma de agendar en línea en tu sitio" beats`), label);
+    assert.ok(!sys.includes("only a phone number") && !sys.includes("solo un teléfono"), label);
+    assert.ok(sys.includes(`In the CTA, name the site as "[company]'s site" ("el sitio de [empresa]"), never "your site" / "tu sitio" / "su sitio"`), label);
+  }
+});
+
+test("exemplars: their CTA, subject and site claims never carry over, for the writer and the critic", async () => {
+  const exemplars = [{ pitch_id: "x1", score: 0.95, subject: "where [company] loses bookings", body: "Hi [name],\n\nYour site has no booking.\n\n👉 See where [the pain] is costing you: [link]\n\n[name]" }];
+  const { critic, writer } = await criticCall(inputs({ exemplars, site_facts: [BOOKING_ENGINE] }));
+  assert.ok(userText(writer).includes("Their CTA, subject and site claims never carry over."));
+  assert.ok(userText(critic).includes("Their CTA and subject are no bar."));
+});
+
+test("industry template: the retail subject claims no loss", () => {
+  const src = readFileSync(new URL("../lib/pitches/industry-templates.ts", import.meta.url), "utf8");
+  assert.ok(!src.includes("what a scattered brand is costing {company}"));
+  assert.ok(src.includes(`subject: "an idea for {company}",`));
 });

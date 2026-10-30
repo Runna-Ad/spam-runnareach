@@ -23,6 +23,8 @@
  * sentence of its own.
  */
 
+import { bareHost } from "../research/site-crawl/select-pages.ts";
+
 export type SiteFactKind = "seen" | "absence";
 
 export type SiteFact = {
@@ -160,7 +162,7 @@ function bookingFact(check: Obj, ctx: Ctx): SiteFact | null {
     const ask = label ? `'${label}' ${how}` : `the booking link ${how}`;
     // "only" is the absence here (online false: every page read, no online path); never "no booking".
     return online === false
-      ? seen("booking", `Bookings are taken only by ${channel === "whatsapp" ? "WhatsApp" : "phone"} (${ask}), on the pages we read (${ctx.pages})`, first.url)
+      ? seen("booking", `The only way to book we saw is by ${channel === "whatsapp" ? "WhatsApp" : "phone"} (${ask}), on the pages we read (${ctx.pages})`, first.url)
       : seen("booking", `${label ? `Their '${label}' link` : "A booking link"} ${how}`, first.url);
   }
   if (online === false) return absence("booking", "No way to book online was found", ctx);
@@ -226,7 +228,7 @@ const MAPPERS: Record<string, Mapper> = {
     const first = evidenceOf(c)[0];
     if (c.found === true) return first ? seen("mobile_viewport", "The home page has the setting that makes it fit a phone screen (a mobile viewport tag)", first.url) : null;
     // The home page's <head> is enough for this one: its URL is the home page.
-    if (c.found === false) return { id: "mobile_viewport", kind: "absence", fact: "The home page does not have the setting that makes a page fit a phone screen (no mobile viewport tag)", url: first?.url ?? ctx.home, strength: "strong" };
+    if (c.found === false) return { id: "mobile_viewport", kind: "absence", fact: "The home page has no phone-friendly viewport setting (the setting that makes a page fit a phone screen)", url: first?.url ?? ctx.home, strength: "strong" };
     return null;
   },
   jsonld: (c, ctx) => {
@@ -329,13 +331,56 @@ export function siteFactsCutoff(now: Date = new Date()): string {
   return new Date(now.getTime() - SITE_FACTS_MAX_AGE_DAYS * 86_400_000).toISOString();
 }
 
+/**
+ * Statuses of a finished crawl (0054). pending / abandoned keep checks = '{}'
+ * and say nothing about the site; every other status is a real read of it.
+ */
+export const FINISHED_STATUSES = ["ok", "unreachable", "blocked", "not_html", "too_large", "offsite"] as const;
+
+/** The prospect's site as we know it now (prospects.website_url, prospects.domain). */
+export type ProspectSite = { website_url?: string | null; domain?: string | null };
+
+/** host without www, from a URL or a bare domain; null when unparseable. */
+function siteHost(v: string | null | undefined): string | null {
+  const s = (v ?? "").trim();
+  if (!s) return null;
+  try {
+    return bareHost(new URL(/^https?:\/\//i.test(s) ? s : `https://${s}`)) || null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * The observation is about the prospect's CURRENT site: its home URL (where
+ * the crawl landed, or the URL it was asked to read) has the host of the
+ * prospect's website_url or domain, www ignored (the crawler's bareHost). A
+ * prospect whose site was corrected after the crawl (the 30-day re-crawl wait
+ * is keyed on prospect_id) otherwise gets another business's facts.
+ */
+export function observationMatchesSite(row: Pick<SiteObservationRow, "url" | "final_url">, site: ProspectSite | null | undefined): boolean {
+  const known = [siteHost(site?.website_url), siteHost(site?.domain)].filter((h): h is string => Boolean(h));
+  if (known.length === 0) return false;
+  const seen = [siteHost(str(row.final_url)), siteHost(str(row.url))].filter((h): h is string => Boolean(h));
+  return seen.some((h) => known.includes(h));
+}
+
+/**
+ * The site facts for the prospect as it stands: the newest finished crawl,
+ * only when it is ok and about the prospect's current site; otherwise [].
+ */
+export function siteFactsFor(row: SiteObservationRow | null | undefined, site: ProspectSite | null | undefined): SiteFact[] {
+  if (!row || !observationMatchesSite(row, site)) return [];
+  return siteFactsFrom(row);
+}
+
 /** The slice of the Supabase client the loader uses. */
-export type SiteFactsDb = {
+export type SiteObservationsDb = {
   from: (table: "site_observations") => {
     select: (cols: string) => {
       eq: (col: string, v: string) => {
         eq: (col: string, v: string) => {
-          eq: (col: string, v: string) => {
+          in: (col: string, v: readonly string[]) => {
             gte: (col: string, v: string) => {
               order: (col: string, o: { ascending: boolean }) => {
                 limit: (n: number) => {
@@ -353,18 +398,20 @@ export type SiteFactsDb = {
 };
 
 /**
- * The newest ok observation (≤ 60 days) for one prospect, as site facts.
- * A read error or no row gives []: the draft never fails on it, and no row is
- * never "nothing on the site" (the writer then makes no site claim at all).
+ * The newest FINISHED observation (≤ 60 days) of one prospect, whatever its
+ * status: a newer unreachable / blocked / offsite re-crawl must stop older ok
+ * facts, so the ok filter is siteFactsFrom's, after this pick. A read error
+ * or no row gives null: the draft never fails on it, and no row is never
+ * "nothing on the site" (the writer then makes no site claim at all).
  */
-export async function loadSiteFacts(db: SiteFactsDb, tenantId: string, prospectId: string, now: Date = new Date()): Promise<SiteFact[]> {
+export async function loadSiteObservation(db: SiteObservationsDb, tenantId: string, prospectId: string, now: Date = new Date()): Promise<SiteObservationRow | null> {
   try {
     const { data, error } = await db
       .from("site_observations")
       .select("url, final_url, status, pages, checks, psi, psi_status")
       .eq("tenant_id", tenantId)
       .eq("prospect_id", prospectId)
-      .eq("status", "ok")
+      .in("status", FINISHED_STATUSES)
       .gte("crawled_at", siteFactsCutoff(now))
       .order("crawled_at", { ascending: false })
       .limit(1)
@@ -372,11 +419,11 @@ export async function loadSiteFacts(db: SiteFactsDb, tenantId: string, prospectI
       .maybeSingle();
     if (error) {
       console.warn("[site-facts] read failed:", error.message || "empty error");
-      return [];
+      return null;
     }
-    return siteFactsFrom(isObj(data) ? (data as SiteObservationRow) : null);
+    return isObj(data) ? (data as SiteObservationRow) : null;
   } catch (e) {
     console.warn("[site-facts] read failed:", e instanceof Error ? e.message : String(e));
-    return [];
+    return null;
   }
 }

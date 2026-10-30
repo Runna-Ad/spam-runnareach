@@ -400,7 +400,7 @@ function englishPack(): LanguagePack {
       `Quick note from ${s.firstName} at ${s.agency}. We work with [industry] businesses on exactly this.`,
     ],
     hook: {
-      good: "I had a look at your site and didn't see a way to book online, only a phone number",
+      good: "I didn't see a way to book online on your site",
       bad: "I noticed an opportunity",
     },
     mechanism: "a few emails that go out on their own to everyone who left something in their cart",
@@ -457,7 +457,7 @@ function spanishPack(size: SizeSignal): LanguagePack {
       `${s.firstName}, de ${s.agency}. Trabajamos con negocios de [industria] justo en esto.`,
     ],
     hook: {
-      good: "Vi tu sitio y no encontré forma de agendar en línea, solo un teléfono",
+      good: "No vi forma de agendar en línea en tu sitio",
       bad: "Vi una oportunidad",
     },
     mechanism: "unos correos que le llegan solos a quien dejó algo en el carrito",
@@ -561,7 +561,7 @@ ${p.jargon}
 
 CALL TO ACTION: the Inefficiency Hunter (payload.hunter_url)
 It is a FREE check they run on their OWN business: about 30 seconds, no signup. The credibility comes from THE DATA, not from us. We are not the ones making the claim; their own numbers show it to them. They look first, and reach out afterward only if they want to, with zero pressure if they don't. Confident and generous, never salesy.
-Write it FRESH every time, in one or two short sentences, never a stock line; vary the opening especially. An interest-based ask ("worth a look?") books twice as many meetings as asking for a call (Gong), which is exactly what this CTA is. It must land all of: free; on their own business; they'll see what our free check finds on [company]'s site; it's the data saying it, not us; about 30 seconds, no signup, no strings; reply afterward only if they want. Never say where they are losing or what something is costing them: that claims a loss nobody has measured.
+Write it FRESH every time, in one or two short sentences, never a stock line; vary the opening especially. An interest-based ask ("worth a look?") books twice as many meetings as asking for a call (Gong), which is exactly what this CTA is. It must land all of: free; on their own business; they'll see what our free check finds on [company]'s site; it's the data saying it, not us; about 30 seconds, no signup, no strings; reply afterward only if they want. Never say where they are losing or what something is costing them: that claims a loss nobody has measured. In the CTA, name the site as "[company]'s site" ("el sitio de [empresa]"), never "your site" / "tu sitio" / "su sitio": the CTA describes our check, not their website.
 Write the token {hunter_url} exactly, where the link goes. It is a template slot that is replaced with the real link before sending: never invent a URL, never write a bare domain, never leave it out. No other links, no video, no call request.
 Tone only, do not copy:
   "${p.cta[0]}"

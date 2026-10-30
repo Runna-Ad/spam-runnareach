@@ -16,11 +16,14 @@ import { parsePage, readableOf } from "../lib/research/site-crawl/parse.ts";
 import {
   SITE_FACTS_MAX_AGE_DAYS,
   SITE_FACT_CHECKS,
-  loadSiteFacts,
+  FINISHED_STATUSES,
+  loadSiteObservation,
+  observationMatchesSite,
+  siteFactsFor,
   siteFactsCutoff,
   siteFactsFrom,
   type SiteFact,
-  type SiteFactsDb,
+  type SiteObservationsDb,
   type SiteObservationRow,
 } from "../lib/pitches/site-facts.ts";
 
@@ -151,11 +154,12 @@ test("booking: engine, marketplace and on-site name the button and host; weak is
 
   const wa = one("booking", { found: false, online: false, channel: "whatsapp", strength: "strong", evidence: ev(HOME, "Agendar cita", "https://wa.me/525539019028") })!;
   assert.equal(wa.kind, "seen");
-  assert.match(wa.fact, /^Bookings are taken only by WhatsApp \('Agendar cita' opens a WhatsApp chat\)/);
+  assert.match(wa.fact, /^The only way to book we saw is by WhatsApp \('Agendar cita' opens a WhatsApp chat\)/);
+  assert.doesNotMatch(wa.fact, /\b(you|they) only take/i);
   assert.doesNotMatch(wa.fact, /\bno (way to )?book|\bno booking|can'?t book/i);
 
   const phone = one("booking", { found: false, online: false, channel: "phone", strength: "strong", evidence: ev(HOME, "Call to book", "tel:18005550100") })!;
-  assert.match(phone.fact, /^Bookings are taken only by phone \('Call to book' starts a phone call\)/);
+  assert.match(phone.fact, /^The only way to book we saw is by phone \('Call to book' starts a phone call\)/);
 
   // WhatsApp seen but other pages unreadable (online null): no "only".
   const waNull = one("booking", { found: null, online: null, channel: "whatsapp", strength: "strong", evidence: ev(HOME, "Agendar cita", "https://wa.me/1") })!;
@@ -236,7 +240,7 @@ test("study: Sundial's BOOK NOW → travelclick, Hidden Acres' Book Now → WebR
 
 test("study: OM Dental books only by WhatsApp; White Moose and Firvale show no online booking (absence); Hotel Zed's form → its engine", () => {
   const om = byId(studyFacts("omdental-home"), "booking")!;
-  assert.equal(om.fact, "Bookings are taken only by WhatsApp ('Agendar cita' opens a WhatsApp chat), on the pages we read (home)");
+  assert.equal(om.fact, "The only way to book we saw is by WhatsApp ('Agendar cita' opens a WhatsApp chat), on the pages we read (home)");
   for (const name of ["whitemoose-home", "firvale-home"]) {
     const b = byId(studyFacts(name), "booking")!;
     assert.equal(b.kind, "absence", name);
@@ -261,30 +265,67 @@ test("study: every fact on every fixture has an http URL and a known id", () => 
   }
 });
 
+// ── The prospect's current site ──────────────────────────────────────────────
+
+test("viewport false: 'no phone-friendly viewport setting' (a viewport tag without width=device-width exists on some sites)", () => {
+  const f = one("mobile_viewport", { found: false, evidence: ev(HOME, "viewport: initial-scale=1") })!;
+  assert.equal(f.fact, "The home page has no phone-friendly viewport setting (the setting that makes a page fit a phone screen)");
+  assert.doesNotMatch(f.fact, /no (mobile )?viewport tag/);
+});
+
+test("current site: an ok crawl of another site gives no facts (a corrected website_url / domain)", () => {
+  const facts = { booking: SAMPLES.booking!.t };
+  const wrong = row(facts, { url: "https://wrong.example", final_url: "https://wrong.example/" });
+  assert.deepEqual(siteFactsFor(wrong, { website_url: "https://right.example", domain: "right.example" }), []);
+  assert.equal(siteFactsFor(wrong, { website_url: "https://wrong.example/home", domain: null }).length, 1, "the same site still maps");
+  // www and scheme-less domains agree with the crawler's bareHost.
+  const www = row(facts, { url: "https://www.acme.test", final_url: "https://www.acme.test/" });
+  for (const site of [{ domain: "acme.test" }, { domain: "www.acme.test" }, { website_url: "http://acme.test/about" }, { website_url: "acme.test" }, { website_url: "", domain: "ACME.test" }]) {
+    assert.equal(siteFactsFor(www, site).length, 1, JSON.stringify(site));
+  }
+  // A redirect the crawler followed (url = the site asked for, final_url = where it landed): either host counts.
+  const moved = row(facts, { url: "https://acme.test", final_url: "https://acme-lodge.test/" });
+  assert.equal(siteFactsFor(moved, { domain: "acme.test" }).length, 1);
+  assert.equal(siteFactsFor(moved, { domain: "acme-lodge.test" }).length, 1);
+  // A subdomain is another host; nothing known about the prospect's site → nothing to match.
+  assert.deepEqual(siteFactsFor(row(facts, { url: "https://shop.acme.test", final_url: null }), { domain: "acme.test" }), []);
+  for (const site of [null, {}, { website_url: null, domain: null }, { website_url: "  ", domain: "" }]) {
+    assert.equal(observationMatchesSite(row(facts), site), false, JSON.stringify(site));
+  }
+  assert.deepEqual(siteFactsFor(null, { domain: "acme.test" }), []);
+});
+
+test("newest finished crawl wins: a newer unreachable / blocked / offsite row gives no facts", () => {
+  for (const status of FINISHED_STATUSES.filter((x) => x !== "ok")) {
+    assert.deepEqual(siteFactsFor(row({ booking: SAMPLES.booking!.t }, { status }), { domain: "acme.test" }), [], status);
+  }
+  assert.deepEqual([...FINISHED_STATUSES].sort(), ["blocked", "not_html", "offsite", "ok", "too_large", "unreachable"]);
+});
+
 // ── The loader ───────────────────────────────────────────────────────────────
 
 type Call = { op: string; args: unknown[] };
-function fakeDb(result: { data: unknown; error: { message: string } | null } | "throw", calls: Call[]): SiteFactsDb {
+function fakeDb(result: { data: unknown; error: { message: string } | null } | "throw", calls: Call[]): SiteObservationsDb {
   const chain: Record<string, (...a: unknown[]) => unknown> = {};
-  for (const op of ["select", "eq", "gte", "order", "limit", "abortSignal"]) chain[op] = (...args: unknown[]) => (calls.push({ op, args }), chain);
+  for (const op of ["select", "eq", "in", "gte", "order", "limit", "abortSignal"]) chain[op] = (...args: unknown[]) => (calls.push({ op, args }), chain);
   chain.maybeSingle = () => {
     calls.push({ op: "maybeSingle", args: [] });
     if (result === "throw") throw new Error("network down");
     return Promise.resolve(result);
   };
-  return { from: (t: string) => (calls.push({ op: "from", args: [t] }), chain) } as unknown as SiteFactsDb;
+  return { from: (t: string) => (calls.push({ op: "from", args: [t] }), chain) } as unknown as SiteObservationsDb;
 }
 
-test("loader: newest ok observation of this tenant's prospect, 60 days at most", async () => {
+test("loader: the newest FINISHED observation of this tenant's prospect (any status but pending/abandoned), 60 days at most", async () => {
   const calls: Call[] = [];
-  const facts = await loadSiteFacts(fakeDb({ data: row({ booking: SAMPLES.booking!.t }), error: null }, calls), "t1", "p1", NOW);
-  assert.equal(facts[0]?.id, "booking");
+  const data = row({ booking: SAMPLES.booking!.t });
+  assert.deepEqual(await loadSiteObservation(fakeDb({ data, error: null }, calls), "t1", "p1", NOW), data);
   assert.deepEqual(calls.slice(0, -2).map((c) => [c.op, ...c.args]), [
     ["from", "site_observations"],
     ["select", "url, final_url, status, pages, checks, psi, psi_status"],
     ["eq", "tenant_id", "t1"],
     ["eq", "prospect_id", "p1"],
-    ["eq", "status", "ok"],
+    ["in", "status", FINISHED_STATUSES],
     ["gte", "crawled_at", new Date(NOW.getTime() - 60 * 86_400_000).toISOString()],
     ["order", "crawled_at", { ascending: false }],
     ["limit", 1],
@@ -296,13 +337,13 @@ test("loader: newest ok observation of this tenant's prospect, 60 days at most",
   assert.equal(siteFactsCutoff(NOW), "2026-08-31T12:00:00.000Z");
 });
 
-test("loader: no row, a read error (empty message included) or a throw → [] and the draft goes on", async () => {
+test("loader: no row, a read error (empty message included) or a throw → null and the draft goes on", async () => {
   const warn = mock.method(console, "warn", () => undefined);
   try {
-    assert.deepEqual(await loadSiteFacts(fakeDb({ data: null, error: null }, []), "t1", "p1"), []);
-    assert.deepEqual(await loadSiteFacts(fakeDb({ data: null, error: { message: "" } }, []), "t1", "p1"), []);
-    assert.deepEqual(await loadSiteFacts(fakeDb({ data: row({ booking: SAMPLES.booking!.t }), error: { message: "timeout" } }, []), "t1", "p1"), [], "an error wins over data");
-    assert.deepEqual(await loadSiteFacts(fakeDb("throw", []), "t1", "p1"), []);
+    assert.equal(await loadSiteObservation(fakeDb({ data: null, error: null }, []), "t1", "p1"), null);
+    assert.equal(await loadSiteObservation(fakeDb({ data: null, error: { message: "" } }, []), "t1", "p1"), null);
+    assert.equal(await loadSiteObservation(fakeDb({ data: row({ booking: SAMPLES.booking!.t }), error: { message: "timeout" } }, []), "t1", "p1"), null, "an error wins over data");
+    assert.equal(await loadSiteObservation(fakeDb("throw", []), "t1", "p1"), null);
     assert.equal(warn.mock.callCount(), 3);
   } finally {
     warn.mock.restore();

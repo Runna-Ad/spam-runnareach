@@ -447,7 +447,8 @@ async function stage(opts: { rpc?: RpcMode; wishes?: boolean; rewrite?: boolean;
     isRoleBasedEmail: () => false,
     listNotableClients: async () => [],
     fetchBenchmarksForPitch: async () => (opts.leadPainBenchmark ? [LEAD_PAIN_BENCHMARK] : []),
-    loadSiteFacts: async () => [],
+    loadSiteObservation: async () => null,
+    siteFactsFor: () => [],
     resolvePainCodes: async (_s: unknown, _t: string, ids: string[]) => {
       resolved.push(ids);
       return ids.map((id) => ({ id, code: id === PAIN ? "lead_response_time" : id }));

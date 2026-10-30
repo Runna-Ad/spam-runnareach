@@ -16,7 +16,7 @@ import { NOT_REVIEWED_ISSUE, WRITER_FIXABLE, composeWithReview, revisionIssues }
 import { PITCH_PROMPT_VERSION, SHOWCASE_PROMPT_VERSION, heldBodyForRevision, isAdviceQuote } from "../lib/pitches/claude-composer.ts";
 import { DECISION_VERSION } from "../lib/pitches/decision.ts";
 import { __test__ } from "../lib/anthropic/client.ts";
-import { loadSiteFacts } from "../lib/pitches/site-facts.ts";
+import { loadSiteObservation, siteFactsFor } from "../lib/pitches/site-facts.ts";
 
 process.env.ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY ?? "test-key";
 
@@ -70,10 +70,13 @@ class Query implements PromiseLike<Result> {
   insert(v: Row) { this.op = "insert"; this.values = v; return this; }
   delete() { this.op = "delete"; return this; }
   eq(k: string, v: unknown) { this.filters.push((r) => r[k] === v); return this; }
-  in(k: string, v: unknown[]) { this.filters.push((r) => v.includes(r[k])); return this; }
+  in(k: string, v: readonly unknown[]) { this.filters.push((r) => v.includes(r[k])); return this; }
   gte(k: string, v: string) { this.filters.push((r) => typeof r[k] !== "string" || String(r[k]) >= v); return this; }
-  order() { return this; }
-  limit() { return this; }
+  // order / limit are honoured: "newest" is tested, not assumed.
+  private sort: { col: string; asc: boolean } | null = null;
+  private lim: number | null = null;
+  order(col: string, o: { ascending: boolean } = { ascending: true }) { this.sort = { col, asc: o.ascending }; return this; }
+  limit(n: number) { this.lim = n; return this; }
   abortSignal() { return this; }
   returns() { return this; }
   maybeSingle() { this.one = true; return this; }
@@ -91,7 +94,14 @@ class Query implements PromiseLike<Result> {
     const hit = rows.filter((r) => this.filters.every((f) => f(r)));
     if (this.op === "select") {
       if (this.fail[this.table]) return { data: null, error: this.fail[this.table]! };
-      const out = hit.map((r) => ({ ...r }));
+      const sorted = this.sort
+        ? [...hit].sort((a, b) => {
+            const s = this.sort!;
+            const c = String(a[s.col]).localeCompare(String(b[s.col]));
+            return s.asc ? c : -c;
+          })
+        : hit;
+      const out = (this.lim === null ? sorted : sorted.slice(0, this.lim)).map((r) => ({ ...r }));
       return { data: this.one ? (out[0] ?? null) : out, error: null };
     }
     if (this.op === "delete") for (const r of hit) rows.splice(rows.indexOf(r), 1);
@@ -140,12 +150,12 @@ const observation = (over: Row): Row => ({
   checks: checks("https://secure.webrez.com/hotel/3530"), psi: null, psi_status: "no_key", ...over,
 });
 
-async function stage(opts: { rewrite?: boolean; observations?: Row[]; failObservations?: boolean }) {
+async function stage(opts: { rewrite?: boolean; observations?: Row[]; failObservations?: boolean; site?: { website_url: string | null; domain: string | null } }) {
   const claude = fakeClaude();
   const tables: Record<string, Row[]> = {
     prospects: [{
       id: PROSPECT_ID, tenant_id: "t1", company_name: "Hidden Acres", industry: "lodging", language: "en",
-      employee_size_estimate: 5, city: null, market: "CA", domain: "hiddenacres.test", website_url: null, status: "researched",
+      employee_size_estimate: 5, city: null, market: "CA", domain: "hiddenacres.test", website_url: null, status: "researched", ...opts.site,
     }],
     prospect_research: [{ tenant_id: "t1", prospect_id: PROSPECT_ID, what_they_do: "treehouse cabins", tech_stack: [], pain_points: [{ pain_id: "pain-1", pain_label: "No online booking", evidence_quote: "no easy way to book a cabin" }] }],
     prospect_contacts: [{ tenant_id: "t1", prospect_id: PROSPECT_ID, email: "ana@hiddenacres.test", email_is_role_based: false, full_name: "Ana", role_title: null, priority_rank: 1 }],
@@ -164,12 +174,13 @@ async function stage(opts: { rewrite?: boolean; observations?: Row[]; failObserv
     isRoleBasedEmail: () => false,
     listNotableClients: async () => [],
     fetchBenchmarksForPitch: async () => [],
-    // The real loader, against the fake db.
-    loadSiteFacts: async (...a: Parameters<typeof loadSiteFacts>) => {
-      const facts = await loadSiteFacts(...a);
-      loaded.push(facts);
-      return facts;
+    // The real loader and site check, against the fake db.
+    loadSiteObservation: async (...a: Parameters<typeof loadSiteObservation>) => {
+      const row = await loadSiteObservation(...a);
+      loaded.push(row);
+      return row;
     },
+    siteFactsFor,
     resolvePainCodes: async (_s: unknown, _t: string, ids: string[]) => ids.map((id) => ({ id, code: id })),
     recordWantedFacts: async () => undefined,
     chooseWriterArms: async () => ({ evidence: "benchmark", guidance: null, showcase: "followup" }),
@@ -210,8 +221,9 @@ async function stage(opts: { rewrite?: boolean; observations?: Row[]; failObserv
 }
 
 const OTHER_ROWS = [
-  observation({ status: "pending", checks: {} }),
-  observation({ status: "unreachable", checks: checks("https://wrong.example/unreachable") }),
+  // A newer pending claim (unfinished) and an older unreachable crawl never hide the ok row.
+  observation({ status: "pending", checks: {}, crawled_at: new Date().toISOString() }),
+  observation({ status: "unreachable", checks: checks("https://wrong.example/unreachable"), crawled_at: new Date(Date.now() - 10 * 86_400_000).toISOString() }),
   observation({ tenant_id: "t2", checks: checks("https://wrong.example/other-tenant") }),
   observation({ prospect_id: "00000000-0000-4000-8000-0000000000f2", checks: checks("https://wrong.example/other-prospect") }),
   observation({ crawled_at: old, checks: checks("https://wrong.example/too-old") }),
@@ -230,6 +242,30 @@ for (const rewrite of [false, true]) {
     assert.deepEqual(facts.map((f) => f.fact), ["Their 'Book Now' button goes to an outside booking engine (secure.webrez.com)"]);
     assert.deepEqual(payloadOf(critic).site_facts, facts);
     assert.ok(!JSON.stringify(facts).includes("wrong.example"), "pending, unreachable, another tenant's, another prospect's or a 90-day-old row never counts");
+  });
+
+  test(`${name}: an ok crawl of another site (website_url / domain corrected since) gives site_facts []`, async () => {
+    const wrong = observation({ url: "https://wrong.example", final_url: "https://wrong.example/" });
+    const { result, claude } = await stage({ rewrite, observations: [wrong], site: { website_url: "https://right.example", domain: "right.example" } });
+    assert.equal(result.ok, true, result.error);
+    assert.deepEqual(payloadOf(claude.find((c) => !isCritic(c))!).site_facts, []);
+    assert.deepEqual(payloadOf(claude.find(isCritic)!).site_facts, []);
+  });
+
+  test(`${name}: the newest finished crawl decides: a newer ok row wins over an older one, a newer unreachable one stops older ok facts`, async () => {
+    const day = (n: number) => new Date(Date.now() - n * 86_400_000).toISOString();
+    const older = observation({ crawled_at: day(20), checks: checks("https://older.example/book") });
+    const newer = observation({ crawled_at: day(2) });
+    const r1 = await stage({ rewrite, observations: [older, newer] });
+    const facts = payloadOf(r1.claude.find((c) => !isCritic(c))!).site_facts as Array<{ fact: string }>;
+    assert.deepEqual(facts.map((f) => f.fact), ["Their 'Book Now' button goes to an outside booking engine (secure.webrez.com)"]);
+    // A pending re-crawl is not finished: the ok row still counts.
+    const r2 = await stage({ rewrite, observations: [newer, observation({ crawled_at: day(0), status: "pending", checks: {} })] });
+    assert.equal((payloadOf(r2.claude.find((c) => !isCritic(c))!).site_facts as unknown[]).length, 1);
+    for (const status of ["unreachable", "blocked", "offsite"]) {
+      const r = await stage({ rewrite, observations: [older, newer, observation({ crawled_at: day(1), status })] });
+      assert.deepEqual(payloadOf(r.claude.find((c) => !isCritic(c))!).site_facts, [], status);
+    }
   });
 
   test(`${name}: no row, or a read error, drafts anyway with site_facts []`, async () => {
