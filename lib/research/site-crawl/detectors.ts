@@ -13,8 +13,8 @@
  * "BOOK NOW" → reservations.travelclick.com that script matching missed).
  */
 
-import type { ParsedPage, PageLink } from "./parse.ts";
-import { bareHost, sameSite } from "./select-pages.ts";
+import type { ParsedPage, PageForm, PageLink } from "./parse.ts";
+import { bareHost, pageKey, sameSite } from "./select-pages.ts";
 import type {
   BookingCheck,
   BookingChannel,
@@ -215,16 +215,24 @@ const coarseControl = (t: string) => {
   const f = fold(t).replace(/booking\.com|guestbook|facebook|lookbook|notebook|bookkeep\w*|bookstore|ebooks?\b|yearbook|bookmark/g, "");
   return COARSE_CONTROL.test(f);
 };
-const coarseText = (t: string) => COARSE_TEXT.test(fold(t).replace(/booking\.com/g, ""));
+/** "No reservations needed", "walk-ins welcome", "sin cita": a booking word that says there is nothing to book. */
+const NEGATED_BOOKING =
+  /no (reservations?|appointments?|booking) (is |are )?(needed|necessary|required)|(reservations?|appointments?|booking) (are |is )?not (needed|necessary|required|accepted)|walk-?ins? (are )?welcome|drop-?in appointments?|sin (cita|reservaci[o]n)|no se (requiere|necesita) (cita|reservaci[o]n)|no (aceptamos|tomamos) reservaciones|sans (rendez-vous|reservation)/g;
+const coarseText = (t: string) => COARSE_TEXT.test(fold(t).replace(/booking\.com/g, "").replace(NEGATED_BOOKING, ""));
 
 export function detectBooking(pages: CrawledPage[], siteUrl: string): BookingCheck {
   const hits: Hit[] = [];
   let unexplained: Evidence | null = null;
+  // Pages we read in full: a booking-word link that leads to one of them is explained by
+  // what that page holds (any booking path on it is a hit of its own), not a reason for null.
+  const readInFull = new Set(
+    pages.filter((p) => p.parsed && p.readable.text && p.readable.links).flatMap((p) => [pageKey(p.url), pageKey(p.parsed?.url ?? p.url)]),
+  );
 
   for (const p of parsedPages(pages)) {
     const add = (h: { channel: Channel; strong: boolean } | null, ev: Evidence, controlText: string) => {
       if (h) hits.push({ ...h, ev });
-      else if (!unexplained && controlText && coarseControl(controlText)) unexplained = ev;
+      else if (!unexplained && controlText && coarseControl(controlText) && !(ev.href && readInFull.has(pageKey(ev.href)))) unexplained = ev;
     };
     for (const l of p.links) {
       if (l.fragment) {
@@ -478,12 +486,18 @@ export const isBookingForm = (f: { submitText: string; hasDate: boolean; hasText
 
 const EMBED_FORMS = /jotform\.com|typeform\.com|docs\.google\.com\/forms|forms\.gle|js\.hsforms\.net|hsforms\.com|formstack\.com|cognitoforms\.com|wufoo\.com|123formbuilder\.com|forms\.office\.com|tally\.so|paperform\.co|formsite\.com/i;
 
-export function detectContactForm(pages: CrawledPage[]): FormCheck {
+/** The form IS a booking path: a booking form whose target resolves to a booking channel. */
+export const resolvedBookingForm = (f: PageForm, pageUrl: string, siteUrl: string) =>
+  isBookingForm(f) && classifyTarget(f.actionUrl ?? pageUrl, f.submitText, siteUrl, true) !== null;
+
+export function detectContactForm(pages: CrawledPage[], siteUrl = pages[0]?.url ?? ""): FormCheck {
   const ev = new EvidenceList();
   let fields: number | null = null;
   for (const p of parsedPages(pages)) {
     for (const f of p.forms) {
-      if (f.search || isBookingForm(f)) continue;
+      // Dropped only when booking resolved from this very form; a contact form that merely looks
+      // like one (no message box, a date field) stays a contact form.
+      if (f.search || resolvedBookingForm(f, p.url, siteUrl)) continue;
       const contact = (f.fields >= 2 && (f.hasEmailOrTel || f.hasTextarea)) || f.fields >= 3;
       if (!contact) continue;
       fields = Math.max(fields ?? 0, f.fields);
@@ -637,7 +651,7 @@ export function runDetectors(pages: CrawledPage[], siteUrl: string, now = new Da
     booking: detectBooking(pages, siteUrl),
     ecommerce: detectEcommerce(pages, siteUrl),
     chat: detectChat(pages),
-    contact_form: detectContactForm(pages),
+    contact_form: detectContactForm(pages, siteUrl),
     tel: detectTel(pages),
     mailto: detectMailto(pages),
     social: detectSocial(pages),

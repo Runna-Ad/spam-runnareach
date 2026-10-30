@@ -85,8 +85,15 @@ function absolute(raw: string, base: string): string | null {
  */
 const PARSE_OPTIONS = { xml: { xmlMode: false, decodeEntities: true } } as const;
 
+/**
+ * A space before each element boundary, so text from neighbouring elements does
+ * not glue ("Gallery" + "Reservations" → "GalleryReservations" defeats every
+ * word match). Squashed away afterwards; the raw `html` field keeps the original.
+ */
+const BOUNDARY = /<\/?(?:p|div|li|ul|ol|a|h[1-6]|td|th|tr|br|section|article|header|footer|nav|main|aside|span|button|label|option|small|strong|em|b|i)\b/gi;
+
 export function parsePage(html: string, url: string): ParsedPage {
-  const $ = cheerio.load(html, PARSE_OPTIONS);
+  const $ = cheerio.load(html.replace(BOUNDARY, " $&"), PARSE_OPTIONS);
 
   const jsonld: unknown[] = [];
   $('script[type="application/ld+json"]').each((_, el) => {
@@ -153,7 +160,8 @@ export function parsePage(html: string, url: string): ParsedPage {
       submitText: clip(submitText, 120),
       hasDate:
         types.includes("date") ||
-        /check-?in|check-?out|arriv|depart|date-?in|date-?out|llegada|salida|fecha|entrada|nights|noches|guests|adults|adultos|hu[ée]spedes|arriv[ée]e/.test(names),
+        // Whole words only (letter boundaries, so "check_in" and "tc-DateIn" match): "department" is not "depart".
+        /(?<![a-z])(check-?in|check-?out|arrival|arrive|arriving|departure|depart|date-?in|date-?out|llegada|salida|fecha|entrada|nights|noches|guests|adults|adultos|hu[ée]spedes|arriv[ée]e)(?![a-z])/.test(names),
     });
   });
 

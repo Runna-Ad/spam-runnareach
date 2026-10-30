@@ -312,6 +312,41 @@ test("fail-closed: a 'Book now' button or text that leads nowhere we can follow 
   assert.equal(detectBooking([guest], guest.url).online, false);
 });
 
+test("a contact form with a 'department' select and no message box is still a contact form (date words are whole words)", () => {
+  const p = page(
+    "https://firm.test/",
+    `${FILLER}${NAV}<form action="/contact/"><input name="name"><input type="email" name="email"><input type="tel" name="tel"><select name="department"><option>Sales</option></select><button type="submit">Send</button></form>`,
+  );
+  const f = detectContactForm([p], p.url);
+  assert.deepEqual([f.found, f.fields], [true, 4]);
+  assert.equal(detectBooking([p], p.url).online, false);
+});
+
+test("a contact form that only looks like a booking form (date field, no message box) stays a contact form when booking did not resolve from it", () => {
+  const p = page("https://firm.test/", `${FILLER}${NAV}<form action="/contacto/"><input name="nombre"><input type="email" name="correo"><input type="date" name="fecha"><button>Enviar</button></form>`);
+  assert.equal(detectContactForm([p], p.url).found, true);
+});
+
+test("a booking-word link whose target page we read in full, with no booking path on it, is explained: a readable absence, not null", () => {
+  const home = page("https://homes.test/", `${FILLER}${NAV}<a href="/desarrollo/21/arava-reserve">Nuevo desarrollo ARAVA RESERVE</a>`);
+  const target = page("https://homes.test/desarrollo/21/arava-reserve", `${FILLER}${NAV}<p>Casas de 3 recámaras.</p>`);
+  assert.equal(detectBooking([home, target], home.url).online, false);
+  // Not crawled: still could not see.
+  assert.equal(detectBooking([home], home.url).online, null);
+  // Crawled but unreadable: still could not see.
+  const shell: CrawledPage = { url: target.url, readable: { html: true, text: false, links: false }, parsed: target.parsed };
+  assert.equal(detectBooking([home, shell], home.url).online, null);
+});
+
+test("negated booking text ('no reservations needed', 'walk-ins welcome', 'sin cita', 'drop-in appointments') is not a booking signal", () => {
+  for (const t of ["No reservations needed, walk-ins welcome.", "Atención sin cita, de lunes a viernes.", "No se requiere reservación.", "Drop-in appointments every Tuesday.", "Appointments are not required."]) {
+    const p = page("https://x.test/", `${FILLER}${NAV}<p>${t}</p>`);
+    assert.equal(detectBooking([p], p.url).online, false, t);
+  }
+  const p = page("https://x.test/", `${FILLER}${NAV}<p>Reservations recommended on weekends.</p>`);
+  assert.equal(detectBooking([p], p.url).online, null, "a real mention with no path stays could-not-see");
+});
+
 test("booking strength: an on-page #booknow anchor is weak; a booking page link is strong", () => {
   const anchor = page("https://bnb.test/", `${FILLER}${NAV}<a href="#booknow">Book your stay</a>`);
   assert.equal(detectBooking([anchor], anchor.url).strength, "weak");

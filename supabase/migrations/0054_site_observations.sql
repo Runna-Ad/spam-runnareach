@@ -19,7 +19,8 @@
 --   route's maxDuration: the next claim marks it 'abandoned' (swept at the
 --   START of a run). A finished row (any status but pending/abandoned) blocks a
 --   re-crawl for 30 days: no prospect is crawled twice in 30 days. An abandoned
---   row blocks a retry for 1 day only (the crawl never finished).
+--   row blocks a retry for 1 day only (the crawl never finished); a second
+--   abandoned row in 30 days blocks it for the full 30 days (no daily loop).
 --   READERS: filter status = 'ok'. pending and abandoned rows keep checks = '{}';
 --   every other non-ok status stores checks with found = null throughout.
 --   Newest per prospect: idx (tenant_id, prospect_id, crawled_at desc).
@@ -150,6 +151,12 @@ begin
             and o.prospect_id = pr.prospect_id
             and o.crawled_at > now() - case when o.status = 'abandoned' then interval '1 day' else interval '30 days' end
        )
+       -- Two abandoned crawls in 30 days: that site kills the run, wait the full 30 days (no daily loop).
+       and (select count(*) from public.site_observations o
+             where o.tenant_id = pr.tenant_id
+               and o.prospect_id = pr.prospect_id
+               and o.status = 'abandoned'
+               and o.crawled_at > now() - interval '30 days') < 2
      order by pr.last_scraped_at desc
      limit greatest(0, least(p_limit, 50))
        for update of pr skip locked
