@@ -413,6 +413,7 @@ const JOB_STOPS: Record<CronJob, string> = {
   "replies-poll": "Reading replies and bounces: lead alerts, opt-outs and the bounce breaker.",
   "send-queue": "Approved emails going out.",
   "follow-up": "Follow-up emails.",
+  "site-observe": "Reading prospect websites (site_observations). No email stops; new prospects wait for their site check.",
 };
 
 /** The values one cron field allows: *, n, a-b, a-b/n, *\/n and lists of them. */
