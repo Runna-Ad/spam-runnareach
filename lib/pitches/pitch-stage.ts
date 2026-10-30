@@ -48,6 +48,7 @@ import {
 } from "./generator";
 import { listNotableClients } from "@/lib/notable-clients/queries";
 import { isSentOrParked } from "@/lib/prospects/status";
+import { loadSiteFacts, type SiteFactsDb } from "./site-facts";
 
 const generateSchema = z.object({
   prospect_id: z.string().uuid(),
@@ -151,7 +152,7 @@ export async function generatePitchWith(
     tech_stack: string[];
   };
 
-  const [{ data: prospect, error: prospectErr }, { data: research }] = await Promise.all([
+  const [{ data: prospect, error: prospectErr }, { data: research }, siteFacts] = await Promise.all([
     supabase
       .from("prospects")
       .select("id, company_name, industry, language, employee_size_estimate, city, market, domain, website_url")
@@ -164,6 +165,9 @@ export async function generatePitchWith(
       .eq("tenant_id", user.tenantId)
       .eq("prospect_id", parsed.data.prospect_id)
       .maybeSingle<ResearchRow>(),
+    // What our crawler saw on their site (newest ok observation, ≤ 60 days).
+    // Never fails the draft: an error or no row is [] (no site claim at all).
+    loadSiteFacts(supabase as unknown as SiteFactsDb, user.tenantId, parsed.data.prospect_id),
   ]);
 
   if (prospectErr) return { ok: false, error: `Lookup failed: ${prospectErr.message}` };
@@ -436,6 +440,7 @@ export async function generatePitchWith(
     guidance: showcaseFirst ? null : (writerArms.guidance?.text ?? null),
     exemplars,
     showcase_builds: showcaseFirst ? showcaseBuilds : null,
+    site_facts: siteFacts,
     // Signed by the per-language sender (Nils ES / Henry EN · Runna Advertising),
     // never the name of whoever clicked "Generate".
     sender: senderForGenerator(prospect.language),
@@ -846,7 +851,7 @@ export async function rewritePitchWithAngleWith(
   };
   type ResearchRow = { pain_points: unknown; what_they_do: string | null; tech_stack: string[] };
 
-  const [{ data: prospect }, { data: research }, { data: contactRows }] = await Promise.all([
+  const [{ data: prospect }, { data: research }, { data: contactRows }, siteFacts] = await Promise.all([
     supabase
       .from("prospects")
       .select("id, company_name, industry, language, employee_size_estimate, city, market, domain, website_url")
@@ -863,6 +868,8 @@ export async function rewritePitchWithAngleWith(
       .eq("prospect_id", pitch.prospect_id).eq("tenant_id", user.tenantId)
       .order("priority_rank", { ascending: true }).limit(12)
       .returns<{ id: string; full_name: string | null; email: string | null; email_is_role_based: boolean; role_title: string | null }[]>(),
+    // The same site facts as first generation (the critic judges against them too).
+    loadSiteFacts(supabase as unknown as SiteFactsDb, user.tenantId, pitch.prospect_id),
   ]);
   if (!prospect) return { ok: false, error: "Prospect not found." };
   // The rewrite greets the pitch's own recipient: when its contact is usable
@@ -923,6 +930,7 @@ export async function rewritePitchWithAngleWith(
     prospect: { ...prospect, what_they_do: research?.what_they_do ?? null, tech_stack: research?.tech_stack ?? [] },
     pains: rewritePains,
     benchmarks: rewriteBenchmarks,
+    site_facts: siteFacts,
     contacts: listed.map((c) => ({
       full_name: c.full_name, email: c.email, email_is_role_based: c.email_is_role_based || (c.email ? isRoleBasedEmail(c.email) : false), role_title: c.role_title ?? null,
     })),

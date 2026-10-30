@@ -286,7 +286,7 @@ test("schema: any wanted_fact shape (number, object, empty, absent) parses; the 
   }
 });
 
-test("prompts: the writer is told when to name a wanted fact and how; the critic too; version v3.3", async () => {
+test("prompts: the writer is told when to name a wanted fact and how; the critic too; version v3.4", async () => {
   const seen: Req[] = [];
   __test__.setClient({
     messages: {
@@ -305,7 +305,7 @@ test("prompts: the writer is told when to name a wanted fact and how; the critic
   assert.match(critic, /WANTED FACT:/);
   assert.match(critic, /"wanted_fact": string \| null/);
   assert.match(critic, /never changes the score or the issues/);
-  assert.equal(PITCH_PROMPT_VERSION, "pitch-v3.3-2026-10-26");
+  assert.equal(PITCH_PROMPT_VERSION, "pitch-v3.4-2026-10-30");
 });
 
 test("rewrite directive: no blanket number ban; the angle's pain_id pairs with the benchmark tagged for it", async () => {
@@ -447,6 +447,7 @@ async function stage(opts: { rpc?: RpcMode; wishes?: boolean; rewrite?: boolean;
     isRoleBasedEmail: () => false,
     listNotableClients: async () => [],
     fetchBenchmarksForPitch: async () => (opts.leadPainBenchmark ? [LEAD_PAIN_BENCHMARK] : []),
+    loadSiteFacts: async () => [],
     resolvePainCodes: async (_s: unknown, _t: string, ids: string[]) => {
       resolved.push(ids);
       return ids.map((id) => ({ id, code: id === PAIN ? "lead_response_time" : id }));

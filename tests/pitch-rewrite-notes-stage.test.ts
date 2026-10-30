@@ -211,6 +211,7 @@ async function run(opts: {
     isRoleBasedEmail: () => false,
     listNotableClients: async () => [],
     fetchBenchmarksForPitch: async () => [],
+    loadSiteFacts: async () => [],
     chooseWriterArms: async () => ({ evidence: "benchmark", guidance: null, showcase: opts.showcase ?? "followup" }),
     isShowcaseArm: (v: unknown) => v === "first" || v === "followup",
     pickBuilds: () => [{ id: "daily-briefing", for_whom: "a business owner", does: "a summary every morning", how_it_works: "reads the inbox", universal: true, learns: false }],
