@@ -144,6 +144,23 @@ RULE: Keep the two kinds of trust separate. Deliverability trips (bounces, Gmail
 TAGS: autopilot, stages, breakers, pedro-override
 
 
+## Bounce pause 2026-10-29 (branch fix/dead-mail-server)
+
+[2026-10-29] PEDRO_OVERRIDE: no paid services; the answer is always "we build it" or "it's free"
+WHAT HAPPENED: For the dead-mailbox bounces (4 of 5 in 30 days), I recommended paying a mailbox-verification service (~$0.004/check) as option 1. Pedro: "dont want to pay for a service the solution is always either we build it or is free".
+WHY HE WAS RIGHT: this preference was already on record (Yelp removed rather than paid for; ZeroBounce rejected in June) and I recommended a paid service anyway. A paid default also adds a vendor bill and a dependency for a problem that may have a free or built answer.
+RULE: Never lead with a paid service. Options are: build it ourselves, or a free source (a genuinely free quota, checked to be perpetual and not a trial, per the Yelp lesson). A paid option is mentioned only if Pedro asks for it.
+TAGS: pedro-override, cost, vendors, deliverability, bounces
+
+[2026-10-29] LESSON: "the domain has an MX record" is not "the domain can receive mail"
+SYMPTOM: the inbox_bounces breaker paused pedro@runnareach.com at 19:30 UTC (2 hard bounces in the last 50 sends). One was dreamjob@themethodyyc.com: its MX pointed at themethodyyc-com.mail.protection.outlook.com, a Microsoft 365 host that no longer exists (NXDOMAIN, checked with dig the same day). Mail there can only bounce.
+ROOT CAUSE: checkDomainMail (lib/research/verify-recipient.ts) returned "mx" the moment an MX record came back and never looked up the MX host itself, so the send gate passed the address on 2026-10-26 and again for the follow-up on 2026-10-29. Gmail had also sent two "Delivery Status Notification (Delay)" notices (10-27, 10-28) naming the same DNS error; the poll files delays as auto_reply by design, so the follow-up still went out.
+FIX: resolve each MX host (A, then AAAA); when EVERY host answers ENOTFOUND/ENODATA and the resolver passes the gmail.com/outlook.com control query, the status is dead_mx and the address is dropped. Any address, empty answer or flaky lookup keeps "mx", so a DNS blip never drops a good address. Tests pinned to themethodyyc.com and to dbkiddtransport.com (one dead MX host plus one live one: must stay "mx"). Before resuming, the same check ran against all 41 queued recipients: only themethodyyc.com was dead.
+MEASURED (30 days, one inbox): 5 hard bounces / 118 sends (about 4%). Only 1 was a dead domain. The other 4 were dead mailboxes on live mail servers (info@ / contacto@ scraped from the company site x3, 1 Anymail address): no free DNS check can see those, so this fix alone will not bring the rate under 2%.
+RULE: a free mail check must follow the MX all the way to an address. And when a breaker trips, count the bounce types before fixing: the loudest bounce (here the dead domain) was the minority type.
+TAGS: bounces, deliverability, dns, mx, verify-recipient, breaker
+
+
 ## Quiet hours for the scheduled jobs (2026-10-26, branch perf/quiet-hours-cron)
 
 [2026-10-26] PEDRO_OVERRIDE: off-hours pace for the tick and the reply poll
