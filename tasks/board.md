@@ -156,7 +156,7 @@ External prerequisite: Pedro creates a free Google API key with the PageSpeed In
 | Slug | Module | Rung | Model/effort | Branch | Session | PR | Depends on | Status | Turns | Review findings | CI reds | Rework |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|
 | study | conductor | 0 | opus/high | — | this | — | — | blocked: session network policy refuses prospect sites (403 CONNECT); PageSpeed keyless = 429 | | | | |
-| site-facts-writer | lib/pitches site-facts + writer/critic v3.4 + loaders | 3 | opus/high | claude/site-facts-writer | session_01XYnsssur8sUg8r9LvJFsxJ | — | site-crawler | spawned 05:00 UTC 10-30 | | | | |
+| site-facts-writer | lib/pitches site-facts + writer/critic v3.4 + loaders | 3 | opus/high | claude/site-facts-writer | session_01XYnsssur8sUg8r9LvJFsxJ | #71 | site-crawler | in review (1672→1714 tests) | | | | |
 | site-crawler | lib/research/site-crawl + observe route + 0054 | 3 | opus/high | claude/site-crawler | session_01XYnsst3eC4Z2opXkGNEubD | #70 | — | merged ea292cd (1672 tests; 2 review rounds + 1 conductor-verified delta); wrapped + archived ($15.13) | | | | |
 | greeting-rule | lib/pitches greeting + send-gate | 3 | opus/high | claude/greeting-rule | session_01XYnsss9MDXbKnz7oCzk2MW | #65 | — | merged 4631556 (1570 tests); wrapped + archived ($3.46) | | | | |
 
@@ -173,3 +173,4 @@ Log
 - 2026-10-30 04:36 UTC — Pedro "ship #69" → squash-merged 2003f85 (no migration). main merged into integration (75551c8): send-gate.ts auto-merged with #65; typecheck, lint, 1607 tests green. Deploy check armed 04:40. Wave 2 can now be briefed on top of the showcase email.
 - 2026-10-30 05:00 UTC — #70 round 2: merge (0 blocking); last delta (contact-form false absence, negated booking text, readable-target links, abandoned cap) verified by conductor: typecheck, lint, 1672 tests → merged ea292cd. types.ts gains site_observations + claim_site_observations (conductor). 33-site booking row now: 7 found, 17 no online booking, 9 could not see.
 - 2026-10-30 05:01 UTC — site-crawler wrapped + archived ($15.13; 4 late lessons → tasks/lessons-inbox/site-crawler-wrapup.md). Wave 2 site-facts-writer spawned (session_01XYnsssur8sUg8r9LvJFsxJ). Conductor decision: site facts built in code (no extra AI call, cost cap); closing line 'see what our free check finds on [company]'s site' pending Pedro's confirmation (his pick promised a phone view the free check may not show).
+- 2026-10-30 05:40 UTC — #71 opened 05:24 (v3.4, site facts in code, new CTA/subjects, showcase pinned by hash). Reviewer running.
