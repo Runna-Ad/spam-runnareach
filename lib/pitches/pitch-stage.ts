@@ -48,6 +48,7 @@ import {
 } from "./generator";
 import { listNotableClients } from "@/lib/notable-clients/queries";
 import { isSentOrParked } from "@/lib/prospects/status";
+import { loadSiteObservation, siteFactsFor, type SiteObservationsDb } from "./site-facts";
 
 const generateSchema = z.object({
   prospect_id: z.string().uuid(),
@@ -151,7 +152,7 @@ export async function generatePitchWith(
     tech_stack: string[];
   };
 
-  const [{ data: prospect, error: prospectErr }, { data: research }] = await Promise.all([
+  const [{ data: prospect, error: prospectErr }, { data: research }, observation] = await Promise.all([
     supabase
       .from("prospects")
       .select("id, company_name, industry, language, employee_size_estimate, city, market, domain, website_url")
@@ -164,10 +165,15 @@ export async function generatePitchWith(
       .eq("tenant_id", user.tenantId)
       .eq("prospect_id", parsed.data.prospect_id)
       .maybeSingle<ResearchRow>(),
+    // What our crawler saw on their site (newest finished crawl, ≤ 60 days).
+    // Never fails the draft: an error or no row is null (no site claim at all).
+    loadSiteObservation(supabase as unknown as SiteObservationsDb, user.tenantId, parsed.data.prospect_id),
   ]);
 
   if (prospectErr) return { ok: false, error: `Lookup failed: ${prospectErr.message}` };
   if (!prospect) return { ok: false, error: "Prospect not found." };
+  // Only an ok crawl of the prospect's CURRENT site (website_url / domain may have been corrected since).
+  const siteFacts = siteFactsFor(observation, prospect);
 
   const pains: GeneratorInputResearchPain[] = normalizePains(research?.pain_points ?? null, prospect.company_name);
 
@@ -436,6 +442,7 @@ export async function generatePitchWith(
     guidance: showcaseFirst ? null : (writerArms.guidance?.text ?? null),
     exemplars,
     showcase_builds: showcaseFirst ? showcaseBuilds : null,
+    site_facts: siteFacts,
     // Signed by the per-language sender (Nils ES / Henry EN · Runna Advertising),
     // never the name of whoever clicked "Generate".
     sender: senderForGenerator(prospect.language),
@@ -846,7 +853,7 @@ export async function rewritePitchWithAngleWith(
   };
   type ResearchRow = { pain_points: unknown; what_they_do: string | null; tech_stack: string[] };
 
-  const [{ data: prospect }, { data: research }, { data: contactRows }] = await Promise.all([
+  const [{ data: prospect }, { data: research }, { data: contactRows }, observation] = await Promise.all([
     supabase
       .from("prospects")
       .select("id, company_name, industry, language, employee_size_estimate, city, market, domain, website_url")
@@ -863,8 +870,11 @@ export async function rewritePitchWithAngleWith(
       .eq("prospect_id", pitch.prospect_id).eq("tenant_id", user.tenantId)
       .order("priority_rank", { ascending: true }).limit(12)
       .returns<{ id: string; full_name: string | null; email: string | null; email_is_role_based: boolean; role_title: string | null }[]>(),
+    // The same site facts as first generation (the critic judges against them too).
+    loadSiteObservation(supabase as unknown as SiteObservationsDb, user.tenantId, pitch.prospect_id),
   ]);
   if (!prospect) return { ok: false, error: "Prospect not found." };
+  const siteFacts = siteFactsFor(observation, prospect);
   // The rewrite greets the pitch's own recipient: when its contact is usable
   // and not already the first usable of the top five (a contact chosen past a
   // flagged one), it leads the list; otherwise the list is the top five, as before.
@@ -923,6 +933,7 @@ export async function rewritePitchWithAngleWith(
     prospect: { ...prospect, what_they_do: research?.what_they_do ?? null, tech_stack: research?.tech_stack ?? [] },
     pains: rewritePains,
     benchmarks: rewriteBenchmarks,
+    site_facts: siteFacts,
     contacts: listed.map((c) => ({
       full_name: c.full_name, email: c.email, email_is_role_based: c.email_is_role_based || (c.email ? isRoleBasedEmail(c.email) : false), role_title: c.role_title ?? null,
     })),

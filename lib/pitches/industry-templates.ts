@@ -243,7 +243,7 @@ En Rünna trabajamos bajo una regla: si no se puede medir, no sirve. Empieza por
     label_en: "Retail / Consumer Brand",
     label_es: "Retail / Marca de Consumo",
     en: {
-      subject: "what a scattered brand is costing {company}",
+      subject: "an idea for {company}",
       preview_text: "Inconsistent packaging, shifting message, invisible cost. A 30-second diagnostic turns it into a real dollar figure.",
       body: `Hi {first_name},
 

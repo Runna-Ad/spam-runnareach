@@ -74,8 +74,8 @@ const FWD_EN = "If you're not the right person for this, I'd really appreciate i
 
 // ── 1. Writer prompt ──────────────────────────────────────────────────────────
 
-test("writer prompt v3.3: the honesty rules are in every language and register", async () => {
-  assert.equal(PITCH_PROMPT_VERSION, "pitch-v3.3-2026-10-26");
+test("writer prompt v3.4: the honesty rules are in every language and register", async () => {
+  assert.equal(PITCH_PROMPT_VERSION, "pitch-v3.4-2026-10-30");
   for (const [lang, size] of [["en", 10], ["es", 10], ["es", 200]] as const) {
     const calls = install(() => answer());
     const r = await composePitchWithClaude(inputs({}, lang, size));
@@ -83,7 +83,8 @@ test("writer prompt v3.3: the honesty rules are in every language and register",
     const sys = sysText(calls[0]!);
     const label = `${lang}/${size}`;
     // Only what was seen is an observation; observed: false is advice.
-    assert.match(sys, /only what is visible on their site, in tech_stack or in what_they_do, and a pain_candidates evidence_quote marked observed: true/, label);
+    // v3.4: what was seen on their site is a site_facts entry (tests/site-facts-writer.test.ts).
+    assert.match(sys, /What you may state as something you saw: a site_facts entry, what_they_do, tech_stack, and a pain_candidates evidence_quote marked observed: true/, label);
     assert.match(sys, /An evidence_quote marked observed: false reads as advice or opinion from our research/, label);
     assert.match(sys, /never turn it into an observation/, label);
     // Never claim to have checked how they handle enquiries.
@@ -140,9 +141,10 @@ test("critic prompt: blocks only claims about THIS business; general lines, our 
     // House facts.
     // A house line still carries no unchecked claim (batch 9 audit): its pain and any result are judged.
     assert.ok(sys.includes("The one-sentence proof line about the kind of work we do for businesses like theirs is our own, as long as it names no client, claims no result"), lang);
-    assert.ok(sys.includes("the pain it names is still judged by rule 1"), lang);
+    // v3.4: the CTA names no pain; a loss in the CTA is still judged by rule 1.
+    assert.ok(sys.includes("A CTA that says where they are losing or what something is costing them claims something about this business: rule 1 judges it"), lang);
     assert.ok(sys.includes("The line asking to pass the email along to the right person is added by our code to role inboxes."), lang);
-    assert.ok(sys.includes(lang === "es" ? 'The CTA\'s "dónde [el dolor] te está costando" wording' : 'The CTA\'s "where [the pain] is costing you" wording'), lang);
+    assert.ok(sys.includes(lang === "es" ? 'The CTA\'s "mira lo que nuestra herramienta gratis encuentra en el sitio de [empresa]" wording' : 'The CTA\'s "see what our free check finds on [company]\'s site" wording'), lang);
     // Subject never blocks; greeting; quote + field.
     // Subject: wording is polish, a claim in it is not (review #61, blocking 1).
     assert.ok(sys.includes("Subject wording (tone, phrasing, length, lower case) is polish, never blocking; a claim about this business, a statistic or a client name in the subject is judged by rules 1 and 2 like any body sentence."), lang);

@@ -189,6 +189,8 @@ async function pitch(status: string, opts: { parkAs?: string; recheckMissing?: b
     isRoleBasedEmail: () => false,
     listNotableClients: async () => [],
     fetchBenchmarksForPitch: async () => [],
+    loadSiteObservation: async () => null,
+    siteFactsFor: () => [],
     chooseWriterArms: async () => ({ evidence: "benchmark", guidance: null }),
     fetchExemplars: async () => [],
     segmentOf: () => "seg",

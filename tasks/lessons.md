@@ -2,6 +2,110 @@
 
 > Sections older than phase 3 batch 8 (batch 7 back to April 2026) moved to `tasks/archive/lessons-2026-10.md` on 2026-10-27. Grep it; do not load it whole.
 
+## Merged from lessons-inbox, batch 10 (2026-10-30)
+
+<!-- from site-facts-writer -->
+[2026-10-30] A shared prompt builder changed for one arm silently changes the other arm's prompt
+WHAT HAPPENED: `criticSystem` (lib/pitches/review.ts) builds both the pain-led and the showcase critic from one template, and the showcase writer reuses `englishPack()` / `spanishPack()` from the pain-led writer. The brief said "showcase unchanged"; editing rule 1, the house CTA line or a pack field would have changed the showcase prompts with no failing test. I hashed every showcase system prompt on the base branch before editing and pinned the hashes in tests/site-facts-writer.test.ts, then gated each new critic sentence on `showcase`.
+RULE: When a brief says "arm X must not change" and X shares a prompt builder with the arm you edit, capture X's full rendered prompt (hash) on the base branch BEFORE the first edit and assert it after. String-contains tests on a few lines do not catch a changed shared sentence.
+TAGS: pitches, prompts, critic, showcase, testing
+
+[2026-10-30] A fail-safe text must not contain the words the guard forbids
+WHAT HAPPENED: The structured-hours absence first read "No opening hours were found in the site's structured data…". The test guard "hours false never says 'no hours'" failed on it: a cheap model reading "No opening hours were found" can drop the qualifier and write "you don't list your hours". Reworded to "Their opening hours are not in the site's structured data…". Same for the WhatsApp-only booking fact, which first carried "no way to book online was found" and now says only "Bookings are taken only by WhatsApp…".
+RULE: A fact handed to a model as "say exactly this and no more" should not open with the forbidden misreading, even when a later clause corrects it. Test the fact text against the misreading regex, not only for the qualifier being present.
+TAGS: pitches, site-facts, prompts, claims
+
+## Out of scope, noticed
+- lib/pitches/send-gate.ts / gate.ts: `evidenceQuotes` holds pain quotes and what_they_do, not site facts. A number from a site fact (copyright year, PageSpeed score, rating count) is "unsourced" to the gate, so the prompt tells the writer to describe those in words. Adding site-fact texts to the gate's sources (and to `writingFailures`) would let them be quoted.
+- lib/pitches/gate.ts:181 `websiteVerified` is research-scraped only; a prospect with an ok site observation but no research `evidence_urls` would have a site-fact claim held as `unverifiable_website_claim`. The claim function only crawls researched prospects, so it should be rare; not checked against prod.
+- The follow-up writer (`app/api/pitches/follow-up/route.ts`, `followup-composer.ts`) still reads research only (next batch, per the brief). Its showcase critic path is unaffected (it always runs as showcase).
+
+<!-- from site-facts-writer wrap-up -->
+[2026-10-30] A stored observation keyed on an entity whose identity can change must be re-matched at read time
+WHAT HAPPENED: The site-facts loader trusted any ok crawl stored under the prospect's id. A website corrected after the crawl (the 30-day re-crawl wait is keyed on prospect_id) would have handed the writer another business's facts. The reviewer caught it.
+RULE: When a stored observation is keyed on an entity whose identity can change (website, domain, email), check at read time that it still matches the entity's current value.
+TAGS: pitches, site-facts, readers, staleness
+
+[2026-10-30] "Newest ok row" is the wrong question; make the fake honour order/limit
+WHAT HAPPENED: A newer failed re-crawl should stop older facts, and the stage test's fake ignored order() and limit(), so "newest" was never tested.
+RULE: Read the newest finished row, then filter it. A fake db must honour sorting and limits whenever "newest" matters.
+TAGS: pitches, testing, fakes
+
+<!-- from site-crawler -->
+[2026-10-30] A word that means "book" in one sentence is a place name in the next: test detectors on real pages, not on the word list
+WHAT HAPPENED: The first booking regex in lib/research/site-crawl/detectors.ts matched "RESERVE" (a development called "Arava Reserve"), "Reserva Real" (a neighbourhood), "Agenda" (a university's event agenda) and "Booking.com*" on a student-housing page linking to airbnb.ca/ and booking.com's home. All four came out as "online booking found" on the 33-site study, i.e. the exact false claim the task exists to stop. Only running the crawler on the real sites showed it.
+RULE: A keyword detector that feeds a claim about a prospect is tuned on real pages before it ships: run it on the study set, read every positive's evidence, and turn each false positive into a test. Marketplace/engine links count only on a listing or a tenant subdomain, never the vendor's home page.
+TAGS: research, site-crawl, detectors, P4
+
+[2026-10-30] Platform scripts are on every site of that platform: they are not evidence of a feature
+WHAT HAPPENED: Wix loads its "wixstores" bundle and Squarespace draws a /cart icon on every site; the first ecommerce detector flagged a treehouse lodge and a hotel as online stores. A translation-tool regex (/wpml/i) matched "wpmL" inside minified code on a Shopify page.
+RULE: Fingerprints run on raw HTML match asset URLs or exact tokens (cdn.weglot.com, plugins/sitepress-multilingual-cms), case-sensitive where possible, and a feature counts only with a user-facing signal (add-to-cart text, a Product with offers), not because the platform's bundle is loaded.
+TAGS: research, site-crawl, fingerprints
+
+[2026-10-30] cheerio's default parser is 5x the CPU of htmlparser2 on real pages
+WHAT HAPPENED: On 200 saved study pages (270 KB average) cheerio.load with parse5 took 7.1 s CPU, with `{ xml: { xmlMode: false, decodeEntities: true } }` (htmlparser2) 1.3 s, same links and text. Per site the crawl dropped from 0.45 s to 0.27 s CPU, which is what fits the Vercel free-plan budget at 700 sites a week.
+RULE: Any cron that parses many third-party pages on Vercel measures CPU per item on real pages and uses htmlparser2 unless parse5's spec-exact tree is needed. lib/research/scraper.ts still uses the default (not changed here: it is read-only for this task).
+TAGS: vercel, cpu, cheerio, P5
+
+[2026-10-30] Our own User-Agent, honestly named, and robots.txt
+WHAT HAPPENED: lib/research/scraper.ts sends a plain Chrome UA. For the crawler the auto-mode classifier refused a UA comparison as bot-check circumvention, which is the right call: the crawler names itself (`Mozilla/5.0 (compatible; RunnaSiteCheck/1.0; +https://runna.com.mx)`) and honours robots.txt. With it, 32/33 study sites answered; one answered 429 on two of four runs and comes out "blocked" = could not see, which is the safe outcome.
+RULE: Never dress a crawler up as a browser to get past a bot wall. A refusal is stored as "blocked" (found = null everywhere), never as an absence.
+TAGS: research, crawling, ethics
+
+## Out of scope, noticed
+- lib/research/scraper.ts:14 sends a browser User-Agent (Chrome 124) to get past bot walls; the new crawler names itself honestly. Worth aligning (conductor/Pedro decision).
+- lib/research/scraper.ts parses with cheerio's default parse5 (5x the CPU of htmlparser2 on real pages, see above); research runs inside the tick budget.
+- The conductor's prototype saw a Wix lodge (hiddenacrestreehouseresort.com) return 0 links; with this crawler's request the same home page came back server-rendered with 25 links and "Book Now" → secure.webrez.com (WebRezPro). The JS-shell case is covered by a fixture derived from that page with the body removed.
+
+<!-- from site-crawler wrap-up -->
+[2026-10-30] A detector's absence needs every path that hides the thing covered: forms and buttons, not just links
+WHAT HAPPENED: Booking only read `<a href>` links. Hotel Zed's "Book Now" is the submit button of an availability form posting to reservations.hotelzed.com, so with every page readable the hotel came out as "no booking" plus a 7-field contact form. The fix resolves form actions, submit text, date fields, onclick and data-href buttons, and adds a coarse fail-closed check.
+RULE: Before writing `found:false`, list every HTML way the feature can appear (link, form, button, script, iframe). Resolve each one, or make an unresolved hint give null.
+TAGS: research, site-crawl, P4, P6
+
+[2026-10-30] Fail-closed matching misfires too: re-run it on the real study set before pushing
+WHAT HAPPENED: The first coarse booking check matched substrings ("Capacitación" holds "cita", "Reservoir" holds "reserv", "Textbook" holds "book"). Six readable sites went to null. Word-start matching, plus explaining a link by the readable page it leads to, fixed it.
+RULE: A fail-closed matcher is still a classifier. Run it on the real pages, read every null it creates, and turn each false trigger into a test.
+TAGS: research, site-crawl, P6
+
+[2026-10-30] Text extracted by htmlparser2 glues neighbouring elements together
+WHAT HAPPENED: `$("body").text()` returned "GalleryReservations", so word-boundary regexes over page text missed real mentions. A space inserted before element boundaries fixed it (~2.5 ms CPU per page).
+RULE: Any word match over extracted page text keeps element boundaries as whitespace.
+TAGS: parsing, cheerio
+
+[2026-10-30] Form-field words must be whole words
+WHAT HAPPENED: The booking-form date check matched "depart" inside "department", so a plain contact form counted as a booking form and contact_form said false.
+RULE: Match words in field names with letter boundaries; drop a form from one check only when another check actually resolved it.
+TAGS: research, site-crawl, forms
+
+## Out of scope, noticed
+- lib/research/scraper.ts:14 sends a Chrome UA (align with the honest crawler UA: Pedro's call); it still parses with parse5 (5x CPU).
+- PageSpeed runs in parallel with robots.txt: Google fetches a refusing site once before we drop the result.
+
+<!-- from greeting-rule -->
+[2026-10-28] A wordlist's subset names describe how it was built, not what the brief needs
+WHAT HAPPENED: The brief asked for "given names only, everyday-word names only with a separator". `lib/pitches/wordlists/names.ts` mixes given names and surnames in NAME_LIST, and NAME_WORDS (6,834) is "correct in a Hunspell dictionary", which includes proper nouns: juan, maria, luis, pedro, jorge, laura, diego all count as "everyday words". The literal rule therefore sends juan@, maria@ and pedro@ to the team greeting. Mexican short forms (memo, chema, toño) are in no SSA list at all, and the exemplar scrubber's tests depended on them.
+RULE: Before a brief builds a rule on a wordlist subset, the conductor (or the worker, first thing) probes it with 10 real inputs from the target market, on both sides of the line, and puts the results in the brief. A subset's header says how it was made; only probing says whether it means what the rule needs.
+TAGS: pitches, greeting, wordlists, briefs
+
+## Out of scope, noticed
+- `lib/pitches/wordlists/names.ts` has no given-name-only export. Regenerating it with a GIVEN_NAMES export (scripts/gen-exemplar-wordlists.mjs already reads baby-names.csv separately) would let greetingName refuse surname-only locals (lopez@, which greets "Lopez" today, as before this change) and drop the dictionary-proper-noun noise from NAME_WORDS.
+- `GATE_VERSION` in send-gate.ts says "bump on any rule change" but has stayed 2 through several greeting changes; not bumped here either.
+
+## Conductor v2 (2026-10-27)
+
+[2026-10-27] LESSON: a notes-only merge to main still rebuilds production
+WHAT HAPPENED: I told Pedro twice that PR #64 (only tasks/, .claude/, *.md) would deploy nothing because scripts/vercel-ignore.sh skips notes. The script's first line exits 1 (build) for every production deploy; it only skips previews. Merging #64 started production build dpl_AicBFtzynf3dEaNvpFxmiG21c87N of unchanged app code.
+RULE: Before saying what a merge will or will not deploy, read the ignore script's production branch, not just its comment. A notes-only merge to main = a production rebuild of the same code (harmless, but it is a deploy and costs a build).
+TAGS: #lesson #vercel #deploy #claims
+
+[2026-10-28] PEDRO_OVERRIDE: approve or reject research statistics yourself when Pedro has decided
+CLAUDE SUGGESTED: Pedro clicks Approve on /benchmarks himself, because approval stamps who vouched for the number.
+PEDRO'S APPROACH: "the 4 statistics you do it, don't give me grief about this." He decides which ones; Claude applies it.
+WHY IT WAS BETTER: the decision is the human step, not the click. Claude applied it exactly like the app's action (approve: is_active, verified_by = Pedro's user id, verified_at; reject: rejected_at, only rows still open) and reported the result.
+RULE: When Pedro has made the call on a review item, apply it for him with the app's own write rules and his user id; do not push the click back to him.
+TAGS: #override #benchmarks #review-ui
+
 ## Overrides from archived sections (copied verbatim; the originals are in `tasks/archive/lessons-2026-10.md`)
 Every PEDRO_OVERRIDE stays readable here. Newer overrides are in the sections below.
 

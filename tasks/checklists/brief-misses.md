@@ -38,6 +38,7 @@ too (rare; the list should stay near 8).
   breaker on the deploy week).
 
 ## P3 Claims verified before spawning
+- A rule built on a wordlist subset: probe the subset with 10 real inputs from the target market on both sides of the line and paste the result (batch 10 #65: NAME_WORDS holds dictionary proper nouns, so juan@/maria@ lost their names).
 - A claim about how the code behaves today quotes the line that does it, checked against its
   file:line before spawning (batch 4: a false premise about the >=70 pitching phase cost a
   rework round; batch 5: "the /learning page lists insights" was false; batch 1: a fetch
@@ -50,6 +51,7 @@ too (rare; the list should stay near 8).
   `cost_tracking.created_at`, the column is `incurred_at`).
 
 ## P4 Quiet states: what must not change or fire
+- A detector that can write "not there": list every HTML way the thing appears (link, form action, button onclick/data-href, script, iframe) and say each must resolve or give null (batch 10 #70: a hotel's availability form read as "no online booking").
 - For a classifier, filter or gate: the NEGATIVE set is listed (inputs whose class must
   not change) and the rule is stated as an invariant, not as an order of checks
   (simulation: the reply classifier took 3 rounds without one).
@@ -101,6 +103,7 @@ too (rare; the list should stay near 8).
   its input (batch 6: the held body carried the old pitch's attribution code into the rewrite).
 
 ## P8 Order and timing: ship order, gaps, races
+- A stored row keyed on an entity whose identity can change later (website, domain, email): say the reader re-matches it to the current value (batch 10 #71: facts from a crawl of a site the prospect no longer had).
 - A migration the old prod code will run against (applied before the deploy): the brief
   says what rows the old code writes in the gap and what the new code then does to them;
   never key a window on `updated_at` (the trigger bumps it on every write).
