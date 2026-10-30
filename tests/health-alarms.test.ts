@@ -239,6 +239,7 @@ test("each job's schedule is the one its migration sets", () => {
     "0041": "0041_autopilot_scheduler.sql",
     "0052": "0052_follow_up_every_10min.sql",
     "0053": "0053_quiet_hours_cron.sql",
+    "0054": "0054_site_observations.sql",
   };
   for (const [job, spec] of Object.entries(CRON_JOBS)) {
     for (const s of spec.schedules) {
