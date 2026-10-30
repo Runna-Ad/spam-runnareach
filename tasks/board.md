@@ -156,6 +156,7 @@ External prerequisite: Pedro creates a free Google API key with the PageSpeed In
 | Slug | Module | Rung | Model/effort | Branch | Session | PR | Depends on | Status | Turns | Review findings | CI reds | Rework |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|
 | study | conductor | 0 | opus/high | — | this | — | — | blocked: session network policy refuses prospect sites (403 CONNECT); PageSpeed keyless = 429 | | | | |
+| site-facts-writer | lib/pitches site-facts + writer/critic v3.4 + loaders | 3 | opus/high | claude/site-facts-writer | — | — | site-crawler | spawning | | | | |
 | site-crawler | lib/research/site-crawl + observe route + 0054 | 3 | opus/high | claude/site-crawler | session_01XYnsst3eC4Z2opXkGNEubD | #70 | — | merged ea292cd (1672 tests; 2 review rounds + 1 conductor-verified delta; $14.83) | | | | |
 | greeting-rule | lib/pitches greeting + send-gate | 3 | opus/high | claude/greeting-rule | session_01XYnsss9MDXbKnz7oCzk2MW | #65 | — | merged 4631556 (1570 tests); wrapped + archived ($3.46) | | | | |
 
