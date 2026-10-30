@@ -152,6 +152,22 @@ WHY HE WAS RIGHT: this preference was already on record (Yelp removed rather tha
 RULE: Never lead with a paid service. Options are: build it ourselves, or a free source (a genuinely free quota, checked to be perpetual and not a trial, per the Yelp lesson). A paid option is mentioned only if Pedro asks for it.
 TAGS: pedro-override, cost, vendors, deliverability, bounces
 
+[2026-10-29] LESSON: I recommended building a rule that already existed ("named person before info@")
+ROOT CAUSE: I offered "prefer a named person over a generic inbox" as the free fix for dead mailboxes, from a bounce-rate split (generic 3/25 vs named 2/32), without reading the picker. Pedro said "build it". The picker (lib/pitches/contacts.ts chooseRecipient) already sorts by priority_rank, and every insert path gives generic inboxes rank 5 and named people 1 or 2. None of the 25 generic first emails in 30 days had a named contact on file, so the "fix" would have changed nothing.
+ALSO MEASURED (all first emails ever sent to a generic inbox): Google/Microsoft-hosted 2 bounced / 60, smaller mail hosts 3 / 32. Too weak for a rule: holding the smaller hosts would cost ~29 good emails to avoid 3 bounces. Bounces before 2026-07-21 are under-counted (no DNC auto-add yet).
+RULE: Before proposing a fix as an option, grep for the code that would own it and query whether the case it targets actually happens. A rate split by category is not a fix until the data shows the alternative was available.
+TAGS: bounces, contacts, recipient-chooser, measure-first, grep-first
+
+[2026-10-29] LESSON: lessons written in a sibling worktree never reach the brain when the session runs from the main checkout
+ROOT CAUSE: unified-stop.sh reads $(pwd)/tasks/lessons.md. This session's folder was /Users/runna/Projects/S.P.A.M (121 commits behind), while every edit went to ../S.P.A.M-dead-mx. The hook would have found no change and captured nothing. Filing by hand, `{ [ ! -f f ] && header; ...; } >> f` skipped the header: the >> creates the file before the test runs (the hook's own comment warns about this).
+RULE: at wrap-up, if lessons were logged outside the session's folder, copy the new entries into ~/Brain/brain-starter/inbox/<date>-<host>-s.p.a.m-lessons.md yourself. Test whether a file exists BEFORE the redirect that appends to it.
+TAGS: process, second-brain, worktrees, stop-hook
+
+[2026-10-29] LESSON: keep prospects' email addresses out of PR descriptions
+ROOT CAUSE: the first `gh pr create` for PR #67 listed the two bounced addresses in a table; the auto-mode safety check refused it as excess sensitive detail. Domains alone told the same story.
+RULE: in PR text, name the company domain, never a prospect's full address. Tests and lessons in the private repo may keep real fixtures, as before.
+TAGS: process, privacy, github, prs
+
 [2026-10-29] LESSON: "the domain has an MX record" is not "the domain can receive mail"
 SYMPTOM: the inbox_bounces breaker paused pedro@runnareach.com at 19:30 UTC (2 hard bounces in the last 50 sends). One was dreamjob@themethodyyc.com: its MX pointed at themethodyyc-com.mail.protection.outlook.com, a Microsoft 365 host that no longer exists (NXDOMAIN, checked with dig the same day). Mail there can only bounce.
 ROOT CAUSE: checkDomainMail (lib/research/verify-recipient.ts) returned "mx" the moment an MX record came back and never looked up the MX host itself, so the send gate passed the address on 2026-10-26 and again for the follow-up on 2026-10-29. Gmail had also sent two "Delivery Status Notification (Delay)" notices (10-27, 10-28) naming the same DNS error; the poll files delays as auto_reply by design, so the follow-up still went out.

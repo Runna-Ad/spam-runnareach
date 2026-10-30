@@ -1503,4 +1503,7 @@ marketing-context only if it bites.
 **Measured:** 30 days, 118 sends, 5 hard bounces (~4%); 4 of 5 dead mailboxes on live domains, which no free check sees. autonomy_state.autoBounceRate 0.079.
 **Not checked:** that the next autopilot tick keeps the inbox on; Vercel preview build of PR #67.
 **Pedro:** "Ship it" for PR #67 (2026-10-29). PEDRO_OVERRIDE: no paid services, so the paid mailbox check is out.
-**Waiting on Pedro:** a free choice for dead mailboxes (generic inboxes to hand approval, or build-it options).
+**Shipped:** PR #67 merged as 97bb3a0, deploy dpl_5KDLx4ULW3HUJfeM7hePJP2AeKg7 READY on production; the 22:00 UTC autopilot run kept the inbox on, 0 bounces since the resume.
+**Not built:** "named person before info@" (Pedro: "Yes, build it") already exists in chooseRecipient; 0 of 25 generic first emails had a named alternative. A small-mail-host rule measured too weak (2/60 vs 3/32). Recommended: build nothing new until more sends; port 25 is blocked on Vercel, Supabase and Pedro's Mac, so a home-built mailbox check is out.
+**Decision:** Pedro agreed to skip new contact rules for now (2026-10-29). Revisit after a few hundred more sends.
+**Waiting on Pedro:** nothing.
