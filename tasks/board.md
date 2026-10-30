@@ -122,3 +122,4 @@ Log
 - 2026-10-30 06:25 UTC — Batch audit (Fable): merge, 0 blocking; button label fix add2f7f. site-facts-writer wrapped + archived ($10.56). Retro tasks/retros/2026-10-30-phase3-batch10.md, lessons merged, checklists + conductor §E network row + core-context updated, batch 8 archived. Integration → main PR next.
 - 2026-10-30 06:30 UTC — Integration → main PR #72 opened; subscribed. Waiting for Pedro's "ship it".
 - 2026-10-30 13:32 UTC — Pedro "ship it" (06:21). PR #72 squash-merged → main a9c0d30; production deploy dpl_CmNd9Ywd4pUDTdyQ1XKaxhoXT91D READY; then 0054 applied and verified. First crawler run check armed 15:16 UTC; early prod check Mon 11-02 17:05 UTC.
+- 2026-10-30 13:40 UTC — Pedro: PageSpeed key left for later (crawl runs, psi_status no_key); closing line stays as shipped ("see what our free check finds on [company]'s site") with the existing email button; conductor skill network row synced to ~/.claude (dotclaude 6c3a372).
