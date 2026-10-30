@@ -221,7 +221,35 @@ export function findUnsourcedNumbers(
  * Rünna's internal products ("S.P.A.M." in a cold email is self-referential and
  * a spam-filter word in its own right).
  */
-export const INTERNAL_NAMES: readonly RegExp[] = [/\bS\.\s?P\.\s?A\.\s?M\.?/i, /\bsnap\s?pad\b/i];
+export const INTERNAL_NAMES: readonly RegExp[] = [
+  /\bS\.\s?P\.\s?A\.\s?M\.?/i,
+  /\bsnap\s?pad\b/i,
+  // The builds the showcase email describes (lib/runna/builds.ts), by their
+  // product names: the email says what each one does, never what it's called.
+  /\bgreenlight\b/i,
+  /\bbrook\s?book\b/i,
+  /\bsnap\s?track\b/i,
+  /\bmatch\s?bot\b/i,
+  /\bcommand\s+cent(?:er|re)\b/i,
+  /\bbarcode\s+studio\b/i,
+  /\bHÜE\b/,
+  /\bR[üu]nna\s+Social\b/i,
+];
+
+/**
+ * Internal product names present in `text`. The prospect's own words are
+ * removed first (company name, site name, evidence quotes): "Greenlight
+ * Dental" is a business, not our portal, and must not hold its every email.
+ */
+export function findInternalNames(text: string, context: ReadonlyArray<string | null | undefined> = []): string[] {
+  let scrubbed = text;
+  // Whole words, 3+ characters: a company called "Snap" must not cut "SnapTrack" in half.
+  for (const c of context) {
+    const t = c?.trim();
+    if (t && t.length >= 3) scrubbed = scrubbed.replace(new RegExp(`(?<![\\p{L}\\d])${escapeRegExp(t)}(?![\\p{L}\\d])`, "giu"), " ");
+  }
+  return INTERNAL_NAMES.map((re) => scrubbed.match(re)?.[0]).filter((x): x is string => Boolean(x));
+}
 
 /** Strip accents but keep case: "Aeroméxico" → "Aeromexico". */
 function deaccent(s: string): string {

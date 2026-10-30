@@ -44,6 +44,10 @@ const LEARNER_INFO: Record<string, { label: string; description: string }> = {
     label: "Writer: guidance",
     description: "Extra writing guidance the learner tries on top of the base prompt.",
   },
+  "writer.showcase": {
+    label: "Writer: showcase",
+    description: "Whether real builds go in the first email (then the observed pain) or in follow-up #1 (after today's first email). Split half and half.",
+  },
   "scout.cell": {
     label: "Scout cells",
     description: "Industry × city cells the discovery scout searches; reward is what those prospects go on to yield.",

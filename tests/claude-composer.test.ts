@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { __test__ } from "../lib/anthropic/client.ts";
-import { composePitchWithClaude, firstNameGuess } from "../lib/pitches/claude-composer.ts";
+import { composePitchWithClaude, firstNameGuess, forwardingLineFor, heldBodyForRevision } from "../lib/pitches/claude-composer.ts";
 import type { GeneratorInputs } from "../lib/pitches/generator.ts";
 
 // Set a fake API key so getClient() doesn't refuse to construct.
@@ -435,4 +435,40 @@ test("firstNameGuess: never greets a role inbox by name", () => {
   assert.equal(firstNameGuess(null, "info@x.com", true), null);
   assert.equal(firstNameGuess(null, "ventas@x.mx", false), null);
   assert.equal(firstNameGuess(null, null, false), null);
+});
+
+test("forwarding line: an usted email asks in usted, a tú email in tú (2026-10-29)", async (t) => {
+  t.after(teardown);
+  const USTED = forwardingLineFor("es", "mid_market");
+  const TU = forwardingLineFor("es", "smb");
+  assert.match(USTED, /^Si usted no es la persona indicada/);
+  assert.doesNotMatch(USTED, /\beres\b|\bte\b|\bpuedas\b/);
+  assert.match(TU, /^Si no eres la persona indicada/);
+  assert.equal(forwardingLineFor("es", "enterprise"), USTED);
+  assert.match(forwardingLineFor("en", "mid_market"), /^If you're not the right person/);
+
+  const es = (employees: number | null): GeneratorInputs =>
+    inputs({
+      prospect: {
+        id: "p2", company_name: "Plásticos del Norte", industry: "fábrica de plásticos", language: "es",
+        employee_size_estimate: employees, city: "Monterrey", market: "MX", what_they_do: null, tech_stack: [],
+      },
+      contacts: [{ full_name: null, email: "ventas@plasticosdelnorte.mx", email_is_role_based: true, role_title: null }],
+    });
+  installMock({
+    reply: {
+      content: [{ type: "text", text: validResponse({ body: "Hola, equipo de Plásticos del Norte,\n\nLe escribo desde Runna.\n\n👉 {hunter_url}\n\nNils\nRunna Advertising", contact_email: "ventas@plasticosdelnorte.mx" }) }],
+      usage: { input_tokens: 10, output_tokens: 10 },
+    },
+  });
+  const big = await composePitchWithClaude(es(120));
+  assert.ok(big.ok);
+  assert.ok(big.result.composed.body.endsWith(USTED), big.result.composed.body);
+  const small = await composePitchWithClaude(es(5));
+  assert.ok(small.ok);
+  assert.ok(small.result.composed.body.endsWith(TU), small.result.composed.body);
+
+  // A rewrite still strips either one (it is appended again after the revision).
+  assert.ok(!heldBodyForRevision(big.result.composed.body).includes(USTED));
+  assert.ok(!heldBodyForRevision(small.result.composed.body).includes(TU));
 });

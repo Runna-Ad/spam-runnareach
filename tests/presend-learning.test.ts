@@ -556,8 +556,9 @@ test("clicks: armStats with clicks (the writer learners) sees 0.25; funnelForPro
 test("clicks: learn.ts turns clicks on for the writer learners and nowhere else", () => {
   const src = readFileSync(new URL("../lib/autopilot/learn.ts", import.meta.url), "utf8");
   assert.equal((src.match(/clicks: true/g) ?? []).length, 1);
-  assert.match(src, /armStats\(inputs, learner, now, \{ clicks: true \}\)/);
-  const writerLoop = src.slice(src.indexOf('for (const learner of ["writer.evidence", "writer.guidance"])'));
+  // writer.showcase scores a filtered copy of the same inputs (fallen-back threads left out).
+  assert.match(src, /armStats\(counted, learner, now, \{ clicks: true \}\)/);
+  const writerLoop = src.slice(src.indexOf('for (const learner of ["writer.evidence", "writer.guidance", "writer.showcase"])'));
   assert.ok(writerLoop.indexOf("clicks: true") < writerLoop.indexOf("}\n"), "the option sits inside the writer-learner loop");
   for (const f of ["../lib/learning/scout.ts", "../lib/learning/icp.ts", "../lib/pitches/exemplars.ts", "../app/api/public/hunter-signals/route.ts"]) {
     assert.doesNotMatch(readFileSync(new URL(f, import.meta.url), "utf8"), /clicks/, f);
