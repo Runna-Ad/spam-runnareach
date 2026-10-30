@@ -302,6 +302,11 @@ test("fail-closed: a 'Book now' button or text that leads nowhere we can follow 
   assert.equal(detectBooking([button], button.url).online, null);
   const text = page("https://hotel.test/", `${FILLER}${NAV}<p>Reservations are handled by our partner, check availability on the widget.</p>`);
   assert.equal(detectBooking([text], text.url).online, null);
+  // Words that merely contain a booking word do not count (study 2026-10-30: these made 6 sites null).
+  for (const label of ["Hunting Books & Maps", "Lower Textbook Costs", "Dried, Preserved or Pickled", "Centros de Cursos de Capacitación", "Solicitar evaluación sin costo"]) {
+    const p = page("https://shop.test/", `${FILLER}${NAV}<a href="/x/">${label}</a>`);
+    assert.equal(detectBooking([p], p.url).online, false, label);
+  }
   // Words that merely contain "book" do not count.
   const guest = page("https://lodge.test/", `${FILLER}${NAV}<a href="/guestbook/">Guestbook</a><a href="https://facebook.com/lodge">Facebook</a>`);
   assert.equal(detectBooking([guest], guest.url).online, false);

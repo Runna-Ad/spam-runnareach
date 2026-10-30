@@ -207,17 +207,15 @@ function classifyTarget(href: string, text: string, siteUrl: string, bookingForm
  * means "could not see", never "no online booking".
  */
 const fold = (s: string) => s.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
-const COARSE_CONTROL = ["book", "reserv", "agend", "cita", "appoint", "availab", "disponib", "schedule"];
-const COARSE_TEXT = ["book now", "book online", "book your", "book a ", "booking", "reservation", "reservacion", "reservar", "agendar", "appointment", "check availability", "disponibilidad", "schedule a "];
+/** Word starts only: "Capacitación" and "solicitar" hold "cita", "Preserved" holds "reserv". */
+const COARSE_CONTROL = /\b(book(?!s\b|store|keep|let|mark|case|shelf|club)|reserv|r[e]serv|agend|citas?\b|appoint|availab|disponib|schedul)/;
+const COARSE_TEXT = /\b(book (now|online|your|a|an)\b|booking\b|reservations?\b|reservaci|reservar\b|agendar\b|appointments?\b|check availability|disponibilidad\b|schedule (a|an|your)\b)/;
 const coarseControl = (t: string) => {
   // Words that only contain "book": a guestbook, Facebook, a lookbook are not a booking ask.
   const f = fold(t).replace(/booking\.com|guestbook|facebook|lookbook|notebook|bookkeep\w*|bookstore|ebooks?\b|yearbook|bookmark/g, "");
-  return COARSE_CONTROL.some((w) => f.includes(w));
+  return COARSE_CONTROL.test(f);
 };
-const coarseText = (t: string) => {
-  const f = fold(t).replace(/booking\.com/g, "");
-  return COARSE_TEXT.some((w) => f.includes(w));
-};
+const coarseText = (t: string) => COARSE_TEXT.test(fold(t).replace(/booking\.com/g, ""));
 
 export function detectBooking(pages: CrawledPage[], siteUrl: string): BookingCheck {
   const hits: Hit[] = [];
