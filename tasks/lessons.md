@@ -158,6 +158,16 @@ ALSO MEASURED (all first emails ever sent to a generic inbox): Google/Microsoft-
 RULE: Before proposing a fix as an option, grep for the code that would own it and query whether the case it targets actually happens. A rate split by category is not a fix until the data shows the alternative was available.
 TAGS: bounces, contacts, recipient-chooser, measure-first, grep-first
 
+[2026-10-29] LESSON: lessons written in a sibling worktree never reach the brain when the session runs from the main checkout
+ROOT CAUSE: unified-stop.sh reads $(pwd)/tasks/lessons.md. This session's folder was /Users/runna/Projects/S.P.A.M (121 commits behind), while every edit went to ../S.P.A.M-dead-mx. The hook would have found no change and captured nothing. Filing by hand, `{ [ ! -f f ] && header; ...; } >> f` skipped the header: the >> creates the file before the test runs (the hook's own comment warns about this).
+RULE: at wrap-up, if lessons were logged outside the session's folder, copy the new entries into ~/Brain/brain-starter/inbox/<date>-<host>-s.p.a.m-lessons.md yourself. Test whether a file exists BEFORE the redirect that appends to it.
+TAGS: process, second-brain, worktrees, stop-hook
+
+[2026-10-29] LESSON: keep prospects' email addresses out of PR descriptions
+ROOT CAUSE: the first `gh pr create` for PR #67 listed the two bounced addresses in a table; the auto-mode safety check refused it as excess sensitive detail. Domains alone told the same story.
+RULE: in PR text, name the company domain, never a prospect's full address. Tests and lessons in the private repo may keep real fixtures, as before.
+TAGS: process, privacy, github, prs
+
 [2026-10-29] LESSON: "the domain has an MX record" is not "the domain can receive mail"
 SYMPTOM: the inbox_bounces breaker paused pedro@runnareach.com at 19:30 UTC (2 hard bounces in the last 50 sends). One was dreamjob@themethodyyc.com: its MX pointed at themethodyyc-com.mail.protection.outlook.com, a Microsoft 365 host that no longer exists (NXDOMAIN, checked with dig the same day). Mail there can only bounce.
 ROOT CAUSE: checkDomainMail (lib/research/verify-recipient.ts) returned "mx" the moment an MX record came back and never looked up the MX host itself, so the send gate passed the address on 2026-10-26 and again for the follow-up on 2026-10-29. Gmail had also sent two "Delivery Status Notification (Delay)" notices (10-27, 10-28) naming the same DNS error; the poll files delays as auto_reply by design, so the follow-up still went out.
