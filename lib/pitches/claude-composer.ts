@@ -352,8 +352,19 @@ export function heldBodyForRevision(body: string): string {
  * general and never says you/your/[company]; a benchmark never stretches to
  * another industry; the salutation is exactly "Hi [first name]," or "Hi
  * [company] team,", never a name or team built from the address.
+ *
+ * v3.4 (2026-10-30, site-facts-writer): v3.3's critic passed 8 of 34 (24%),
+ * the top blocker a claim about the site nobody saw (a lodge told it had "no
+ * easy way to book a cabin"; its "Book Now" goes to a booking engine). The
+ * payload now carries site_facts (lib/pitches/site-facts.ts): what our
+ * crawler saw, each with its page. Only a site fact is something seen ON
+ * THEIR SITE; an absence only from an absence entry, said as "I didn't see";
+ * no site_facts, no site claim. The CTA invites them to see what the free
+ * check finds on their site (it no longer says where the pain "is costing
+ * you"), and the subject never claims a loss: "what I noticed on [company]'s
+ * site" only with site_facts, otherwise a neutral one.
  */
-export const PITCH_PROMPT_VERSION = "pitch-v3.3-2026-10-26";
+export const PITCH_PROMPT_VERSION = "pitch-v3.4-2026-10-30";
 
 /** Everything that differs by language. The rules themselves do not. */
 type LanguagePack = {
@@ -389,7 +400,7 @@ function englishPack(): LanguagePack {
       `Quick note from ${s.firstName} at ${s.agency}. We work with [industry] businesses on exactly this.`,
     ],
     hook: {
-      good: "Checked your site: the only way to book is to call during office hours",
+      good: "I didn't see a way to book online on your site",
       bad: "I noticed an opportunity",
     },
     mechanism: "a few emails that go out on their own to everyone who left something in their cart",
@@ -397,7 +408,7 @@ function englishPack(): LanguagePack {
       "We do this kind of work for clinics that get more calls than the front desk can answer: finding where people slip away, then making sure someone always gets back to them.",
     pain: {
       wrong: 'I saw "Outdated website, no e-commerce functionality".',
-      right: "Checked [company]'s site: there's no way to buy anything online.",
+      right: "I didn't see a way to buy anything on [company]'s site.",
       guess: "Your phone shoppers give up and buy somewhere else.",
       usually: "Most people who can't buy on the spot from their phone don't come back to finish.",
     },
@@ -420,14 +431,12 @@ function englishPack(): LanguagePack {
     techStack:
       'you may name the platform they use when it is in tech_stack ("your Shopify store"). Never name a tool they did not mention (Klaviyo, Meta, HubSpot...).',
     cta: [
-      "Don't take my word for it, take the data's: run [company] through our free check and see for yourself where [the pain] is costing you. About 30 seconds, no signup, no strings: {hunter_url}. See something worth fixing? Reply. If not, no harm done.",
-      "I'd rather the numbers show you than me tell you. {hunter_url} is a free check of [company]'s own [pain], about 30 seconds, no signup. If you want to talk after, I'm here.",
+      "Don't take my word for it, take the data's: see what our free check finds on [company]'s site. About 30 seconds, no signup, no strings: {hunter_url}. See something worth fixing? Reply. If not, no harm done.",
+      "I'd rather the data show you than me tell you. {hunter_url} is a free check of [company]'s own site, about 30 seconds, no signup. If you want to talk after, I'm here.",
     ],
-    subjects: `    - their business + a quiet loss (the default): "where [company] loses online orders", "what [company]'s website isn't doing"
-    - what you saw, said plainly (only when the pain evidence shows it): "no online booking at [company]"
-    - the reframe, something they think is fine called a cost: "what a slow reply costs [company]"
-    - the 30-second check: "30 seconds: where [company] leaks customers"`,
-    preview: "no way to book online after hours, only a contact form",
+    subjects: `    - what you noticed (the default, ONLY when site_facts is not empty): "what I noticed on [company]'s site"
+    - neutral (when site_facts is empty, or when nothing else fits): "an idea for [company]", "something for [company]"`,
+    preview: "I didn't see a way to book online, only a contact form",
   };
 }
 
@@ -448,7 +457,7 @@ function spanishPack(size: SizeSignal): LanguagePack {
       `${s.firstName}, de ${s.agency}. Trabajamos con negocios de [industria] justo en esto.`,
     ],
     hook: {
-      good: "Revisé tu sitio: la única forma de agendar es llamar en horario de oficina",
+      good: "No vi forma de agendar en línea en tu sitio",
       bad: "Vi una oportunidad",
     },
     mechanism: "unos correos que le llegan solos a quien dejó algo en el carrito",
@@ -456,7 +465,7 @@ function spanishPack(size: SizeSignal): LanguagePack {
       "Hacemos este trabajo para clínicas que reciben más llamadas de las que la recepción alcanza a contestar: encontrar dónde se pierden los pacientes y asegurar que siempre alguien les responda.",
     pain: {
       wrong: 'Vi "Outdated website, no e-commerce functionality".',
-      right: "Revisé el sitio de [empresa]: no hay forma de comprar nada en línea.",
+      right: "No vi forma de comprar nada en el sitio de [empresa].",
       guess: "Tus clientes se cansan y le compran a otro.",
       usually: "Casi nadie que no puede comprar en el momento desde el celular regresa a terminar.",
     },
@@ -477,14 +486,12 @@ function spanishPack(size: SizeSignal): LanguagePack {
     techStack:
       'say "tu tienda en línea" or "tu sitio" (or the usted form), never the platform name.',
     cta: [
-      "No me creas a mí, créele a los datos: corre [empresa] en nuestra herramienta gratis y mira tú mismo dónde [el dolor] te está costando. Unos 30 segundos, sin registro, sin compromiso: {hunter_url}. ¿Ves algo que arreglar? Escríbeme. ¿No? No pasa nada.",
-      "Prefiero que te lo muestren los números a decírtelo yo: {hunter_url} revisa gratis [el dolor] de [empresa] en unos 30 segundos, sin registro. Si quieres hablar después, aquí estoy.",
+      "No me creas a mí, créele a los datos: entra y mira lo que nuestra herramienta gratis encuentra en el sitio de [empresa]. Unos 30 segundos, sin registro, sin compromiso: {hunter_url}. ¿Ves algo que arreglar? Escríbeme. ¿No? No pasa nada.",
+      "Prefiero que te lo muestren los datos a decírtelo yo: {hunter_url} revisa gratis el sitio de [empresa] en unos 30 segundos, sin registro. Si quieres hablar después, aquí estoy.",
     ],
-    subjects: `    - su negocio + una pérdida silenciosa (por defecto): "dónde pierde clientes [empresa]", "lo que el sitio de [empresa] no está haciendo"
-    - lo que viste, dicho tal cual (solo si la evidencia lo muestra): "[empresa] sin reservas en línea"
-    - el replanteo, algo que creen que está bien visto como costo: "¿cuánto le cuesta a [empresa] una respuesta tarde?"
-    - la revisión de 30 segundos: "30 segundos: dónde [empresa] pierde ventas"`,
-    preview: "no hay forma de agendar en línea fuera de horario, solo un formulario",
+    subjects: `    - lo que viste (por defecto, SOLO cuando site_facts no está vacío): "lo que vi en el sitio de [empresa]"
+    - neutral (cuando site_facts está vacío, o cuando nada más encaja): "una idea para [empresa]", "algo para [empresa]"`,
+    preview: "no vi forma de agendar en línea, solo un formulario",
   };
 }
 
@@ -503,8 +510,11 @@ THE GOAL
 Make them curious enough to run the free check or reply. Not to close a deal. One pain, one fix, one ask.
 
 FACTS: EVERYTHING COMES FROM THE PAYLOAD
-1. About the prospect, say only what the payload says (company_name, industry, city, what_they_do, tech_stack, pain_candidates). Never guess their size, revenue, customers, location or tools.
-   What you may state as something you saw: only what is visible on their site, in tech_stack or in what_they_do, and a pain_candidates evidence_quote marked observed: true. An evidence_quote marked observed: false reads as advice or opinion from our research ("Replace the site with one that shows live wait times"), not as something on their site: never turn it into an observation ("your site doesn't show wait times"); use it only as a general pattern about businesses like theirs, or lead with another pain.
+1. About the prospect, say only what the payload says (company_name, industry, city, what_they_do, tech_stack, pain_candidates, site_facts). Never guess their size, revenue, customers, location or tools.
+   What you may state as something you saw: a site_facts entry, what_they_do, tech_stack, and a pain_candidates evidence_quote marked observed: true.
+   site_facts is what our crawler saw on their site, each entry with the page (url) it was on. It is the ONLY source for anything you say about their website: what it has, lacks, shows or does, "I saw", "I noticed", "your site". kind "seen": it was there, say it plainly. kind "absence": we read those pages and it was not there; say it as what you didn't see ("I didn't see a way to book online on your site"), never as a fact about them ("you have no online booking", "customers can't book", "there's no way to book"). An absence comes ONLY from an absence entry (or the word "only" in a seen entry): never from a missing entry, a pain_candidate or what_they_do. strength "weak": say it softly ("it looks like you can book from the home page"). Say what each entry says and no more: "no tap-to-call link" is not "no phone number", "hours not in the structured data" is not "no hours". A number in a site fact (a year, a score, a rating) is not one FACTS 2 allows: describe it in words, never write the figure. When a pain_candidate about their site disagrees with a site fact (the pain says no online booking, a site fact shows a "Book Now" button), the site fact wins: lead with another pain.
+   When site_facts is empty, make no claim about their website at all, whatever pain_candidates say: lead with what_they_do and a general pattern about businesses like theirs.
+   An evidence_quote marked observed: false reads as advice or opinion from our research ("Replace the site with one that shows live wait times"), not as something on their site: never turn it into an observation ("your site doesn't show wait times"); use it only as a general pattern about businesses like theirs, or lead with another pain.
    You have not contacted them, sent them an enquiry or timed their replies: never claim to have checked how they handle enquiries, calls or bookings, or how fast they answer.
 2. Numbers. A real number makes a cold email more believable; an invented one kills it. Allowed:
    - "about 30 seconds" for the free check;
@@ -523,7 +533,7 @@ THE EMAIL, IN THIS ORDER (nothing added, nothing reordered)
 2. Intro, one sentence: who is writing. Warm, not a pitch. For example:
    "${p.intro[0]}"
    "${p.intro[1]}"
-3. Hook: one specific observation about THIS business, from the pain you picked (below) plus what_they_do, tech_stack or city. "${p.hook.good}" beats "${p.hook.bad}".
+3. Hook: one specific observation about THIS business, from the pain you picked (below) or a site_facts entry, plus what_they_do, tech_stack or city. "${p.hook.good}" beats "${p.hook.bad}".
 4. The fix, one or two sentences, the core of the email: what we would do, described by what it does for them, specific to their business and industry. Start from solution_hint and make it theirs. Describe how it works ("${p.mechanism}"), never a tool name or a result figure.
 5. Proof, one sentence: the kind of work we do for businesses like theirs. No client, no metric, no boast. For example: "${p.proof}"
 6. CTA: one line that starts with 👉 (that marker turns it into the email's button). See CALL TO ACTION.
@@ -531,7 +541,7 @@ THE EMAIL, IN THIS ORDER (nothing added, nothing reordered)
 Length: 60 to 100 words from the salutation to the CTA. Past 100, replies drop sharply (Gong, 2026); the best emails run 50 to 100.
 
 SAY WHAT YOU SAW, THEN WHAT IT TENDS TO COST
-pain_candidates are raw audit findings in technical, usually English, language. Before writing, pick the best one (prefer one with pain_id, evidence_quote and observed: true) and say what was found in the plain words the owner would use with a friend. No jargon, never a quote from the audit. That plain observation is your hook, and it may be stated as fact because the payload shows it (FACTS 1 says what counts as seen).
+pain_candidates are raw audit findings in technical, usually English, language. Before writing, pick the best one (prefer one with pain_id, evidence_quote and observed: true) and say what was found in the plain words the owner would use with a friend. No jargon, never a quote from the audit. That plain observation is your hook, and it may be stated as fact because the payload shows it (FACTS 1 says what counts as seen). Anything it says about their website must be a site_facts entry: with none, the hook is about what they do, not about their site.
 What it costs them is NOT in the payload: you have not seen their customers, their traffic or their inbox. Say it as what tends to happen to businesses with this gap in general, never as a fact about their own customers, visitors or sales. Word that in your own way each time, not with a stock phrase. That sentence is about people or businesses in general: it never says you, your, yours or the company's name ("clinics like yours lose patients", "a student you don't enroll", "te cuesta clientes" are guesses about them).
   NOT: ${p.pain.wrong}
   OK:  ${p.pain.right}
@@ -551,7 +561,7 @@ ${p.jargon}
 
 CALL TO ACTION: the Inefficiency Hunter (payload.hunter_url)
 It is a FREE check they run on their OWN business: about 30 seconds, no signup. The credibility comes from THE DATA, not from us. We are not the ones making the claim; their own numbers show it to them. They look first, and reach out afterward only if they want to, with zero pressure if they don't. Confident and generous, never salesy.
-Write it FRESH every time, in one or two short sentences, tailored to the pain this email leads with, never a stock line; vary the opening especially. An interest-based ask ("worth a look?") books twice as many meetings as asking for a call (Gong), which is exactly what this CTA is. It must land all of: free; on their own business; they'll see for themselves where [this email's pain] is costing them; it's the data saying it, not us; about 30 seconds, no signup, no strings; reply afterward only if they want.
+Write it FRESH every time, in one or two short sentences, never a stock line; vary the opening especially. An interest-based ask ("worth a look?") books twice as many meetings as asking for a call (Gong), which is exactly what this CTA is. It must land all of: free; on their own business; they'll see what our free check finds on [company]'s site; it's the data saying it, not us; about 30 seconds, no signup, no strings; reply afterward only if they want. Never say where they are losing or what something is costing them: that claims a loss nobody has measured. In the CTA, name the site as "[company]'s site" ("el sitio de [empresa]"), never "your site" / "tu sitio" / "su sitio": the CTA describes our check, not their website.
 Write the token {hunter_url} exactly, where the link goes. It is a template slot that is replaced with the real link before sending: never invent a URL, never write a bare domain, never leave it out. No other links, no video, no call request.
 Tone only, do not copy:
   "${p.cta[0]}"
@@ -560,11 +570,13 @@ Tone only, do not copy:
 SUBJECT LINE
 - 2 to 6 plain words, at most 50 characters, all lower case, no em dash, no jargon, no number except "30 seconds" / "30 segundos". It should read like a note from someone they know, about THEIR business.
 - Never "[company]: [pain label]" (it reads like a spam report). They should not know exactly what the email is about until they open it.
+- Never a loss or a cost ("where [company] loses customers", "what a slow reply costs"): nobody has measured one.
+- A subject that says you saw or noticed something on their site only when site_facts is not empty; with site_facts empty, a neutral subject that claims nothing.
 - Pick the shape that fits the evidence:
 ${p.subjects}
 
 PREVIEW TEXT (shown under the subject in the inbox)
-- 20 to 150 characters, same language, same rules on numbers and jargon. Never repeat the subject: the subject makes them curious, the preview names the specific observation that makes opening worth it. For example: "${p.preview}"
+- 20 to 150 characters, same language, same rules on numbers and jargon. Never repeat the subject: the subject makes them curious, the preview names the specific observation that makes opening worth it. It follows FACTS 1 like the body: anything about their website only from site_facts. For example: "${p.preview}"
 - Never "I'd love to connect", "Let me know if you're interested", "Hope this finds you well".
 
 Brackets like [company] or [the pain] in the examples above are for you to fill in. {hunter_url} is the only token that stays exactly as written.
@@ -774,6 +786,15 @@ Using the payload:
 - prospect.city: mention it only if it fits naturally.`;
 }
 
+/**
+ * site_facts as the writer and the critic are both shown them: one list, the
+ * same fields, so the critic judges a site claim against exactly what the
+ * writer had.
+ */
+export function siteFactsPayload(input: Pick<GeneratorInputs, "site_facts">): Array<{ id: string; kind: string; fact: string; url: string; strength: string }> {
+  return (input.site_facts ?? []).map((f) => ({ id: f.id, kind: f.kind, fact: f.fact, url: f.url, strength: f.strength }));
+}
+
 /** The greeting's first name: the rule lives in greeting-name.ts, shared with the exemplar scrubber. */
 export const firstNameGuess = greetingName;
 
@@ -911,6 +932,10 @@ function buildStage2UserPrompt(input: GeneratorInputs): string {
       evidence_quote: p.evidence_quote,
       observed: painObserved(p, input.prospect.company_name),
     })),
+    // What our crawler saw on their site (lib/pitches/site-facts.ts): the
+    // only source for a claim about their website (FACTS 1). The critic is
+    // shown the same list.
+    site_facts: siteFactsPayload(input),
     // The single contact to address, resolved + with a derived first name so the
     // model greets the decision-maker by name instead of defaulting to "team".
     // The single contact to address (addressContact: the recipient), with a
@@ -982,6 +1007,9 @@ ${JSON.stringify(payload, null, 2)}
 Using the payload:
 - address_contact is the person who will receive this email. Greet them as the salutation rule says, and set contact_email to address_contact.email.
 - pain_candidates[].observed: true when the evidence_quote reads as something on their site, false when it reads as our research's advice. Only an observed one is something you saw (FACTS 1).
+${(input.site_facts?.length ?? 0) > 0
+    ? "- site_facts: everything you say about their website comes from these entries (FACTS 1). An absence only from a kind \"absence\" entry, said as what you didn't see."
+    : "- site_facts is empty: say nothing about their website (what it has, lacks or does), and use a neutral subject that claims nothing (\"" + (lang === "es" ? "una idea para [empresa]" : "an idea for [company]") + "\")."}
 - prospect.what_they_do: base the hook on what they actually do, not on a generic observation.
 - prospect.tech_stack: see "Their platform" under WORDS.
 - prospect.city: mention it only if it fits naturally, and never claim anything about their city or market that is not in the payload.

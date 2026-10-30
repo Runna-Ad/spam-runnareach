@@ -346,7 +346,8 @@ test("prompt sections: empty without exemplars, short instruction with them", ()
   assert.equal(criticExemplarSection(null), "");
   const ex = [{ subject: "s", body: "b" }];
   const words = (s: string) => s.split("--- Past email")[0]!.trim().split(/\s+/).length;
-  assert.ok(words(writerExemplarSection(ex)) < 60, `writer: ${words(writerExemplarSection(ex))} words`);
+  // 65 (was 60): the site-facts line, "their CTA, subject and site claims never carry over" (#71 review).
+  assert.ok(words(writerExemplarSection(ex)) < 65, `writer: ${words(writerExemplarSection(ex))} words`);
   assert.ok(words(criticExemplarSection(ex)) < 60, `critic: ${words(criticExemplarSection(ex))} words`);
   assert.match(writerExemplarSection(ex), /shape and restraint, never their facts/);
   assert.match(criticExemplarSection(ex), /Judge against this bar/);

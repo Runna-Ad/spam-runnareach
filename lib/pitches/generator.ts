@@ -27,6 +27,7 @@ import { pickAddressContact } from "../research/email-utils.ts";
 import { getSolutionHint } from "./claude-composer.ts";
 import { senderIdentity } from "./sender-identity.ts";
 import type { ShowcaseBuild } from "../runna/builds.ts";
+import type { SiteFact } from "./site-facts.ts";
 
 export type GeneratorInputProspect = {
   id: string;
@@ -197,6 +198,14 @@ export type GeneratorInputs = {
    * benchmarks, guidance or exemplars. Absent or empty → today's email.
    */
   showcase_builds?: ShowcaseBuild[] | null;
+  /**
+   * What our crawler saw on their site (lib/pitches/site-facts.ts, from the
+   * newest ok site_observations row, 60 days at most). The only things the
+   * writer may state as seen ON THEIR SITE, and what the critic judges every
+   * site claim against. Absent or empty: the email makes no claim about
+   * their site (no row is never "nothing on the site").
+   */
+  site_facts?: SiteFact[] | null;
   forced_angle?: {
     pain_label: string;
     pain_id: string | null;

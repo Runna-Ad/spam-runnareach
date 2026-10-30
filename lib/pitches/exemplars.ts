@@ -1317,7 +1317,7 @@ export function writerExemplarSection(exemplars: readonly Pick<Exemplar, "subjec
   if (!exemplars || exemplars.length === 0) return "";
   return `
 
-Below are our own past emails that businesses like this one replied to or acted on. Match their shape and restraint, never their facts: nothing in them is true of this prospect. Bracketed words ([name], [company], [site], [city], [n]) are blanks, never text to copy, and the rules in the system prompt still win.
+Below are our own past emails that businesses like this one replied to or acted on. Match their shape and restraint, never their facts: nothing in them is true of this prospect. Bracketed words ([name], [company], [site], [city], [n]) are blanks, never text to copy, and the rules in the system prompt still win. Their CTA, subject and site claims never carry over.
 
 ${exemplarBlock(exemplars)}`;
 }
@@ -1327,7 +1327,7 @@ export function criticExemplarSection(exemplars: readonly Pick<Exemplar, "subjec
   if (!exemplars || exemplars.length === 0) return "";
   return `
 
-Judge against this bar: our own past emails that businesses like this one replied to or acted on. They are not part of the payload and prove nothing about this prospect. Bracketed words are blanks. A draft clearly weaker than these in relevance or plainness deserves the issue that says why.
+Judge against this bar: our own past emails that businesses like this one replied to or acted on. They are not part of the payload and prove nothing about this prospect. Bracketed words are blanks. A draft clearly weaker than these in relevance or plainness deserves the issue that says why. Their CTA and subject are no bar.
 
 ${exemplarBlock(exemplars)}`;
 }
