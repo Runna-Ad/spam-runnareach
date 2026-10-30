@@ -36,7 +36,7 @@ none matched (second brain not attached). Core-context: P4/P7: never read meanin
 
 ## Files
 Allowed to edit: `lib/research/site-crawl/*` (new), `app/api/research/observe/route.ts` (new), `supabase/migrations/0054_site_observations.sql` (new), `lib/reports/heartbeat.ts` (`CRON_JOBS` entry only), `tests/site-crawl*.test.ts` (new), `tests/fixtures/site-crawl/*` (new: saved HTML pages; the cloud network now allows prospect sites, so save REAL pages, no personal data beyond what the business publishes).
-Read only: `lib/research/scraper.ts`, `lib/research/deep-research-stage.ts`, `lib/pitches/gate.ts`, `lib/cron-auth/*`, `supabase/migrations/0050_wanted_facts.sql`, `0053_quiet_hours_cron.sql`, `lib/reports/health.ts`.
+Read only: `lib/research/scraper.ts`, `lib/research/deep-research-stage.ts`, `lib/pitches/gate.ts`, `lib/cron-auth.ts`, `supabase/migrations/0050_wanted_facts.sql`, `0053_quiet_hours_cron.sql`, `lib/reports/health.ts`.
 Forbidden: `lib/supabase/types.ts` (list the new table's type under "Needs conductor"), `vercel.json` (same), `lib/pitches/*`, `lib/anthropic/*`, any other migration.
 
 ## Must not change (negative set)
