@@ -344,7 +344,7 @@ export function deriveButtonText(description: string, lang?: "en" | "es"): strin
     return "Ver diagnóstico gratis →";
   }
   // English — lean into the self-serve "see for yourself, it's the data" framing.
-  if (lower.includes("see for yourself") || lower.includes("the data") || lower.includes("free tool") || lower.includes("free platform")) {
+  if (lower.includes("see for yourself") || lower.includes("the data") || lower.includes("free tool") || lower.includes("free platform") || lower.includes("free check")) {
     return "See it for yourself →";
   }
   if (lower.includes("audit") || lower.includes("leak") || lower.includes("losing")) {
