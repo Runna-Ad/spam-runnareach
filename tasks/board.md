@@ -33,7 +33,7 @@ previous one move to `tasks/archive/board-<YYYY-MM>.md` at each retro (batches 1
 | 0051 | batch 8 health-alarms: `0051_cron_heartbeats.sql` | APPLIED 2026-10-22 21:28 UTC via connector, verified (6 cols, RLS on, 0 policies), version normalised to 0051 |
 | 0052 | batch 8 send-pacing: `0052_follow_up_every_10min.sql` | APPLIED 2026-10-22 21:29 UTC via connector, verified (spam-follow-up = 7-59/10 15-22 * * 1-5, active), version normalised to 0052 |
 | 0053 | quiet hours (branch `perf/quiet-hours-cron`, PR #63, outside the batch flow): `0053_quiet_hours_cron.sql` (moves 12 pg_cron jobs) | used; apply AFTER the deploy |
-| 0054 | batch 10 site-crawler: `0054_site_observations.sql` (table for crawl + PageSpeed results) | reserved |
+| 0054 | batch 10 site-crawler: `0054_site_observations.sql` (table + claim fn + cron spam-site-observe) | used; apply AFTER the deploy |
 | 0055 | — | free |
 
 ## Worktrees to clean up (in-session workers only)
@@ -156,7 +156,7 @@ External prerequisite: Pedro creates a free Google API key with the PageSpeed In
 | Slug | Module | Rung | Model/effort | Branch | Session | PR | Depends on | Status | Turns | Review findings | CI reds | Rework |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|
 | study | conductor | 0 | opus/high | — | this | — | — | blocked: session network policy refuses prospect sites (403 CONNECT); PageSpeed keyless = 429 | | | | |
-| site-crawler | lib/research/site-crawl + observe route + 0054 | 3 | opus/high | claude/site-crawler | session_01XYnsst3eC4Z2opXkGNEubD | #70 | — | fix round 1 (1 blocking: booking forms invisible → false 'no online booking'; + 6 optionals for wave 2 truth) | | | | |
+| site-crawler | lib/research/site-crawl + observe route + 0054 | 3 | opus/high | claude/site-crawler | session_01XYnsst3eC4Z2opXkGNEubD | #70 | — | merged ea292cd (1672 tests; 2 review rounds + 1 conductor-verified delta; $14.83) | | | | |
 | greeting-rule | lib/pitches greeting + send-gate | 3 | opus/high | claude/greeting-rule | session_01XYnsss9MDXbKnz7oCzk2MW | #65 | — | merged 4631556 (1570 tests); wrapped + archived ($3.46) | | | | |
 
 Log
@@ -170,3 +170,4 @@ Log
 - 2026-10-30 04:35 UTC — Out-of-flow work found (resume check): main moved 1bd256b → 97bb3a0 (#66 vercel-ignore skips claude/* previews; #67 drop addresses with dead mail servers, lib/research/verify-recipient.ts; no migration). Open on main from another session: #68 (notes) and #69 AI showcase email (claude-composer, review, pitch-stage, send-gate, followup-composer, learn.ts): same files as wave 2 and #65's gate → wave 2 waits for Pedro's call on #69. Integration will merge main before the batch PR.
 - 2026-10-30 04:50 UTC — #70 review: fix-then-merge, 1 blocking (availability forms posting to an engine read as 'no booking' + 'contact form'; live repro hotelzed.com). Sent with 6 optionals that wave 2 will read as facts (online/channel fields, Cloudflare email, too_large/blocked status, abandoned retry 1 day, cart text, tracking params).
 - 2026-10-30 04:36 UTC — Pedro "ship #69" → squash-merged 2003f85 (no migration). main merged into integration (75551c8): send-gate.ts auto-merged with #65; typecheck, lint, 1607 tests green. Deploy check armed 04:40. Wave 2 can now be briefed on top of the showcase email.
+- 2026-10-30 05:00 UTC — #70 round 2: merge (0 blocking); last delta (contact-form false absence, negated booking text, readable-target links, abandoned cap) verified by conductor: typecheck, lint, 1672 tests → merged ea292cd. types.ts gains site_observations + claim_site_observations (conductor). 33-site booking row now: 7 found, 17 no online booking, 9 could not see.

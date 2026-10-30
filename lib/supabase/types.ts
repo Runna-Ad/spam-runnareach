@@ -822,6 +822,56 @@ export type Database = {
         };
         Relationships: NoRels;
       };
+      // 0054 (batch 10 site-crawler). Readers filter status = 'ok'; pending and
+      // abandoned rows keep checks = {}. checks/pages/psi shapes: lib/research/site-crawl/types.ts.
+      site_observations: {
+        Row: {
+          id: UUID;
+          tenant_id: UUID;
+          prospect_id: UUID;
+          url: string;
+          final_url: string | null;
+          crawled_at: Timestamptz;
+          crawler_version: string;
+          status: "pending" | "ok" | "unreachable" | "blocked" | "not_html" | "too_large" | "offsite" | "abandoned";
+          readable: unknown;
+          pages: unknown;
+          checks: unknown;
+          psi: unknown;
+          psi_status: "ok" | "no_key" | "timeout" | "error" | "skipped" | null;
+          duration_ms: number | null;
+          created_at: Timestamptz;
+        };
+        Insert: {
+          id?: UUID;
+          tenant_id: UUID;
+          prospect_id: UUID;
+          url: string;
+          final_url?: string | null;
+          crawled_at?: Timestamptz;
+          crawler_version: string;
+          status?: "pending" | "ok" | "unreachable" | "blocked" | "not_html" | "too_large" | "offsite" | "abandoned";
+          readable?: unknown;
+          pages?: unknown;
+          checks?: unknown;
+          psi?: unknown;
+          psi_status?: "ok" | "no_key" | "timeout" | "error" | "skipped" | null;
+          duration_ms?: number | null;
+          created_at?: Timestamptz;
+        };
+        Update: {
+          final_url?: string | null;
+          crawled_at?: Timestamptz;
+          status?: "pending" | "ok" | "unreachable" | "blocked" | "not_html" | "too_large" | "offsite" | "abandoned";
+          readable?: unknown;
+          pages?: unknown;
+          checks?: unknown;
+          psi?: unknown;
+          psi_status?: "ok" | "no_key" | "timeout" | "error" | "skipped" | null;
+          duration_ms?: number | null;
+        };
+        Relationships: NoRels;
+      };
       replies: {
         Row: {
           id: UUID;
@@ -1362,6 +1412,11 @@ export type Database = {
     // every insert/update payload to `never`.
     Views: { [_ in never]: never };
     Functions: {
+      // 0054: claims up to p_limit due prospects as pending site_observations rows.
+      claim_site_observations: {
+        Args: { p_limit: number; p_crawler_version: string };
+        Returns: { id: string; tenant_id: string; prospect_id: string; url: string }[];
+      };
       // Migration 0049: one daily send slot per call (lib/pitches/daily-cap.ts).
       // Returns the UTC day the slot was counted on, or null when the cap is reached.
       spam_reserve_send_slot: { Args: { p_inbox: string }; Returns: string | null };
