@@ -55,6 +55,7 @@ cost-tracked, daily-capped wrapper in `lib/anthropic/` · Gmail API · Sentry ·
 - One predicate per question. If two paths ask "is this contact usable" or "may this
   send", they call the same function. A gate and the UI that announces it share it.
 - Every claim an outbound email makes about the prospect is verified where it is used.
+- Site observations (0054, `lib/research/site-crawl/types.ts`): `found: false` = looked on every readable page, not there; `null` = could not see, never an absence. Readers filter `status = 'ok'` and take the newest FINISHED row. A stored observation keyed on prospect_id is re-matched to the prospect's current site at read time (batch 10).
 - One recipient per pitch: `chooseRecipient` (lib/pitches/contacts.ts) answers it once and
   the greeting, `contact_id`, the gate and /pitches all use that answer (batch 8).
 - `pitches.decision` is WRITE-ONCE (0038 trigger): anything that belongs in it goes in at

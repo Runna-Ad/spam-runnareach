@@ -1504,3 +1504,9 @@ marketing-context only if it bites.
 **Not checked:** that the next autopilot tick keeps the inbox on; Vercel preview build of PR #67.
 **Pedro:** "Ship it" for PR #67 (2026-10-29). PEDRO_OVERRIDE: no paid services, so the paid mailbox check is out.
 **Waiting on Pedro:** a free choice for dead mailboxes (generic inboxes to hand approval, or build-it options).
+
+## 2026-10-30 06:17 UTC — conductor session_01HtEg7XG4MPQU4omrd2BX69 (batch 10)
+**Done:** batch 10 built, reviewed, audited (greeting rule #65, site crawler + PageSpeed #70 with 0054, writer/critic v3.4 on site facts #71); PR #69 shipped on Pedro's word (deploy READY dpl_Cwvsyd4XrM99oBuFLeRhVAWqEUJ6); 4 statistics applied (2 approved under Pedro's id, 2 rejected); PEDRO_OVERRIDE logged. Retro + lessons merged.
+**Checks run:** typecheck, lint, 1726 tests, build (audit); live crawl of 33 study sites; prod: 1 of 821 researched rows lack evidence_urls.
+**Not checked:** PageSpeed with a real key; the crawler in prod (0054 not applied yet); v3.4 pass rate.
+**Waiting on Pedro:** "ship it" for the batch 10 PR; PageSpeed key; closing-line wording; OK to sync the conductor skill's new network row to ~/.claude.

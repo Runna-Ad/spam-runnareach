@@ -44,6 +44,7 @@ Check which tools exist before planning; never promise a mechanism you do not ha
 | Wake me later | `send_later` · `CronCreate` / `ScheduleWakeup` | check at the start of every turn; tell the owner what to send ("check") and when |
 | PR events | `subscribe_pr_activity` | list PRs at the start of every turn |
 | GitHub | GitHub MCP tools · `gh` | local mode: workers commit to branches, the conductor merges locally, no PRs |
+| Outbound network (arbitrary sites, third-party APIs) | test one real target host with curl before planning a study or a worker that fetches sites | ask the owner to widen the environment's network access, or measure from a preview deploy |
 | Second brain | the owner's hooks (see config) | ask the owner to attach it before planning |
 
 ## 1. Setup (once per project)

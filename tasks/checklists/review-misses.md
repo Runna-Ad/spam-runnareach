@@ -65,6 +65,7 @@ the line under its principle (same P1-P8 as the conductor skill).
   cue phrase let a forbidden claim through, and will the phrase become a template?
 
 ## P4 Quiet states
+- A detector that writes found:false: list every HTML way the feature appears (links, form actions + submit text, button onclick/data-href, scripts, iframes) and check each resolves or yields null; probe one real page of each shape (batch 10 #70).
 - Classifier, filter or gate change: probe inputs that contain the trigger words but belong
   to another class (an interested reply that says "stop by our booth"); list them.
 - New alert, digest or emergency rule: run it against the designed-normal states
@@ -92,6 +93,7 @@ the line under its principle (same P1-P8 as the conductor skill).
   the new gaps (quiet hours #63).
 
 ## P6 Independent checks
+- "Newest row" logic: does the test fake honour order() and limit()? If not, newest is untested (batch 10 #71).
 - A fail-closed check (leak check, invariant, guard): does it call the code it guards?
   If it reuses the guarded code's matchers it can never fire on that code's misses →
   BLOCKING. Same for the property test's own matcher.
@@ -110,6 +112,7 @@ the line under its principle (same P1-P8 as the conductor skill).
   fake model that copies its input to the end of the path (batch 6: attribution lost).
 
 ## P8 Order, timing, races
+- A reader of a stored observation keyed on an id whose underlying value can change (site, domain, email): does it re-match the row to the current value, and does a newer failed row stop an older good one? (batch 10 #71)
 - A migration applied before the deploy: what do the OLD prod code's writes look like in
   the new schema during the gap, and does the NEW code re-act on them (duplicate alert,
   re-send)? Missing ship step → BLOCKING.
