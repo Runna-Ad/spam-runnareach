@@ -34,6 +34,8 @@ const CHALLENGE = /<title>\s*(just a moment|attention required|access denied|un 
 /** A bot wall rather than the site: Cloudflare/Akamai challenge pages and their headers. */
 export function isBlockedResponse(status: number, headers: Headers, head: string): boolean {
   if (headers.get("cf-mitigated") === "challenge") return true;
+  // A 403 or 429 is the site refusing us, WAF header or not: the site is up, we may not read it.
+  if (status === 403 || status === 429) return true;
   if ((status === 403 || status === 429 || status === 503) && /cloudflare|akamai|sucuri|incapsula/i.test(headers.get("server") ?? ""))
     return true;
   return CHALLENGE.test(head);

@@ -49,6 +49,7 @@ export function normalizeSiteUrl(raw: string): string | null {
 function statusOf(f: Extract<FetchOutcome, { ok: false }>): ObservationStatus {
   if (f.error === "blocked") return "blocked";
   if (f.error === "not_html") return "not_html";
+  if (f.error === "too_large") return "too_large";
   return "unreachable";
 }
 
@@ -65,6 +66,7 @@ function redirectStub(fromUrl: string, toUrl: string, role: string): ParsedPage 
     textChars: 0,
     links: [{ href: toUrl, text: `${role} link (redirects)`, fragment: false }],
     forms: [],
+    buttons: [],
     scriptSrcs: [],
     iframeSrcs: [],
     jsonld: [],

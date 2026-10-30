@@ -29,7 +29,21 @@ export type PageForm = {
   hasEmailOrTel: boolean;
   hasTextarea: boolean;
   search: boolean;
+  /** The raw action attribute. */
   action: string;
+  /** The action as an absolute URL (null when missing or unparseable). */
+  actionUrl: string | null;
+  /** Text of its submit control(s): "Book Now", "Check availability", "Send". */
+  submitText: string;
+  /** Has a date / stay field (check-in, arrival, fecha, guests…): a booking form, not a message form. */
+  hasDate: boolean;
+};
+
+/** A <button>, submit input or element with an onclick / data-href that goes somewhere. */
+export type PageButton = {
+  text: string;
+  /** The URL it opens (data-href, or a URL in onclick), absolute; null when it names none. */
+  href: string | null;
 };
 
 export type ParsedPage = {
@@ -39,6 +53,7 @@ export type ParsedPage = {
   textChars: number;
   links: PageLink[];
   forms: PageForm[];
+  buttons: PageButton[];
   scriptSrcs: string[];
   iframeSrcs: string[];
   jsonld: unknown[];
@@ -111,20 +126,48 @@ export function parsePage(html: string, url: string): ParsedPage {
       return !["hidden", "submit", "button", "image", "reset", "checkbox", "radio"].includes(t);
     });
     const types = inputs.map((__, i) => ($(i).attr("type") ?? (i.tagName === "textarea" ? "textarea" : "text")).toLowerCase()).get();
-    const names = inputs.map((__, i) => `${$(i).attr("name") ?? ""} ${$(i).attr("id") ?? ""}`.toLowerCase()).get().join(" ");
+    const names = inputs
+      .map((__, i) => `${$(i).attr("name") ?? ""} ${$(i).attr("id") ?? ""} ${$(i).attr("placeholder") ?? ""} ${$(i).attr("class") ?? ""}`.toLowerCase())
+      .get()
+      .join(" ");
     const action = f.attr("action") ?? "";
     const search =
       f.attr("role") === "search" ||
       types.includes("search") ||
       /search|buscar|\/\?s=/i.test(action) ||
       (inputs.length === 1 && /(^|\s)(s|q|search|query)(\s|$)/.test(names));
+    const submitText = squash(
+      f
+        .find('button, input[type="submit"], input[type="image"]')
+        .map((__, b) => squash($(b).text()) || ($(b).attr("value") ?? "") || ($(b).attr("aria-label") ?? ""))
+        .get()
+        .join(" "),
+    );
     forms.push({
       fields: inputs.length,
       hasEmailOrTel: types.includes("email") || types.includes("tel") || /mail|correo|phone|tel/.test(names),
       hasTextarea: f.find("textarea").length > 0,
       search,
       action,
+      actionUrl: action.trim() ? absolute(action, url) : null,
+      submitText: clip(submitText, 120),
+      hasDate:
+        types.includes("date") ||
+        /check-?in|check-?out|arriv|depart|date-?in|date-?out|llegada|salida|fecha|entrada|nights|noches|guests|adults|adultos|hu[ée]spedes|arriv[ée]e/.test(names),
     });
+  });
+
+  // Buttons that go somewhere without an <a>: onclick="window.open('https://…')", data-href.
+  const buttons: PageButton[] = [];
+  $('button, input[type="submit"], input[type="button"], [onclick], [data-href], [data-url], [data-link]').each((_, el) => {
+    const b = $(el);
+    if (el.tagName === "a" && b.attr("href")) return; // a real link: already in `links`
+    const text = squash(b.text()) || squash(b.attr("value") ?? "") || squash(b.attr("aria-label") ?? "");
+    const target = b.attr("data-href") ?? b.attr("data-url") ?? b.attr("data-link") ?? "";
+    const onclick = b.attr("onclick") ?? "";
+    const fromClick = /https?:\/\/[^'"\s)]+/.exec(onclick)?.[0] ?? /location(?:\.href)?\s*=\s*['"]([^'"]+)['"]/.exec(onclick)?.[1] ?? "";
+    const raw = target || fromClick;
+    buttons.push({ text: clip(text, 120), href: raw ? absolute(raw, url) : null });
   });
 
   const title = squash($("title").first().text()) || null;
@@ -146,6 +189,7 @@ export function parsePage(html: string, url: string): ParsedPage {
     textChars: text.length,
     links,
     forms,
+    buttons,
     scriptSrcs,
     iframeSrcs,
     jsonld,

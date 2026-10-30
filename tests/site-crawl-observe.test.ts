@@ -333,7 +333,7 @@ test("0054: table with RLS on, tenant read-only policy, claim function service-r
 });
 
 test("0054: no prospect twice in 30 days; skips exactly the do-not-send statuses; sweeps stale claims first", () => {
-  assert.match(code, /o\.crawled_at > now\(\) - interval '30 days'/);
+  assert.match(code, /o\.crawled_at > now\(\) - case when o\.status = 'abandoned' then interval '1 day' else interval '30 days' end/);
   const listed = /p\.status not in \(([^)]*)\)/.exec(code)?.[1]?.split(",").map((s) => s.trim().replace(/'/g, "")) ?? [];
   assert.deepEqual(listed.sort(), [...DO_NOT_SEND_STATUSES].sort());
   assert.ok(code.indexOf("set status = 'abandoned'") < code.indexOf("return query"), "sweep at the START of a run");
@@ -343,7 +343,7 @@ test("0054: no prospect twice in 30 days; skips exactly the do-not-send statuses
 
 test("0054: the status and psi_status lists match the TypeScript unions", () => {
   const statuses = /check \(status in \(([^)]*)\)\)/.exec(code)?.[1]?.replace(/'|\s/g, "").split(",") ?? [];
-  assert.deepEqual(statuses, ["pending", "ok", "unreachable", "blocked", "not_html", "offsite", "abandoned"]);
+  assert.deepEqual(statuses, ["pending", "ok", "unreachable", "blocked", "not_html", "too_large", "offsite", "abandoned"]);
   const psi = /check \(psi_status in \(([^)]*)\)\)/.exec(code)?.[1]?.replace(/'|\s/g, "").split(",") ?? [];
   assert.deepEqual(psi, ["ok", "no_key", "timeout", "error", "skipped"]);
 });

@@ -17,7 +17,7 @@ import type { ParsedPage, PageLink } from "./parse.ts";
 import { bareHost, sameSite } from "./select-pages.ts";
 import type {
   BookingCheck,
-  BookingKind,
+  BookingChannel,
   BuilderCheck,
   Check,
   Evidence,
@@ -48,10 +48,25 @@ export function absent(pages: CrawledPage[], needs: Need[]): boolean {
 
 const parsedPages = (pages: CrawledPage[]) => pages.flatMap((p) => (p.parsed ? [p.parsed] : []));
 
+const TRACKING_PARAM = /^(utm_[a-z_]+|_ga|_gac|_gl|fbclid|gclid|gbraid|wbraid|msclkid|mc_[a-z]+|hsa_[a-z]+|_hs[a-z]+|ksprof_id|k_clickid|ds_[a-z]+|semcid|ktarget|ksdevice|klocf|kloct|ha_t)$/i;
+
+/** Evidence URLs without click/ad tracking parameters (they are noise and can identify a visit). */
+export function cleanHref(href: string): string {
+  if (!/^https?:/i.test(href) || !href.includes("?")) return href;
+  try {
+    const u = new URL(href);
+    for (const k of [...u.searchParams.keys()]) if (TRACKING_PARAM.test(k)) u.searchParams.delete(k);
+    return u.toString();
+  } catch {
+    return href;
+  }
+}
+
 class EvidenceList {
   private items: Evidence[] = [];
   private keys = new Set<string>();
-  add(e: Evidence) {
+  add(raw: Evidence) {
+    const e = raw.href ? { ...raw, href: cleanHref(raw.href) } : raw;
     const key = `${e.href ?? ""}|${e.text ?? ""}`;
     if (this.keys.has(key) || this.items.length >= MAX_EVIDENCE) return;
     this.keys.add(key);
@@ -151,68 +166,115 @@ function engineHost(href: string): "external_engine" | "marketplace" | null {
   return engine && (path.length > 1 || own) ? "external_engine" : null;
 }
 
+type Channel = BookingChannel;
+type Hit = { channel: Channel; strong: boolean; ev: Evidence };
+
+/**
+ * Where one link, button or form target goes, for booking. null = not a booking path.
+ * `text` is the link/button/submit text; `bookingForm` marks a form with stay
+ * dates or a booking submit ("Check availability").
+ */
+function classifyTarget(href: string, text: string, siteUrl: string, bookingForm = false): { channel: Channel; strong: boolean } | null {
+  const wantsBooking = (BOOK_TEXT.test(text) && !NOT_BOOKING.test(text)) || bookingForm;
+  if (isWhatsApp(href)) return wantsBooking || BOOK_TEXT.test(whatsappText(href)) ? { channel: "whatsapp", strong: true } : null;
+  if (/^tel:/i.test(href)) return wantsBooking ? { channel: "phone", strong: true } : null;
+  if (!/^https?:/i.test(href)) return null;
+  const engine = engineHost(href);
+  if (engine) return { channel: engine, strong: true };
+  const host = hostOf(href) ?? "";
+  if (sameSite(href, siteUrl)) {
+    let path = "";
+    try {
+      path = new URL(href).pathname;
+    } catch {
+      // unparseable: text only
+    }
+    // "Book a consultation" → /contact is a request form, not booking online.
+    if (CONTACT_PATH.test(path)) return null;
+    if (bookingForm) return { channel: "on_site", strong: true };
+    if (BOOK_PATH.test(path)) return { channel: "on_site", strong: true };
+    return wantsBooking ? { channel: "on_site", strong: false } : null;
+  }
+  // reservations.hotelgroup.com / book.someengine.com behind a "Book" link or a booking form.
+  if (wantsBooking && (bookingForm || (host.split(".").length > 2 && ENGINE_SUBDOMAIN.test(host)))) return { channel: "external_engine", strong: true };
+  return null;
+}
+
+/**
+ * The fail-closed side of booking (P6): its own, coarser matching, on folded
+ * letters. Any booking word on a button, a submit or a link we did not resolve
+ * to a booking path (or in the page text when nothing was resolved at all)
+ * means "could not see", never "no online booking".
+ */
+const fold = (s: string) => s.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
+const COARSE_CONTROL = ["book", "reserv", "agend", "cita", "appoint", "availab", "disponib", "schedule"];
+const COARSE_TEXT = ["book now", "book online", "book your", "book a ", "booking", "reservation", "reservacion", "reservar", "agendar", "appointment", "check availability", "disponibilidad", "schedule a "];
+const coarseControl = (t: string) => {
+  // Words that only contain "book": a guestbook, Facebook, a lookbook are not a booking ask.
+  const f = fold(t).replace(/booking\.com|guestbook|facebook|lookbook|notebook|bookkeep\w*|bookstore|ebooks?\b|yearbook|bookmark/g, "");
+  return COARSE_CONTROL.some((w) => f.includes(w));
+};
+const coarseText = (t: string) => {
+  const f = fold(t).replace(/booking\.com/g, "");
+  return COARSE_TEXT.some((w) => f.includes(w));
+};
+
 export function detectBooking(pages: CrawledPage[], siteUrl: string): BookingCheck {
-  const online: Record<"external_engine" | "marketplace" | "on_site", EvidenceList> = {
-    external_engine: new EvidenceList(),
-    marketplace: new EvidenceList(),
-    on_site: new EvidenceList(),
-  };
-  const whatsapp = new EvidenceList();
-  const phone = new EvidenceList();
+  const hits: Hit[] = [];
+  let unexplained: Evidence | null = null;
 
   for (const p of parsedPages(pages)) {
+    const add = (h: { channel: Channel; strong: boolean } | null, ev: Evidence, controlText: string) => {
+      if (h) hits.push({ ...h, ev });
+      else if (!unexplained && controlText && coarseControl(controlText)) unexplained = ev;
+    };
     for (const l of p.links) {
-      const wantsBooking = BOOK_TEXT.test(l.text) && !NOT_BOOKING.test(l.text);
       if (l.fragment) {
-        if (wantsBooking || BOOK_PATH.test(`/${l.href.slice(1)}`)) online.on_site.add({ url: p.url, text: l.text, href: l.href });
+        const wants = BOOK_TEXT.test(l.text) && !NOT_BOOKING.test(l.text);
+        // An on-page anchor (#booknow) opens something we cannot see: weak.
+        add(wants || BOOK_PATH.test(`/${l.href.slice(1)}`) ? { channel: "on_site", strong: false } : null, { url: p.url, text: l.text, href: l.href }, l.text);
         continue;
       }
-      if (isWhatsApp(l.href)) {
-        if (wantsBooking || BOOK_TEXT.test(whatsappText(l.href))) whatsapp.add({ url: p.url, text: l.text || whatsappText(l.href), href: l.href });
-        continue;
-      }
-      if (/^tel:/i.test(l.href)) {
-        if (wantsBooking) phone.add({ url: p.url, text: l.text, href: l.href });
-        continue;
-      }
-      if (!/^https?:/i.test(l.href)) continue;
-      const engine = engineHost(l.href);
-      if (engine) {
-        online[engine].add({ url: p.url, text: l.text, href: l.href });
-        continue;
-      }
-      const host = hostOf(l.href) ?? "";
-      if (sameSite(l.href, siteUrl)) {
-        let path = "";
-        try {
-          path = new URL(l.href).pathname;
-        } catch {
-          // unparseable: text only
-        }
-        // "Book a consultation" → /contact is a request form, not booking online.
-        if (CONTACT_PATH.test(path)) continue;
-        if (wantsBooking || BOOK_PATH.test(path)) online.on_site.add({ url: p.url, text: l.text, href: l.href });
-      } else if (host.split(".").length > 2 && ENGINE_SUBDOMAIN.test(host) && wantsBooking) {
-        // book.someengine.com / reservations.hotelgroup.com behind a "Book" link.
-        online.external_engine.add({ url: p.url, text: l.text, href: l.href });
-      }
+      // A link to an unrelated page whose text mentions booking ("Facebook", "Our booking policy") is still unresolved.
+      add(classifyTarget(l.href, l.text, siteUrl), { url: p.url, text: l.text || whatsappText(l.href), href: l.href }, /^(mailto|tel):/i.test(l.href) ? "" : l.text);
+    }
+    for (const f of p.forms) {
+      if (f.search) continue;
+      if (!isBookingForm(f)) continue;
+      const target = f.actionUrl ?? p.url;
+      add(classifyTarget(target, f.submitText, siteUrl, true), { url: p.url, text: `form "${f.submitText || "submit"}"`, href: target }, f.submitText);
+    }
+    for (const b of p.buttons) {
+      if (!b.text && !b.href) continue;
+      // A button inside a form was handled with its form; here only the ones that go somewhere, or unresolved booking words.
+      add(b.href ? classifyTarget(b.href, b.text, siteUrl) : null, { url: p.url, text: b.text, ...(b.href ? { href: b.href } : {}) }, b.text);
     }
     // Booking widgets loaded as a script or iframe from a known engine.
     for (const src of [...p.scriptSrcs, ...p.iframeSrcs]) {
       const abs = src.startsWith("//") ? `https:${src}` : src;
-      if (/^https?:/i.test(abs) && engineHost(abs) === "external_engine") online.external_engine.add({ url: p.url, href: abs, text: "booking widget" });
+      if (/^https?:/i.test(abs) && engineHost(abs) === "external_engine") hits.push({ channel: "external_engine", strong: true, ev: { url: p.url, href: abs, text: "booking widget" } });
     }
   }
 
-  for (const kind of ["external_engine", "marketplace", "on_site"] as const) {
-    if (online[kind].size > 0) return { found: true, kind, evidence: online[kind].list };
+  const pick = (channel: Channel) => {
+    const of = hits.filter((h) => h.channel === channel);
+    const ev = new EvidenceList();
+    for (const h of [...of.filter((x) => x.strong), ...of.filter((x) => !x.strong)]) ev.add(h.ev);
+    return { any: of.length > 0, strong: of.some((h) => h.strong), evidence: ev.list };
+  };
+  for (const channel of ["external_engine", "marketplace", "on_site"] as const) {
+    const c = pick(channel);
+    if (c.any) return { found: true, online: true, channel, strength: c.strong ? "strong" : "weak", evidence: c.evidence };
   }
-  const linksSeen = absent(pages, ["html", "links"]);
-  // No online booking. WhatsApp or phone may still be the way to book: that was
-  // SEEN, so `kind` says it; "no online booking" is still an absence (found).
-  if (whatsapp.size > 0) return { found: linksSeen ? false : null, kind: "whatsapp", evidence: whatsapp.list };
-  if (phone.size > 0) return { found: linksSeen ? false : null, kind: "phone", evidence: phone.list };
-  return { found: linksSeen ? false : null, kind: null as BookingKind | null, evidence: [] };
+
+  // No online booking path resolved. "No online booking" is an absence: it needs
+  // every page readable AND no booking word we could not resolve.
+  const offline = (["whatsapp", "phone"] as const).find((ch) => pick(ch).any) ?? null;
+  const textMention = !offline ? parsedPages(pages).find((p) => coarseText(p.text)) : undefined;
+  const unresolved: Evidence | null = unexplained ?? (textMention ? { url: textMention.url, text: "booking mentioned in the page text, no booking link found" } : null);
+  const online = absent(pages, ["html", "text", "links"]) && !unresolved ? false : null;
+  const evidence = offline ? pick(offline).evidence : unresolved ? [unresolved] : [];
+  return { found: online, online, channel: offline, strength: offline ? "strong" : null, evidence };
 }
 
 // ── Fingerprints (scripts / html) ────────────────────────────────────────────
@@ -342,7 +404,9 @@ function linkCheck(pages: CrawledPage[], match: (l: PageLink) => boolean): Check
 }
 
 export const detectTel = (pages: CrawledPage[]) => linkCheck(pages, (l) => /^tel:\s*\+?[\d(]/i.test(l.href));
-export const detectMailto = (pages: CrawledPage[]) => linkCheck(pages, (l) => /^mailto:[^@\s]+@/i.test(l.href));
+/** Cloudflare hides published addresses behind /cdn-cgi/l/email-protection: still a mailto link. */
+export const detectMailto = (pages: CrawledPage[]) =>
+  linkCheck(pages, (l) => /^mailto:[^@\s]+@/i.test(l.href) || /\/cdn-cgi\/l\/email-protection/i.test(l.href));
 
 export const SOCIAL: Array<{ name: string; hosts: string[]; skip?: RegExp }> = [
   { name: "facebook", hosts: ["facebook.com", "fb.com", "fb.me"], skip: /sharer|\/share|\/dialog\/|\/plugins\/|\/tr\?/i },
@@ -380,18 +444,39 @@ const CART_TEXT = /add to (cart|bag)|agregar al carrito|a[ñn]adir al carrito|aj
 const STORE_ENGINES = /cdn\.shopify\.com|wp-content\/plugins\/woocommerce|cdn\d*\.bigcommerce\.com|app\.ecwid\.com|cdn\.tiendanube|mitiendanube\.com|jumpseller/i;
 const isProductNode = (n: JsonNode) => typesOf(n).some((t) => t === "Product") && Boolean(n.offers);
 
-export function detectEcommerce(pages: CrawledPage[]): Check {
-  const ev = new EvidenceList();
+/** A control that buys: on a link, button or submit (free page text alone is not enough: "gift shop now open"). */
+const BUY_CONTROL = /add to (cart|bag|basket)|agregar al carrito|a[ñn]adir al carrito|ajouter au panier|buy now|comprar ahora|\bcheckout\b|proceed to checkout/i;
+const CART_LINK = /\/(cart|checkout|carrito|panier|basket)(\/|$)/i;
+const CART_WORD = /\bcart\b|carrito|panier|basket|checkout|\bbag\b/i;
+
+export function detectEcommerce(pages: CrawledPage[], siteUrl: string): Check {
+  const signals = new EvidenceList();
+  const support = new EvidenceList();
   for (const p of parsedPages(pages)) {
     const m = STORE_ENGINES.exec(p.html);
-    if (m) ev.add({ url: p.url, text: "store platform", href: m[0] });
-    for (const l of p.links) if (CART_TEXT.test(l.text)) ev.add({ url: p.url, text: l.text, href: l.href });
+    if (m) signals.add({ url: p.url, text: "store platform", href: m[0] });
+    if (p.jsonld.some((b) => jsonNodes(b).some(isProductNode))) signals.add({ url: p.url, text: "JSON-LD Product with offers" });
+    for (const l of p.links) {
+      if (!/^https?:/i.test(l.href)) continue;
+      if (BUY_CONTROL.test(l.text)) signals.add({ url: p.url, text: l.text, href: l.href });
+      // A cart link that says so ("Cart", "Carrito"); a bare cart icon ("0") is drawn by Squarespace on every site.
+      else if (sameSite(l.href, siteUrl) && CART_LINK.test(l.href) && CART_WORD.test(l.text)) signals.add({ url: p.url, text: l.text, href: l.href });
+    }
+    for (const b of p.buttons) if (BUY_CONTROL.test(b.text)) signals.add({ url: p.url, text: b.text, ...(b.href ? { href: b.href } : {}) });
+    for (const f of p.forms) if (BUY_CONTROL.test(f.submitText)) signals.add({ url: p.url, text: f.submitText, ...(f.actionUrl ? { href: f.actionUrl } : {}) });
     const t = CART_TEXT.exec(p.text);
-    if (t) ev.add({ url: p.url, text: t[0] });
-    if (p.jsonld.some((b) => jsonNodes(b).some(isProductNode))) ev.add({ url: p.url, text: "JSON-LD Product with offers" });
+    if (t) support.add({ url: p.url, text: t[0] });
   }
-  return { found: ev.size > 0 ? true : absent(pages, ["html", "text", "links"]) ? false : null, evidence: ev.list };
+  if (signals.size > 0) {
+    for (const e of support.list) signals.add(e);
+    return { found: true, evidence: signals.list };
+  }
+  return { found: absent(pages, ["html", "text", "links"]) ? false : null, evidence: [] };
 }
+
+/** A form with stay dates or a booking submit is a booking form (detectBooking), not a contact form. */
+export const isBookingForm = (f: { submitText: string; hasDate: boolean; hasTextarea: boolean }) =>
+  (BOOK_TEXT.test(f.submitText) && !NOT_BOOKING.test(f.submitText)) || (f.hasDate && !f.hasTextarea);
 
 const EMBED_FORMS = /jotform\.com|typeform\.com|docs\.google\.com\/forms|forms\.gle|js\.hsforms\.net|hsforms\.com|formstack\.com|cognitoforms\.com|wufoo\.com|123formbuilder\.com|forms\.office\.com|tally\.so|paperform\.co|formsite\.com/i;
 
@@ -400,7 +485,7 @@ export function detectContactForm(pages: CrawledPage[]): FormCheck {
   let fields: number | null = null;
   for (const p of parsedPages(pages)) {
     for (const f of p.forms) {
-      if (f.search) continue;
+      if (f.search || isBookingForm(f)) continue;
       const contact = (f.fields >= 2 && (f.hasEmailOrTel || f.hasTextarea)) || f.fields >= 3;
       if (!contact) continue;
       fields = Math.max(fields ?? 0, f.fields);
@@ -550,9 +635,9 @@ export function detectLanguages(pages: CrawledPage[], siteUrl: string): ValuesCh
 
 export function runDetectors(pages: CrawledPage[], siteUrl: string, now = new Date()): SiteChecks {
   const { jsonld, hours, rating } = detectJsonLd(pages);
-  return {
+  const checks: SiteChecks = {
     booking: detectBooking(pages, siteUrl),
-    ecommerce: detectEcommerce(pages),
+    ecommerce: detectEcommerce(pages, siteUrl),
     chat: detectChat(pages),
     contact_form: detectContactForm(pages),
     tel: detectTel(pages),
@@ -567,6 +652,11 @@ export function runDetectors(pages: CrawledPage[], siteUrl: string, now = new Da
     languages: detectLanguages(pages, siteUrl),
     analytics: detectAnalytics(pages),
   };
+  // One place strips tracking parameters from every stored href, whichever detector wrote it.
+  for (const c of Object.values(checks) as Check[]) {
+    for (const e of c.evidence) if (e.href) e.href = cleanHref(e.href);
+  }
+  return checks;
 }
 
 /** Every check "could not see": an unreachable site. */

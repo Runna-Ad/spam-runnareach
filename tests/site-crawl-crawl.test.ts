@@ -7,7 +7,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { crawlSite, normalizeSiteUrl } from "../lib/research/site-crawl/crawl.ts";
-import type { FetchOutcome, FetchPage } from "../lib/research/site-crawl/fetch-page.ts";
+import { isBlockedResponse, type FetchOutcome, type FetchPage } from "../lib/research/site-crawl/fetch-page.ts";
 import { ALLOW_ALL, parseRobots, robotsAllows } from "../lib/research/site-crawl/robots.ts";
 import { MAX_SUBPAGES, selectPages } from "../lib/research/site-crawl/select-pages.ts";
 import { parsePage } from "../lib/research/site-crawl/parse.ts";
@@ -84,7 +84,7 @@ test("crawl: home + up to 7 sub-pages, ONE request at a time, every fetch inside
   assert.equal(n.maxInFlight(), 1, "never two requests to the site at once");
   assert.ok(n.calls.every((c) => c.timeout > 0 && c.timeout <= 8_000));
   assert.deepEqual(obs.readable, { html: true, text: true, links: true });
-  assert.equal(obs.checks.booking.kind, "on_site");
+  assert.equal(obs.checks.booking.channel, "on_site");
 });
 
 test("crawl: when the site budget runs out, the pages left are recorded unreadable and absences become null", async () => {
@@ -113,12 +113,21 @@ test("crawl: a timed-out sub-page makes absences null; a 404 sub-page counts as 
   assert.equal(b.checks.tel.found, false);
 });
 
-test("crawl: unreachable, blocked and not_html homes store every check as null", async () => {
+test("fetch: any 403 or 429 is the site refusing us (blocked), WAF header or not; a 500 is not", () => {
+  const h = new Headers({ server: "nginx" });
+  assert.equal(isBlockedResponse(403, h, "<html><title>Forbidden</title>"), true);
+  assert.equal(isBlockedResponse(429, h, ""), true);
+  assert.equal(isBlockedResponse(500, h, "<html><title>Error</title>"), false);
+  assert.equal(isBlockedResponse(200, h, "<html><head><title>Just a moment...</title>"), true);
+});
+
+test("crawl: unreachable, blocked, not_html and too_large homes store every check as null", async () => {
   const cases: Array<[FetchOutcome, string]> = [
     [{ ok: false, status: null, finalUrl: null, error: "dns", detail: "domain does not resolve" }, "unreachable"],
     [{ ok: false, status: 503, finalUrl: SITE, error: "blocked", detail: "HTTP 503 bot challenge" }, "blocked"],
     [{ ok: false, status: 200, finalUrl: SITE, error: "not_html", detail: "application/pdf" }, "not_html"],
     [{ ok: false, status: 500, finalUrl: SITE, error: "http", detail: "HTTP 500" }, "unreachable"],
+    [{ ok: false, status: 200, finalUrl: SITE, error: "too_large", detail: "over 1500000 bytes" }, "too_large"],
   ];
   for (const [home, status] of cases) {
     const n = net({ [SITE]: home });
@@ -144,7 +153,7 @@ test("crawl: a same-site 'Book' link that redirects to an engine is booking foun
     ...sub("about/"),
   });
   const obs = await crawlSite(SITE, { fetchPage: n.fetchPage, fetchRobots: async () => ALLOW_ALL, now: n.now });
-  assert.equal(obs.checks.booking.kind, "external_engine");
+  assert.equal(obs.checks.booking.channel, "external_engine");
   assert.ok(obs.checks.booking.evidence.some((e) => e.href?.includes("resnexus.com")));
 });
 

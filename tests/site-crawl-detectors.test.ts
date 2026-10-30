@@ -20,6 +20,8 @@ import {
   detectCopyrightYear,
   detectEcommerce,
   detectLanguages,
+  detectMailto,
+  cleanHref,
   runDetectors,
   unseenChecks,
   type CrawledPage,
@@ -54,7 +56,7 @@ const allChecks = (c: SiteChecks): Array<[string, Check]> => Object.entries(c) a
 test("study: the hotel's BOOK NOW → reservations.travelclick.com is booking found, external engine", () => {
   const c = checks([fixture("sundial-home")]);
   assert.equal(c.booking.found, true);
-  assert.equal(c.booking.kind, "external_engine");
+  assert.equal(c.booking.channel, "external_engine");
   const first = c.booking.evidence[0];
   assert.ok(first?.href?.startsWith("https://reservations.travelclick.com/"), JSON.stringify(first));
   assert.equal(first?.text, "BOOK NOW");
@@ -63,7 +65,7 @@ test("study: the hotel's BOOK NOW → reservations.travelclick.com is booking fo
 
 test("study: the dental clinic whose 'Agendar cita' goes only to wa.me is booking via WhatsApp, not online", () => {
   const c = checks([fixture("omdental-home")]);
-  assert.equal(c.booking.kind, "whatsapp");
+  assert.equal(c.booking.channel, "whatsapp");
   assert.equal(c.booking.found, false, "no online booking, and the page was readable");
   assert.ok(c.booking.evidence.some((e) => e.text === "Agendar cita" && e.href?.startsWith("https://wa.me/")));
   assert.equal(c.chat.found, true);
@@ -84,7 +86,7 @@ test("study: a JavaScript-drawn page (Wix shell, body empty) is 'could not see' 
 test("the same Wix lodge, server-rendered as our crawler got it: 'Book Now' → secure.webrez.com is an external engine", () => {
   const c = checks([fixture("hiddenacres-home")]);
   assert.equal(c.booking.found, true);
-  assert.equal(c.booking.kind, "external_engine");
+  assert.equal(c.booking.channel, "external_engine");
   assert.ok(c.booking.evidence.some((e) => e.href === "https://secure.webrez.com/hotel/3530"));
   // Wix loads its store bundle on every site: not a shop.
   assert.equal(c.ecommerce.found, false);
@@ -95,20 +97,21 @@ test("the same Wix lodge, server-rendered as our crawler got it: 'Book Now' → 
 test("a lodge with no booking link at all, readable: booking false", () => {
   const c = checks([fixture("firvale-home")]);
   assert.equal(c.booking.found, false);
-  assert.equal(c.booking.kind, null);
+  assert.equal(c.booking.channel, null);
   assert.equal(c.builder.value, "WordPress");
   assert.equal(c.jsonld_opening_hours.found, true);
 });
 
-test("a place name ('Reserva Real', 'Arava Reserve') is not a booking link", () => {
+test("a place name ('Reserva Real', 'Arava Reserve') is not a booking link; the coarse check still says 'could not see', never false", () => {
   const c = checks([fixture("frava-home")]);
-  assert.equal(c.booking.found, false);
+  assert.equal(c.booking.found, null);
+  assert.equal(c.booking.channel, null, "not resolved as on-site booking");
   assert.equal(c.copyright_year.year, 2026);
 });
 
 test("a booking widget loaded from a known engine (checkfront script) is booking found", () => {
   const c = checks([fixture("strathcona-guest")]);
-  assert.equal(c.booking.kind, "external_engine");
+  assert.equal(c.booking.channel, "external_engine");
   assert.ok(c.booking.evidence.some((e) => e.href?.includes("checkfront.com")));
   // A tag manager can load a chat widget we can't see: chat is null, not false.
   assert.equal(c.chat.found, null);
@@ -155,7 +158,7 @@ test("absent(): one unreadable page (failed, JS-drawn or cut by the budget) turn
 });
 
 test("property: on any mix of real pages with one unreadable page, no check says false", () => {
-  const names = ["sundial-home", "omdental-home", "hiddenacres-home", "firvale-home", "frava-home", "whitemoose-home", "hualiz-product", "strathcona-guest"];
+  const names = ["sundial-home", "omdental-home", "hiddenacres-home", "firvale-home", "frava-home", "whitemoose-home", "hualiz-product", "strathcona-guest", "hotelzed-home"];
   const loaded = names.map(fixture);
   for (const a of loaded) {
     for (const bad of [failed(`${a.url}x`), fixture("wix-shell")]) {
@@ -187,7 +190,7 @@ test("booking: an OTA homepage link is not their listing; a listing URL is a mar
   const home = page("https://lodge.test/", `${FILLER}${NAV}<a href="https://www.booking.com/index.en-gb.html">Booking.com</a><a href="https://www.airbnb.ca/">Airbnb</a>`);
   assert.equal(detectBooking([home], home.url).found, false);
   const listing = page("https://lodge.test/", `${FILLER}${NAV}<a href="https://www.booking.com/hotel/ca/lodge.html">Book on Booking.com</a>`);
-  assert.deepEqual([detectBooking([listing], listing.url).found, detectBooking([listing], listing.url).kind], [true, "marketplace"]);
+  assert.deepEqual([detectBooking([listing], listing.url).found, detectBooking([listing], listing.url).channel], [true, "marketplace"]);
 });
 
 test("booking: an engine's own home page ('Powered by') is not a booking link", () => {
@@ -195,23 +198,25 @@ test("booking: an engine's own home page ('Powered by') is not a booking link", 
   assert.equal(detectBooking([p], p.url).found, false);
 });
 
-test("booking: 'Book a consultation' → their /contact page is a request form, not online booking", () => {
+test("booking: 'Book a consultation' → their /contact page is a request form, not online booking, and not a proven absence", () => {
   const p = page("https://consult.test/", `${FILLER}${NAV}<a href="/contacto">Agenda una asesoría</a>`);
-  assert.equal(detectBooking([p], p.url).found, false);
+  const b = detectBooking([p], p.url);
+  assert.deepEqual([b.online, b.channel], [null, null]);
+  assert.equal(b.evidence[0]?.href, "https://consult.test/contacto");
 });
 
 test("booking: on-site anchors and pages count; 'Call to book' → tel: is phone-only", () => {
   const anchor = page("https://bnb.test/", `${FILLER}${NAV}<a href="#booknow">Book your stay</a>`);
-  assert.deepEqual([detectBooking([anchor], anchor.url).found, detectBooking([anchor], anchor.url).kind], [true, "on_site"]);
+  assert.deepEqual([detectBooking([anchor], anchor.url).found, detectBooking([anchor], anchor.url).channel], [true, "on_site"]);
   const phone = page("https://bnb.test/", `${FILLER}${NAV}<a href="tel:+12505551234">Call to book</a>`);
   const b = detectBooking([phone], phone.url);
-  assert.deepEqual([b.found, b.kind], [false, "phone"]);
+  assert.deepEqual([b.found, b.channel], [false, "phone"]);
   assert.equal(b.evidence[0]?.href, "tel:+12505551234");
 });
 
 test("booking: a WhatsApp link whose prefilled text asks for a cita is booking via WhatsApp", () => {
   const p = page("https://clinica.test/", `${FILLER}${NAV}<a href="https://wa.me/5215555555555?text=Hola%2C%20quiero%20agendar%20una%20cita">Escríbenos</a>`);
-  assert.equal(detectBooking([p], p.url).kind, "whatsapp");
+  assert.equal(detectBooking([p], p.url).channel, "whatsapp");
 });
 
 test("booking: a same-site link that redirects to an engine (stub page from the crawl) is external", () => {
@@ -221,7 +226,7 @@ test("booking: a same-site link that redirects to an engine (stub page from the 
     parsed: { ...parsePage("<html></html>", "https://bnb.test/book"), links: [{ href: "https://bnb.resnexus.com/resnexus/reservations/book/ABC", text: "booking link (redirects)", fragment: false }] },
   };
   const home = page("https://bnb.test/", `${FILLER}${NAV}`);
-  assert.equal(detectBooking([home, stub], home.url).kind, "external_engine");
+  assert.equal(detectBooking([home, stub], home.url).channel, "external_engine");
 });
 
 // ── Other rules (synthetic) ──────────────────────────────────────────────────
@@ -244,9 +249,88 @@ test("copyright: a © whose year is drawn by a script is 'could not see', not 'n
 
 test("ecommerce: a bare /cart link or a Wix store bundle is not a shop; add-to-cart text is", () => {
   const icon = page("https://x.test/", `${FILLER}${NAV}<a href="/cart">0</a><script src="https://static.parastorage.com/wixstores/app.js"></script>`);
-  assert.equal(detectEcommerce([icon]).found, false);
+  assert.equal(detectEcommerce([icon], icon.url).found, false);
   const shop = page("https://x.test/", `${FILLER}${NAV}<button>Add to cart</button>`);
-  assert.equal(detectEcommerce([shop]).found, true);
+  assert.equal(detectEcommerce([shop], shop.url).found, true);
+});
+
+test("ecommerce: shop words in free page text alone ('gift shop now open') are not a store", () => {
+  const p = page("https://lodge.test/", `${FILLER}${NAV}<p>Our gift shop now open daily. Shop now for local crafts at the front desk.</p>`);
+  assert.equal(detectEcommerce([p], p.url).found, false);
+  const cart = page("https://shop.test/", `${FILLER}${NAV}<a href="/cart">Cart (0)</a>`);
+  assert.equal(detectEcommerce([cart], cart.url).found, true, "a cart link that says so");
+});
+
+// ── Booking forms and buttons (review 2026-10-30: Hotel Zed) ─────────────────
+
+test("Hotel Zed: 'Book Now' submits an availability form to reservations.hotelzed.com: booking online, external engine, strong; not a contact form", () => {
+  const c = checks([fixture("hotelzed-home")]);
+  assert.equal(c.booking.online, true);
+  assert.equal(c.booking.found, true);
+  assert.equal(c.booking.channel, "external_engine");
+  assert.equal(c.booking.strength, "strong");
+  assert.ok(c.booking.evidence.some((e) => e.href?.startsWith("https://www.reservations.hotelzed.com/ibe/")), JSON.stringify(c.booking.evidence));
+  assert.equal(c.contact_form.found, false, "the availability form is a booking form");
+});
+
+test("booking: a form posting to a known engine with date fields is external; onclick / data-href buttons count like links", () => {
+  const form = page(
+    "https://hotel.test/",
+    `${FILLER}${NAV}<form action="https://be.synxis.com/"><input name="arrive" type="date"><input name="depart" type="date"><select name="adults"><option>2</option></select><button type="submit">Check rates</button></form>`,
+  );
+  const f = detectBooking([form], form.url);
+  assert.deepEqual([f.online, f.channel, f.strength], [true, "external_engine", "strong"]);
+  assert.equal(detectContactForm([form]).found, false);
+
+  const click = page("https://hotel.test/", `${FILLER}${NAV}<button onclick="window.open('https://reservations.travelclick.com/12345')">BOOK NOW</button>`);
+  const b = detectBooking([click], click.url);
+  assert.deepEqual([b.online, b.channel], [true, "external_engine"]);
+  assert.equal(b.evidence[0]?.href, "https://reservations.travelclick.com/12345");
+
+  const data = page("https://spa.test/", `${FILLER}${NAV}<div data-href="https://spa.janeapp.com/locations/main/book">Book an appointment</div>`);
+  assert.equal(detectBooking([data], data.url).channel, "external_engine");
+});
+
+test("booking: an on-site form with stay dates and a booking submit is on_site, strong", () => {
+  const p = page("https://bnb.test/", `${FILLER}${NAV}<form action="/availability"><input name="checkin"><input name="checkout"><button>Check availability</button></form>`);
+  const b = detectBooking([p], p.url);
+  assert.deepEqual([b.online, b.channel, b.strength], [true, "on_site", "strong"]);
+});
+
+test("fail-closed: a 'Book now' button or text that leads nowhere we can follow is 'could not see', never false", () => {
+  const button = page("https://hotel.test/", `${FILLER}${NAV}<button class="open-widget">Book now</button>`);
+  assert.equal(detectBooking([button], button.url).online, null);
+  const text = page("https://hotel.test/", `${FILLER}${NAV}<p>Reservations are handled by our partner, check availability on the widget.</p>`);
+  assert.equal(detectBooking([text], text.url).online, null);
+  // Words that merely contain "book" do not count.
+  const guest = page("https://lodge.test/", `${FILLER}${NAV}<a href="/guestbook/">Guestbook</a><a href="https://facebook.com/lodge">Facebook</a>`);
+  assert.equal(detectBooking([guest], guest.url).online, false);
+});
+
+test("booking strength: an on-page #booknow anchor is weak; a booking page link is strong", () => {
+  const anchor = page("https://bnb.test/", `${FILLER}${NAV}<a href="#booknow">Book your stay</a>`);
+  assert.equal(detectBooking([anchor], anchor.url).strength, "weak");
+  const pageLink = page("https://bnb.test/", `${FILLER}${NAV}<a href="/reservations/">Reservations</a>`);
+  assert.equal(detectBooking([pageLink], pageLink.url).strength, "strong");
+});
+
+// ── Evidence hygiene, mail ───────────────────────────────────────────────────
+
+test("evidence hrefs lose tracking parameters (utm_*, _ga, _gac, fbclid, gclid) and keep the rest", () => {
+  assert.equal(
+    cleanHref("https://reservations.travelclick.com/103668?_ga=2.1&_gac=1.2&utm_source=x&utm_medium=y&fbclid=abc&gclid=def&hotel=7#/rooms"),
+    "https://reservations.travelclick.com/103668?hotel=7#/rooms",
+  );
+  assert.equal(cleanHref("tel:+12505551234"), "tel:+12505551234");
+  const c = checks([fixture("sundial-home")]);
+  for (const [name, check] of allChecks(c)) {
+    for (const e of check.evidence) assert.doesNotMatch(e.href ?? "", /[?&](utm_|_ga=|_gac=|fbclid=|gclid=)/, name);
+  }
+});
+
+test("mailto: a Cloudflare-protected email link counts as a mailto link", () => {
+  const p = page("https://x.test/", `${FILLER}${NAV}<a href="/cdn-cgi/l/email-protection#a1c8cfc7cee1d9d5c4d2d58fc2ce">[email&#160;protected]</a>`);
+  assert.equal(detectMailto([p]).found, true);
 });
 
 test("languages: html lang + hreflang + a switcher link; one language on a readable site is false", () => {

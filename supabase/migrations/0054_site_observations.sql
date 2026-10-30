@@ -17,8 +17,11 @@
 --   the claim: a second run never picks the same prospect), the route updates
 --   it to the outcome. A pending row older than 15 minutes was killed at the
 --   route's maxDuration: the next claim marks it 'abandoned' (swept at the
---   START of a run). Any row, abandoned included, counts as "observed": no
---   prospect is crawled twice in 30 days.
+--   START of a run). A finished row (any status but pending/abandoned) blocks a
+--   re-crawl for 30 days: no prospect is crawled twice in 30 days. An abandoned
+--   row blocks a retry for 1 day only (the crawl never finished).
+--   READERS: filter status = 'ok'. pending and abandoned rows keep checks = '{}';
+--   every other non-ok status stores checks with found = null throughout.
 --   Newest per prospect: idx (tenant_id, prospect_id, crawled_at desc).
 --
 -- SCHEDULE
@@ -65,13 +68,16 @@ create table if not exists public.site_observations (
   -- pending      claimed, crawl running
   -- ok           home page read (checks hold real true/false/null values)
   -- unreachable  DNS, timeout, network or HTTP error on the home page
-  -- blocked      bot wall (Cloudflare challenge, 429) or robots.txt asks us out
+  -- blocked      the site refuses us: 403, 429, a bot challenge page, or robots.txt
   -- not_html     the URL is not a web page (PDF, image…)
+  -- too_large    the home page is over the 1.5 MB cap (not parsed: CPU budget)
   -- offsite      the home page redirects to another company's domain
   -- abandoned    the run was killed before it saved (swept by the next claim)
-  -- Every status but ok stores checks with found = null throughout.
+  -- ok is the only status with real values. unreachable / blocked / not_html /
+  -- too_large / offsite store checks with found = null throughout; pending and
+  -- abandoned keep the default '{}'.
   status text not null default 'pending'
-    check (status in ('pending', 'ok', 'unreachable', 'blocked', 'not_html', 'offsite', 'abandoned')),
+    check (status in ('pending', 'ok', 'unreachable', 'blocked', 'not_html', 'too_large', 'offsite', 'abandoned')),
 
   -- { html, text, links }: true only when EVERY page read had it.
   readable jsonb not null default '{"html": false, "text": false, "links": false}'::jsonb,
@@ -110,7 +116,7 @@ comment on table public.site_observations is
   'found=null when the page could not be seen. Written by /api/research/observe (service role).';
 
 -- Sweep, then claim up to p_limit researched prospects with a website and no
--- observation in the last 30 days, newest-researched first. Researched = deep
+-- observation in the last 30 days (1 day for an abandoned one), newest-researched first. Researched = deep
 -- research ran (research_method 'claude_assisted', lib/research/deep-research-stage.ts).
 -- Prospects we may not email are skipped: the statuses are DO_NOT_SEND_STATUSES
 -- in lib/prospects/status.ts (a test keeps the two lists equal).
@@ -142,7 +148,7 @@ begin
          select 1 from public.site_observations o
           where o.tenant_id = pr.tenant_id
             and o.prospect_id = pr.prospect_id
-            and o.crawled_at > now() - interval '30 days'
+            and o.crawled_at > now() - case when o.status = 'abandoned' then interval '1 day' else interval '30 days' end
        )
      order by pr.last_scraped_at desc
      limit greatest(0, least(p_limit, 50))

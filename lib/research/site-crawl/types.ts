@@ -30,15 +30,30 @@ export type Check = {
   evidence: Evidence[];
 };
 
-/** Online booking: found = a way to book online (engine, marketplace or on-site). */
-export type BookingKind =
-  | "external_engine" // link to a booking/scheduling tool on another domain (travelclick, calendly…)
-  | "marketplace" // link to a listing that takes bookings (booking.com, airbnb, opentable…)
-  | "on_site" // a booking link or anchor on their own site (#booknow, /reservations)
-  | "whatsapp" // the only booking path is a WhatsApp chat ("Agendar cita" → wa.me)
-  | "phone"; // the only booking path is a phone call ("Book now" → tel:)
+/** How a visitor books, when we saw a way. */
+export type BookingChannel =
+  | "external_engine" // a booking/scheduling tool on another domain (travelclick, calendly, reservations.<them>.com form…)
+  | "marketplace" // a listing that takes bookings (booking.com/hotel/…, airbnb.ca/rooms/…)
+  | "on_site" // a booking page, form or anchor on their own site
+  | "whatsapp" // the only booking path seen is a WhatsApp chat ("Agendar cita" → wa.me)
+  | "phone"; // the only booking path seen is a call ("Book now" → tel:)
 
-export type BookingCheck = Check & { kind: BookingKind | null };
+/**
+ * Booking, with its meaning spelled out:
+ *   online    true  = a way to book online was seen (engine, marketplace listing, on-site page/form/anchor)
+ *             false = every page was readable, no online path, and no booking word we could not resolve
+ *             null  = could not see (a page unreadable, or a "Book" button/text that leads nowhere we can follow)
+ *   channel   how they take bookings: an online channel when online = true; "whatsapp" / "phone"
+ *             when that is the only path seen (online false or null); null when none was seen.
+ *   strength  "strong" = an engine link, booking form, widget or booking page; "weak" = only an
+ *             on-page anchor (#booknow) or a booking word on an ordinary page link. Phrase weak softly.
+ *   found     = online (every check has `found`).
+ */
+export type BookingCheck = Check & {
+  online: boolean | null;
+  channel: BookingChannel | null;
+  strength: "strong" | "weak" | null;
+};
 export type FormCheck = Check & { fields: number | null };
 export type ValuesCheck = Check & { values: string[] };
 export type RatingCheck = Check & { value: number | null; count: number | null };
@@ -51,7 +66,9 @@ export type SiteChecks = {
   /** Live-chat widget or a WhatsApp chat link. */
   chat: ValuesCheck;
   contact_form: FormCheck;
+  /** A clickable tel: link exists. false says nothing about a phone number written as text. */
   tel: Check;
+  /** A mailto: link (or a Cloudflare-protected email link) exists. false says nothing about an address written as text. */
   mailto: Check;
   /** values = platforms (facebook, instagram…). */
   social: ValuesCheck;
@@ -94,7 +111,7 @@ export type PageObservation = {
   error?: string;
 };
 
-export type ObservationStatus = "ok" | "unreachable" | "blocked" | "not_html" | "offsite";
+export type ObservationStatus = "ok" | "unreachable" | "blocked" | "not_html" | "too_large" | "offsite";
 
 export type PsiStatus = "ok" | "no_key" | "timeout" | "error" | "skipped";
 
