@@ -23,6 +23,21 @@ export type PitchOutcomeInput = {
 export type ArmTotals = { reward: number; trials: number; negatives: number };
 
 /**
+ * The showcase test (writer.showcase) compares where the builds go. A thread
+ * whose follow-up #1 was meant to be the showcase or the pain note but went out
+ * as the plain template tested neither, so writer.showcase leaves it out.
+ */
+export function showcaseFollowupFellBack(events: readonly OutcomeEvent[]): boolean {
+  return events.some(
+    (e) =>
+      e.type === "sent" &&
+      e.payload?.step === 2 &&
+      (e.payload.followup_mode === "showcase" || e.payload.followup_mode === "pain") &&
+      e.payload.composed_by === "template",
+  );
+}
+
+/**
  * Settled outcomes only; a pitch that must not teach the writer (bounce, never
  * sent) is skipped. `score` goes to scoreOutcome: the writer learners pass
  * `{ clicks: true }` (lib/autopilot/learn.ts), nothing else does.

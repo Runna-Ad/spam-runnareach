@@ -18,7 +18,7 @@ import { hasUsableEmail, isRoleBasedEmail } from "../research/email-utils.ts";
 import { siteOwnership } from "../research/site-ownership.ts";
 import { isTrustedForAutoSend } from "../research/verify-recipient.ts";
 import {
-  INTERNAL_NAMES,
+  findInternalNames,
   findBannedTerms,
   findClientNames,
   findUnsourcedNumbers,
@@ -411,7 +411,7 @@ export function evaluateSendGate(input: GateInput): GateResult {
   if (clients.length > 0) {
     fail("client_name", `Names ${clients.join(", ")}. Cold emails never name a client (Pedro, 2026-07-22).`);
   }
-  const internal = INTERNAL_NAMES.map((re) => both.match(re)?.[0]).filter((x): x is string => Boolean(x));
+  const internal = findInternalNames(both, [input.companyName, input.siteName, ...input.evidenceQuotes]);
   if (internal.length > 0) {
     fail("internal_name", `Names ${internal.join(", ")}: an internal product, never mentioned to a prospect.`);
   }

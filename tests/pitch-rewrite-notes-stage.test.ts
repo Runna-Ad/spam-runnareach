@@ -14,7 +14,7 @@ import { register } from "node:module";
 import test from "node:test";
 import { DO_NOT_SEND_STATUSES } from "../lib/prospects/status.ts";
 import { NOT_REVIEWED_ISSUE, WRITER_FIXABLE, composeWithReview, revisionIssues } from "../lib/pitches/review.ts";
-import { PITCH_PROMPT_VERSION, heldBodyForRevision, isAdviceQuote } from "../lib/pitches/claude-composer.ts";
+import { PITCH_PROMPT_VERSION, SHOWCASE_PROMPT_VERSION, heldBodyForRevision, isAdviceQuote } from "../lib/pitches/claude-composer.ts";
 import { DECISION_VERSION } from "../lib/pitches/decision.ts";
 import { __test__ } from "../lib/anthropic/client.ts";
 
@@ -35,8 +35,8 @@ const TARGETS = { [PITCH_URL.href]: stubNames(PITCH_URL), [ANGLE_URL.href]: stub
 
 // Constants the stage compares against (a Proxy is never === a string): the
 // stub module exports the real values for these names.
-(globalThis as Record<string, unknown>).__rwConsts = { NOT_REVIEWED_ISSUE, WRITER_FIXABLE, PITCH_PROMPT_VERSION, DECISION_VERSION, ANTHROPIC_DEFAULT_MODEL: "sonnet-x" };
-const CONSTS = ["NOT_REVIEWED_ISSUE", "WRITER_FIXABLE", "PITCH_PROMPT_VERSION", "DECISION_VERSION", "ANTHROPIC_DEFAULT_MODEL"];
+(globalThis as Record<string, unknown>).__rwConsts = { NOT_REVIEWED_ISSUE, WRITER_FIXABLE, PITCH_PROMPT_VERSION, SHOWCASE_PROMPT_VERSION, DECISION_VERSION, ANTHROPIC_DEFAULT_MODEL: "sonnet-x" };
+const CONSTS = ["NOT_REVIEWED_ISSUE", "WRITER_FIXABLE", "PITCH_PROMPT_VERSION", "SHOWCASE_PROMPT_VERSION", "DECISION_VERSION", "ANTHROPIC_DEFAULT_MODEL"];
 
 const hooks = `
 const STATUS = ${JSON.stringify(STATUS_URL.href)};
@@ -175,6 +175,8 @@ async function run(opts: {
   contacts?: Row[];
   pick?: (rows: Row[]) => Row | null;
   redraftOf?: string;
+  /** The showcase arm chooseWriterArms returns (default "followup"). */
+  showcase?: "first" | "followup";
 }) {
   const calls: string[] = [];
   const composerContacts: unknown[] = [];
@@ -209,7 +211,9 @@ async function run(opts: {
     isRoleBasedEmail: () => false,
     listNotableClients: async () => [],
     fetchBenchmarksForPitch: async () => [],
-    chooseWriterArms: async () => ({ evidence: "benchmark", guidance: null }),
+    chooseWriterArms: async () => ({ evidence: "benchmark", guidance: null, showcase: opts.showcase ?? "followup" }),
+    isShowcaseArm: (v: unknown) => v === "first" || v === "followup",
+    pickBuilds: () => [{ id: "daily-briefing", for_whom: "a business owner", does: "a summary every morning", how_it_works: "reads the inbox", universal: true, learns: false }],
     fetchExemplars: async () => [],
     segmentOf: () => "seg",
     newAttributionCode: () => "code",
@@ -477,6 +481,35 @@ test("redraft_of is written with the decision record (write-once), and a rewrite
   echoWriter();
   const plain = await run({ held: null, retryOf: null, realCompose: true });
   assert.equal(Object.hasOwn(plain.db.tables.pitches!.find((p) => p.id !== HELD_ID)!.decision as object, "redraft_of"), false);
+});
+
+test("showcase: the arm decides the email, the record says which, and a rewrite keeps the held draft's arm", async () => {
+  type D = { arms?: Record<string, string>; prompt_version?: string; builds_offered?: string[]; builds_used?: string[]; wanted_fact?: unknown };
+  const decisionOf = (r: Awaited<ReturnType<typeof run>>) => r.db.tables.pitches!.find((p) => p.id !== HELD_ID)!.decision as D;
+
+  echoWriter();
+  const first = await run({ held: null, retryOf: null, realCompose: true, showcase: "first" });
+  assert.equal(first.result?.ok, true, first.result?.error);
+  const d1 = decisionOf(first);
+  assert.deepEqual(d1.arms, { "writer.showcase": "first" });
+  assert.equal(d1.prompt_version, SHOWCASE_PROMPT_VERSION);
+  assert.deepEqual(d1.builds_offered, ["daily-briefing"]);
+  assert.ok(Array.isArray(d1.builds_used));
+  assert.equal(Object.hasOwn(d1, "wanted_fact"), false);
+
+  echoWriter();
+  const later = await run({ held: null, retryOf: null, realCompose: true, showcase: "followup" });
+  const d2 = decisionOf(later);
+  assert.deepEqual(d2.arms, { "writer.evidence": "benchmark", "writer.guidance": "none", "writer.showcase": "followup" });
+  assert.equal(d2.prompt_version, PITCH_PROMPT_VERSION);
+  assert.equal(Object.hasOwn(d2, "builds_offered"), false);
+
+  // The held draft was a showcase email; today's pick says "followup": the rewrite stays a showcase.
+  echoWriter();
+  const held = claudeHeld({ decision: { path: "claude", arms: { "writer.showcase": "first" }, critic: { issues: ["x"] } } });
+  const rewrite = await run({ held, realCompose: true, showcase: "followup" });
+  assert.equal(rewrite.result?.ok, true, rewrite.result?.error);
+  assert.deepEqual(decisionOf(rewrite).arms, { "writer.showcase": "first" });
 });
 
 // ── suggestPitchAnglesAction records its Claude call ──────────────────────────

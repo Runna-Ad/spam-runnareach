@@ -71,6 +71,7 @@ test("published on the company's own domain with MX → send", () => {
 test("DNS: a missing domain, null MX or no mail server drops; A-only or unknown needs review", () => {
   assert.equal(v("a@acme.ca", "scraper", "acme.ca", "nxdomain").verdict, "drop");
   assert.equal(v("a@acme.ca", "scraper", "acme.ca", "null_mx").verdict, "drop");
+  assert.equal(v("a@acme.ca", "scraper", "acme.ca", "dead_mx").verdict, "drop");
   assert.equal(v("a@acme.ca", "scraper", "acme.ca", "no_mail").verdict, "drop");
   assert.equal(v("a@acme.ca", "scraper", "acme.ca", "a_only").verdict, "review");
   assert.equal(v("a@acme.ca", "scraper", "acme.ca", "unknown").verdict, "review");
@@ -167,6 +168,8 @@ function fakeResolver(
     mx?: Array<{ exchange: string; priority: number }> | string;
     a?: string[] | string;
     aaaa?: string[] | string;
+    /** A/AAAA answers for one host name (an MX host); others get a / aaaa. */
+    hosts?: Record<string, { a?: string[] | string; aaaa?: string[] | string }>;
   },
   opts: { healthy?: boolean } = {},
 ): MxResolver {
@@ -178,8 +181,8 @@ function fakeResolver(
       host === "gmail.com" || host === "outlook.com"
         ? reply(healthy ? [{ exchange: "mx.google.com", priority: 5 }] : "ENOTFOUND", [])
         : reply(answers.mx, []),
-    resolve4: () => reply(answers.a, []),
-    resolve6: () => reply(answers.aaaa, []),
+    resolve4: (host: string) => reply(answers.hosts?.[host] ? answers.hosts[host].a : answers.a, []),
+    resolve6: (host: string) => reply(answers.hosts?.[host] ? answers.hosts[host].aaaa : answers.aaaa, []),
   };
 }
 
@@ -191,6 +194,32 @@ test("checkDomainMail maps resolver answers to definite or unknown states", asyn
   assert.equal(await checkDomainMail("x", fakeResolver({ mx: "ENODATA", a: "ENODATA", aaaa: "ENODATA" })), "no_mail");
   assert.equal(await checkDomainMail("x", fakeResolver({ mx: "ETIMEOUT" })), "unknown");
   assert.equal(await checkDomainMail("x", fakeResolver({ mx: "ENODATA", a: "ESERVFAIL" })), "unknown");
+});
+
+test("real: an MX pointing at a mail host that no longer exists is dead_mx (themethodyyc.com, 2026-10-29)", async () => {
+  const gone = "themethodyyc-com.mail.protection.outlook.com";
+  const mx = [{ exchange: gone, priority: 0 }];
+  assert.equal(await checkDomainMail("themethodyyc.com", fakeResolver({ mx, hosts: { [gone]: { a: "ENOTFOUND", aaaa: "ENOTFOUND" } } })), "dead_mx");
+  assert.equal(await checkDomainMail("x", fakeResolver({ mx, hosts: { [gone]: { a: "ENODATA", aaaa: "ENODATA" } } })), "dead_mx");
+  // Unproven: a flaky lookup or a broken resolver never drops an address.
+  assert.equal(await checkDomainMail("x", fakeResolver({ mx, hosts: { [gone]: { a: "ESERVFAIL", aaaa: "ENOTFOUND" } } })), "mx");
+  assert.equal(await checkDomainMail("x", fakeResolver({ mx, hosts: { [gone]: { a: "ENOTFOUND", aaaa: "ETIMEOUT" } } })), "mx");
+  assert.equal(await checkDomainMail("x", fakeResolver({ mx, hosts: { [gone]: { a: "ENOTFOUND", aaaa: "ENOTFOUND" } } }, { healthy: false })), "unknown");
+});
+
+test("real: one dead MX host is fine while another one answers (dbkiddtransport.com)", async () => {
+  const mx = [
+    { exchange: "dbkiddtransport-com.mail.protection.outlook.com", priority: 0 },
+    { exchange: "mail.dbkiddtransport.com", priority: 10 },
+  ];
+  const hosts = {
+    "dbkiddtransport-com.mail.protection.outlook.com": { a: ["52.101.1.1"] },
+    "mail.dbkiddtransport.com": { a: "ENOTFOUND", aaaa: "ENOTFOUND" },
+  };
+  assert.equal(await checkDomainMail("dbkiddtransport.com", fakeResolver({ mx, hosts })), "mx");
+  assert.equal(await checkDomainMail("x", fakeResolver({ mx: [...mx].reverse(), hosts })), "mx");
+  // IPv6-only mail host
+  assert.equal(await checkDomainMail("x", fakeResolver({ mx: [mx[1]!], hosts: { "mail.dbkiddtransport.com": { a: "ENODATA", aaaa: ["::1"] } } })), "mx");
 });
 
 test("a resolver that can't see gmail.com makes every negative answer 'unknown'", async () => {

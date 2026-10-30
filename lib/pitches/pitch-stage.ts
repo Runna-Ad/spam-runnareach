@@ -12,7 +12,7 @@ import { isUnderDailyCap, recordClaudeCall } from "@/lib/anthropic/cost-tracking
 import { writeAuditLog } from "@/lib/audit/log";
 import type { Actor } from "@/lib/actor";
 import type { Database } from "@/lib/supabase/types";
-import { PITCH_PROMPT_VERSION, isAdviceQuote } from "./claude-composer";
+import { PITCH_PROMPT_VERSION, SHOWCASE_PROMPT_VERSION, isAdviceQuote } from "./claude-composer";
 import { composeWithReview, type ReviewCall, type WantedFacts } from "./review";
 import {
   DECISION_VERSION,
@@ -29,7 +29,8 @@ import { allowedFrom, transitionRefusedMessage, transitionVerdict } from "./stat
 import { fetchExemplars } from "./exemplar-queries";
 import { decisionExemplarFields } from "./exemplars";
 import { segmentOf } from "@/lib/learning/segments";
-import { chooseWriterArms } from "@/lib/autopilot/learn";
+import { chooseWriterArms, isShowcaseArm, type ShowcaseArm } from "@/lib/autopilot/learn";
+import { pickBuilds } from "@/lib/runna/builds";
 import { renderIndustryTemplate } from "./industry-templates";
 import { buildHunterUrlForPitch } from "./hunter-mapping";
 import { senderForGenerator } from "./sender-identity";
@@ -365,11 +366,50 @@ export async function generatePitchWith(
   // critic's bar. Never throws; none → today's exact prompts. Skipped when the
   // daily AI cap is already hit (the template writes the pitch then), so the
   // cap is checked once, here, and reused below.
+  // ── The autopilot's rewrite composes FRESH (writer-honesty, 2026-10-26) ──
+  // It used to revise the held draft's text against its notes: since batch 6
+  // revised rewrites were sent or approved 7 of 59 times (12%), fresh ones 3
+  // of 11 (27%), and a revision carries the held text's claims (and its
+  // attribution code) into the new draft. The held row is read only for its
+  // re-draft mark and its showcase arm, BEFORE the draft delete below clears it.
+  // A re-draft's rewrite is still that re-draft: its mark comes with it.
+  // It keeps the held draft's showcase arm too: re-rolling it would move the
+  // drafts the critic holds more often over to the other style, and the test
+  // would compare survivors instead of styles.
+  let redraftOf: string | undefined = opts.redraftOf;
+  let heldShowcase: ShowcaseArm | null = null;
+  if (opts.retryOf) {
+    const { data: held, error: heldErr } = await supabase
+      .from("pitches")
+      .select("decision")
+      .eq("id", opts.retryOf)
+      .eq("tenant_id", user.tenantId)
+      .eq("prospect_id", parsed.data.prospect_id)
+      .maybeSingle<{ decision: unknown }>();
+    if (heldErr) console.warn("[generatePitch] held draft not read:", heldErr.message || "no message");
+    const heldDecision = held?.decision as { redraft_of?: unknown; arms?: Record<string, unknown> } | null | undefined;
+    const heldMark = heldDecision?.redraft_of;
+    if (!redraftOf && typeof heldMark === "string" && heldMark) redraftOf = heldMark;
+    const arm = heldDecision?.arms?.["writer.showcase"];
+    if (isShowcaseArm(arm)) heldShowcase = arm;
+  }
+
+  // The showcase email (writer.showcase "first", lib/runna/builds.ts) is its
+  // own style: real builds instead of a pain, so no benchmarks, no learned
+  // guidance (tuned on the pain-led email) and no exemplars, which are then
+  // never fetched.
   const dailyCapCheck = claudeIsAvailable() ? isUnderDailyCap(user.tenantId) : Promise.resolve(null);
-  const [writerArms, exemplars, dailyCap] = await Promise.all([
-    chooseWriterArms(supabase, user.tenantId),
-    dailyCapCheck.then((c) =>
-      c?.under
+  const armsCheck = chooseWriterArms(supabase, user.tenantId);
+  const showcaseCheck = armsCheck.then((a) =>
+    (heldShowcase ?? a.showcase) === "first"
+      ? pickBuilds({ industry: prospect.industry, what_they_do: research?.what_they_do ?? null, lang: prospect.language })
+      : [],
+  );
+  const [writerArms, showcaseBuilds, exemplars, dailyCap] = await Promise.all([
+    armsCheck,
+    showcaseCheck,
+    Promise.all([dailyCapCheck, showcaseCheck]).then(([c, builds]) =>
+      c?.under && builds.length === 0
         ? fetchExemplars(supabase, user.tenantId, {
             segment: segmentOf(prospect),
             lang: prospect.language,
@@ -379,7 +419,8 @@ export async function generatePitchWith(
     ),
     dailyCapCheck,
   ]);
-  const offeredBenchmarks = writerArms.evidence === "no_benchmark" ? [] : benchmarks;
+  const showcaseFirst = showcaseBuilds.length > 0;
+  const offeredBenchmarks = showcaseFirst || writerArms.evidence === "no_benchmark" ? [] : benchmarks;
 
   const generatorInputs: GeneratorInputs = {
     prospect: {
@@ -392,8 +433,9 @@ export async function generatePitchWith(
     case_studies,
     notable_clients: notableClientRows,
     benchmarks: offeredBenchmarks,
-    guidance: writerArms.guidance?.text ?? null,
+    guidance: showcaseFirst ? null : (writerArms.guidance?.text ?? null),
     exemplars,
+    showcase_builds: showcaseFirst ? showcaseBuilds : null,
     // Signed by the per-language sender (Nils ES / Henry EN · Runna Advertising),
     // never the name of whoever clicked "Generate".
     sender: senderForGenerator(prospect.language),
@@ -427,27 +469,6 @@ export async function generatePitchWith(
   let critic: CriticVerdict | null = null;
   // The kept draft's wishes for a statistic the library lacks (Claude path only).
   let wanted: WantedFacts | null = null;
-
-  // ── The autopilot's rewrite composes FRESH (writer-honesty, 2026-10-26) ──
-  // It used to revise the held draft's text against its notes: since batch 6
-  // revised rewrites were sent or approved 7 of 59 times (12%), fresh ones 3
-  // of 11 (27%), and a revision carries the held text's claims (and its
-  // attribution code) into the new draft. The held row is read only for its
-  // re-draft mark, BEFORE the draft delete below clears it.
-  // A re-draft's rewrite is still that re-draft: its mark comes with it.
-  let redraftOf: string | undefined = opts.redraftOf;
-  if (opts.retryOf) {
-    const { data: held, error: heldErr } = await supabase
-      .from("pitches")
-      .select("decision")
-      .eq("id", opts.retryOf)
-      .eq("tenant_id", user.tenantId)
-      .eq("prospect_id", parsed.data.prospect_id)
-      .maybeSingle<{ decision: unknown }>();
-    if (heldErr) console.warn("[generatePitch] held draft not read:", heldErr.message || "no message");
-    const heldMark = (held?.decision as { redraft_of?: unknown } | null | undefined)?.redraft_of;
-    if (!redraftOf && typeof heldMark === "string" && heldMark) redraftOf = heldMark;
-  }
 
   // ── Status re-check, immediately before any Claude call ───────────────
   // Everything above took seconds of awaits; a pipeline job works through its
@@ -486,7 +507,7 @@ export async function generatePitchWith(
         // The no_benchmark arm hides the library from the writer and critic on
         // purpose: a wish there is for a statistic we may well have, not a gap.
         // The decision still keeps the writer's wish (it is labelled with the arm).
-        wanted = writerArms.evidence === "no_benchmark" ? null : reviewed.wanted;
+        wanted = showcaseFirst || writerArms.evidence === "no_benchmark" ? null : reviewed.wanted;
         claudeUsage = sumUsage(reviewed.calls.map((c) => c.usage));
       } else {
         claudeFallbackReason = `${reviewed.reason}: ${reviewed.error.slice(0, 200)}`;
@@ -621,7 +642,7 @@ export async function generatePitchWith(
     v: DECISION_VERSION,
     created_at: new Date().toISOString(),
     path: method === "claude" ? "claude" : "template",
-    prompt_version: method === "claude" ? PITCH_PROMPT_VERSION : "industry-templates",
+    prompt_version: method === "claude" ? (showcaseFirst ? SHOWCASE_PROMPT_VERSION : PITCH_PROMPT_VERSION) : "industry-templates",
     model: method === "claude" ? claudeModel : null,
     fallback_reason: claudeFallbackReason,
     lang: prospect.language,
@@ -648,8 +669,22 @@ export async function generatePitchWith(
       ? { version: gateAtGeneration.version, pass: gateAtGeneration.pass, codes: gateAtGeneration.failures.map((f) => f.code) }
       : null,
     // Only an AI-written pitch tests writer variants; a template tests nothing.
+    // The showcase email tests only where the builds go; the pain-led one tests
+    // its evidence and guidance too, and carries the builds into follow-up #1.
     ...(method === "claude"
-      ? { arms: { "writer.evidence": writerArms.evidence, "writer.guidance": writerArms.guidance?.key ?? "none" } }
+      ? showcaseFirst
+        ? {
+            arms: { "writer.showcase": "first" },
+            builds_offered: showcaseBuilds.map((b) => b.id),
+            builds_used: composed.builds_used ?? [],
+          }
+        : {
+            arms: {
+              "writer.evidence": writerArms.evidence,
+              "writer.guidance": writerArms.guidance?.key ?? "none",
+              "writer.showcase": "followup",
+            },
+          }
       : {}),
     // A template uses no exemplars, even when some were loaded for the AI path.
     ...decisionExemplarFields(method === "claude" ? "claude" : "template", exemplars),
@@ -657,7 +692,7 @@ export async function generatePitchWith(
       ? { retry_of: opts.retryOf, retry_mode: "fresh" as const }
       : {}),
     ...(redraftOf ? { redraft_of: redraftOf } : {}),
-    ...(method === "claude" ? { wanted_fact: composed.wanted_fact ?? null } : {}),
+    ...(method === "claude" && !showcaseFirst ? { wanted_fact: composed.wanted_fact ?? null } : {}),
   };
   const { error: decisionErr } = await supabase
     .from("pitches")

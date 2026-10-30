@@ -20,7 +20,7 @@
  * prospect who booked got the message. Test addresses are ignored entirely.
  *
  * Clicks are opt-in (`{ clicks: true }`): only the writer learners read them
- * (armStats, called by learn.ts for writer.evidence / writer.guidance), where
+ * (armStats, called by learn.ts for writer.evidence / writer.guidance / writer.showcase), where
  * arms are random and a corporate link scanner is only noise. The scout, the
  * ICP ranking, exemplars and hunter-signals ignore them: a scanner clicks
  * every link, so there a click would teach which segments sit behind one.
@@ -41,6 +41,10 @@ export type OutcomeEvent = {
     stage?: string;
     intent?: string;
     test?: boolean;
+    /** A follow-up's sent event: its step, what it was meant to be, who wrote it. */
+    step?: number;
+    followup_mode?: string;
+    composed_by?: string;
   } | null;
 };
 

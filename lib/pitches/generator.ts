@@ -26,6 +26,7 @@ import { getTemplate, type TemplateVars } from "./templates.ts";
 import { pickAddressContact } from "../research/email-utils.ts";
 import { getSolutionHint } from "./claude-composer.ts";
 import { senderIdentity } from "./sender-identity.ts";
+import type { ShowcaseBuild } from "../runna/builds.ts";
 
 export type GeneratorInputProspect = {
   id: string;
@@ -114,6 +115,8 @@ export type ComposedPitch = {
    * template.
    */
   wanted_fact?: string | null;
+  /** Showcase email only: the offered build ids it describes (lib/runna/builds.ts). */
+  builds_used?: string[];
 };
 
 /**
@@ -187,6 +190,13 @@ export type GeneratorInputs = {
    * and to the critic as a bar. Absent or empty → today's exact prompts.
    */
   exemplars?: Array<{ pitch_id: string; score: number; subject: string; body: string }> | null;
+  /**
+   * Set on the showcase first email (the `writer.showcase` arm "first"): real
+   * builds picked for this prospect (lib/runna/builds.ts pickBuilds). The
+   * composer then writes the showcase email, not the pain-led one, with no
+   * benchmarks, guidance or exemplars. Absent or empty → today's email.
+   */
+  showcase_builds?: ShowcaseBuild[] | null;
   forced_angle?: {
     pain_label: string;
     pain_id: string | null;

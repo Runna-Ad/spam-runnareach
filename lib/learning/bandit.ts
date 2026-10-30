@@ -120,6 +120,17 @@ export function chooseArm(
   return best;
 }
 
+/**
+ * Pick uniformly among the active arms: an even split for a test the owner
+ * wants run half and half. Retiring an arm (reviewArms) still ends it.
+ */
+export function chooseEvenly(arms: readonly Arm[], opts: { rng?: Rng } = {}): Arm | null {
+  const pool = active(arms);
+  if (pool.length === 0) return null;
+  const rng = opts.rng ?? Math.random;
+  return pool[Math.min(pool.length - 1, Math.floor(rng() * pool.length))]!;
+}
+
 /** Monte Carlo probability that each active arm has the highest true reward. */
 export function probabilityBest(arms: readonly Arm[], opts: { rng?: Rng; draws?: number } = {}): Map<string, number> {
   const rng = opts.rng ?? Math.random;
