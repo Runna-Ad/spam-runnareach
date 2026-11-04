@@ -486,3 +486,8 @@ WHAT HAPPENED: Sample run 4. Both showcase first emails passed the send gate and
 ROOT CAUSE: asking the model to apply a policy (offers never block) in the same step where it judges the email. A small model keeps applying its own idea of "unsupported". And the follow-up path skipped the rewrite loop the first email has, the same second-path gap as 2026-07-22.
 RULE: Let the model classify and let code decide. The reviewer now tags each issue (past_build, offer, set_wording, this_business, number, other), and criticVerdict never lets offer or set_wording hold a showcase email; untagged stays blocking. When a prompt rule fails twice, move it to code before a third rewording. Any path that auto-sends gets the same write, check, rewrite-once loop as the first email.
 TAGS: #pitches #showcase #reviewer #prompt-plus-deterministic-guard #followup
+
+[2026-10-26] LESSON: read the clock right before a step whose safety depends on the time
+WHAT HAPPENED: I told Pedro "it's 16:48 UTC, inside the send window, the right time to apply 0053". He logged in to Vercel about ten hours later; the merge record said 02:59 UTC. Applying 0053 then, outside the window and before any new-code health run, would have left Sentry on the old health-check schedule overnight (one false "missed" issue). Caught only because `gh pr view` printed mergedAt.
+RULE: Before any step whose safety depends on the hour (migrations that move cron jobs, send windows, deploy order), run `date -u` in the same turn. A time read earlier in the session is a fact about then, not now.
+TAGS: #lesson #time #ship #cron
