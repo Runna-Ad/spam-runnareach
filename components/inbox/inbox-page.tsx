@@ -46,6 +46,7 @@ import {
 } from "@/lib/replies/actions";
 import { handleReplyIntent } from "@/lib/replies/intent-actions";
 import { approveAndSendReply, archiveNoMeeting, regenerateReplyDraft } from "@/lib/replies/send-reply-action";
+import { isDraftableIntent } from "@/lib/replies/draftable";
 import type {
   ProspectOption,
   Reply,
@@ -560,7 +561,7 @@ function DraftReview({
       if (res.ok) {
         setBody(res.body);
         setSubject(res.subject);
-        toast.success("Draft regenerated");
+        toast.success("Draft ready to review");
         onChange();
       } else {
         setError(res.error);
@@ -656,7 +657,36 @@ function DraftReview({
     );
   }
 
-  if (!hasDraft) return null;
+  if (!hasDraft) {
+    // A reply that never got a draft (older replies, or a wrong-person reply
+    // from before thank-yous existed) can get one on demand.
+    if (!reply.prospect_id || !isDraftableIntent(reply.intent) || capReached || alreadyBooked) return null;
+    const thanks = reply.intent === "wrong_person";
+    return (
+      <div className="rounded-[var(--radius-md)] bg-[var(--color-bg-700)] p-3">
+        <p className="mb-2 text-[11px] text-[var(--color-fg-500)]">
+          {thanks
+            ? "They passed your email on or pointed you elsewhere. Thank them in a couple of lines?"
+            : "No reply drafted yet."}
+        </p>
+        <Button
+          type="button"
+          variant="secondary"
+          onClick={regen}
+          disabled={regenerating}
+          className="w-full justify-center"
+        >
+          {regenerating ? (
+            <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden />
+          ) : (
+            <Sparkles className="h-3.5 w-3.5" aria-hidden />
+          )}
+          {thanks ? "Write a thank-you" : "Write a reply"}
+        </Button>
+        {error ? <p className="mt-1 text-[11px] text-[var(--color-danger-300)]">{error}</p> : null}
+      </div>
+    );
+  }
 
   return (
     <div className="rounded-[var(--radius-md)] bg-[var(--color-bg-700)] p-3">

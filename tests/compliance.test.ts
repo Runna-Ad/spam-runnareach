@@ -5,7 +5,7 @@
 
 import assert from "node:assert/strict";
 import test from "node:test";
-import { buildComplianceFooter } from "../lib/compliance/footer.ts";
+import { buildComplianceFooter, buildComplianceFooterHtml } from "../lib/compliance/footer.ts";
 import { getOutboundCompliance } from "../lib/compliance/outbound.ts";
 import { signUnsubscribeToken, verifyUnsubscribeToken } from "../lib/compliance/unsubscribe-token.ts";
 
@@ -37,39 +37,72 @@ test("token rejects a wrong secret, a tampered payload and garbage", () => {
   assert.equal(verifyUnsubscribeToken("not-a-token", SECRET), null);
 });
 
-test("footer: identity + address + unsubscribe, both languages, no em dash", () => {
+test("footer: sign-off line, address, unsubscribe, both languages, no em dash", () => {
   const base = {
-    senderEntity: "Rünna",
+    senderEntity: "Runna Advertising",
     mailingAddress: "123 Main St SW\nCalgary, AB T2P 1A1",
     unsubscribeUrl: "https://go.example.com/api/unsubscribe?t=abc",
   };
   const en = buildComplianceFooter({ ...base, lang: "en" });
   assert.equal(
     en,
-    "Rünna · 123 Main St SW, Calgary, AB T2P 1A1\nTo stop receiving these emails: https://go.example.com/api/unsubscribe?t=abc",
+    "Runna Advertising\n123 Main St SW, Calgary, AB T2P 1A1\nTo stop receiving these emails: https://go.example.com/api/unsubscribe?t=abc",
   );
   const es = buildComplianceFooter({ ...base, lang: "es", privacyUrl: "https://runna.mx/privacidad" });
-  assert.match(es, /^Rünna · 123 Main St SW, Calgary, AB T2P 1A1\n/);
+  assert.match(es, /^Runna Advertising\n123 Main St SW, Calgary, AB T2P 1A1\n/);
   assert.match(es, /Para dejar de recibir estos correos: https:\/\/go\.example\.com/);
   assert.match(es, /Aviso de privacidad: https:\/\/runna\.mx\/privacidad$/);
   for (const f of [en, es]) assert.doesNotMatch(f, /—/);
 });
 
-test("footer contact line: website and email between identity and unsubscribe", () => {
-  const f = buildComplianceFooter({
-    lang: "en",
-    senderEntity: "Rünna",
+test("footer sign-off line: name · locations · website; email only when there is no website", () => {
+  const base = {
+    lang: "en" as const,
+    senderEntity: "Runna Advertising",
+    locations: "Mexico · Canada",
     mailingAddress: "Tizapán San Ángel, 01090 Mexico City, Mexico",
-    website: "runnik.ca",
     contactEmail: "hola@runna.mx",
     unsubscribeUrl: "https://x/u",
     privacyUrl: "https://runna.com.mx/avisop",
-  });
+  };
   assert.equal(
-    f,
-    "Rünna · Tizapán San Ángel, 01090 Mexico City, Mexico\nrunnik.ca · hola@runna.mx\nTo stop receiving these emails: https://x/u",
-    "English: no Spanish privacy notice",
+    buildComplianceFooter({ ...base, website: "runnik.ca" }),
+    "Runna Advertising · Mexico · Canada · runnik.ca\nTizapán San Ángel, 01090 Mexico City, Mexico\nTo stop receiving these emails: https://x/u",
+    "English: no Spanish privacy notice, no email next to the website",
   );
+  // CASL needs one contact method: with no website the email takes its place.
+  assert.match(buildComplianceFooter({ ...base, website: null }), /^Runna Advertising · Mexico · Canada · hola@runna\.mx\n/);
+  const html = buildComplianceFooterHtml({ ...base, website: "runnik.ca" });
+  assert.match(html, /^<p style="margin: 0;">Runna Advertising · Mexico · Canada · <a href="https:\/\/runnik\.ca"/);
+  assert.doesNotMatch(html, /mailto:/);
+});
+
+test("outbound compliance: an English (Canadian) address is used on English emails only", () => {
+  const keys = ["RUNNA_MAILING_ADDRESS", "RUNNA_MAILING_ADDRESS_EN", "TOKEN_ENCRYPTION_KEY"] as const;
+  const saved = Object.fromEntries(keys.map((k) => [k, process.env[k]]));
+  try {
+    for (const k of keys) delete process.env[k];
+    process.env.TOKEN_ENCRYPTION_KEY = "k";
+    // Not set yet: English emails keep the Mexico City address (never no address).
+    const before = getOutboundCompliance({ ...PAYLOAD, lang: "en" });
+    assert.ok(before.ok && before.value.footer.text.includes("\nTizapán San Ángel"));
+
+    process.env.RUNNA_MAILING_ADDRESS_EN = "100 Example Ave SW, Calgary, AB T2P 0A1, Canada";
+    const en = getOutboundCompliance({ ...PAYLOAD, lang: "en" });
+    assert.ok(en.ok);
+    if (en.ok) {
+      assert.ok(en.value.footer.text.startsWith("Runna Advertising · Mexico · Canada · runnik.ca\n100 Example Ave SW, Calgary"));
+      assert.doesNotMatch(en.value.footer.text, /Tizapán/);
+    }
+    const es = getOutboundCompliance(PAYLOAD);
+    assert.ok(es.ok && es.value.footer.text.includes("\nTizapán San Ángel"), "Spanish emails keep the Mexico City address");
+    assert.ok(es.ok && !es.value.footer.text.includes("Calgary"));
+  } finally {
+    for (const k of keys) {
+      if (saved[k] === undefined) delete process.env[k];
+      else process.env[k] = saved[k];
+    }
+  }
 });
 
 test("outbound compliance: Pedro's details by default, env overrides, fails closed without a signing key", () => {
@@ -91,14 +124,16 @@ test("outbound compliance: Pedro's details by default, env overrides, fails clos
       assert.match(es.value.listUnsubscribe.url, /^https:\/\/go\.example\.com\/api\/unsubscribe\?t=/);
       const { text, html } = es.value.footer;
       assert.ok(text.includes(es.value.listUnsubscribe.url));
-      assert.ok(text.startsWith("Rünna · Tizapán San Ángel, Loreto y Campamento, Álvaro Obregón, 01090 Mexico City, Mexico\n"));
-      assert.match(text, /\nrunna\.com\.mx · hola@runna\.mx\n/);
+      assert.ok(
+        text.startsWith(
+          "Runna Advertising · México · Canadá · runna.com.mx\nTizapán San Ángel, Loreto y Campamento, Álvaro Obregón, 01090 Mexico City, Mexico\n",
+        ),
+      );
       assert.match(text, /Aviso de privacidad: https:\/\/runna\.com\.mx\/avisop$/);
 
       // HTML: labelled links, no URL in the visible text.
       assert.match(html, />darse de baja<\/a>/);
       assert.match(html, /href="https:\/\/runna\.com\.mx"/);
-      assert.match(html, /href="mailto:hola@runna\.mx"/);
       assert.match(html, />Aviso de privacidad<\/a>/);
       const visible = html.replace(/<[^>]+>/g, "");
       assert.doesNotMatch(visible, /https?:\/\//, "no raw URL shown");
@@ -107,7 +142,7 @@ test("outbound compliance: Pedro's details by default, env overrides, fails clos
 
     process.env.RUNNA_WEBSITE_EN = "example.ca";
     const en = getOutboundCompliance({ ...PAYLOAD, lang: "en" });
-    assert.ok(en.ok && en.value.footer.text.includes("\nexample.ca · hola@runna.mx\n"), "env override wins");
+    assert.ok(en.ok && en.value.footer.text.startsWith("Runna Advertising · Mexico · Canada · example.ca\n"), "env override wins");
     assert.ok(en.ok && !en.value.footer.text.includes("Aviso"), "no Spanish notice on English emails");
     assert.ok(en.ok && />unsubscribe<\/a>/.test(en.value.footer.html));
   } finally {

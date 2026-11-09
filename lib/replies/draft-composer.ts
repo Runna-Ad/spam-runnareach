@@ -2,8 +2,9 @@
  * Reply-funnel draft composer.
  *
  * Given a classified inbound reply, drafts the response WE should send back.
- * The single goal of every draft is to book a meeting (the end goal of the
- * platform). Human-in-the-loop: the draft is reviewed + approved by Pedro
+ * The goal of every draft is to book a meeting (the end goal of the platform),
+ * except a wrong_person reply, which gets a short thank-you and nothing more
+ * (Pedro, 2026-11-09). Human-in-the-loop: the draft is reviewed + approved by Pedro
  * before it sends — this never auto-sends.
  *
  * Mirrors lib/pitches/claude-composer.ts: Sonnet 4.5, Zod-validated JSON,
@@ -18,6 +19,7 @@ import {
   type ClaudeUsage,
 } from "../anthropic/client.ts";
 import type { ReplyIntent } from "./queries.ts";
+import { GENERIC_LOCALS } from "../pitches/greeting-name.ts";
 
 export type DraftComposerInput = {
   /** First name of the person who replied, if known. */
@@ -98,13 +100,24 @@ export async function composeReplyDraftWithClaude(
  * Intent-aware but generic — Pedro edits before sending anyway.
  */
 export function composeReplyDraftHeuristic(input: DraftComposerInput): ComposedDraft {
-  const greetName = input.contactFirstName?.trim() || input.companyName;
   const es = input.language === "es";
-  const hi = es ? `Hola ${greetName},` : `Hi ${greetName},`;
+  const name = input.contactFirstName?.trim();
+  // A thank-you to a receptionist greets the person or nobody, never the company.
+  const greetName = name || (input.intent === "wrong_person" ? null : input.companyName);
+  const hi = greetName ? (es ? `Hola ${greetName},` : `Hi ${greetName},`) : es ? "Hola," : "Hi there,";
   const signoff = `\n\n${es ? "Saludos" : "Best"},\n${input.senderFirstName}\n${input.agencyName}`;
 
   let core: string;
   switch (input.intent) {
+    case "wrong_person":
+      core = saysForwarded(input.replyBody)
+        ? es
+          ? "Muchas gracias por hacerlo llegar, se lo agradezco mucho. Espero tener noticias de ustedes pronto."
+          : "Thank you so much for passing this along, I really appreciate it. Hope to hear from you or the team soon."
+        : es
+          ? "Muchas gracias por avisarme. Si hay alguien en su equipo que vea estos temas, le agradecería mucho que me dijera con quién hablar. Que tenga una excelente semana."
+          : "Thank you so much for letting me know. If there's someone on your team who looks after this, I'd be grateful if you could point me their way. Have a great week.";
+      break;
     case "wants_meeting":
       core = es
         ? "Perfecto, me encantaría platicar. ¿Te queda bien una llamada de 20 minutos esta semana? Mándame un par de horarios que te funcionen y lo agendamos."
@@ -131,6 +144,25 @@ export function composeReplyDraftHeuristic(input: DraftComposerInput): ComposedD
     body: `${hi}\n\n${core}${signoff}`,
     reasoning: "(heuristic fallback — Claude unavailable)",
   };
+}
+
+/** "I have forwarded your message to our management team" and its Spanish/French forms. */
+export function saysForwarded(body: string | null): boolean {
+  return /\bforward(ed|ing)?\b|\bpass(ed|ing)? (it|this|that|your \w+) (on|along)\b|\bpassed (it )?on\b|\b(shared|sent) (it|this|your \w+) (with|to)\b|\btransferr?ed\b|reenv[ií]|turn[eé] (a|al)\b|compart[ií] (tu|su) (correo|mensaje)|transmis|transf[ée]r[ée]/i.test(
+    body ?? "",
+  );
+}
+
+/**
+ * The first name to greet from a reply's From display name, or null when it
+ * names a department ("Reception", "Info Desk"), an address, or nothing.
+ */
+export function replyGreetingName(fromName: string | null | undefined): string | null {
+  const first = fromName?.trim().replace(/^["']+|["']+$/g, "").split(/\s+/)[0] ?? "";
+  if (!first || /[@\d]/.test(first)) return null;
+  const word = first.normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase().replace(/[^a-zñ]/g, "");
+  if (!word || GENERIC_LOCALS.has(word)) return null;
+  return first;
 }
 
 function ensureReSubject(subject: string, threadSubject: string | null): string {
@@ -326,6 +358,17 @@ BY INTENT (still answer their question first in every case):
 - wants_meeting: they're ready. Match their energy, confirm warmly, make booking effortless (offer to
   send a couple of times or ask for theirs).
 - not_now: respect it fully, stay warm, leave the door open. No push.
+- wrong_person: they are NOT the right contact, so points 2 and 3 above do NOT apply. Write a short,
+  warm thank-you: 2 or 3 sentences, then the sign-off. No pitch, no questions about their business,
+  no call or meeting ask, no next step.
+  * They forwarded or passed our email on (to management, the owner, a colleague): thank them for
+    passing it along and say you hope to hear from them or the team soon.
+  * They named someone else to contact: thank them for pointing you the right way and say you'll
+    reach out to that person. Never invent a name or an address they did not give.
+  * They only said they are not the right person: thank them, and in one light line ask who would be
+    the best person to talk to, if they're happy to share.
+  Greet them by the first name they signed the reply with. If there is none, use a simple greeting
+  with no name (never a company or department name).
 - anything else: be helpful and human, answer what you can, gently leave a soft next step.
 
 Sign off with the sender's first name on one line, then the agency name on the next.
@@ -346,7 +389,7 @@ function buildUserPrompt(input: DraftComposerInput): string {
 Prospect company: ${input.companyName}
 What they do: ${input.whatTheyDo ?? "(unknown)"}
 Their main pain (from research): ${input.painSummary ?? "(unknown)"}
-Person who replied: ${input.contactFirstName ?? "(unknown first name)"}
+Person who replied (from the From line; may be missing, check their signature): ${input.contactFirstName ?? "(unknown first name)"}
 Their intent (classified): ${input.intent}
 Original thread subject: ${input.threadSubject ?? "(none)"}
 
@@ -362,6 +405,11 @@ ${replyBody}
 Sender (you): ${input.senderFirstName}
 Agency: ${input.agencyName}
 
-Write a warm, genuinely helpful reply that answers what they asked using the original pitch as
-context, builds a little rapport, and ends with a soft, optional next step. Not robotic, not salesy.`;
+${
+    input.intent === "wrong_person"
+      ? `They are not the right contact. Write only the short thank-you described for wrong_person: no
+pitch, no question about their business, no next step.`
+      : `Write a warm, genuinely helpful reply that answers what they asked using the original pitch as
+context, builds a little rapport, and ends with a soft, optional next step. Not robotic, not salesy.`
+  }`;
 }
