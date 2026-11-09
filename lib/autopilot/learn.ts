@@ -43,7 +43,7 @@ import {
   funnelForProspect,
   GUIDANCE_MAX_CHARS,
   sanitizeGuidance,
-  showcaseFollowupFellBack,
+  countsForShowcaseTest,
   type PitchOutcomeInput,
 } from "@/lib/learning/outcomes";
 import { hunterDemand, industryScore, proposeCells, type IcpForCells, type IndustryEvidence } from "@/lib/learning/icp";
@@ -232,14 +232,20 @@ export async function learnFromOutcomes(db: Db, tenantId: string, now: Date = ne
     .is("parent_pitch_id", null)
     .not("sent_at", "is", null)
     .gte("created_at", since);
-  const pitches = ((pitchRows ?? []) as Array<{ id: string; decision: { arms?: Record<string, string> } | null }>).filter(
+  const pitches = ((pitchRows ?? []) as Array<{ id: string; decision: { arms?: Record<string, string>; showcase_forced?: unknown } | null }>).filter(
     (p) => p.decision?.arms,
   );
   const events = await eventsFor(db, tenantId, pitches.map((p) => p.id));
-  const inputs: PitchOutcomeInput[] = pitches.map((p) => ({ arms: p.decision?.arms, events: events.get(p.id) ?? [] }));
+  const inputs: Array<PitchOutcomeInput & { forced: boolean }> = pitches.map((p) => ({
+    arms: p.decision?.arms,
+    events: events.get(p.id) ?? [],
+    forced: p.decision?.showcase_forced === true,
+  }));
   for (const learner of ["writer.evidence", "writer.guidance", "writer.showcase"]) {
-    // Only the writer learners count clicks (lib/learning/reward.ts).
-    const counted = learner === "writer.showcase" ? inputs.filter((p) => !showcaseFollowupFellBack(p.events)) : inputs;
+    // Only the writer learners count clicks (lib/learning/reward.ts). A
+    // showcase email forced by "nothing we can prove" (proven-facts.ts) is no
+    // trial of where the showcase goes: the test didn't choose it.
+    const counted = learner === "writer.showcase" ? inputs.filter(countsForShowcaseTest) : inputs;
     await settleLearner(db, tenantId, learner, armStats(counted, learner, now, { clicks: true }), 30);
   }
   await presendReview(db, tenantId, now);

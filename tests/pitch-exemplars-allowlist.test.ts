@@ -287,7 +287,11 @@ test("S4: with no contact name, the address's given name is a field: scrubbed, o
     const body = `Hola Monica,\n\nSoy Nils, de Runna Advertising. Revisé tu sitio: no hay forma de agendar fuera de horario.\n\nSi quieres, Monica${last}, lo vemos en una llamada corta.\n\nNils\nRunna Advertising`;
     assert.equal(keptWith(subject, body, p, ["monica", "escobar", "sonrisa"]), null, last);
   }
-  assert.equal(scrubExemplar("Si quieres, Monica, lo vemos.", p), "Si quieres, [name], lo vemos.");
+  // Since 2026-11-09 a one-word address (monica@) greets no one, so the
+  // scrubber has no greeted name to blank there: the leak check drops the
+  // exemplar instead (asserted above). With a separator the greeting reads
+  // the name, and the scrubber blanks it.
+  assert.equal(scrubExemplar("Si quieres, Monica, lo vemos.", { ...p, recipient_email: "monica.escobar@sonrisadental.mx" }), "Si quieres, [name], lo vemos.");
   // A role inbox is not a name.
   assert.equal(scrubExemplar("Las citas se agendan por correo.", { ...p, recipient_email: "citas@sonrisadental.mx" }), "Las citas se agendan por correo.");
 });
@@ -378,11 +382,16 @@ test("R6.2: the name deny beats our vocabulary: Spanish month names, Quintana, t
 });
 
 test("R6.3: the scrubber blanks the name the greeting reads from the address; the leak check reads any local part", () => {
+  const sonrisa = (email: string): ExemplarProspect => ({ company_name: "Clínica Dental Sonrisa", domain: "sonrisadental.mx", recipient_name: null, recipient_email: email, city: "Puebla" });
+  const bodyFor = (name: string) => `Hola ${name},\n\nSoy Nils, de Runna Advertising.\n\nSi quieres, ${name}, lo vemos en una llamada corta.\n\nNils\nRunna Advertising`;
+  // Since 2026-11-09 the greeting reads a name only with a separator (memo.ruiz@): the scrubber blanks that one.
+  for (const [email, name] of [["memo.ruiz@sonrisadental.mx", "Memo"], ["chema.lopez@sonrisadental.mx", "Chema"], ["nacho.diaz@sonrisadental.mx", "Nacho"], ["toño.vega@sonrisadental.mx", "Toño"]] as const) {
+    assert.equal(keptWith("una llamada corta", bodyFor(name), sonrisa(email), [name]), null, email);
+    assert.equal(scrubExemplar(`Si quieres, ${name}, lo vemos.`, sonrisa(email)), "Si quieres, [name], lo vemos.", email);
+  }
+  // A one-word address greets no one now, but an old email sent to it may carry the name: the leak check still drops it.
   for (const [email, name] of [["memo@sonrisadental.mx", "Memo"], ["chema@sonrisadental.mx", "Chema"], ["nacho@sonrisadental.mx", "Nacho"], ["toño@sonrisadental.mx", "Toño"]] as const) {
-    const p: ExemplarProspect = { company_name: "Clínica Dental Sonrisa", domain: "sonrisadental.mx", recipient_name: null, recipient_email: email, city: "Puebla" };
-    const body = `Hola ${name},\n\nSoy Nils, de Runna Advertising.\n\nSi quieres, ${name}, lo vemos en una llamada corta.\n\nNils\nRunna Advertising`;
-    assert.equal(keptWith("una llamada corta", body, p, [name]), null, email);
-    assert.equal(scrubExemplar(`Si quieres, ${name}, lo vemos.`, p), "Si quieres, [name], lo vemos.", email);
+    assert.equal(keptWith("una llamada corta", bodyFor(name), sonrisa(email), [name]), null, email);
   }
   // An address the greeting would not use ("vfournier@") is still a name to the leak check.
   const vf: ExemplarProspect = { company_name: null, domain: null, recipient_name: null, recipient_email: "vfournier@julien.ca" };

@@ -14,7 +14,8 @@
  * Triage on final score:
  *   < 50   → suppressed
  *   50–69  → b_list
- *   ≥ 70   → Anymail/Hunter → pitch auto-generated
+ *   ≥ 70   → Anymail/Hunter → match: waits for the site and web looks; the
+ *            autopilot tick drafts its first email (lib/research/web-dive/ready.ts)
  *
  * All steps are try/catch — one failure never blocks the rest of the batch.
  */
@@ -29,20 +30,24 @@ import { scrapeWebsiteWith } from "@/lib/research/scrape-stage";
 import { runStructuredResearchWith } from "@/lib/research/structured-research-stage";
 import { deepResearchProspectWith } from "@/lib/research/deep-research-stage";
 import { scoreProspectWith } from "@/lib/research/score-stage";
-import { generatePitchWith } from "@/lib/pitches/pitch-stage";
 import { generateWebsitePitchWith } from "@/lib/pitches/website-pitch-stage";
 import { searchBrave } from "@/lib/discover/sources/brave-search";
 import { searchGooglePlaces, googlePlacesIsAvailable } from "@/lib/discover/sources/google-places";
 import { normalizeDomain } from "@/lib/discover/fuzzy-dedupe";
 import { DO_NOT_SEND_STATUSES, isPastPipeline, protectedStatusFilter } from "@/lib/prospects/status";
+import { WAITING_FOR_LOOKS } from "@/lib/research/web-dive/looks";
 import type { Database } from "@/lib/supabase/types";
 
 type ProspectUpdate = Database["public"]["Tables"]["prospects"]["Update"];
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
-/** "skipped": already contacted or decided (isPastPipeline); nothing was run or written. */
-export type ProspectOutcome = "suppressed" | "needs_review" | "pitched" | "website_pitch" | "skipped" | "error";
+/**
+ * "skipped": already contacted or decided (isPastPipeline); nothing was run or written.
+ * "match": passed every gate with a usable contact; its first email is drafted
+ * by the tick once both looks are done (the discovery job counts it as pitched).
+ */
+export type ProspectOutcome = "suppressed" | "needs_review" | "pitched" | "match" | "website_pitch" | "skipped" | "error";
 
 export type SinglePipelineResult = {
   prospect_id: string;
@@ -225,27 +230,10 @@ export async function processSingleProspectWith(
     return { prospect_id: prospectId, company_name: name, score: null, outcome: "skipped", error: `Skipped: ${why} (${p.status})` };
   }
 
-  // Every status write below goes through here. `p` is a snapshot: a job works
-  // through its ids over many slices, so a prospect can be bulk-suppressed or
-  // booked after the read above. The rule's guard (lib/prospects/status.ts) in
-  // the UPDATE's WHERE refuses such a row: moved is false. A failed write is
-  // reported (error), never read as allowed: it looks identical to success.
-  async function writeStatus(
-    fields: ProspectUpdate & { status: NonNullable<ProspectUpdate["status"]> },
-  ): Promise<{ moved: boolean; error?: string }> {
-    let q = supabase
-      .from("prospects")
-      .update({ ...fields, updated_at: new Date().toISOString() })
-      .eq("id", prospectId)
-      .eq("tenant_id", user.tenantId);
-    const guard = protectedStatusFilter(fields.status, "automation");
-    if (guard) q = q.not("status", "in", guard);
-    const { data, error } = await q.select("id");
-    if (error) {
-      console.error(`[pipeline] status write (${fields.status}) failed for ${prospectId}: ${error.message}`);
-      return { moved: false, error: `Status write (${fields.status}) failed: ${error.message || "no message"}` };
-    }
-    return { moved: (data ?? []).length > 0 };
+  // Every status write below goes through here (statusWriteWith: the status
+  // rule's guard in the UPDATE's WHERE).
+  async function writeStatus(fields: StatusFields): Promise<{ moved: boolean; error?: string }> {
+    return statusWriteWith(actor, prospectId, fields);
   }
 
   /** The result a lane ends with after its status write: an error when the write failed. */
@@ -590,16 +578,7 @@ export async function processSingleProspectWith(
   // placeholders) pass the gate, after which generatePitch refused them — so
   // the prospect landed in limbo: scored, gate-passed, no pitch, never
   // suppressed. Filter here so the outcome is honest either way.
-  type ContactRow = { email: string | null };
-  const { data: contactRows, error: contactGateErr } = await supabase
-    .from("prospect_contacts")
-    .select("email")
-    .eq("prospect_id", prospectId)
-    .eq("tenant_id", user.tenantId)
-    .not("email", "is", null)
-    .returns<ContactRow[]>();
-
-  const validContacts = (contactRows ?? []).filter((c) => hasUsableEmail(c.email));
+  const contactGate = await usableContactsWith(actor, prospectId);
 
   // Write contact gate result to audit_log so we can diagnose from DB
   await writeAuditLog({
@@ -610,14 +589,14 @@ export async function processSingleProspectWith(
     entityId: prospectId,
     metadata: {
       kind: "contact_gate",
-      contacts_found: validContacts.length,
-      contacts_rejected_unusable: (contactRows ?? []).length - validContacts.length,
-      gate_error: contactGateErr?.message ?? null,
+      contacts_found: contactGate.usable,
+      contacts_rejected_unusable: contactGate.total - contactGate.usable,
+      gate_error: contactGate.error,
       score,
     },
   });
 
-  if (validContacts.length === 0) {
+  if (contactGate.usable === 0) {
     // ≥70 but unreachable: we ran the full enrichment waterfall and still found no
     // email — "if we didn't get it in the pipeline, we aren't getting it" — so
     // suppress rather than park it in a worklist nobody clears.
@@ -631,52 +610,88 @@ export async function processSingleProspectWith(
     return settle(written, "suppressed", score);
   }
 
-  let pitchError: string | null = null;
-  try {
-    const pitchResult = await generatePitchWith(actor, prospectId);
-    if (pitchResult.ok) {
-      const written = await writeStatus({ status: "pitched", pitch_gate_passed: true });
+  // ── Wait for both looks (brief web-dive, 2026-11-09) ──────────────────────
+  // The first email is no longer drafted here. The prospect waits in `match`
+  // until its own website was read (site_observations) and the rest of the web
+  // was searched (web_research); the tick's first-draft step then drafts it
+  // (lib/research/web-dive/ready.ts), or after the look timeout. The audit row
+  // is when it entered `match`: the timeout counts from it.
+  const written = await enterMatchWith(actor, prospectId, score, "pipeline");
+  revalidatePath("/companies");
+  return settle(written, "match", score);
+}
 
-      revalidatePath("/companies");
-      revalidatePath("/funnel");
-      revalidatePath("/pitches");
-      return settle(written, "pitched", score);
-    }
-    pitchError = pitchResult.error;
-  } catch (err) {
-    pitchError = err instanceof Error ? err.message : String(err);
+// ── Shared with the discovery job's catch-up (app/api/discover/run) ──────────
+
+type StatusFields = ProspectUpdate & { status: NonNullable<ProspectUpdate["status"]> };
+
+/**
+ * Every automated status write of the pipeline and the job's catch-up. A
+ * prospect read earlier is a snapshot: a job works through its ids over many
+ * slices, so it can be bulk-suppressed or booked meanwhile. The rule's guard
+ * (lib/prospects/status.ts) in the UPDATE's WHERE refuses such a row: moved is
+ * false. A failed write is reported (error), never read as allowed: it looks
+ * identical to success.
+ */
+export async function statusWriteWith(actor: Actor, prospectId: string, fields: StatusFields): Promise<{ moved: boolean; error?: string }> {
+  let q = actor.supabase
+    .from("prospects")
+    .update({ ...fields, updated_at: new Date().toISOString() })
+    .eq("id", prospectId)
+    .eq("tenant_id", actor.user.tenantId);
+  const guard = protectedStatusFilter(fields.status, "automation");
+  if (guard) q = q.not("status", "in", guard);
+  const { data, error } = await q.select("id");
+  if (error) {
+    console.error(`[pipeline] status write (${fields.status}) failed for ${prospectId}: ${error.message}`);
+    return { moved: false, error: `Status write (${fields.status}) failed: ${error.message || "no message"}` };
   }
+  return { moved: (data ?? []).length > 0 };
+}
 
-  // Log pitch failure to audit_log so we can diagnose it
-  if (pitchError) {
-    console.error(`[pipeline] generatePitch failed for ${name} (${prospectId}): ${pitchError}`);
+/**
+ * The no-contact gate's test, one predicate for the pipeline and the job's
+ * catch-up: the SAME usable-email rule as pitch generation and the send paths.
+ * `error` is set (presence, not truthiness) when the read failed.
+ */
+export async function usableContactsWith(actor: Actor, prospectId: string): Promise<{ usable: number; total: number; error: string | null }> {
+  type ContactRow = { email: string | null };
+  const { data, error } = await actor.supabase
+    .from("prospect_contacts")
+    .select("email")
+    .eq("prospect_id", prospectId)
+    .eq("tenant_id", actor.user.tenantId)
+    .not("email", "is", null)
+    .returns<ContactRow[]>();
+  const rows = data ?? [];
+  return { usable: rows.filter((c) => hasUsableEmail(c.email)).length, total: rows.length, error: error ? error.message || "no message" : null };
+}
+
+/**
+ * A scored, reachable prospect waits in `match` for its site and web looks
+ * (web-dive): status match + pitch_gate_passed through the guarded write, and,
+ * only when the row moved, the waiting_for_looks audit row the tick's look
+ * timeout counts from. The pipeline's last step and the job's catch-up both
+ * enter here; only the tick drafts the first email.
+ */
+export async function enterMatchWith(
+  actor: Actor,
+  prospectId: string,
+  score: number | null,
+  source: "pipeline" | "catch_up",
+): Promise<{ moved: boolean; error?: string }> {
+  const written = await statusWriteWith(actor, prospectId, { status: "match", pitch_gate_passed: true });
+  if (written.error === undefined && written.moved) {
     await writeAuditLog({
-      tenantId: user.tenantId,
-      actorId: user.id,
+      tenantId: actor.user.tenantId,
+      actorId: actor.user.id,
       action: "prospect.scored",
       entityType: "prospect",
       entityId: prospectId,
-      metadata: { kind: "pitch_generation_failed", error: pitchError, score },
+      metadata: { kind: WAITING_FOR_LOOKS, score, source },
     });
   }
-
-  // Score passed but pitch couldn't be created — mark gate passed so UI shows
-  // correct state. No status write: a prospect parked during the run stays
-  // parked (status rule I5), and is counted as suppressed, not needs_review.
-  const { data: after } = await supabase
-    .from("prospects")
-    .update({
-      pitch_gate_passed: true,
-      updated_at: new Date().toISOString(),
-    })
-    .eq("id", prospectId)
-    .eq("tenant_id", user.tenantId)
-    .select("status")
-    .maybeSingle<{ status: string }>();
-
-  revalidatePath("/companies");
-  const parked = !!after && DO_NOT_SEND_STATUSES.has(after.status);
-  return { prospect_id: prospectId, company_name: name, score, outcome: parked ? "suppressed" : "needs_review" };
+  return written;
 }
 
 // ── Public: re-enrich contacts for an existing prospect ──────────────────────
@@ -767,7 +782,8 @@ export async function reEnrichProspectContactsWith(
  * pipeline loop completes.
  *
  * Sort order:
- *   1. Pitched prospects always survive (score ≥70, pitch already generated)
+ *   1. Pitched prospects always survive (score ≥70, pitch already generated),
+ *      and so do `match` ones (score ≥70, first email waiting for the looks)
  *   2. Remaining sorted by match_score DESC (null last)
  *
  * If ≤30 prospects were processed, nothing is deleted.
@@ -794,10 +810,11 @@ export async function pruneRunToTop30With(
   const all = data ?? [];
   if (all.length <= 30) return { ok: true, kept: all.length, deleted: 0 };
 
-  // Sort: pitched first (must survive), then by score descending, nulls last
+  // Sort: pitched and match first (must survive), then by score descending, nulls last
+  const ready = (status: string) => status === "pitched" || status === "match";
   all.sort((a, b) => {
-    if (a.status === "pitched" && b.status !== "pitched") return -1;
-    if (b.status === "pitched" && a.status !== "pitched") return 1;
+    if (ready(a.status) && !ready(b.status)) return -1;
+    if (ready(b.status) && !ready(a.status)) return 1;
     return (b.match_score ?? -1) - (a.match_score ?? -1);
   });
 

@@ -23,6 +23,7 @@
  * sentence of its own.
  */
 
+import { viewportPhoneReady } from "../research/site-crawl/detectors.ts";
 import { bareHost } from "../research/site-crawl/select-pages.ts";
 
 export type SiteFactKind = "seen" | "absence";
@@ -224,8 +225,12 @@ const MAPPERS: Record<string, Mapper> = {
     if (c.found === false) return absence("social", "No links to social media were found", ctx);
     return null;
   },
-  mobile_viewport: (c, ctx) => {
-    const first = evidenceOf(c)[0];
+  mobile_viewport: (raw, ctx) => {
+    const first = evidenceOf(raw)[0];
+    // Rows crawled before 2026-11-09 stored `initial-scale=1` as false
+    // (CrushCamp): judge the stored tag again with today's rule.
+    const tag = first?.text?.startsWith("viewport: ") ? first.text.slice("viewport: ".length) : null;
+    const c = tag !== null ? { ...raw, found: viewportPhoneReady(tag) } : raw;
     if (c.found === true) return first ? seen("mobile_viewport", "The home page has the setting that makes it fit a phone screen (a mobile viewport tag)", first.url) : null;
     // The home page's <head> is enough for this one: its URL is the home page.
     if (c.found === false) return { id: "mobile_viewport", kind: "absence", fact: "The home page has no phone-friendly viewport setting (the setting that makes a page fit a phone screen)", url: first?.url ?? ctx.home, strength: "strong" };

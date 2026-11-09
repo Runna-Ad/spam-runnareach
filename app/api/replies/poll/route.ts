@@ -52,6 +52,7 @@ import {
 } from "@/lib/replies/classify";
 import { recordOptOut } from "@/lib/compliance/opt-out";
 import { senderIdentity } from "@/lib/pitches/sender-identity";
+import { cleanWhatTheyDo } from "@/lib/pitches/proven-facts";
 import {
   composeReplyDraftHeuristic,
   composeReplyDraftWithClaude,
@@ -632,7 +633,8 @@ async function draftResponse(
   // what they're asking about instead of deflecting to "let's book a call".
   let originalPitchBody: string | null = null;
   let whatTheyDo: string | null = null;
-  let painSummary: string | null = null;
+  // A research pain is never evidence (proven facts, 2026-11-09): the reply gets none.
+  const painSummary: string | null = null;
   try {
     const { data: pitch } = await supabase
       .from("pitches")
@@ -646,15 +648,14 @@ async function draftResponse(
 
     // prospect_research is the table every writer uses (the legacy "research"
     // table this used to read is never written — drafts ran without context).
+    // Proven facts (2026-11-09, CrushCamp): only what they do, without the
+    // research step's guesses; a research pain is never evidence, so none.
     const { data: research } = await supabase
       .from("prospect_research")
-      .select("what_they_do, pain_points")
+      .select("what_they_do")
       .eq("prospect_id", thread.prospect_id)
       .maybeSingle();
-    whatTheyDo = research?.what_they_do ?? null;
-    const pains = Array.isArray(research?.pain_points) ? research.pain_points : [];
-    painSummary =
-      (pains[0] as { pain_label?: string } | undefined)?.pain_label ?? null;
+    whatTheyDo = cleanWhatTheyDo(research?.what_they_do ?? null);
   } catch {
     // Best-effort context — the composer still works without it.
   }

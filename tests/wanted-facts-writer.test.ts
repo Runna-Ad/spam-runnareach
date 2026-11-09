@@ -286,7 +286,7 @@ test("schema: any wanted_fact shape (number, object, empty, absent) parses; the 
   }
 });
 
-test("prompts: the writer is told when to name a wanted fact and how; the critic too; version v3.4", async () => {
+test("prompts: the writer is told when to name a wanted fact and how; the critic too; version v3.5", async () => {
   const seen: Req[] = [];
   __test__.setClient({
     messages: {
@@ -305,28 +305,39 @@ test("prompts: the writer is told when to name a wanted fact and how; the critic
   assert.match(critic, /WANTED FACT:/);
   assert.match(critic, /"wanted_fact": string \| null/);
   assert.match(critic, /never changes the score or the issues/);
-  assert.equal(PITCH_PROMPT_VERSION, "pitch-v3.4-2026-10-30");
+  assert.equal(PITCH_PROMPT_VERSION, "pitch-v3.5-2026-11-09");
 });
 
-test("rewrite directive: no blanket number ban; the angle's pain_id pairs with the benchmark tagged for it", async () => {
+test("rewrite directive: no blanket number ban; the angle's pain_id pairs with the benchmark tagged for it; the angle is always our offer, never 'Lead with this pain'", async () => {
   const seen: Req[] = [];
   __test__.setClient({
     messages: { create: async (r: Req) => { seen.push(r); return { content: [{ type: "text", text: writerJson(1) }], usage: { input_tokens: 1, output_tokens: 1 } }; } },
   } as never);
   // forced_angle.pain_id comes from the same prospect_research.pain_points row as
   // pain_candidates (angle-advisor normalizePains → painId), so it has the same form.
-  await composePitchWithClaude({
+  const angled = {
     ...inputs(),
     benchmarks: [{
       id: "b1", statistic: "firms that reply within the hour win more conversations", figure: "7 times", publisher: "HBR",
       source_url: "https://hbr.org", caveat: null, for_pains: [{ code: "lead_response_time", label: "Slow replies", pain_id: PAIN }],
     }],
     forced_angle: { pain_label: "Slow replies", pain_id: PAIN, case_study_id: null, capability: null },
-  });
+  };
+  // A chosen angle is no evidence (2026-11-09, second review): with or without a proven
+  // problem (a PageSpeed score Google rates as poor), it is offered, never said as theirs.
+  const psi = { id: "psi", kind: "seen" as const, fact: "Google's mobile speed test (PageSpeed Insights) scored the home page 31/100 for performance, which Google rates as poor", url: "https://x.test/", strength: "strong" as const };
+  await composePitchWithClaude(angled);
+  await composePitchWithClaude({ ...angled, site_facts: [psi] });
+  for (const call of seen.slice(0, 2)) {
+    const text = call.messages[0]!.content;
+    assert.ok(text.includes(`⚑ REWRITE DIRECTIVE: the human chose the angle for this rewrite: "Slow replies" (pain_id ${PAIN}). Offer help with it as our offer`), text);
+    assert.ok(text.includes("Never say or suggest they have this problem: a chosen angle is not evidence."));
+    assert.ok(text.includes(`the hook is one of those entries whose hook is "problem" or "opening", or, with none, prospect.what_they_do.`));
+    assert.doesNotMatch(text, /Lead with this pain/);
+    assert.match(text, /no client; a number only as FACTS 2 allows \(a benchmark whose for_pains includes this pain\)/);
+    assert.doesNotMatch(text, /no client, no number/);
+  }
   const user = seen[0]!.messages[0]!.content;
-  assert.match(user, new RegExp(`Lead with this pain: "Slow replies" \\(pain_id ${PAIN}\\)`));
-  assert.match(user, /no client; a number only as FACTS 2 allows \(a benchmark whose for_pains includes this pain\)/);
-  assert.doesNotMatch(user, /no client, no number/);
   const payload = JSON.parse(/```json\n([\s\S]*?)\n```/.exec(user)![1]!) as {
     pain_candidates: Array<{ pain_id: string }>;
     benchmarks: Array<{ for_pains: Array<{ pain_id: string }> }>;
@@ -449,6 +460,11 @@ async function stage(opts: { rpc?: RpcMode; wishes?: boolean; rewrite?: boolean;
     fetchBenchmarksForPitch: async () => (opts.leadPainBenchmark ? [LEAD_PAIN_BENCHMARK] : []),
     loadSiteObservation: async () => null,
     siteFactsFor: () => [],
+    // Proven facts (2026-11-09): these tests drive the problem-led path, so a proven hook exists.
+    provenFacts: () => [],
+    hasProvenHook: () => true,
+    proveInputs: (i: unknown) => i,
+    webFactsFor: async () => [],
     resolvePainCodes: async (_s: unknown, _t: string, ids: string[]) => {
       resolved.push(ids);
       return ids.map((id) => ({ id, code: id === PAIN ? "lead_response_time" : id }));
@@ -568,4 +584,16 @@ test("stage: the no_benchmark arm records nothing (the library was hidden on pur
   // Control: same library, benchmark arm → recorded.
   const shown = await stage({ arm: "benchmark", leadPainBenchmark: true });
   assert.equal(shown.rpcCalls.length, 2);
+  assert.equal((shown.tables.pitches![0]!.decision as DecisionRecord).arms?.["writer.evidence"], "benchmark");
+});
+
+test("stage: the evidence arm is recorded only when it could change the email (a figure for this prospect's pain)", async () => {
+  // No figure in the library for this prospect: both arms write the same email, so neither is a trial.
+  for (const arm of ["benchmark", "no_benchmark"] as const) {
+    const none = await stage({ arm });
+    assert.equal(none.result.ok, true, none.result.error);
+    const decision = none.tables.pitches![0]!.decision as DecisionRecord;
+    assert.equal(Object.hasOwn(decision.arms ?? {}, "writer.evidence"), false, arm);
+    assert.equal(decision.arms?.["writer.showcase"], "followup", arm);
+  }
 });

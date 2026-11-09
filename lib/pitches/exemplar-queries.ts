@@ -21,6 +21,7 @@
 
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { isTestAddress } from "../compliance/test-addresses.ts";
+import { findAbsenceClaims, findTrackRecordClaims } from "./content-rules.ts";
 import { ATTRIBUTION_WINDOW_DAYS, OUTCOME_EVENT_TYPES, type OutcomeEvent } from "../learning/reward.ts";
 import {
   EXEMPLAR_SHORTLIST,
@@ -100,6 +101,16 @@ export function candidateFromRow(r: CandidateRow): ExemplarCandidate | null {
     critic_pass: typeof r.critic_pass === "boolean" ? r.critic_pass : null,
     gate_overridden: overridden(r.gate_override),
   };
+}
+
+/**
+ * A past email that says what we didn't see or who we work with is never a
+ * model (proven facts, 2026-11-09): emails sent before the rule carry such
+ * claims (CrushCamp's), and a writer shown one would copy it.
+ */
+export function makesUnprovenClaims(subject: string, body: string): boolean {
+  const text = `${subject}\n${body}`;
+  return findAbsenceClaims(text).length > 0 || findTrackRecordClaims(text).length > 0;
 }
 
 /** The kill switch: off unless EXEMPLARS_ENABLED=1 in Vercel. */
@@ -246,12 +257,18 @@ export async function fetchExemplars(
 
     const out: Exemplar[] = [];
     let scrubFailed = 0;
+    let unproven = 0;
     for (const p of allowed) {
       if (out.length >= MAX_EXEMPLARS) break;
       const t = byId.get(p.pitch_id);
       // What a person approved, without the compliance footer body_sent carries.
       const body = t?.body_edited?.trim() || t?.body_original?.trim();
       if (!t || !body || !t.subject?.trim()) continue;
+      // A runner-up takes the slot (twice the slots were picked).
+      if (makesUnprovenClaims(t.subject, body)) {
+        unproven++;
+        continue;
+      }
       const exemplar = toExemplar(p, {
         subject: t.subject,
         body,
@@ -266,6 +283,7 @@ export async function fetchExemplars(
       else scrubFailed++;
     }
     if (scrubFailed > 0) console.warn(`[exemplars] scrub_failed: dropped ${scrubFailed} exemplar(s) that still named their prospect`);
+    if (unproven > 0) console.warn(`[exemplars] unproven_claims: dropped ${unproven} exemplar(s) that claim an absence or a track record`);
     return out;
   } catch (err) {
     console.error("[exemplars] not loaded:", (err as Error).message);

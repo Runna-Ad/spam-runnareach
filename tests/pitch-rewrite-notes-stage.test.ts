@@ -17,6 +17,8 @@ import { NOT_REVIEWED_ISSUE, WRITER_FIXABLE, composeWithReview, revisionIssues }
 import { PITCH_PROMPT_VERSION, SHOWCASE_PROMPT_VERSION, heldBodyForRevision, isAdviceQuote } from "../lib/pitches/claude-composer.ts";
 import { DECISION_VERSION } from "../lib/pitches/decision.ts";
 import { __test__ } from "../lib/anthropic/client.ts";
+import { hasProvenHook, provenFacts, proveInputs } from "../lib/pitches/proven-facts.ts";
+import type { SiteFact } from "../lib/pitches/site-facts.ts";
 
 const PITCH_URL = new URL("../lib/pitches/pitch-stage.ts", import.meta.url);
 const ANGLE_URL = new URL("../lib/pitches/angle-advisor.ts", import.meta.url);
@@ -177,6 +179,11 @@ async function run(opts: {
   redraftOf?: string;
   /** The showcase arm chooseWriterArms returns (default "followup"). */
   showcase?: "first" | "followup";
+  /**
+   * siteFactsFor's answer. When set, the stage runs the real proven-facts rule
+   * (lib/pitches/proven-facts.ts) instead of the pass-through stubs below.
+   */
+  siteFacts?: SiteFact[];
 }) {
   const calls: string[] = [];
   const composerContacts: unknown[] = [];
@@ -212,7 +219,13 @@ async function run(opts: {
     listNotableClients: async () => [],
     fetchBenchmarksForPitch: async () => [],
     loadSiteObservation: async () => null,
-    siteFactsFor: () => [],
+    siteFactsFor: () => opts.siteFacts ?? [],
+    // Proven facts (2026-11-09): these tests drive the problem-led path, so a proven hook exists,
+    // unless a test hands in site facts and runs the real rule.
+    ...(opts.siteFacts
+      ? { provenFacts, hasProvenHook, proveInputs }
+      : { provenFacts: () => [], hasProvenHook: () => true, proveInputs: (i: unknown) => i }),
+    webFactsFor: async () => [],
     chooseWriterArms: async () => ({ evidence: "benchmark", guidance: null, showcase: opts.showcase ?? "followup" }),
     isShowcaseArm: (v: unknown) => v === "first" || v === "followup",
     pickBuilds: () => [{ id: "daily-briefing", for_whom: "a business owner", does: "a summary every morning", how_it_works: "reads the inbox", universal: true, learns: false }],
@@ -368,7 +381,10 @@ test("full path: a template held draft is rewritten fresh and says so (retry_mod
   assert.equal((created.decision as { retry_mode?: string }).retry_mode, "fresh");
 });
 
-test("normalizePains (writer-honesty): a recommendation quote reaches the writer and critic as observed: false, a site quote as true, none dropped", async () => {
+// Was "a recommendation quote reaches the writer and critic as observed: false, a site quote as true,
+// none dropped" (writer-honesty). Since 2026-11-09 (CrushCamp) no research pain is evidence: proveInputs
+// drops them all from a first draft, advice or site-like, and only a proven site fact is said.
+test("proven facts: no research pain, advice or site-like, reaches the writer or the critic of a first draft; the proven site fact does, and the problem-led email goes out", async () => {
   const writerPayloads: string[] = [];
   const criticPayloads: string[] = [];
   __test__.setClient({
@@ -387,18 +403,29 @@ test("normalizePains (writer-honesty): a recommendation quote reaches the writer
       },
     },
   } as never);
-  const { result } = await run({
-    held: null, retryOf: null, realCompose: true,
-    painPoints: [
-      { pain_id: "p1", pain_label: "Website", evidence_quote: "Replace outdated WordPress with a site that shows live ED wait times" },
-      { pain_id: "p2", pain_label: "AI", evidence_quote: "Implementar un chatbot para atender consultas 24/7" },
-      { pain_id: "p3", pain_label: "Lead response time", evidence_quote: "contact form only, no online booking" },
-    ],
-  });
+  const painPoints = [
+    { pain_id: "p1", pain_label: "Website", evidence_quote: "Replace outdated WordPress with a site that shows live ED wait times" },
+    { pain_id: "p2", pain_label: "AI", evidence_quote: "Implementar un chatbot para atender consultas 24/7" },
+    { pain_id: "p3", pain_label: "Lead response time", evidence_quote: "contact form only, no online booking" },
+  ];
+  // A PageSpeed score Google rates as poor: a problem we can show, so the problem-led email is drafted.
+  const psi: SiteFact = { id: "psi", kind: "seen", fact: "Google's mobile speed test (PageSpeed Insights) scored the home page 31/100 for performance, which Google rates as poor", url: "https://clinicasur.ca/", strength: "strong" };
+  const { result, db } = await run({ held: null, retryOf: null, realCompose: true, painPoints, siteFacts: [psi] });
   assert.equal(result?.ok, true, result?.error);
+  assert.equal(writerPayloads.length, 1);
+  assert.equal(criticPayloads.length, 1);
   const json = (s: string) => JSON.parse(/```json\n([\s\S]*?)\n```/.exec(s)![1]!) as Record<string, Array<Record<string, unknown>>>;
-  assert.deepEqual(json(writerPayloads[0]!).pain_candidates!.map((p) => [p.pain_id, p.observed]), [["p1", false], ["p2", false], ["p3", true]]);
-  assert.deepEqual(json(criticPayloads[0]!).pain_evidence!.map((p) => [p.pain_id, p.observed]), [["p1", false], ["p2", false], ["p3", true]]);
+  assert.deepEqual(json(writerPayloads[0]!).pain_candidates, []);
+  assert.deepEqual(json(criticPayloads[0]!).pain_evidence, []);
+  for (const p of painPoints) {
+    assert.ok(!writerPayloads[0]!.includes(p.evidence_quote), `writer: ${p.evidence_quote}`);
+    assert.ok(!criticPayloads[0]!.includes(p.evidence_quote), `critic: ${p.evidence_quote}`);
+  }
+  assert.deepEqual(json(writerPayloads[0]!).site_facts!.map((f) => [f.id, f.hook]), [["psi", "problem"]]);
+  assert.deepEqual(json(criticPayloads[0]!).site_facts, json(writerPayloads[0]!).site_facts);
+  const decision = db.tables.pitches!.at(-1)!.decision as { prompt_version?: string; showcase_forced?: boolean };
+  assert.equal(decision.prompt_version, PITCH_PROMPT_VERSION);
+  assert.equal(decision.showcase_forced, undefined);
 });
 
 test("guard: an emailed company (sent, replied, bounced, ghosted) is refused before any Claude call", async () => {
@@ -502,7 +529,9 @@ test("showcase: the arm decides the email, the record says which, and a rewrite 
   echoWriter();
   const later = await run({ held: null, retryOf: null, realCompose: true, showcase: "followup" });
   const d2 = decisionOf(later);
-  assert.deepEqual(d2.arms, { "writer.evidence": "benchmark", "writer.guidance": "none", "writer.showcase": "followup" });
+  // No figure for this prospect (fetchBenchmarksForPitch gives none): both evidence arms write the
+  // same email, so the evidence test is not recorded (2026-11-09, second review).
+  assert.deepEqual(d2.arms, { "writer.guidance": "none", "writer.showcase": "followup" });
   assert.equal(d2.prompt_version, PITCH_PROMPT_VERSION);
   assert.equal(Object.hasOwn(d2, "builds_offered"), false);
 

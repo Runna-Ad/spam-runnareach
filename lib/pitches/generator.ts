@@ -27,6 +27,7 @@ import { pickAddressContact } from "../research/email-utils.ts";
 import { getSolutionHint } from "./claude-composer.ts";
 import { senderIdentity } from "./sender-identity.ts";
 import type { ShowcaseBuild } from "../runna/builds.ts";
+import type { WebFactInput } from "./proven-facts.ts";
 import type { SiteFact } from "./site-facts.ts";
 
 export type GeneratorInputProspect = {
@@ -206,6 +207,13 @@ export type GeneratorInputs = {
    * their site (no row is never "nothing on the site").
    */
   site_facts?: SiteFact[] | null;
+  /**
+   * Facts about the business from other web pages (lib/research/web-dive),
+   * each with the page and the exact text on it, checked in code before it
+   * was stored. With site_facts, the only things an email may say about the
+   * business (lib/pitches/proven-facts.ts proveInputs).
+   */
+  web_facts?: WebFactInput[] | null;
   forced_angle?: {
     pain_label: string;
     pain_id: string | null;

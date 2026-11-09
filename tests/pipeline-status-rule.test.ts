@@ -153,7 +153,8 @@ const SCENARIOS: Scenario[] = [
   { label: "final score < 50", writes: "suppressed", prospect: SITE, contacts: [], scores: [30, 40] },
   { label: "final score 50–69", writes: "b_list", prospect: SITE, contacts: [], scores: [30, 60] },
   { label: "≥ 70, no contact", writes: "suppressed", prospect: SITE, contacts: [], scores: [30, 80] },
-  { label: "≥ 70, pitched", writes: "pitched", prospect: SITE, contacts: CONTACT, scores: [30, 80], pitchOk: true },
+  // web-dive: ≥ 70 with a contact waits in match for the site and web looks; the tick drafts it.
+  { label: "≥ 70, waits for the looks", writes: "match", prospect: SITE, contacts: CONTACT, scores: [30, 80], pitchOk: true },
 ];
 
 async function run(s: Scenario, status: string, parkAs?: string, failProspectUpdates?: { message: string }) {
@@ -277,7 +278,7 @@ test("a raw prospect's outcomes are unchanged", async () => {
   for (const s of SCENARIOS) outcomes.push((await run(s, "raw")).result.outcome);
   assert.deepEqual(outcomes, [
     "suppressed", "suppressed", "website_pitch", "suppressed", "suppressed",
-    "suppressed", "needs_review", "suppressed", "pitched",
+    "suppressed", "needs_review", "suppressed", "match",
   ]);
 });
 
@@ -295,13 +296,19 @@ test("parked between the read and the write: the guard refuses the move and the 
   }
 });
 
-test("parked during a run whose pitch failed: counted suppressed, not needs_review", async () => {
-  const s: Scenario = { label: "≥ 70, pitch fails", writes: "", prospect: SITE, contacts: CONTACT, scores: [30, 80], pitchOk: false };
-  assert.equal((await run(s, "raw")).result.outcome, "needs_review");
-  for (const parkAs of PARKED) {
-    const { result, row } = await run(s, "raw", parkAs);
-    assert.equal(result.outcome, "suppressed", parkAs);
-    assert.equal(row.status, parkAs, parkAs);
+test("≥ 70 with a contact no longer drafts in the pipeline (web-dive): match, gate passed; parked during the run stays parked", async () => {
+  for (const pitchOk of [true, false]) {
+    const s: Scenario = { label: "≥ 70", writes: "match", prospect: SITE, contacts: CONTACT, scores: [30, 80], pitchOk };
+    const { result, row, paid } = await run(s, "raw");
+    assert.equal(result.outcome, "match");
+    assert.equal(row.status, "match");
+    assert.equal(row.pitch_gate_passed, true);
+    assert.ok(!paid.includes("generatePitchWith"), "the first email is the tick's, after the looks");
+    for (const parkAs of PARKED) {
+      const parked = await run(s, "raw", parkAs);
+      assert.equal(parked.result.outcome, "suppressed", parkAs);
+      assert.equal(parked.row.status, parkAs, parkAs);
+    }
   }
 });
 
@@ -310,14 +317,21 @@ test("source: every status write in processSingleProspectWith goes through the g
   const end = STAGE_SRC.indexOf("\nexport ", start + 1);
   const body = STAGE_SRC.slice(start, end);
   const helper = body.slice(body.indexOf("async function writeStatus"), body.indexOf("let hasWebsite"));
-  assert.match(helper, /protectedStatusFilter\(fields\.status, "automation"\)/);
-  assert.match(helper, /\.not\("status", "in", guard\)/);
+  // The closure delegates to the module's one guarded write (web-dive: shared with the job's catch-up).
+  assert.match(helper, /return statusWriteWith\(actor, prospectId, fields\);/);
+  const shared = STAGE_SRC.slice(STAGE_SRC.indexOf("export async function statusWriteWith"), STAGE_SRC.indexOf("export async function usableContactsWith"));
+  assert.match(shared, /protectedStatusFilter\(fields\.status, "automation"\)/);
+  assert.match(shared, /\.not\("status", "in", guard\)/);
   const rest = body.replace(helper, "");
   // No raw prospects UPDATE outside the helper sets a status.
   for (const m of rest.matchAll(/\.update\(\{([^}]*)\}\)/g)) {
     assert.doesNotMatch(m[1]!, /\bstatus\s*:/, m[0]);
   }
-  assert.ok((rest.match(/writeStatus\(\{/g) ?? []).length >= 9);
+  // Eight lanes write through writeStatus; the 70+ lane enters match through the same guarded write.
+  assert.ok((rest.match(/writeStatus\(\{/g) ?? []).length >= 8);
+  assert.match(rest, /enterMatchWith\(actor, prospectId, score, "pipeline"\)/);
+  const enter = STAGE_SRC.slice(STAGE_SRC.indexOf("export async function enterMatchWith"));
+  assert.match(enter, /statusWriteWith\(actor, prospectId, \{ status: "match", pitch_gate_passed: true \}\)/);
 });
 
 test("source: bulkScoreProspects and deep research guard their suppress write; no bulk restore", () => {

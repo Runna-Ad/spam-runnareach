@@ -21,6 +21,7 @@ import {
   detectEcommerce,
   detectLanguages,
   detectMailto,
+  detectViewport,
   cleanHref,
   runDetectors,
   unseenChecks,
@@ -380,6 +381,34 @@ test("languages: html lang + hreflang + a switcher link; one language on a reada
   assert.deepEqual(l.values.sort(), ["en", "es", "fr"]);
   const one = page("https://x.test/", `${FILLER}${NAV}`);
   assert.deepEqual([detectLanguages([one], one.url).found, detectLanguages([one], one.url).values], [false, ["en"]]);
+});
+
+// CrushCamp (2026-11-09): its Squarespace tag `initial-scale=1` was stored as
+// "no phone setting" and the email told them so; they replied a hard no. These
+// are the exact tags from prod: 16 of 26 stored "absences" were these shapes.
+test("viewport: a tag without a fixed pixel width is phone-ready (Squarespace, Duda, WordPress shapes from prod)", () => {
+  for (const content of [
+    "width=device-width, initial-scale=1",
+    "initial-scale=1",
+    "initial-scale=1, minimum-scale=1, maximum-scale=5, viewport-fit=cover",
+    "initial-scale=1.0, user-scalable=yes",
+    "width = device-width",
+  ]) {
+    const p = page("https://x.test/", FILLER, `<meta name="viewport" content="${content}">`);
+    const v = detectViewport([p]);
+    assert.equal(v.found, true, content);
+    assert.equal(v.evidence[0]?.text, `viewport: ${content}`);
+  }
+});
+
+test("viewport: a fixed pixel width is not phone-ready; no tag on a readable page is false; a tag we can't read is null", () => {
+  const fixed = page("https://x.test/", FILLER, `<meta name="viewport" content="width=1024">`);
+  assert.equal(detectViewport([fixed]).found, false);
+  const none = page("https://x.test/", FILLER);
+  assert.equal(detectViewport([none]).found, false);
+  const odd = page("https://x.test/", FILLER, `<meta name="viewport" content="user-scalable=no">`);
+  assert.equal(detectViewport([odd]).found, null, "a tag that says nothing about size: could not tell, never an absence");
+  assert.equal(detectViewport([failed("https://x.test/")]).found, null);
 });
 
 test("every check carries the page URL in each evidence item", () => {

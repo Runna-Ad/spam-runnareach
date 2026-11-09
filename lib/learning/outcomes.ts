@@ -38,6 +38,16 @@ export function showcaseFollowupFellBack(events: readonly OutcomeEvent[]): boole
 }
 
 /**
+ * Does this thread count as a trial of the showcase test? Not when its first
+ * email was forced to the showcase because nothing we could prove about the
+ * prospect gave a reason to write (decision.showcase_forced, 2026-11-09): the
+ * test did not choose it. Not when follow-up #1 fell back to the template.
+ */
+export function countsForShowcaseTest(p: { forced: boolean; events: readonly OutcomeEvent[] }): boolean {
+  return !p.forced && !showcaseFollowupFellBack(p.events);
+}
+
+/**
  * Settled outcomes only; a pitch that must not teach the writer (bounce, never
  * sent) is skipped. `score` goes to scoreOutcome: the writer learners pass
  * `{ clicks: true }` (lib/autopilot/learn.ts), nothing else does.

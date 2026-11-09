@@ -53,7 +53,8 @@ test("acceptance 1: address words are no name; the gate refuses them as greeting
 
 test("acceptance 2: the negative set is unchanged", () => {
   assert.equal(greetingName(null, "john.sipos@waglaw.net", false), "John");
-  assert.equal(greetingName(null, "miguel@saucedoa.com", false), "Miguel");
+  // Changed 2026-11-09 (CrushCamp's sweat@): a one-word address greets the team.
+  assert.equal(greetingName(null, "miguel@saucedoa.com", false), null);
   assert.equal(greetingName(null, "ana.lopez@clinica.mx", false), "Ana");
   assert.equal(greetingName(null, "vfournier@julien-cormier.ca", false), null);
   assert.equal(greetingName(null, "manus-sales@acme.com", false), null);
@@ -68,7 +69,7 @@ test("acceptance 2: the negative set is unchanged", () => {
   assert.deepEqual(greetingCodes(gateInput("care@acme.ca", "Hi Mark,", { recipientFullName: "Sarah Lee" })), ["greeting_mismatch"]);
   // Writer and gate agree on the negative set.
   assert.deepEqual(greetingCodes(gateInput("john.sipos@waglaw.net", "Hi John,")), []);
-  assert.deepEqual(greetingCodes(gateInput("miguel@saucedoa.com", "Hola Miguel,", { lang: "es" })), []);
+  assert.deepEqual(greetingCodes(gateInput("miguel@saucedoa.com", "Hola, equipo de Acme Dental,", { lang: "es" })), []);
   assert.deepEqual(greetingCodes(gateInput("ana.lopez@clinica.mx", "Hola Ana,", { lang: "es" })), []);
   assert.deepEqual(greetingCodes(gateInput("vfournier@julien-cormier.ca", "Hi Fournier,")), ["greeting_not_a_name"]);
   assert.deepEqual(greetingCodes(gateInput("manus-sales@acme.com", "Hi Manus,")), ["greeting_not_a_name"]);
@@ -81,11 +82,14 @@ test("acceptance 2: the negative set is unchanged", () => {
   assert.equal(m.pass ? null : m.failures.find((f) => f.code === "greeting_mismatch")?.severity, "review");
 });
 
-test("listed names greet alone or with a separator; weak word-names never; Mexican short forms are names", () => {
-  // Conductor on #65: names a dictionary also carries greet alone too.
-  for (const [email, name] of [["juan@acme.mx", "Juan"], ["carmen@cgc.mx", "Carmen"], ["maria@acme.mx", "Maria"], ["pedro@acme.mx", "Pedro"]] as const) {
-    assert.equal(greetingName(null, email, false), name, email);
+test("listed names greet only with a separator; one-word addresses never; weak word-names never; Mexican short forms are names", () => {
+  // 2026-11-09 (CrushCamp): the names list holds surnames and words, so a lone
+  // token can't be trusted: sweat@, lake@, cullen@, london@ all greeted by name.
+  for (const email of ["sweat@crushcamp.com", "lake@acme.ca", "cullen@acme.ca", "london@acme.ca", "juan@acme.mx", "carmen@cgc.mx", "maria@acme.mx", "pedro@acme.mx", "andrew@acme.ca"]) {
+    assert.equal(greetingName(null, email, false), null, email);
   }
+  assert.deepEqual(greetingCodes(gateInput("sweat@crushcamp.com", "Hi Sweat,", { companyName: "CrushCamp" })), ["greeting_not_a_name"]);
+  assert.deepEqual(greetingCodes(gateInput("sweat@crushcamp.com", "Hi CrushCamp team,", { companyName: "CrushCamp" })), []);
   for (const email of ["cursos@acme.mx", "nfo@acme.ca", "care@acme.ca"]) assert.equal(greetingName(null, email, false), null, email);
   // Job words that are listed names are the inbox, not a person.
   for (const email of ["doctor@clinic.ca", "doc@clinic.ca", "doctora@clinica.mx", "chef@bistro.ca", "coach@gym.ca", "nurse@clinic.ca", "rev@church.ca"]) {
@@ -96,10 +100,10 @@ test("listed names greet alone or with a separator; weak word-names never; Mexic
   assert.equal(greetingName(null, "rosa.flores@acme.mx", false), "Rosa");
   assert.equal(greetingName(null, "carmen.ruiz@cgc.mx", false), "Carmen");
   assert.equal(greetingName(null, "care.team@acme.ca", false), null, "a weak word-name never greets");
-  for (const [email, name] of [["memo@acme.mx", "Memo"], ["chema@acme.mx", "Chema"], ["toño@acme.mx", "Toño"]] as const) {
+  for (const [email, name] of [["memo.ruiz@acme.mx", "Memo"], ["chema.lopez@acme.mx", "Chema"], ["toño.diaz@acme.mx", "Toño"]] as const) {
     assert.equal(greetingName(null, email, false), name, email);
   }
-  assert.equal(greetingName(null, "tono@acme.mx", false), null, "tono is a word; toño is Antonio");
+  assert.equal(greetingName(null, "tono.diaz@acme.mx", false), null, "tono is a word; toño is Antonio");
 });
 
 // 30 addresses with no greetable name, then 20 given-name addresses.
@@ -110,17 +114,18 @@ const NO_NAME = [
   "library@ucw.ca", "customersupport@acme.ca", "servicios@acme.mx", "contabilidad@acme.mx", "recursos@acme.mx",
   "ayudas@acme.mx", "talleres@acme.mx", "pedidos@acme.mx", "citas@acme.mx", "clinica@acme.mx",
   "facturas@acme.mx", "hello@acme.ca", "office@acme.ca", "care.team@acme.ca", "tono@acme.mx", "abc@acme.ca",
+  // One-word addresses (2026-11-09): never a name.
+  "miguel@saucedoa.com", "sweat@crushcamp.com", "sergio@acme.ca", "juan@acme.mx",
 ];
 const GIVEN = [
-  "miguel@saucedoa.com", "ana.lopez@clinica.mx", "john.sipos@waglaw.net", "carmen.ruiz@cgc.mx",
-  "rosa.flores@acme.mx", "memo@acme.mx", "chema@acme.mx", "toño@acme.mx", "alexandra.ruiz@acme.ca",
-  "sergio@acme.ca", "sofia@acme.mx", "javier@acme.mx", "oscar@acme.mx", "lucia.perez@acme.mx",
-  "jorge.ramirez@acme.mx", "elena@acme.mx", "emilio@acme.mx", "valeria.cruz@acme.mx", "xin@acme.ca",
-  "juan@acme.mx",
+  "ana.lopez@clinica.mx", "john.sipos@waglaw.net", "carmen.ruiz@cgc.mx",
+  "rosa.flores@acme.mx", "memo.ruiz@acme.mx", "chema.lopez@acme.mx", "toño.diaz@acme.mx", "alexandra.ruiz@acme.ca",
+  "sergio.mena@acme.ca", "sofia.ortiz@acme.mx", "javier.leon@acme.mx", "oscar.vega@acme.mx", "lucia.perez@acme.mx",
+  "jorge.ramirez@acme.mx", "elena.rios@acme.mx", "emilio.sanz@acme.mx", "valeria.cruz@acme.mx", "xin.li@acme.ca",
 ];
 
 test("acceptance 3 (property): the gate passes exactly the greeting greetingName produces, or the team", () => {
-  assert.equal(NO_NAME.length + GIVEN.length, 50);
+  assert.equal(NO_NAME.length + GIVEN.length, 52);
   const company = (email: string) => (email.startsWith("ecof@") ? "ECOF Cabinets" : "Acme Dental");
   for (const email of NO_NAME) assert.equal(greetingName(null, email, false, company(email)), null, `no name: ${email}`);
   for (const email of GIVEN) assert.notEqual(greetingName(null, email, false, company(email)), null, `a name: ${email}`);

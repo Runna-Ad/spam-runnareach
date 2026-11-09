@@ -18,6 +18,10 @@ import "server-only";
  *                 fixed by writing to the prospect's next unflagged contact
  *   5. schedule   veto stage: AUTO pitches approved and scheduled 18h out, with
  *                 a digest so a person can hold any; auto stage: scheduled now
+ *   5a. first     a prospect waiting in `match` gets its first email once its
+ *                 site and the web were both looked at (or the looks timed
+ *                 out), at most 2 a tick, inside the AI cap
+ *                 (lib/research/web-dive/ready.ts); before the re-drafts
  *   5b. redraft   a prospect whose only draft was thrown away for its writing
  *                 gets one fresh draft 14 days later (governor.redraftOf),
  *                 at most 3 a tick and 10 a day, inside the AI cap; after
@@ -31,7 +35,8 @@ import "server-only";
  *
  * With the autopilot off (kill switch, stage off) only the safety steps run:
  * the pull-back of automatic approvals still waiting, the veto digest, and
- * 1 (breakers). The route ticks every tenant with a state row for this.
+ * 1 (breakers), plus 5a (first drafts: a draft never sends by itself, and a
+ * person reviews it). The route ticks every tenant with a state row for this.
  *
  * Every autonomous change writes a learning_insights row; breaker trips and
  * stage changes also email the notify address. A tick that hit errors leaves
@@ -83,6 +88,7 @@ import { isEmailOnDncList } from "@/lib/discover/dnc-check";
 import { WRITER_FIXABLE } from "@/lib/pitches/review";
 import { sendNotification, type NotificationResult } from "@/lib/notify/send";
 import { storedVerdictUsable, verifyRecipient } from "@/lib/research/verify-recipient";
+import { draftReadyProspects, type FirstDraftReport } from "@/lib/research/web-dive/ready";
 import { checkDeliverabilityHealth } from "@/lib/warmup/deliverability";
 import { analyzeSpamRate } from "@/lib/warmup/intelligence";
 import type { WarmupLogEntry } from "@/lib/warmup/types";
@@ -149,6 +155,8 @@ export type TickReport = {
   discovery: { started: boolean; reason: string; cell?: string; budget?: number };
   labelled: Record<Lane, number>;
   resolved: { rewritten: number; dropped: number; waiting: string | null };
+  /** 5a: first emails for prospects waiting in `match` for their site and web looks. */
+  firstDrafts?: FirstDraftReport;
   /** 4c: fresh drafts for prospects whose only draft was thrown away for its writing. */
   redrafted?: { drafted: number; failed: number; waiting: string | null };
   scheduled: number;
@@ -272,7 +280,28 @@ async function runTickSteps(actor: Actor, now: Date, report: TickReport): Promis
   // blocks an inbox on fresh bounces for one run only) even with the autopilot
   // off, so only this step turns trouble into a pause + email.
   report.breakers = await step("breakers", () => runBreakers(db, tenantId, now, report.errors), []);
+  // 5a. First emails for prospects waiting in `match` (lib/research/web-dive/ready.ts),
+  // inside the AI cap (the rewrite floor). A draft never sends by itself.
+  const firstDrafts = () =>
+    step(
+      "first-draft",
+      () =>
+        draftReadyProspects({
+          db,
+          tenantId,
+          now,
+          deadline,
+          minBudgetUsd: REWRITE_MIN_BUDGET_USD,
+          underCap: isUnderDailyCap,
+          generate: (prospectId) => generatePitchWith(actor, prospectId),
+        }),
+      { drafted: 0, failed: 0, timedOut: 0, advanced: 0, waiting: "error" },
+    );
   if (!s || safetyOnly(s)) {
+    // Autopilot off (kill switch or stage off): a prospect from a manual discovery
+    // run still gets its first draft, for a person to review; nothing is labelled,
+    // approved or scheduled. No state row = no tenant to draft for.
+    if (s) report.firstDrafts = await firstDrafts();
     report.skipped = "autopilot off for this tenant";
     return report;
   }
@@ -286,6 +315,8 @@ async function runTickSteps(actor: Actor, now: Date, report: TickReport): Promis
   if ((s.stage === "veto" || s.stage === "auto") && !sendingHalted) {
     report.scheduled = await step("schedule", () => scheduleAuto(actor, db, s.stage, now, deadline), 0);
   }
+  // After scheduling, so an AUTO approval never waits on a first draft.
+  report.firstDrafts = await firstDrafts();
   report.redrafted = await step("redraft", () => redraftPool(actor, db, now, deadline), { drafted: 0, failed: 0, waiting: "error" });
   const stage = await step("stage", () => evaluateStage(db, s, now), { change: null, pullback: null });
   report.stageChange = stage.change;
@@ -474,6 +505,16 @@ async function maybeStartDiscovery(actor: Actor, db: Db, now: Date): Promise<Tic
     .is("parent_pitch_id", null)
     .gte("created_at", new Date(now.getTime() - 14 * DAY).toISOString());
 
+  // A prospect in `match` waits for its two looks before its first email
+  // (lib/research/web-dive): it is a pitch on the way, or the scout would
+  // start discovery jobs for pitches that already exist.
+  const { count: lookingFirst } = await db
+    .from("prospects")
+    .select("id", { count: "exact", head: true })
+    .eq("tenant_id", tenantId)
+    .eq("status", "match")
+    .gte("updated_at", new Date(now.getTime() - 14 * DAY).toISOString());
+
   // Recent yield: pitches produced per prospect researched by finished jobs.
   // Counters only: stats also carries id lists, and this runs every tick.
   const { data: jobs } = await db
@@ -490,7 +531,7 @@ async function maybeStartDiscovery(actor: Actor, db: Db, now: Date): Promise<Tic
   }
   const pitchYield = processed >= 20 ? pitched / processed : 0.2;
 
-  const budget = discoveryBudget({ dailySendCapacity: capacity, pitchesWaiting: waiting ?? 0, pitchYield });
+  const budget = discoveryBudget({ dailySendCapacity: capacity, pitchesWaiting: (waiting ?? 0) + (lookingFirst ?? 0), pitchYield });
   if (budget === 0) return { started: false, reason: `${waiting ?? 0} pitches already waiting for ${capacity}/day`, budget };
 
   const { data: todays } = await db

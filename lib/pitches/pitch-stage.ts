@@ -49,6 +49,8 @@ import {
 import { listNotableClients } from "@/lib/notable-clients/queries";
 import { isSentOrParked } from "@/lib/prospects/status";
 import { loadSiteObservation, siteFactsFor, type SiteObservationsDb } from "./site-facts";
+import { hasProvenHook, provenFacts, proveInputs, type WebFactInput } from "./proven-facts";
+import { webFactsFor, type WebResearchDb } from "@/lib/research/web-dive/store";
 
 const generateSchema = z.object({
   prospect_id: z.string().uuid(),
@@ -152,7 +154,7 @@ export async function generatePitchWith(
     tech_stack: string[];
   };
 
-  const [{ data: prospect, error: prospectErr }, { data: research }, observation] = await Promise.all([
+  const [{ data: prospect, error: prospectErr }, { data: research }, observation, storedWebFacts] = await Promise.all([
     supabase
       .from("prospects")
       .select("id, company_name, industry, language, employee_size_estimate, city, market, domain, website_url")
@@ -168,6 +170,9 @@ export async function generatePitchWith(
     // What our crawler saw on their site (newest finished crawl, ≤ 60 days).
     // Never fails the draft: an error or no row is null (no site claim at all).
     loadSiteObservation(supabase as unknown as SiteObservationsDb, user.tenantId, parsed.data.prospect_id),
+    // What other web pages say about them (lib/research/web-dive, checked
+    // against the page before it was stored). Never throws: an error is [].
+    webFactsFor(supabase as unknown as WebResearchDb, user.tenantId, parsed.data.prospect_id),
   ]);
 
   if (prospectErr) return { ok: false, error: `Lookup failed: ${prospectErr.message}` };
@@ -404,10 +409,15 @@ export async function generatePitchWith(
   // own style: real builds instead of a pain, so no benchmarks, no learned
   // guidance (tuned on the pain-led email) and no exemplars, which are then
   // never fetched.
+  // Only say what we can prove (Pedro, 2026-11-09, CrushCamp): with no proven
+  // problem or opening, the capability (showcase) email goes out, whatever
+  // the writer.showcase test would pick.
+  const webFacts: WebFactInput[] = storedWebFacts;
+  const showcaseForced = !hasProvenHook(provenFacts({ site_facts: siteFacts, web_facts: webFacts }));
   const dailyCapCheck = claudeIsAvailable() ? isUnderDailyCap(user.tenantId) : Promise.resolve(null);
   const armsCheck = chooseWriterArms(supabase, user.tenantId);
   const showcaseCheck = armsCheck.then((a) =>
-    (heldShowcase ?? a.showcase) === "first"
+    showcaseForced || (heldShowcase ?? a.showcase) === "first"
       ? pickBuilds({ industry: prospect.industry, what_they_do: research?.what_they_do ?? null, lang: prospect.language })
       : [],
   );
@@ -428,7 +438,7 @@ export async function generatePitchWith(
   const showcaseFirst = showcaseBuilds.length > 0;
   const offeredBenchmarks = showcaseFirst || writerArms.evidence === "no_benchmark" ? [] : benchmarks;
 
-  const generatorInputs: GeneratorInputs = {
+  const generatorInputs: GeneratorInputs = proveInputs({
     prospect: {
       ...prospect,
       what_they_do: research?.what_they_do ?? null,
@@ -460,7 +470,7 @@ export async function generatePitchWith(
       websiteUrl: prospect.website_url,
       ref: attributionCode,
     }),
-  };
+  }, webFacts);
 
   // ── PHASE 2: try Claude first, fall back to heuristic ─────────────────
   // Claude path requires both an API key AND headroom under the daily
@@ -659,12 +669,13 @@ export async function generatePitchWith(
       id: composed.pain_id,
       label: pains.find((p) => p.pain_id && p.pain_id === composed.pain_id)?.pain_label ?? chosenPainLabel,
     },
-    benchmarks_offered: offeredBenchmarks.map((b) => ({
+    // What the writer was really shown: proveInputs offers no figure without a pain to tie it to.
+    benchmarks_offered: generatorInputs.benchmarks.map((b) => ({
       id: b.id,
       figure: b.figure,
       pain_codes: b.for_pains.map((f) => f.code),
     })),
-    benchmark_cited: detectCitedBenchmark(composed.body, offeredBenchmarks),
+    benchmark_cited: detectCitedBenchmark(composed.body, generatorInputs.benchmarks),
     attribution_code: insertWithPreview.attribution_code,
     recipient: recipientSummary(
       topUsable
@@ -684,10 +695,19 @@ export async function generatePitchWith(
             arms: { "writer.showcase": "first" },
             builds_offered: showcaseBuilds.map((b) => b.id),
             builds_used: composed.builds_used ?? [],
+            ...(showcaseForced ? { showcase_forced: true as const } : {}),
           }
         : {
             arms: {
-              "writer.evidence": writerArms.evidence,
+              // The evidence test is a trial only when the benchmark arm's writer
+              // is really offered a figure: there are figures for this prospect
+              // and a pain to tie one to (proveInputs offers none without one).
+              // Otherwise both arms write the same email (2026-11-09). For the
+              // benchmark arm this is generatorInputs.benchmarks non-empty; the
+              // no_benchmark arm is offered none by design, so it asks whether
+              // it would have been. The learner skips a pitch without the key
+              // (lib/learning/outcomes.ts armStats).
+              ...(benchmarks.length > 0 && generatorInputs.pains.length > 0 ? { "writer.evidence": writerArms.evidence } : {}),
               "writer.guidance": writerArms.guidance?.key ?? "none",
               "writer.showcase": "followup",
             },
@@ -738,7 +758,8 @@ export async function generatePitchWith(
     // b_list included: a B-list prospect re-scored ≥70 gets pitched by the
     // job worker — without advancing it here it kept status b_list and the
     // janitor's 21-day TTL would suppress a prospect with live outreach.
-    .in("status", ["raw", "researched", "b_list"]);
+    // match: a prospect that waited for its two looks (lib/research/web-dive).
+    .in("status", ["raw", "researched", "b_list", "match"]);
 
   await wantedRecording;
 
@@ -853,7 +874,7 @@ export async function rewritePitchWithAngleWith(
   };
   type ResearchRow = { pain_points: unknown; what_they_do: string | null; tech_stack: string[] };
 
-  const [{ data: prospect }, { data: research }, { data: contactRows }, observation] = await Promise.all([
+  const [{ data: prospect }, { data: research }, { data: contactRows }, observation, rewriteWebFacts] = await Promise.all([
     supabase
       .from("prospects")
       .select("id, company_name, industry, language, employee_size_estimate, city, market, domain, website_url")
@@ -872,6 +893,7 @@ export async function rewritePitchWithAngleWith(
       .returns<{ id: string; full_name: string | null; email: string | null; email_is_role_based: boolean; role_title: string | null }[]>(),
     // The same site facts as first generation (the critic judges against them too).
     loadSiteObservation(supabase as unknown as SiteObservationsDb, user.tenantId, pitch.prospect_id),
+    webFactsFor(supabase as unknown as WebResearchDb, user.tenantId, pitch.prospect_id),
   ]);
   if (!prospect) return { ok: false, error: "Prospect not found." };
   const siteFacts = siteFactsFor(observation, prospect);
@@ -929,7 +951,7 @@ export async function rewritePitchWithAngleWith(
     market: prospect.market,
   });
 
-  const generatorInputs: GeneratorInputs = {
+  const generatorInputs: GeneratorInputs = proveInputs({
     prospect: { ...prospect, what_they_do: research?.what_they_do ?? null, tech_stack: research?.tech_stack ?? [] },
     pains: rewritePains,
     benchmarks: rewriteBenchmarks,
@@ -960,7 +982,7 @@ export async function rewritePitchWithAngleWith(
       case_study_id: chosenCases.length > 0 ? parsed.data.case_study_id : null,
       capability: parsed.data.capability,
     },
-  };
+  }, rewriteWebFacts);
 
   // Same write → review → revise loop as first generation.
   const result = await composeWithReview(generatorInputs, { deadline: Date.now() + 45_000 });

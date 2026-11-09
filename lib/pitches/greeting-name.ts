@@ -174,12 +174,11 @@ export function emailGreetingName(email: string | null | undefined, companyName?
   // (john.sipos -> John, ana.lopez -> Ana).
   if (segments.length > 1) return cap(seg);
 
-  // WITHOUT a separator the local-part is ambiguous, and the common law-firm /
-  // professional shape is initial(s)+surname: vfournier = V. Fournier,
-  // rgjulien = R.G. Julien, calgauthier = Cal Gauthier. Greeting those as
-  // "Hi Vfournier," / "Hi Calgauthier," reads as a bot and already cost a real
-  // lead. Only accept a short token that can only plausibly BE a given name
-  // (miguel, carmen, ana, pedro); anything longer greets the company instead.
-  // Losing "alexandra@" to the team greeting is far cheaper than one "Hi Vfournier,".
-  return seg.length <= 6 ? cap(seg) : null;
+  // WITHOUT a separator the local-part never greets by name. The names list
+  // mixes given names, 40,000 surnames and everyday words, so a lone word
+  // can't be told apart: sweat@crushcamp.com greeted "Hi Sweat," (CrushCamp,
+  // 2026-11-09, a hard no), and lake@, cullen@, london@ greeted the same way.
+  // Pedro, 2026-11-09: whatever we claim must be 100% sure. A real andrew@
+  // now gets the team greeting: less warm, never wrong.
+  return null;
 }

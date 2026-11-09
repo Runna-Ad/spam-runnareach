@@ -72,6 +72,13 @@ export type DecisionRecord = {
   builds_offered?: string[];
   builds_used?: string[];
   /**
+   * The showcase email went out because nothing we can prove about the
+   * prospect gives a reason to write (lib/pitches/proven-facts.ts
+   * hasProvenHook), not because the writer.showcase test picked "first".
+   * The learner leaves these out of that test.
+   */
+  showcase_forced?: true;
+  /**
    * Our own past pitches shown to the writer and critic as exemplars
    * (lib/pitches/exemplars.ts), with the outcome score that qualified each.
    * Empty when none were shown; absent before exemplar memory existed.

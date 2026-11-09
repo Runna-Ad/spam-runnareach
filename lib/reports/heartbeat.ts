@@ -53,6 +53,10 @@ export const CRON_JOBS = {
     route: "/api/research/observe",
     schedules: [{ pgJob: "spam-site-observe", cron: "12,42 15-22 * * 1-5", migration: "0054" }],
   },
+  "web-dive": {
+    route: "/api/research/web-dive",
+    schedules: [{ pgJob: "spam-web-dive", cron: "3,18,33,48 15-22 * * 1-5", migration: "0055" }],
+  },
 } as const;
 
 export type CronJob = keyof typeof CRON_JOBS;

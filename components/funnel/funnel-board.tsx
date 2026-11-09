@@ -15,6 +15,8 @@ const COLUMNS: { key: ColStatus; label: string; tone: "neutral" | "info" | "succ
   { key: "suppressed", label: "Suppressed", tone: "warning" },
   { key: "raw", label: "Raw", tone: "neutral" },
   { key: "researched", label: "Researched", tone: "info" },
+  // Passed every gate; the first email is drafted once the site (and web) checks are done (web-dive).
+  { key: "match", label: "Waiting for checks", tone: "info" },
   { key: "pitched", label: "Pitched", tone: "info" },
   { key: "sent", label: "Sent", tone: "success" },
   { key: "replied", label: "Replied", tone: "info" },
@@ -27,6 +29,7 @@ type ColStatus =
   | "suppressed"
   | "raw"
   | "researched"
+  | "match"
   | "pitched"
   | "sent"
   | "replied"
@@ -36,8 +39,14 @@ type ColStatus =
 
 const TERMINAL_STATUSES: Set<ColStatus> = new Set(["won", "lost"]);
 // "Sent" is a DERIVED column (driven by whether a pitch was actually sent, not
-// a prospect status) — you can't manually drop a card into it.
-const NON_DROPPABLE: Set<ColStatus> = new Set(["sent"]);
+// a prospect status) — you can't manually drop a card into it. "Waiting for
+// checks" is set by the pipeline once every gate passed: a card dropped there
+// would skip the scoring and the contact check.
+const NON_DROPPABLE: Set<ColStatus> = new Set(["sent", "match"]);
+const NON_DROPPABLE_WHY: Partial<Record<ColStatus, string>> = {
+  sent: `"Sent" is set automatically when a pitch is sent — it's not a manual stage.`,
+  match: `"Waiting for checks" is set automatically when a prospect passes every gate. It's not a manual stage.`,
+};
 
 const MARKET_FLAG: Record<"CA" | "MX" | "US" | "LATAM", string> = {
   CA: "🇨🇦",
@@ -72,6 +81,7 @@ export function FunnelBoard({ cards, canEdit }: FunnelBoardProps) {
       suppressed: [],
       raw: [],
       researched: [],
+      match: [],
       pitched: [],
       sent: [],
       replied: [],
@@ -101,7 +111,7 @@ export function FunnelBoard({ cards, canEdit }: FunnelBoardProps) {
     if (NON_DROPPABLE.has(target)) {
       setToast({
         tone: "warn",
-        text: `"Sent" is set automatically when a pitch is sent — it's not a manual stage.`,
+        text: NON_DROPPABLE_WHY[target] ?? "This stage is set automatically.",
       });
       window.setTimeout(() => setToast(null), 4000);
       return;
@@ -121,8 +131,8 @@ export function FunnelBoard({ cards, canEdit }: FunnelBoardProps) {
     setState((s) => s.map((c) => (c.id === id ? { ...c, status: target } : c)));
 
     React.startTransition(async () => {
-      // `target` is never "sent" here — NON_DROPPABLE guards it above.
-      const res = await transitionStatus({ id, next_status: target as Exclude<ColStatus, "sent"> });
+      // `target` is never "sent" or "match" here: NON_DROPPABLE guards them above.
+      const res = await transitionStatus({ id, next_status: target as Exclude<ColStatus, "sent" | "match"> });
       if (!res.ok) {
         // Revert + surface the server's reason.
         setState((s) => s.map((c) => (c.id === id ? { ...c, status: previous } : c)));

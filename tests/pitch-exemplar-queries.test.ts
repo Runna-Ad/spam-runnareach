@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { fetchExemplars, onDnc } from "../lib/pitches/exemplar-queries.ts";
+import { fetchExemplars, makesUnprovenClaims, onDnc } from "../lib/pitches/exemplar-queries.ts";
 import type { ExemplarTarget } from "../lib/pitches/exemplars.ts";
 
 // fetchExemplars against a fake client: a prospect that opted out (suppressed
@@ -130,4 +130,35 @@ test("onDnc matches the address case-insensitively, or its whole domain", () => 
   assert.equal(onDnc(dnc, "owner@firm-a.ca"), false);
   assert.equal(onDnc(dnc, null), false);
   assert.equal(onDnc(dnc, "not-an-address"), false);
+});
+
+// Proven facts (2026-11-09): a past email that claims an absence or a track
+// record (CrushCamp's was both) is never anyone's model.
+test("fetchExemplars: an email claiming an absence or a track record is never an example; a runner-up takes its slot", async () => {
+  process.env.EXEMPLARS_ENABLED = "1";
+  const warn = console.warn;
+  console.warn = () => undefined;
+  try {
+    const w = world();
+    const clean = await fetchExemplars(fakeClient(w) as never, "t1", TARGET, NOW);
+    assert.deepEqual(clean.map((e) => e.pitch_id).sort(), ["pitch-a", "pitch-e"]);
+    for (const claim of [
+      "I didn't see a way to book a consultation online.",
+      "We work with independent law firms on exactly this.",
+      "Most law firm owners we talk to miss calls after six.",
+    ]) {
+      const texts = w.texts.map((t) => (t.id === "pitch-a" ? { ...t, body_original: `Hi there,\n\n${claim}\n\nHenry\nRunna Advertising` } : t));
+      const out = await fetchExemplars(fakeClient({ ...w, texts }) as never, "t1", TARGET, NOW);
+      assert.deepEqual(out.map((e) => e.pitch_id), ["pitch-e"], claim);
+    }
+  } finally {
+    console.warn = warn;
+    delete process.env.EXEMPLARS_ENABLED;
+  }
+});
+
+test("makesUnprovenClaims: reads the subject and the body", () => {
+  assert.equal(makesUnprovenClaims("what i didn't see on your site", "Hi,\n\nA quick idea."), true);
+  assert.equal(makesUnprovenClaims("evening calls", "Hi,\n\nYou don't have a contact form."), true);
+  assert.equal(makesUnprovenClaims("evening calls", "Hi,\n\nMost law firms miss calls after six."), false);
 });

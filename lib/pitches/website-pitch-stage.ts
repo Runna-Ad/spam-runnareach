@@ -34,6 +34,7 @@ import { recordPitchEvent } from "@/lib/pitches/events";
 import { DECISION_VERSION, recipientSummary, registerFor, type DecisionRecord } from "@/lib/pitches/decision";
 import { isRoleBasedEmail } from "@/lib/research/email-utils";
 import { decisionExemplarFields } from "@/lib/pitches/exemplars";
+import { WEBSITE_PROMPT_VERSION, websiteCaseStudyLine, websiteFallbackPitch, websitePitchPrompt, websiteSubject } from "@/lib/pitches/website-pitch-copy";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -110,13 +111,12 @@ export async function generateWebsitePitchWith(
       // Named clients removed 2026-07-22 (Pedro override): named examples
       // consistently underperform. The case study LINK is kept — case_study_id
       // feeds the learning loop's rejection downranking — but the line now
-      // describes the WORK at industry level instead of naming who it was for.
+      // describes the WORK, never who it was for or how often we do it
+      // (proven facts, 2026-11-09: "we do this all the time for [industry]
+      // like yours" is a track record we can't show).
       // The hero metric goes with the name: a number stripped of its source
       // reads as invented, which is worse than no number at all.
-      caseStudyLine =
-        prospect.language === "es"
-          ? `Esto lo hacemos seguido para negocios de ${match.industry ?? "este giro"}, el trabajo está en que los encuentre la gente que ya anda buscando lo que ustedes hacen.`
-          : `We do this all the time for ${match.industry ?? "businesses"} like yours, the work is getting you found by the people already looking for what you do.`;
+      caseStudyLine = websiteCaseStudyLine(prospect.language);
       caseStudyId = match.id;
     }
   }
@@ -172,8 +172,9 @@ export async function generateWebsitePitchWith(
         usage: result.usage,
       });
     } else {
-      // Fall back to deterministic template
-      const fallback = buildFallbackPitch({
+      // Fall back to the deterministic template, in the prospect's own language
+      // (a Mexican owner must never get the English one because Claude was down).
+      const fallback = websiteFallbackPitch({
         companyName: prospect.company_name,
         industry: industryLabel,
         language: prospect.language,
@@ -185,7 +186,7 @@ export async function generateWebsitePitchWith(
       body = fallback.body;
     }
   } else {
-    const fallback = buildFallbackPitch({
+    const fallback = websiteFallbackPitch({
       companyName: prospect.company_name,
       industry: industryLabel,
       language: prospect.language,
@@ -228,7 +229,7 @@ export async function generateWebsitePitchWith(
     v: DECISION_VERSION,
     created_at: new Date().toISOString(),
     path: method === "claude" ? "website_claude" : "website_template",
-    prompt_version: "website-v1",
+    prompt_version: WEBSITE_PROMPT_VERSION,
     model: method === "claude" ? ANTHROPIC_HAIKU_MODEL : null,
     fallback_reason: null,
     lang: prospect.language,
@@ -274,66 +275,9 @@ async function callClaudeForWebsitePitch(opts: {
   /** Two-line sign-off, e.g. "Nils\nRunna Advertising" (lib/pitches/sender-identity). */
   signature: string;
 }): Promise<{ ok: true; subject: string; body: string; cost_usd: number; usage: ClaudeUsage } | { ok: false }> {
-  // Localized greeting. "Hi there," is banned project-wide (reads as a mail
-  // merge); fall back to the team form, in the prospect's own language.
-  const greeting =
-    opts.language === "es"
-      ? opts.firstName
-        ? `Hola ${opts.firstName},`
-        : `Hola equipo de ${opts.companyName},`
-      : opts.firstName
-        ? `Hi ${opts.firstName},`
-        : `Hi ${opts.companyName} team,`;
-  const marketLabel =
-    opts.market === "MX" ? "Mexico" : opts.market === "US" ? "the US" : "Canada";
-  const caseStudyBlock = opts.caseStudyLine
-    ? `\n\n${opts.caseStudyLine}`
-    : "";
-
-  const prompt = `You are a sales email writer for Rünna Advertising, a digital marketing and web design agency.
-
-Write a cold email to ${opts.companyName}, a ${opts.industry} business in ${marketLabel} that has NO website.
-The goal is to sell them on getting a professional website built by Rünna.
-
-${opts.language === "es" ? "Write the email in Spanish." : "Write the email in English."}
-
-Use this EXACT structure, replacing [INDUSTRY] with specific ${opts.industry}-appropriate language:
-
-Subject: Quick question about ${opts.companyName}
-
-${greeting}
-
-I work with ${opts.industry} businesses across ${marketLabel} helping them show up online and win more customers, and I came across your business recently.
-
-I wanted to ask: is not having a website a deliberate choice, or just something that hasn't happened yet?
-
-I ask because most of the business owners I talk to in [${opts.industry} industry] tell me the same thing: they know they need one, but it always feels expensive, slow, or complicated. So it keeps getting pushed back.
-
-We built Rünna specifically to solve that. We get [${opts.industry}] businesses online in 2–3 weeks, at a cost that makes sense for a growing business, and built to bring in real customers, not just look pretty.
-
-What a good website does for a [${opts.industry}] business:
-✓ Shows up when locals search for what you offer
-✓ Builds instant credibility (customers Google you before they call)
-✓ Works as your 24/7 salesperson, taking enquiries while you sleep
-✓ Gives you something real to point to on social media
-✓ Makes you look like the obvious, professional choice vs. competitors${caseStudyBlock}
-
-If you've been meaning to get this done, I'd love to make it easy. Happy to show you an example or two from [${opts.industry}] businesses we've built for.
-
-Worth a quick chat?
-
-${opts.signature}
-
-Rules:
-- Replace every [${opts.industry}] placeholder with industry-specific, natural-sounding language
-- Keep tone warm and conversational — not salesy or pushy
-- Subject line must feel like a genuine question, not a sales pitch
-- 250–350 words max in the body
-- No em dashes (—): use commas or periods
-- Plain words a business owner uses: never "leads", "funnel", "conversion", "optimize"
-- No numbers other than the ones already in the structure above
-- End with the sign-off exactly as shown, nothing after it
-- Return ONLY the email. First line: "Subject: ..." then blank line then body. Nothing else.`;
+  // The words live in lib/pitches/website-pitch-copy.ts (pure, tested): our
+  // offer, and about them only their name and industry.
+  const prompt = websitePitchPrompt(opts);
 
   try {
     const client = getClient();
@@ -353,7 +297,7 @@ Rules:
     const subjectLine = lines.find((l) => l.toLowerCase().startsWith("subject:"));
     const subjectParsed = subjectLine
       ? subjectLine.replace(/^subject:\s*/i, "").trim()
-      : `Quick question about ${opts.companyName}`;
+      : websiteSubject(opts);
 
     // Body starts after the subject line + blank line
     const subjectIdx = lines.findIndex((l) => l.toLowerCase().startsWith("subject:"));
@@ -383,95 +327,4 @@ Rules:
   } catch {
     return { ok: false };
   }
-}
-
-// ── Deterministic fallback template ──────────────────────────────────────────
-
-function buildFallbackPitch(opts: {
-  companyName: string;
-  industry: string;
-  language: "en" | "es";
-  firstName: string | null;
-  caseStudyLine: string | null;
-  /** Two-line sign-off, e.g. "Nils\nRunna Advertising" (lib/pitches/sender-identity). */
-  signature: string;
-}): { subject: string; body: string } {
-  // Spanish prospects must never receive the English template just because
-  // Claude was unavailable (API error or daily cap) — the fallback is exactly
-  // when a Mexican owner would get an out-of-language cold email.
-  if (opts.language === "es") return buildFallbackPitchEs(opts);
-
-  const greeting = opts.firstName
-    ? `Hi ${opts.firstName},`
-    : `Hi ${opts.companyName} team,`;
-  const caseStudyBlock = opts.caseStudyLine
-    ? `\n\n${opts.caseStudyLine}\n`
-    : "";
-
-  const subject = `Quick question about ${opts.companyName}`;
-  const body = `${greeting}
-
-I work with ${opts.industry} businesses helping them show up online and win more customers, and I came across your business recently.
-
-I wanted to ask: is not having a website a deliberate choice, or just something that hasn't happened yet?
-
-I ask because most of the business owners I talk to in ${opts.industry} tell me the same thing: they know they need one, but it always feels expensive, slow, or complicated. So it keeps getting pushed back.
-
-We built Rünna specifically to solve that. We get ${opts.industry} businesses online in 2–3 weeks, at a cost that makes sense for a growing business, and built to bring in real customers, not just look pretty.
-
-What a good website does for a ${opts.industry} business:
-✓ Shows up when locals search for what you offer
-✓ Builds instant credibility (customers Google you before they call)
-✓ Works as your 24/7 salesperson, taking enquiries while you sleep
-✓ Gives you something real to point to on social media
-✓ Makes you look like the obvious, professional choice vs. competitors${caseStudyBlock}
-
-If you've been meaning to get this done, I'd love to make it easy. Happy to show you an example or two from ${opts.industry} businesses we've built for.
-
-Worth a quick chat?
-
-${opts.signature}`;
-
-  return { subject, body };
-}
-
-/** Spanish twin of buildFallbackPitch — MX/LATAM prospects, natural business register. */
-function buildFallbackPitchEs(opts: {
-  companyName: string;
-  industry: string;
-  firstName: string | null;
-  caseStudyLine: string | null;
-  /** Two-line sign-off, e.g. "Nils\nRunna Advertising" (lib/pitches/sender-identity). */
-  signature: string;
-}): { subject: string; body: string } {
-  const greeting = opts.firstName
-    ? `Hola ${opts.firstName},`
-    : `Hola equipo de ${opts.companyName},`;
-  const caseStudyBlock = opts.caseStudyLine ? `\n\n${opts.caseStudyLine}\n` : "";
-
-  const subject = `Una pregunta sobre ${opts.companyName}`;
-  const body = `${greeting}
-
-Trabajo con negocios de ${opts.industry} ayudándoles a tener presencia en internet y atraer más clientes, y hace poco me encontré con su negocio.
-
-Quería preguntarles: ¿no tener sitio web es una decisión deliberada, o simplemente algo que no ha pasado todavía?
-
-Lo pregunto porque la mayoría de los dueños con los que hablo en ${opts.industry} me dicen lo mismo: saben que lo necesitan, pero siempre se siente caro, lento o complicado. Y así se va posponiendo.
-
-En Rünna construimos justo para resolver eso. Ponemos en línea a negocios de ${opts.industry} en 2 o 3 semanas, a un costo que tiene sentido para un negocio en crecimiento, y hecho para traer clientes reales, no solo para verse bonito.
-
-Lo que un buen sitio web hace por un negocio de ${opts.industry}:
-✓ Aparecen cuando alguien cerca busca lo que ustedes ofrecen
-✓ Genera confianza inmediata (la gente los busca en Google antes de llamar)
-✓ Trabaja como su vendedor 24/7, capturando clientes mientras duermen
-✓ Les da algo real a dónde dirigir a sus seguidores en redes
-✓ Los posiciona como la opción profesional y obvia frente a la competencia${caseStudyBlock}
-
-Si han tenido esto pendiente, con gusto se los hago fácil. Puedo mostrarles un par de ejemplos de negocios de ${opts.industry} que hemos construido.
-
-¿Vale la pena una llamada corta?
-
-${opts.signature}`;
-
-  return { subject, body };
 }

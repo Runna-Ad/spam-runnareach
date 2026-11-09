@@ -426,9 +426,14 @@ test("firstNameGuess: refuses initial+surname locals (real firm addresses)", () 
   assert.equal(firstNameGuess(null, "calgauthier@gmail.com", false), null);
 });
 
-test("firstNameGuess: accepts a short unambiguous given name", () => {
-  assert.equal(firstNameGuess(null, "miguel@saucedoa.com", false), "Miguel");
-  assert.equal(firstNameGuess(null, "carmen@cgc.mx", false), "Carmen");
+// Changed 2026-11-09 (CrushCamp): sweat@crushcamp.com was greeted "Hi Sweat,".
+// A one-word address never greets by name; the same given name with a separator does.
+test("firstNameGuess: a one-word address greets no one; a given name with a separator still greets", () => {
+  assert.equal(firstNameGuess(null, "miguel@saucedoa.com", false), null);
+  assert.equal(firstNameGuess(null, "carmen@cgc.mx", false), null);
+  assert.equal(firstNameGuess(null, "sweat@crushcamp.com", false, "CrushCamp"), null);
+  assert.equal(firstNameGuess(null, "miguel.saucedo@saucedoa.com", false), "Miguel");
+  assert.equal(firstNameGuess(null, "carmen.ruiz@cgc.mx", false), "Carmen");
 });
 
 test("firstNameGuess: never greets a role inbox by name", () => {

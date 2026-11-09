@@ -414,6 +414,7 @@ const JOB_STOPS: Record<CronJob, string> = {
   "send-queue": "Approved emails going out.",
   "follow-up": "Follow-up emails.",
   "site-observe": "Reading prospect websites (site_observations). No email stops; new prospects wait for their site check.",
+  "web-dive": "Searching the web about new prospects (web_research). No email stops; first emails wait up to a day of the dive's schedule, then are drafted without web facts.",
 };
 
 /** The values one cron field allows: *, n, a-b, a-b/n, *\/n and lists of them. */
