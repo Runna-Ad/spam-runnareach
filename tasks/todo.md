@@ -87,7 +87,7 @@ Before switching the web search on (later task, not this ship):
 Prompt versions: pitch-v3.5-2026-11-09, showcase-v2-2026-11-09, website-v3-2026-11-09.
 Ship notes: approved/scheduled pitches written under the old rules are re-checked at send and go back to drafts (one-word greetings, the two new codes); that is expected.
 
-Next Step: Pedro's word for the first commit + PR; then "ship it" → deploy, apply 0055, cap $3 → $5 only when the web search is switched on (with it off, the cap can stay at $3).
+Next Step: PR #76 open (d5b9ca0). Pedro's "ship it" → deploy, apply 0055, cap $3 → $5 only when the web search is switched on (with it off, the cap can stay at $3).
 
 ## Thank-you for wrong-person replies + sign-off footer (branch feat/forwarded-thank-you, 2026-11-09)
 
