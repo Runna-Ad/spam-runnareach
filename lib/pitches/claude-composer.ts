@@ -26,6 +26,7 @@ import { senderIdentity } from "./sender-identity.ts";
 import { writerExemplarSection } from "./exemplars.ts";
 import { greetingName, isDecisionMakerInbox, isRoleInbox } from "./greeting-name.ts";
 import type { ComposedPitch, GeneratorInputs } from "./generator.ts";
+import { provenFacts } from "./proven-facts.ts";
 import { isShowcase, offeredBuildIds } from "../runna/builds.ts";
 
 // Who the intro line names. Resolved once at module load so each language's
@@ -127,7 +128,8 @@ export async function composePitchWithClaude(
   | { ok: false; error: string; reason: string; usage: ClaudeUsage | null }
 > {
   const showcase = isShowcase(input);
-  if (!showcase && input.case_studies.length === 0 && input.pains.length === 0) {
+  const proven = (input.site_facts?.length ?? 0) + (input.web_facts?.length ?? 0);
+  if (!showcase && input.case_studies.length === 0 && input.pains.length === 0 && proven === 0) {
     return {
       ok: false,
       error: "No case studies and no pains — nothing to compose.",
@@ -363,8 +365,17 @@ export function heldBodyForRevision(body: string): string {
  * check finds on their site (it no longer says where the pain "is costing
  * you"), and the subject never claims a loss: "what I noticed on [company]'s
  * site" only with site_facts, otherwise a neutral one.
+ *
+ * v3.5 (2026-11-09, proven facts): CrushCamp was told its site had no phone
+ * setting (it had one) and that "we work with independent fitness studios";
+ * it replied a hard no. The payload now carries only proven facts
+ * (lib/pitches/proven-facts.ts proveInputs): seen site facts and web facts
+ * with their page and quote. No absences, no research pains, no "I didn't
+ * see"; the intro and proof lines claim what we build, never who we work
+ * with. With no proven problem or opening the capability email goes out
+ * instead (pitch-stage.ts showcaseForced).
  */
-export const PITCH_PROMPT_VERSION = "pitch-v3.4-2026-10-30";
+export const PITCH_PROMPT_VERSION = "pitch-v3.5-2026-11-09";
 
 /** Everything that differs by language. The rules themselves do not. */
 type LanguagePack = {
@@ -397,18 +408,18 @@ function englishPack(): LanguagePack {
       'exactly "Hi [address_contact.first_name]," when address_contact.first_name is set. When it is null, exactly "Hi [company] team," with the company_name. Never a name, team or department read from the email address, the full_name or the role ("Hi Manus,", "Hi admissions team,", "Hi Liaisons team,"), never a single initial, never a bare "Hi,", never "Hi there,".',
     intro: [
       `${s.firstName} from ${s.agency} here. We help independent businesses grow without burning money on ads.`,
-      `Quick note from ${s.firstName} at ${s.agency}. We work with [industry] businesses on exactly this.`,
+      `Quick note from ${s.firstName} at ${s.agency}. We build tools that let a small team do the work of a much bigger one.`,
     ],
     hook: {
-      good: "I didn't see a way to book online on your site",
+      good: "I saw the job post for a second front-desk person",
       bad: "I noticed an opportunity",
     },
     mechanism: "a few emails that go out on their own to everyone who left something in their cart",
     proof:
-      "We do this kind of work for clinics that get more calls than the front desk can answer: finding where people slip away, then making sure someone always gets back to them.",
+      "We build this kind of thing around how a business already works, so nobody has to change how they do their job.",
     pain: {
-      wrong: 'I saw "Outdated website, no e-commerce functionality".',
-      right: "I didn't see a way to buy anything on [company]'s site.",
+      wrong: "I didn't see a way to book online on your site.",
+      right: "I saw the job post for a second front-desk person at [company].",
       guess: "Your phone shoppers give up and buy somewhere else.",
       usually: "Most people who can't buy on the spot from their phone don't come back to finish.",
     },
@@ -454,18 +465,18 @@ function spanishPack(size: SizeSignal): LanguagePack {
       : 'exactamente "Hola [address_contact.first_name]," cuando address_contact.first_name existe. Cuando es null, exactamente "Hola, equipo de [empresa]," con el company_name. Nunca un nombre, equipo o departamento sacado del correo, del full_name o del puesto ("Hola Informes,", "Hola, equipo de reservaciones,"), nunca una inicial sola, nunca "Hola," a secas, nunca "Hola there,".',
     intro: [
       `Soy ${s.firstName}, de ${s.agency}. Ayudamos a negocios independientes a crecer sin quemar dinero en anuncios.`,
-      `${s.firstName}, de ${s.agency}. Trabajamos con negocios de [industria] justo en esto.`,
+      `${s.firstName}, de ${s.agency}. Hacemos herramientas para que un equipo pequeño rinda como uno mucho más grande.`,
     ],
     hook: {
-      good: "No vi forma de agendar en línea en tu sitio",
+      good: "Vi que están buscando una segunda persona para recepción",
       bad: "Vi una oportunidad",
     },
     mechanism: "unos correos que le llegan solos a quien dejó algo en el carrito",
     proof:
-      "Hacemos este trabajo para clínicas que reciben más llamadas de las que la recepción alcanza a contestar: encontrar dónde se pierden los pacientes y asegurar que siempre alguien les responda.",
+      "Lo armamos alrededor de cómo ya trabaja cada negocio, para que nadie tenga que cambiar su forma de trabajar.",
     pain: {
-      wrong: 'Vi "Outdated website, no e-commerce functionality".',
-      right: "No vi forma de comprar nada en el sitio de [empresa].",
+      wrong: "No vi forma de agendar en línea en tu sitio.",
+      right: "Vi que [empresa] está buscando una segunda persona para recepción.",
       guess: "Tus clientes se cansan y le compran a otro.",
       usually: "Casi nadie que no puede comprar en el momento desde el celular regresa a terminar.",
     },
@@ -510,15 +521,15 @@ THE GOAL
 Make them curious enough to run the free check or reply. Not to close a deal. One pain, one fix, one ask.
 
 FACTS: EVERYTHING COMES FROM THE PAYLOAD
-1. About the prospect, say only what the payload says (company_name, industry, city, what_they_do, tech_stack, pain_candidates, site_facts). Never guess their size, revenue, customers, location or tools.
-   What you may state as something you saw: a site_facts entry, what_they_do, tech_stack, and a pain_candidates evidence_quote marked observed: true.
-   site_facts is what our crawler saw on their site, each entry with the page (url) it was on. It is the ONLY source for anything you say about their website: what it has, lacks, shows or does, "I saw", "I noticed", "your site". kind "seen": it was there, say it plainly. kind "absence": we read those pages and it was not there; say it as what you didn't see ("I didn't see a way to book online on your site"), never as a fact about them ("you have no online booking", "customers can't book", "there's no way to book"). An absence comes ONLY from an absence entry (or the word "only" in a seen entry): never from a missing entry, a pain_candidate or what_they_do. strength "weak": say it softly ("it looks like you can book from the home page"). Say what each entry says and no more: "no tap-to-call link" is not "no phone number", "hours not in the structured data" is not "no hours". A number in a site fact (a year, a score, a rating) is not one FACTS 2 allows: describe it in words, never write the figure. When a pain_candidate about their site disagrees with a site fact (the pain says no online booking, a site fact shows a "Book Now" button), the site fact wins: lead with another pain.
-   When site_facts is empty, make no claim about their website at all, whatever pain_candidates say: lead with what_they_do and a general pattern about businesses like theirs.
-   An evidence_quote marked observed: false reads as advice or opinion from our research ("Replace the site with one that shows live wait times"), not as something on their site: never turn it into an observation ("your site doesn't show wait times"); use it only as a general pattern about businesses like theirs, or lead with another pain.
+1. About the prospect, say only what the payload proves: company_name, industry, city, what_they_do, tech_stack, site_facts and web_facts. Every claim about them must be one of those, said as it is written there and no more. Never guess their size, revenue, customers, location, tools, or anything they lack.
+   site_facts is what our crawler saw on their own site, each entry with its page (url). web_facts is what another web page says about them (a review, a news story, a job post, a directory listing), each with its page (url) and the exact text on that page (quote). Each entry has a hook: "problem" (something not working), "opening" (a change, like a new location or a hire), "context" (true, but no reason to write on its own).
+   Say where a web fact comes from in plain words when its url shows it ("a review on Google", "your job post on Indeed", "a story in the local paper"), and say it as the page says it.
+   Never write what you did not see, did not find or think is missing, not even softly: no "I didn't see", "I couldn't find", "there's no", "you don't have", "your site doesn't", "without a way to". If it is not an entry, it is not in the email. A pain_candidate, when there is one, is the angle a person chose for this rewrite: it tells you what to offer, never something you saw.
+   A number in a site fact or a web fact (a year, a score, a rating, a count) is not one FACTS 2 allows: describe it in words, never write the figure.
    You have not contacted them, sent them an enquiry or timed their replies: never claim to have checked how they handle enquiries, calls or bookings, or how fast they answer.
 2. Numbers. A real number makes a cold email more believable; an invented one kills it. Allowed:
    - "about 30 seconds" for the free check;
-   - facts about THEM that are in the payload (what_they_do, evidence_quote), e.g. how many locations they run;
+   - facts about THEM that are in what_they_do, e.g. how many locations they run;
    - statistics from payload.benchmarks: real, sourced research on what businesses that make this kind of change typically see (more enquiries won, hours saved, sales recovered, fewer no-shows). We don't need numbers of our own; this is how the outcome gets a size. Each benchmark lists for_pains, the pains it is about: cite a benchmark ONLY if one of its for_pains is the pain you lead with (the same pain_id), otherwise use no number at all, because a figure about a different problem is worse than none. When one matches, USE it: it is usually the line that makes the reader stop. Keep the figure exactly as given, say where it comes from in a few words (${p.benchmark.attribution}), and frame it as what businesses like theirs experience, saying exactly what the source measured ("get a real conversation" is not "win the client"). Each benchmark carries a caveat: follow it. Never stretch a figure to another industry or past what it measured ("the same happens in hotels" about a clinic figure). One per email; two only if they make the same point.
    If a statistic would make this email stronger and none of payload.benchmarks has the pain you lead with in for_pains, write no number in the email and put the fact you wish you had in wanted_fact, in plain words, as a question or a description, never a number.
    How to frame it matters: in cold-email data, percentage and ROI claims made by the sender LOWER replies (Gong: -15%), while a number that describes the reader's world reads as insight. So a statistic describes what happens out there or sizes their problem ("most firms never reply to a web enquiry at all"); it never promises the reader a result ("you'll get 30% more").
@@ -533,15 +544,15 @@ THE EMAIL, IN THIS ORDER (nothing added, nothing reordered)
 2. Intro, one sentence: who is writing. Warm, not a pitch. For example:
    "${p.intro[0]}"
    "${p.intro[1]}"
-3. Hook: one specific observation about THIS business, from the pain you picked (below) or a site_facts entry, plus what_they_do, tech_stack or city. "${p.hook.good}" beats "${p.hook.bad}".
+3. Hook: one proven fact about THIS business, a site_facts or web_facts entry whose hook is "problem" or "opening", plus what_they_do or city. "${p.hook.good}" beats "${p.hook.bad}".
 4. The fix, one or two sentences, the core of the email: what we would do, described by what it does for them, specific to their business and industry. Start from solution_hint and make it theirs. Describe how it works ("${p.mechanism}"), never a tool name or a result figure.
-5. Proof, one sentence: the kind of work we do for businesses like theirs. No client, no metric, no boast. For example: "${p.proof}"
+5. Proof, one sentence: what we build and how it fits them. Never who we work with or have worked with ("we work with studios like yours", "we do this for clinics", "trabajamos con negocios como el tuyo"): that claims clients we may not have. No client, no metric, no boast. For example: "${p.proof}"
 6. CTA: one line that starts with 👉 (that marker turns it into the email's button). See CALL TO ACTION.
 7. Sign-off: "${s.firstName}" on one line and "${s.agency}" on the next. Nothing after it.
 Length: 60 to 100 words from the salutation to the CTA. Past 100, replies drop sharply (Gong, 2026); the best emails run 50 to 100.
 
 SAY WHAT YOU SAW, THEN WHAT IT TENDS TO COST
-pain_candidates are raw audit findings in technical, usually English, language. Before writing, pick the best one (prefer one with pain_id, evidence_quote and observed: true) and say what was found in the plain words the owner would use with a friend. No jargon, never a quote from the audit. That plain observation is your hook, and it may be stated as fact because the payload shows it (FACTS 1 says what counts as seen). Anything it says about their website must be a site_facts entry: with none, the hook is about what they do, not about their site.
+Before writing, pick the site_facts or web_facts entry (hook "problem" or "opening") that gives the best reason to write, and say it in the plain words the owner would use with a friend. No jargon. That is your hook, and it may be stated as fact because the payload shows where it is. Nothing else about them is a hook.
 What it costs them is NOT in the payload: you have not seen their customers, their traffic or their inbox. Say it as what tends to happen to businesses with this gap in general, never as a fact about their own customers, visitors or sales. Word that in your own way each time, not with a stock phrase. That sentence is about people or businesses in general: it never says you, your, yours or the company's name ("clinics like yours lose patients", "a student you don't enroll", "te cuesta clientes" are guesses about them).
   NOT: ${p.pain.wrong}
   OK:  ${p.pain.right}
@@ -602,8 +613,13 @@ OUTPUT: one JSON object with exactly these fields, all required (null only where
 // faster, show real builds picked for their industry, and how the AI learns
 // from their own data so it gets better at their business. Same reader, same
 // words rules, same CTA as the pain-led email; the builds replace the pain.
+//
+// v2 (2026-11-09, proven facts): the opener taught "Most [industry] owners we
+// talk to want to use AI…", a claim about conversations we can't show (the
+// track-record rule in content-rules.ts holds it now). It opens on what gets
+// easier for a small team instead, a general line that claims nothing.
 
-export const SHOWCASE_PROMPT_VERSION = "showcase-v1-2026-10-29";
+export const SHOWCASE_PROMPT_VERSION = "showcase-v2-2026-11-09";
 
 type ShowcasePack = {
   hook: [string, string];
@@ -619,7 +635,7 @@ function showcasePack(lang: "en" | "es"): ShowcasePack {
   if (lang === "es") {
     return {
       hook: [
-        "La mayoría de los dueños de [industria] con los que hablamos quieren usar IA, pero no saben dónde les ayudaría de verdad.",
+        "Un equipo pequeño rinde mucho más cuando el trabajo repetitivo se hace solo.",
         "¿Quieres usar IA en [empresa] pero no sabes por dónde empezar?",
       ],
       whatWeDo: "Hacemos herramientas a la medida de cada negocio, para que el trabajo sea más fácil y más rápido para quien lo hace.",
@@ -637,7 +653,7 @@ function showcasePack(lang: "en" | "es"): ShowcasePack {
   }
   return {
     hook: [
-      "Most [industry] owners we talk to want to use AI but aren't sure where it would actually help.",
+      "Small teams get a lot more done when the repetitive work runs on its own.",
       "Want to use AI at [company] but not sure where it would make a real difference?",
     ],
     whatWeDo: "We build tools around one business at a time, so the work gets easier and faster for the people doing it.",
@@ -682,7 +698,7 @@ FACTS: EVERYTHING COMES FROM THE PAYLOAD
 
 THE EMAIL, IN THIS ORDER (nothing added, nothing reordered)
 1. Salutation. ${p.salutation}
-2. Intro and the question, one or two sentences: who is writing, then the AI question for their kind of business, said as something you hear from owners like them, never as a claim about them. For example:
+2. Intro and the opening, one or two sentences: who is writing, then a general line about what gets easier for a business like theirs when the repetitive work runs on its own, or the AI question put to them. Never a claim about them, and never what other owners or businesses say, ask for or tell us. For example:
    "${x.hook[0]}"
    "${x.hook[1]}"
 3. What we do, one sentence. For example: "${x.whatWeDo}"
@@ -782,7 +798,7 @@ ${JSON.stringify(payload, null, 2)}
 Using the payload:
 - address_contact is the person who will receive this email. Greet them as the salutation rule says, and set contact_email to address_contact.email.
 - builds: pick the one closest to what this business does; describe only what its entry says. learns decides whether you may say it learns (FACTS 5).
-- prospect.what_they_do and industry: the AI question and the "for them" line are about this kind of business.
+- prospect.what_they_do and industry: the opening and the "for them" line are about this kind of business.
 - prospect.city: mention it only if it fits naturally.`;
 }
 
@@ -791,8 +807,14 @@ Using the payload:
  * same fields, so the critic judges a site claim against exactly what the
  * writer had.
  */
-export function siteFactsPayload(input: Pick<GeneratorInputs, "site_facts">): Array<{ id: string; kind: string; fact: string; url: string; strength: string }> {
-  return (input.site_facts ?? []).map((f) => ({ id: f.id, kind: f.kind, fact: f.fact, url: f.url, strength: f.strength }));
+export function siteFactsPayload(input: Pick<GeneratorInputs, "site_facts">): Array<{ id: string; kind: string; fact: string; url: string; strength: string; hook: string }> {
+  const hooks = new Map(provenFacts({ site_facts: input.site_facts }).map((f) => [`${f.id}\n${f.fact}`, f.hook]));
+  return (input.site_facts ?? []).map((f) => ({ id: f.id, kind: f.kind, fact: f.fact, url: f.url, strength: f.strength, hook: hooks.get(`${f.id}\n${f.fact}`) ?? "context" }));
+}
+
+/** web_facts as the writer and the critic are both shown them (same list, same fields). */
+export function webFactsPayload(input: Pick<GeneratorInputs, "web_facts">): Array<{ fact: string; quote: string; url: string; hook: string }> {
+  return provenFacts({ web_facts: input.web_facts }).map((f) => ({ fact: f.fact, quote: f.quote ?? "", url: f.url, hook: f.hook }));
 }
 
 /** The greeting's first name: the rule lives in greeting-name.ts, shared with the exemplar scrubber. */
@@ -924,18 +946,13 @@ function buildStage2UserPrompt(input: GeneratorInputs): string {
     },
     // Baseline solution to propose — tailor this using what_they_do, tech_stack, and industry.
     solution_hint: solutionHint,
-    // observed: false means the quote reads as the research step's advice,
-    // not as something on their site (FACTS 1).
-    pain_candidates: input.pains.map((p) => ({
-      pain_id: p.pain_id,
-      pain_label: p.pain_label,
-      evidence_quote: p.evidence_quote,
-      observed: painObserved(p, input.prospect.company_name),
-    })),
-    // What our crawler saw on their site (lib/pitches/site-facts.ts): the
-    // only source for a claim about their website (FACTS 1). The critic is
-    // shown the same list.
+    // Only a rewrite's chosen angle (proveInputs): a direction, never evidence.
+    pain_candidates: input.pains.map((p) => ({ pain_id: p.pain_id, pain_label: p.pain_label })),
+    // What our crawler saw on their site and what other pages say about them
+    // (lib/pitches/proven-facts.ts): the only claims about them (FACTS 1).
+    // The critic is shown the same lists.
     site_facts: siteFactsPayload(input),
+    web_facts: webFactsPayload(input),
     // The single contact to address, resolved + with a derived first name so the
     // model greets the decision-maker by name instead of defaulting to "team".
     // The single contact to address (addressContact: the recipient), with a
@@ -969,12 +986,15 @@ function buildStage2UserPrompt(input: GeneratorInputs): string {
     hunter_url: input.deep_pitch_url ?? null,
   };
 
+  // A person chose the angle, but a chosen angle is no evidence that they have
+  // the problem: it is always our offer, whatever site or web fact exists
+  // (proven facts, 2026-11-09). What we say about them stays FACTS 1's.
+  const anglePain = input.forced_angle
+    ? `"${input.forced_angle.pain_label}"${input.forced_angle.pain_id ? ` (pain_id ${input.forced_angle.pain_id})` : ""}`
+    : "";
+  const angleProof = input.forced_angle?.capability ? ` ("${input.forced_angle.capability}")` : "";
   const rewriteDirective = input.forced_angle
-    ? `\n⚑ REWRITE DIRECTIVE: the human chose the angle for this rewrite. Lead with this pain: "${input.forced_angle.pain_label}"${
-        input.forced_angle.pain_id ? ` (pain_id ${input.forced_angle.pain_id})` : ""
-      }. Prove it with the kind of work that fixes it${
-        input.forced_angle.capability ? ` ("${input.forced_angle.capability}")` : ""
-      }, under the same FACTS rules: no client; a number only as FACTS 2 allows (a benchmark whose for_pains includes this pain). Everything else stays the same.\n`
+    ? `\n⚑ REWRITE DIRECTIVE: the human chose the angle for this rewrite: ${anglePain}. Offer help with it as our offer: what we would build for a business like theirs, and the kind of work that does it${angleProof}. Never say or suggest they have this problem: a chosen angle is not evidence. Say about them only what a site_facts or web_facts entry says (FACTS 1); the hook is one of those entries whose hook is "problem" or "opening", or, with none, prospect.what_they_do. Same FACTS rules: no client; a number only as FACTS 2 allows (a benchmark whose for_pains includes this pain). Everything else stays the same.\n`
     : "";
 
   // The AI review sent the previous draft back. Name each issue; keep what
@@ -1006,9 +1026,9 @@ ${JSON.stringify(payload, null, 2)}
 
 Using the payload:
 - address_contact is the person who will receive this email. Greet them as the salutation rule says, and set contact_email to address_contact.email.
-- pain_candidates[].observed: true when the evidence_quote reads as something on their site, false when it reads as our research's advice. Only an observed one is something you saw (FACTS 1).
+- site_facts and web_facts: the only things you may say about them (FACTS 1). Lead with one whose hook is "problem" or "opening".
 ${(input.site_facts?.length ?? 0) > 0
-    ? "- site_facts: everything you say about their website comes from these entries (FACTS 1). An absence only from a kind \"absence\" entry, said as what you didn't see."
+    ? "- site_facts: everything you say about their website comes from these entries (FACTS 1)."
     : "- site_facts is empty: say nothing about their website (what it has, lacks or does), and use a neutral subject that claims nothing (\"" + (lang === "es" ? "una idea para [empresa]" : "an idea for [company]") + "\")."}
 - prospect.what_they_do: base the hook on what they actually do, not on a generic observation.
 - prospect.tech_stack: see "Their platform" under WORDS.

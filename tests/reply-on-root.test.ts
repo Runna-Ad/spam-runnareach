@@ -21,6 +21,8 @@ const REAL: Record<string, Record<string, string>> = {
   [ROUTE]: {
     "@/lib/pitches/events": u("../lib/pitches/events.ts"),
     "@/lib/replies/draftable": u("../lib/replies/draftable.ts"),
+    // Pure (type-only imports): the reply writer's what_they_do cleaner runs for real.
+    "@/lib/pitches/proven-facts": u("../lib/pitches/proven-facts.ts"),
   },
 };
 
@@ -90,7 +92,7 @@ function pitchRows(rows: PitchRow[]): Row[] {
     }));
 }
 
-function fakeDb(pitches: Row[], opts: { replyInsertError?: { code: string; message: string } } = {}) {
+function fakeDb(pitches: Row[], opts: { replyInsertError?: { code: string; message: string }; research?: Row } = {}) {
   const writes: Write[] = [];
   const events: Row[] = [];
   let replySeq = 0;
@@ -113,6 +115,7 @@ function fakeDb(pitches: Row[], opts: { replyInsertError?: { code: string; messa
         return { data: { id: PROSPECT, company_name: "Clínica Sol", language: "es", status: "contacted", reply_attempts: 0 }, error: null };
       if (table === "sender_inboxes")
         return { data: { email: "nils@runna.ca", display_name: "Nils", gmail_refresh_token_encrypted: "enc" }, error: null };
+      if (table === "prospect_research" && opts.research) return { data: single ? opts.research : [opts.research], error: null };
       return { data: single ? null : [], error: null };
     };
     const b: Record<string, unknown> = {};
@@ -356,6 +359,21 @@ test("side effects on a follow-up thread are unchanged: sequence pause, suppress
   assert.equal(postpone.length, 1);
   assert.ok("next_followup_at" in postpone[0]!.values);
   assert.ok(postpone[0]!.filters.includes(`eq:"prospect_id","${PROSPECT}"`));
+});
+
+// Proven facts (2026-11-09, CrushCamp): the research step's pains and guesses read as things we saw.
+test("proven facts: the reply draft gets no research pain or quote, and what_they_do without the research step's guesses", async () => {
+  const research = {
+    what_they_do: "Clínica dental en Puebla; probablemente un equipo pequeño",
+    pain_points: [{ pain_label: "Sin agenda en línea", evidence_quote: "Implementar un sistema de citas en línea" }],
+  };
+  const r = await poll(pitchRows([pitch(ROOT, "2026-10-19T15:00:00Z", null)]), [human("m1")], { research });
+  assert.deepEqual(r.res.errors, []);
+  const draft = r.calls.find((c) => c.name === "composeReplyDraftHeuristic")?.args[0] as Row | undefined;
+  assert.ok(draft, "the reply writer was called");
+  assert.equal(draft.painSummary, null);
+  assert.equal(draft.whatTheyDo, "Clínica dental en Puebla");
+  assert.doesNotMatch(JSON.stringify(draft), /agenda en línea|citas en línea|probablemente/);
 });
 
 test("route source: the event write uses the root, the reply row keeps the newest pitch", () => {

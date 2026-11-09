@@ -516,12 +516,26 @@ export function detectContactForm(pages: CrawledPage[], siteUrl = pages[0]?.url 
 
 // ── Head / structured data / text ────────────────────────────────────────────
 
+/**
+ * Phone-ready = the home page's viewport tag lets the page take the phone's
+ * width. `width=device-width` does; so does `initial-scale=1` with no width
+ * (browsers then use the device width: the standard Squarespace and Duda tag,
+ * CrushCamp 2026-11-09). A fixed pixel width (`width=1024`) does not. A tag
+ * that says nothing about size is "could not tell" (null), never an absence.
+ */
+export function viewportPhoneReady(content: string): boolean | null {
+  const width = /(?:^|[,;\s])width\s*=\s*([^,;\s]+)/i.exec(content)?.[1]?.toLowerCase() ?? null;
+  if (width === "device-width") return true;
+  if (width !== null) return /^\d+(\.\d+)?(px)?$/.test(width) ? false : null;
+  return /initial-scale\s*=/i.test(content) ? true : null;
+}
+
 export function detectViewport(pages: CrawledPage[]): Check {
   const home = pages[0];
   const vp = home?.parsed?.viewport ?? null;
-  if (home?.parsed && vp && /width\s*=\s*device-width/i.test(vp)) return { found: true, evidence: [{ url: home.url, text: `viewport: ${vp}` }] };
   // The <head> is server-sent even on JavaScript sites: the home's HTML is enough.
-  return { found: home?.readable.html ? false : null, evidence: home?.parsed && vp ? [{ url: home.url, text: `viewport: ${vp}` }] : [] };
+  if (!home?.parsed || !vp) return { found: home?.readable.html ? false : null, evidence: [] };
+  return { found: viewportPhoneReady(vp), evidence: [{ url: home.url, text: `viewport: ${vp}` }] };
 }
 
 type JsonNode = Record<string, unknown>;

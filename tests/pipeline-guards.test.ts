@@ -191,6 +191,11 @@ async function pitch(status: string, opts: { parkAs?: string; recheckMissing?: b
     fetchBenchmarksForPitch: async () => [],
     loadSiteObservation: async () => null,
     siteFactsFor: () => [],
+    // Proven facts (2026-11-09): these tests drive the problem-led path, so a proven hook exists.
+    provenFacts: () => [],
+    hasProvenHook: () => true,
+    proveInputs: (i: unknown) => i,
+    webFactsFor: async () => [],
     chooseWriterArms: async () => ({ evidence: "benchmark", guidance: null }),
     fetchExemplars: async () => [],
     segmentOf: () => "seg",
@@ -354,7 +359,9 @@ async function slice(runs: Record<string, Run>, o: { skipPrune?: boolean; meanwh
     getProspectIdsForRunsWith: async () => ({ ok: true, ids: [] }),
     runAllSourcesWith: async () => ({ ok: false, error: "unused" }),
     pruneRunToTop30With: async () => ({ ok: true, kept: 0, deleted: 0 }),
-    generatePitchWith: async (_a: unknown, id: string) => { pitchedIds.push(id); return { ok: false, error: "stub" }; },
+    // web-dive: the catch-up moves a high scorer into `match` (never drafts); pitchedIds = those it reached.
+    usableContactsWith: async () => ({ usable: 1, total: 1, error: null }),
+    enterMatchWith: async (_a: unknown, id: string) => { pitchedIds.push(id); return { moved: false }; },
     processSingleProspectWith: async (_a: unknown, id: string) => {
       const run = runs[id]!;
       const row = prospects.find((p) => p.id === id)!;
@@ -412,7 +419,7 @@ test("route: no skip leaves skipped absent (old jobs and clean runs read the sam
 
 test("route: no race timer outlives its prospect or its catch-up pitch", async () => {
   liveTimers.clear();
-  // hi scores 85 and errors, so the pitching phase runs a raced generatePitchWith too.
+  // hi scores 85 and errors, so the pitching phase runs a raced catch-up (into match) too.
   const { pitchedIds } = await slice({
     a: { leave: "researched", outcome: "needs_review" },
     hi: { leave: "researched", outcome: "error", error: "x", score: 85 },

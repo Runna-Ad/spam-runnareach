@@ -19,6 +19,7 @@ import {
 import { composeWithReview, criticVerdict } from "../lib/pitches/review.ts";
 import { emailGreetingName, greetingName, isRoleInbox } from "../lib/pitches/greeting-name.ts";
 import { scrubExemplar } from "../lib/pitches/exemplars.ts";
+import { proveInputs } from "../lib/pitches/proven-facts.ts";
 import type { GeneratorInputs } from "../lib/pitches/generator.ts";
 
 process.env.ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY ?? "test-key";
@@ -74,19 +75,21 @@ const FWD_EN = "If you're not the right person for this, I'd really appreciate i
 
 // ── 1. Writer prompt ──────────────────────────────────────────────────────────
 
-test("writer prompt v3.4: the honesty rules are in every language and register", async () => {
-  assert.equal(PITCH_PROMPT_VERSION, "pitch-v3.4-2026-10-30");
+test("writer prompt v3.5: the honesty rules are in every language and register", async () => {
+  assert.equal(PITCH_PROMPT_VERSION, "pitch-v3.5-2026-11-09");
   for (const [lang, size] of [["en", 10], ["es", 10], ["es", 200]] as const) {
     const calls = install(() => answer());
     const r = await composePitchWithClaude(inputs({}, lang, size));
     assert.equal(r.ok, true);
     const sys = sysText(calls[0]!);
     const label = `${lang}/${size}`;
-    // Only what was seen is an observation; observed: false is advice.
-    // v3.4: what was seen on their site is a site_facts entry (tests/site-facts-writer.test.ts).
-    assert.match(sys, /What you may state as something you saw: a site_facts entry, what_they_do, tech_stack, and a pain_candidates evidence_quote marked observed: true/, label);
-    assert.match(sys, /An evidence_quote marked observed: false reads as advice or opinion from our research/, label);
-    assert.match(sys, /never turn it into an observation/, label);
+    // v3.5 (proven facts, 2026-11-09): only a payload field or a site/web fact is said about them;
+    // a research pain is never something seen (it no longer reaches the writer with evidence at all).
+    assert.ok(sys.includes("About the prospect, say only what the payload proves: company_name, industry, city, what_they_do, tech_stack, site_facts and web_facts."), label);
+    assert.ok(sys.includes("A pain_candidate, when there is one, is the angle a person chose for this rewrite: it tells you what to offer, never something you saw."), label);
+    assert.ok(sys.includes(`Never write what you did not see, did not find or think is missing, not even softly: no "I didn't see"`), label);
+    // The v3.4 observed / evidence_quote rules are gone with the field.
+    assert.doesNotMatch(sys, /evidence_quote|observed: (true|false)/, label);
     // Never claim to have checked how they handle enquiries.
     assert.match(sys, /never claim to have checked how they handle enquiries, calls or bookings, or how fast they answer/, label);
     // The cost line is about businesses in general.
@@ -97,8 +100,9 @@ test("writer prompt v3.4: the honesty rules are in every language and register",
     assert.doesNotMatch(sys, /reads like a real given name|parece un nombre real/, label);
     assert.ok(!sys.includes("Checked your store: nothing follows up"), label);
     assert.ok(!sys.includes("nadie le da seguimiento a quien se va sin comprar"), label);
-    // The payload carries observed for each pain.
-    assert.equal((payloadOf(calls[0]!).pain_candidates as Array<{ observed: unknown }>)[0]!.observed, true, label);
+    // The payload carries the pain as a direction only: no evidence quote, no observed flag.
+    assert.deepEqual(payloadOf(calls[0]!).pain_candidates, [{ pain_id: "pain-1", pain_label: "Lead response time" }], label);
+    assert.ok(!calls[0]!.messages[0]!.content.includes("contact form only, no online booking"), label);
   }
 });
 
@@ -132,7 +136,9 @@ test("critic prompt: blocks only claims about THIS business; general lines, our 
     const sys = sysText(await criticOf(inputs({}, lang)));
     // The rule.
     assert.ok(sys.includes("1. A sentence that states, about THIS business (it says you, your, yours or the company's name"), lang);
-    assert.ok(sys.includes("A pain_evidence quote marked observed: false is our research's advice"), lang);
+    // Since 2026-11-09 pain_evidence is only a chosen angle, never something seen (proven facts).
+    assert.ok(sys.includes("pain_evidence lists the pain a person chose as the angle, when there is one: it is what we offer to help with, never something seen"), lang);
+    assert.doesNotMatch(sys, /observed: (true|false)/, lang);
     assert.ok(sys.includes("A claim to have checked how they handle enquiries, calls or bookings, or how fast they answer, is always unsupported."), lang);
     // What it is not.
     assert.ok(sys.includes('a sentence about people or businesses in general (what tends to happen with this gap), with or without a hedge like "most" or "usually"'), lang);
@@ -140,7 +146,9 @@ test("critic prompt: blocks only claims about THIS business; general lines, our 
     assert.ok(sys.includes("a figure from payload.benchmarks cited for one of its for_pains (rule 2 decides that, it is not an inference)"), lang);
     // House facts.
     // A house line still carries no unchecked claim (batch 9 audit): its pain and any result are judged.
-    assert.ok(sys.includes("The one-sentence proof line about the kind of work we do for businesses like theirs is our own, as long as it names no client, claims no result"), lang);
+    // 2026-11-09: what we build, never "the kind of work we do for businesses like theirs" (a track record).
+    assert.ok(sys.includes("The one-sentence line about what we build is our own, as long as it names no client, claims no result"), lang);
+    assert.ok(!sys.includes("for businesses like theirs is our own"), lang);
     // v3.4: the CTA names no pain; a loss in the CTA is still judged by rule 1.
     assert.ok(sys.includes("A CTA that says where they are losing or what something is costing them claims something about this business: rule 1 judges it"), lang);
     assert.ok(sys.includes("The line asking to pass the email along to the right person is added by our code to role inboxes."), lang);
@@ -162,7 +170,8 @@ test("critic prompt: blocks only claims about THIS business; general lines, our 
   }
 });
 
-test("critic payload: observed per pain, and the writer's own first_name and role answer for the recipient", async () => {
+// Was "observed per pain". Since 2026-11-09 (proven facts) the critic gets the pain only: no research quote, no observed flag.
+test("critic payload: the pain only (no quote, no observed flag), and the writer's own first_name and role answer for the recipient", async () => {
   const input = inputs({
     pains: [
       { pain_id: "pain-1", pain_label: "Website", evidence_quote: "Replace outdated WordPress with a site that shows live wait times" },
@@ -170,11 +179,10 @@ test("critic payload: observed per pain, and the writer's own first_name and rol
     ],
     contacts: [person("ecof@ecofcabinets.ca")],
   });
-  const critic = payloadOf(await criticOf(input));
-  assert.deepEqual(
-    (critic.pain_evidence as Array<{ pain_id: string; observed: boolean }>).map((p) => [p.pain_id, p.observed]),
-    [["pain-1", false], ["pain-2", true]],
-  );
+  const req = await criticOf(input);
+  const critic = payloadOf(req);
+  assert.deepEqual(critic.pain_evidence, [{ pain_id: "pain-1", pain: "Website" }, { pain_id: "pain-2", pain: "Lead response time" }]);
+  for (const p of input.pains) assert.ok(!req.messages[0]!.content.includes(p.evidence_quote!), p.evidence_quote!);
   assert.deepEqual(critic.recipient, { name: null, first_name: null, email: "ecof@ecofcabinets.ca", role_based: false });
 });
 
@@ -260,17 +268,23 @@ test("painObserved: the stage's mark wins; an unmarked pain is classified", () =
   assert.equal(painObserved({ pain_id: "a", pain_label: "x", evidence_quote: "contact form only", observed: false }), false);
 });
 
-test("the writer prefers an observed pain for the solution hint, and an advice pain stays in the payload (not dropped)", async () => {
+test("the writer prefers an observed pain for the solution hint; no evidence quote or observed flag reaches its payload; proveInputs keeps only a chosen angle", async () => {
+  const pains = [
+    { pain_id: "pain-web", pain_label: "Outdated website", evidence_quote: "Replace outdated WordPress with a mobile-optimized site" },
+    { pain_id: "pain-cart", pain_label: "abandoned_cart recovery", evidence_quote: "no abandoned cart email flow detected on checkout" },
+  ];
   const calls = install(() => answer());
-  await composePitchWithClaude(inputs({
-    pains: [
-      { pain_id: "pain-web", pain_label: "Outdated website", evidence_quote: "Replace outdated WordPress with a mobile-optimized site" },
-      { pain_id: "pain-cart", pain_label: "abandoned_cart recovery", evidence_quote: "no abandoned cart email flow detected on checkout" },
-    ],
-  }));
+  await composePitchWithClaude(inputs({ pains }));
   const p = payloadOf(calls[0]!);
-  assert.deepEqual((p.pain_candidates as Array<{ pain_id: string; observed: boolean }>).map((c) => [c.pain_id, c.observed]), [["pain-web", false], ["pain-cart", true]]);
+  // v3.5 (2026-11-09): a pain is a direction, never evidence.
+  assert.deepEqual(p.pain_candidates, [{ pain_id: "pain-web", pain_label: "Outdated website" }, { pain_id: "pain-cart", pain_label: "abandoned_cart recovery" }]);
+  for (const q of pains) assert.ok(!calls[0]!.messages[0]!.content.includes(q.evidence_quote), q.evidence_quote);
   assert.match(String(p.solution_hint), /reaching back out to everyone who added things and left/);
+  // The stage's one door (proveInputs): a first draft gets no research pain at all;
+  // a person's rewrite angle keeps its pain, without the research's evidence.
+  assert.deepEqual(proveInputs(inputs({ pains }), null).pains, []);
+  const angle = { pain_label: "abandoned_cart recovery", pain_id: "pain-cart", case_study_id: null, capability: null };
+  assert.deepEqual(proveInputs(inputs({ pains, forced_angle: angle }), null).pains, [{ ...pains[1]!, evidence_quote: null }]);
 });
 
 // ── 4. Greetings ──────────────────────────────────────────────────────────────
@@ -296,7 +310,9 @@ test("greetingName: the study's failures greet no one; real names are unchanged"
   }
   // Unchanged.
   assert.equal(greetingName(null, "john.sipos@waglaw.net", false), "John");
-  assert.equal(greetingName(null, "miguel@tacos.mx", false), "Miguel");
+  // A one-word address never greets by name (CrushCamp's sweat@, 2026-11-09).
+  assert.equal(greetingName(null, "miguel@tacos.mx", false), null);
+  assert.equal(greetingName(null, "miguel.ruiz@tacos.mx", false), "Miguel");
   assert.equal(greetingName("Sarah Lee", "info@ecofcabinets.ca", true), "Sarah", "a real full_name wins, role inbox or not");
   assert.equal(greetingName("María José Pérez", null, false), "María");
   assert.equal(greetingName("O'Brien", null, false), "O'Brien");

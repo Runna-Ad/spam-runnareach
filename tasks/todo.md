@@ -5,6 +5,90 @@ Deck: `/Users/work/Downloads/SPAM_Partner_Deck.pdf`
 
 ---
 
+## Only say what we can prove (CrushCamp hard no, 2026-11-09) — BUILT on feat/proven-facts, not committed
+
+Why (Pedro, 2026-11-09): CrushCamp replied "Squarespace is already fully mobile optimized… remove us". Pedro: "whatever we claim we are 100% sure its correct and if not default to offering services in general", then "option 1 but with a deeper search than just checking their website… do a deep dive on the web and if we cant find anything other than the website fine but look 1st".
+
+What went wrong (measured 2026-11-09, prod):
+- The phone-setting check (`detectViewport`, lib/research/site-crawl/detectors.ts:519) accepts only `width=device-width`. CrushCamp's tag is `initial-scale=1` (standard Squarespace). 26 of 574 crawled sites read "no phone setting"; 16 of those are working Squarespace / Duda / WordPress sites (1 real case: Patient Networks, `width=1024`; 9 had no tag).
+- Research's "Poor mobile conversion" pain had as evidence a sentence our own AI wrote (the deep-research pitch hook). The writer may state an evidence_quote as seen unless `isAdviceQuote` catches it; this one wasn't caught. The site showed Mindbody booking + a Momence shop, and nothing compared the two.
+- Stock prompt lines "We work with [industry] businesses on exactly this" / "We do this kind of work for…" (claude-composer.ts:400, :408): one of them is in 73 of 81 problem-led first emails since 2026-10-15.
+- "Hi Sweat,": `sweat` is in the 60k-word names list, so `emailGreetingName` greeted it.
+- 19 of 81 problem-led first emails since 2026-10-15 contain "I didn't see / no hay…" wording (a claim built on something the crawler did NOT find).
+- The follow-up "pain" note, the nudge and reply drafts also read research pains (followup-composer.ts:156-175, nudge/route.ts:159, send-reply-action.ts:338, poll/route.ts:651).
+
+Rule after this change: an email says something about the business only when we can show where it came from (their site, or another web page about them, with the link and the exact text). Absences and research guesses are never said. No proven problem → the capability (showcase) email.
+
+Parts:
+1. Phone-setting check: a viewport tag counts as phone-ready unless it sets a fixed pixel width.
+2. Greeting: never a name from a one-word address (sweat@, alexandra@); first.last@ and real full names still greet.
+3. One "proven facts" list (new pure module) that every writer gets: site facts of kind "seen" + web facts that passed the source check. No absences, no research pains, no pitch hook; what_they_do with guess clauses removed (likely, suggests, appears, probably, seems, "No visible…", "Tech:").
+4. Web deep dive (new): once per prospect, right before its first draft (only prospects we will email), stored 60 days in a new table (migration 0055). Claude web search, same pattern as weekly fact research (lib/benchmarks/research.ts). A fact is kept only when: its URL is one the search returned, a citation from that URL contains the quoted text, every number in the fact is in the quote, and the quote or URL ties to THIS business (its domain, or its name + city). Fails closed. Cost recorded like fact research. Not enough AI budget left → the prospect waits for the next day (look first).
+5. Choosing the email: problem-led only when a proven fact shows a problem or an opening; otherwise the capability email, which may open with one proven fact. Forced capability emails are left out of the first-vs-follow-up showcase test.
+6. Prompts (EN + ES): remove the two stock experience lines; claims about the business only from proven facts.
+7. Send gate (code, not the AI reviewer): `absence_claim` ("I didn't see", "couldn't find", "no vi", "no encontré"…) and `track_record_claim` ("we work with [X]s", "we do this kind of work for", "trabajamos con…") hold the email.
+8. Same proven-facts list in the follow-up writer, nudge, reply drafts and the website pitch path.
+
+Done when (each item names its proof):
+- D1 `npm test` green + new tests: CrushCamp's tag and the Duda/WordPress tags read phone-ready, `width=1024` does not (new test fails on today's code).
+- D2 Test: sweat@ → team greeting; john.smith@ → "John".
+- D3 Test: CrushCamp's stored research + crawl give a proven-facts list with no "mobile" item and no research pain.
+- D4 Test: the web-dive keep-check drops a fact whose quote is not in a citation, whose URL the search didn't return, or that names another business; keeps a cited, matching one.
+- D5 Sample run (real Claude, nothing saved or sent) on 10 recent prospects incl. CrushCamp: every kept web fact opened and checked by me against its page; cost per prospect measured.
+- D6 Test: no proven problem → capability email; send gate holds both new codes on today's CrushCamp email text.
+- D7 Parity sweep: every writer that reads research listed with the facts source it now uses.
+- D8 `npm run typecheck`, `npm run lint`, `npm run build` clean; reviewer agent pass on the diff.
+- Not doing: no paid service; no rewrite of stored crawl rows (absences stop reaching writers anyway); no change to the $3 daily AI cap without Pedro's word.
+
+Cost (measured): Claude web-search calls today (weekly fact research, Sonnet, 4 searches) cost $0.20-0.22 each. First drafts last week: 10-24/day. Busy-day AI spend: $2.77-2.93 of the $3 cap. A dive on every first draft ≈ +$2-4/day (Sonnet); Haiku estimated about half (not measured).
+
+Decisions (Pedro, 2026-11-09): Claude web search for the deep dive; raise `ANTHROPIC_DAILY_USD_CAP` from $3 to $5 at ship (not before; the sample run measures the real cost first). Built here as one change with a reviewer (parts 3, 5, 6, 8 share the writer files, so splitting them would mean merges).
+
+Progress (branch feat/proven-facts, nothing committed):
+- [x] Part 1: `viewportPhoneReady` in detectors.ts; site-facts.ts re-reads stored viewport tags (old rows fixed at read time). Tests: tests/site-crawl-detectors.test.ts (2 new, failed on old code), tests/site-facts.test.ts.
+- [x] Part 2: one-word addresses never greet by name (greeting-name.ts); greeting tests updated (sweat@, lake@, cullen@, juan@ → team).
+- [x] Part 3a: lib/pitches/proven-facts.ts (`provenFacts`, `hasProvenHook`, `cleanWhatTheyDo`) + tests/proven-facts.test.ts (CrushCamp fixture).
+- [x] Part 3b (proveInputs on both paths; composer/critic payloads carry web_facts + hooks): wire into pitch-stage.ts (generatePitchWith ~L176-450 AND rewritePitchWithAngleWith ~L877-936): GeneratorInputs.pains = [] for writers; site_facts = seen-only proven; web_facts added; what_they_do cleaned; composer no_case_studies check (claude-composer.ts:130) allows proven facts; critic (review.ts:72, :243) and gate (gate.ts:183-190) drop pain quotes.
+- [x] Part 5 (countsForShowcaseTest in lib/learning/outcomes.ts, tested): no hasProvenHook → showcase "first" forced, `decision.showcase_forced = true`; learner (lib/autopilot/learn.ts:242) skips forced for writer.showcase.
+- [x] Part 6 (v3.5; showcase prompts untouched): prompts: remove intro "We work with [industry]…" + proof "We do this kind of work for…" (claude-composer.ts:400,408 + ES pack); FACTS rules → proven facts; bump PITCH_PROMPT_VERSION; showcase prompt hashes pinned in tests/site-facts-writer.test.ts.
+- [x] Part 7 (tests/proven-claims-gate.test.ts, fails on old code): gate codes absence_claim + track_record_claim (block, writer-fixable) in send-gate.ts; test on CrushCamp's sent body.
+- [x] Part 8 (helper agent; plus its 10 findings fixed: curly quotes, more absence patterns, track-record noun rule, showcase opener v2 "Small teams get a lot more done…", gate numbers from cleaned what_they_do only, no benchmarks without a pain, rewrite-angle directive, breakup template, no-repeat line): follow-up pain mode (followup-composer.ts:156-175), nudge (nudge/route.ts:159), reply drafts (send-reply-action.ts:338, poll/route.ts:651): proven facts, no research pains.
+- [x] Web dive (merged from the worker's worktree as a patch; webFactsFor wired into both draft paths; `match` → pitched after a draft; match counted as pitches waiting in maybeStartDiscovery; cost type web_research): worker running in its own worktree (brief tasks/briefs/web-dive.md, local mode, uncommitted). Merge its diff, then wire `webFactsFor` into pitch-stage beside siteFactsFor.
+
+Checks (2026-11-09, after the last edit): `npx tsc --noEmit -p .` clean; `npm run lint` 0 errors; `npm test` 1823/1823; `npm run build` exit 0 (route /api/research/web-dive listed).
+Noticed by the web-dive worker, still open: `match` is not in lib/today/queries.ts or lib/analytics/queries.ts; the discovery run summary says "N pitched" for prospects still waiting for checks (lib/discover/run-summary.ts); PAST_PIPELINE (lib/prospects/status.ts) has no `match`, so a hand-picked pipeline re-run researches a waiting prospect again; lib/anthropic/cost-tracking.ts:65 comment says the default cap is $5 (code default $6).
+Known gaps (re-review 2026-11-09): a prospect whose first draft failed twice shows "Waiting for checks" like one still on its way (nothing reads autopilot.first_draft_gave_up); a tenant with no autonomy_state row is never drafted by the tick; cleanWhatTheyDo fails closed and drops real descriptions ("Panadería sin gluten", "The only kosher deli", "Not-for-profit daycare"): vaguer emails, never wrong ones; the no-website email still asks for a call ("Worth a quick chat?") instead of the free check.
+Known gaps: reply drafts are not gated by the send check (a person approves each one; pre-existing); a web fact's one-line summary is the AI's wording (its quote is checked word for word); free-check link still pre-fills from the research pain label; `match` missing from /companies filters, funnel and Today lists; no alarm for prospects stuck in `match`.
+Sample run (Pedro, needs .env.local; nothing saved or sent):
+  node --env-file=.env.local --experimental-strip-types scripts/web-dive-samples.ts d11d3a47-7808-4194-9ccf-f8c5e1622ad6 1fe788e0-3a12-4b52-aedf-6a9de30c9688 c074a635-9ebe-40c7-934f-da9d955368e5 322065bf-e369-42f3-a91a-b03c0538b1ad 612e521a-2728-409a-bac8-f01fbf7df6bd cc19ed1a-e6c0-4bc0-93e5-2812e5b76a67 88be40da-cc68-4118-80c2-4854d4f720b1 13c0664f-db9a-434e-b0d4-44e0846a68e4 874ad756-e3c5-4ebb-a6a0-c3ea5a99bf60 dbbfe3a8-08a1-49bf-9254-65152d630455
+Ship order: code deploy (Pedro "ship it") → migration 0055 → ANTHROPIC_DAILY_USD_CAP 3 → 5 in Vercel.
+
+Sample run (Pedro, 2026-11-09, 10 prospects, $1.94, $0.19 each): 9 facts kept, 0 fit to send (3 employee reviews labelled "problem", an auto-written aggregator summary, 2 pages now 404, a 2020 article on a dead site, Birdeye template text). Reviewer (2026-11-09): fix-then-merge, 5 blocking.
+Decision (Pedro, 2026-11-09): "Ship it switched off": the web search ships behind WEB_DIVE_ENABLED (unset = off, $0); the site look still runs before every first email.
+
+Before switching the web search on (later task, not this ship):
+- keep.ts:233-243: the name must be in the QUOTE (title-only only with a domain-label path segment); city only from the quote. Probes: a listicle titled "…CrushCamp, Fit Lab…" handed CrushCamp Fit Lab's news.
+- Writers see only the quote + url + kind ("say only what the quote says"), or drop facts whose content words are not in the quote; `kind` checked coarsely against the quote.
+- Source rules: never employee reviews (indeed.com/cmp, glassdoor reviews), never auto-generated profiles/aggregators (wheree, tracxn, zoominfo, birdeye FAQ, cylex, canpages, companiesup); a recent page date (search result page_age, not stored today); the page still loads when we draft.
+- Budget: its own 24h ceiling (e.g. $2), MIN_CAP_LEFT ≥ $1; 25 × $0.21 > $5.
+- webFactsFor re-matches the row to the prospect's current name/domain; a one-common-word name tied by a social handle can be another business.
+- The showcase email may open with one proven fact (todo Part 5, not built).
+- One more real sample, every kept fact graded by hand.
+
+### Review (2026-11-09)
+- D1 phone setting: tests/site-crawl-detectors.test.ts (failed on old code) ✓
+- D2 greeting: sweat@ → team, john.smith@ → John (tests/greeting-rule.test.ts) ✓
+- D3 CrushCamp's stored crawl + research → no absence, no research pain, no hook → capability email (tests/proven-facts.test.ts) ✓
+- D4 web-dive keep check: 15 tests incl. same name in another city ✓ (title-only tie gap deferred, see above)
+- D5 real sample (Pedro): 10 prospects, $1.94, 0 of 9 kept facts fit to send → web search ships OFF ✓
+- D6 no proven hook → showcase forced; gate holds CrushCamp's sent body on absence + track record + greeting ✓
+- D7 parity: first draft, rewrite, autopilot rewrite/re-draft, follow-up, nudge, reply drafts, no-website pitch, templates, exemplars all read proven facts only; reply drafts are not gated (a person approves each) ✓
+- D8 after the last edit: tsc 0, lint 0 errors, npm test 1852/1852, npm run build 0; independent review twice (fix-then-merge → all blocking fixed) ✓
+Prompt versions: pitch-v3.5-2026-11-09, showcase-v2-2026-11-09, website-v3-2026-11-09.
+Ship notes: approved/scheduled pitches written under the old rules are re-checked at send and go back to drafts (one-word greetings, the two new codes); that is expected.
+
+Next Step: PR #76 open (d5b9ca0). Pedro's "ship it" → deploy, apply 0055, cap $3 → $5 only when the web search is switched on (with it off, the cap can stay at $3).
+
 ## Thank-you for wrong-person replies + sign-off footer (branch feat/forwarded-thank-you, 2026-11-09)
 
 Why (Pedro, 2026-11-09): Desloges reception forwarded our email to management and the reply only got a "Wrong person" flag; Pedro wants a quick thank-you. Footer: the full Mexico City address looked off on Canadian emails; CASL still needs an address, so Pedro chose a Canadian address on English emails and a sign-off line first.

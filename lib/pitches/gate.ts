@@ -24,6 +24,7 @@ import {
   type GateInput,
   type GateResult,
 } from "./send-gate";
+import { cleanWhatTheyDo } from "./proven-facts";
 
 // Callers pass either the cookie client (server actions) or the service-role
 // client (crons); their generated types differ, so this module takes either.
@@ -57,14 +58,6 @@ export type GateContext = {
   clientNames: string[];
   topRecipient: GateRecipient | null;
 };
-
-/** Pull evidence_quote strings out of the pain_points JSONB. */
-function evidenceQuotesFrom(painPoints: unknown): string[] {
-  if (!Array.isArray(painPoints)) return [];
-  return painPoints
-    .map((p) => (p as { evidence_quote?: unknown } | null)?.evidence_quote)
-    .filter((q): q is string => typeof q === "string" && q.trim().length > 0);
-}
 
 export function parseGateOverride(raw: unknown): GateOverride | null {
   if (!raw || typeof raw !== "object") return null;
@@ -144,7 +137,7 @@ export async function loadGateContext(
       .maybeSingle(),
     supabase
       .from("prospect_research")
-      .select("last_scraped_at, evidence_urls, pain_points, site_name, what_they_do")
+      .select("last_scraped_at, evidence_urls, site_name, what_they_do")
       .eq("prospect_id", prospectId)
       .eq("tenant_id", tenantId)
       .maybeSingle(),
@@ -165,12 +158,12 @@ export async function loadGateContext(
   const research = researchRes.data as {
     last_scraped_at: string | null;
     evidence_urls: string[] | null;
-    pain_points: unknown;
     site_name: string | null;
     what_they_do: string | null;
   } | null;
   const contacts = (contactsRes.data ?? []) as GateRecipient[];
   const top = pickAddressContact(contacts);
+  const whatTheyDo = cleanWhatTheyDo(research?.what_they_do);
 
   return {
     companyName: prospect.company_name,
@@ -180,11 +173,10 @@ export async function loadGateContext(
     // A site we successfully scraped leaves both a timestamp and evidence URLs.
     websiteVerified: Boolean(research?.last_scraped_at && (research.evidence_urls?.length ?? 0) > 0),
     // The research summary is evidence too: "346 beds", "26 locations" come
-    // from their own site via what_they_do, which the composer is given.
-    evidenceQuotes: [
-      ...evidenceQuotesFrom(research?.pain_points),
-      ...(research?.what_they_do?.trim() ? [research.what_they_do] : []),
-    ],
+    // from their own site via what_they_do, which the composer is given
+    // without its guesses (proven facts, 2026-11-09). Research pain quotes
+    // are not: the writer never sees them, so a figure in one sources nothing.
+    evidenceQuotes: whatTheyDo ? [whatTheyDo] : [],
     benchmarkSources: shared.benchmarkSources,
     clientNames: shared.clientNames,
     topRecipient: top

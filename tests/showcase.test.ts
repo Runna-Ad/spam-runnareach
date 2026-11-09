@@ -11,11 +11,10 @@ import { __test__ } from "../lib/anthropic/client.ts";
 import { chooseEvenly, seededRng, type Arm } from "../lib/learning/bandit.ts";
 import { composePitchWithClaude } from "../lib/pitches/claude-composer.ts";
 import { BANNED_TERMS, INTERNAL_NAMES, findBannedTerms, findInternalNames } from "../lib/pitches/content-rules.ts";
-import { showcaseFollowupFellBack } from "../lib/learning/outcomes.ts";
+import { countsForShowcaseTest, showcaseFollowupFellBack } from "../lib/learning/outcomes.ts";
 import { candidateFromRow, type CandidateRow } from "../lib/pitches/exemplar-queries.ts";
 import {
   composeFollowupWithClaude,
-  followupEvidenceQuote,
   followupMode,
   reviewShowcaseFollowup,
   reviseShowcaseFollowup,
@@ -189,17 +188,26 @@ test("learner: a thread whose follow-up #1 fell back to the template is left out
   assert.ok(!showcaseFollowupFellBack([]));
 });
 
-test("follow-up quote: the pain note never presents research advice as something seen", () => {
-  const advice = { evidence_quote: "Add online booking so clients can book after hours" };
-  const seen = { evidence_quote: "Call us during office hours to book an appointment" };
-  assert.equal(followupEvidenceQuote([advice, seen], "pain", "Core Lab"), seen.evidence_quote);
-  assert.equal(followupEvidenceQuote([advice], "pain", "Core Lab"), null);
-  // The other modes keep today's rule: the first quote, 20+ characters.
-  assert.equal(followupEvidenceQuote([advice, seen], "standard", "Core Lab"), advice.evidence_quote);
-  assert.equal(followupEvidenceQuote([{ quote: "short" }], "standard", "Core Lab"), null);
-  assert.equal(followupEvidenceQuote(null, "pain", "Core Lab"), null);
-  // A short first quote doesn't hide a good later one.
-  assert.equal(followupEvidenceQuote([{ evidence_quote: "Book now" }, seen], "pain", "Core Lab"), seen.evidence_quote);
+test("learner: a showcase email forced by 'nothing we can prove' is no trial of the showcase test (2026-11-09)", () => {
+  assert.equal(countsForShowcaseTest({ forced: true, events: [] }), false);
+  assert.equal(countsForShowcaseTest({ forced: false, events: [] }), true);
+  const fellBack = { type: "sent", at: "2026-11-09T15:00:00Z", payload: { step: 2, followup_mode: "pain", composed_by: "template" } };
+  assert.equal(countsForShowcaseTest({ forced: false, events: [fellBack] }), false);
+});
+
+// Was "the pain note never presents research advice as something seen" (followupEvidenceQuote picked
+// a site-like quote for the pain note). Since 2026-11-09 (proven facts) no research quote is evidence:
+// the route reads none into the follow-up, advice-like or site-like, and the composer has no field for one.
+test("follow-up route: no research pain or quote, advice-like or site-like, reaches the follow-up; what_they_do loses its guesses; the template names no pain", () => {
+  const route = readFileSync(new URL("../app/api/pitches/follow-up/route.ts", import.meta.url), "utf8");
+  const code = route.replace(/\/\/[^\n]*/g, "");
+  assert.ok(!code.includes("followupEvidenceQuote") && !code.includes("evidence_quote"), "no research quote is read for the follow-up");
+  assert.ok(!/\bpainSummary\b|\bevidenceQuote\b/.test(code), "the composer input carries no pain");
+  assert.match(code, /whatTheyDo = cleanWhatTheyDo\(research\?\.what_they_do \?\? null\);/);
+  // The template's breakup said "we spotted a gap around [research pain]": it names none now.
+  assert.match(code, /const ctx: FollowupContext = \{[^}]*painLabel: null,/);
+  // The research label still pre-fills only the free check's link, like the first email's.
+  assert.equal(code.match(/rawLabel/g)?.length, 2);
 });
 
 test("exemplars: a showcase first email never models the pain-led writer", () => {
@@ -261,7 +269,7 @@ function inputs(over: Partial<GeneratorInputs> = {}): GeneratorInputs {
 }
 
 const BODY =
-  "Hi Dana,\n\nHenry from Runna Advertising here. Most manufacturers we talk to want to use AI but aren't sure where it would help.\n\nFor a factory running molding machines, we built a phone app where operators log output and downtime as they work.\n\n👉 {hunter_url}\n\nHenry\nRunna Advertising";
+  "Hi Dana,\n\nHenry from Runna Advertising here. Small teams get a lot more done when the repetitive work runs on its own.\n\nFor a factory running molding machines, we built a phone app where operators log output and downtime as they work.\n\n👉 {hunter_url}\n\nHenry\nRunna Advertising";
 
 test("composer: showcase builds switch the prompt; pain, numbers and wishes are dropped; only offered ids are kept", async (t) => {
   t.after(() => __test__.reset());
@@ -341,7 +349,10 @@ test("critic: a showcase email is judged against the builds offered", async (t) 
   const r = await critiquePitch(inputs({ showcase_builds: builds }), { subject: "AI at Prairie Plastics", body: BODY }, 5_000);
   assert.ok(r.ok);
   assert.match(systemText(calls[0]!), /THE BUILDS \(this is a showcase email\)/);
-  assert.match(systemText(calls[0]!), /The opening AI question is about owners like them in general/);
+  // showcase-v2 (2026-11-09): the opener claims no conversations; quoting who we talk to is never set framing.
+  assert.match(systemText(calls[0]!), /The opening line about small teams and repetitive work, or the AI question put to them, is general on purpose/);
+  assert.match(systemText(calls[0]!), /A line saying what other owners or businesses tell us, or who we talk to or work with, is never set framing/);
+  assert.doesNotMatch(systemText(calls[0]!), /owners who want to use AI but are not sure/);
   // Sample run 2 (2026-10-29): the reviewer read an offer ("learning from your own case notes")
   // as a claim about a past build. Learning is no longer its call, and it never sees `learns`.
   assert.match(systemText(calls[0]!), /Never raise whether a tool learns, adapts or uses AI, for a past build or an offer/);
@@ -375,8 +386,6 @@ function followupInput(over: Partial<FollowupComposerInput> = {}): FollowupCompo
     city: "Calgary",
     originalSubject: "AI built around Prairie Plastics",
     originalBody: BODY,
-    painSummary: "Call us for a quote",
-    evidenceQuote: "Call us for a quote",
     whatTheyDo: "Custom injection-molded parts.",
     techStack: [],
     hunterValue: null,
@@ -417,20 +426,50 @@ test("follow-up composer: showcase, pain and standard modes get their own rules;
   assert.match(systemText(calls[3]!), /FOLLOW-UP #2 \(the final \/ breakup\)/);
 });
 
-test("follow-up composer: the pain note may say what an observed quote shows; the showcase reports its builds", async (t) => {
+// Was "the pain note may say what an observed quote shows". Since 2026-11-09 (proven facts) the pain
+// note is never handed a quote: it offers one idea from what_they_do, and says nothing about their site.
+test("follow-up composer: the pain note offers one idea and claims nothing seen; the showcase reports its builds", async (t) => {
   t.after(() => __test__.reset());
   const calls: Call[] = [];
   fakeClaude({ ...FOLLOWUP_REPLY, builds_used: ["dealer-map"] }, calls);
   const builds = pickBuilds({ industry: "plastics manufacturer", lang: "en" });
   const pain = await composeFollowupWithClaude(followupInput({ mode: "pain" }));
   assert.ok(pain.ok);
-  assert.match(systemText(calls[0]!), /beyond what pain\.evidence_quote shows/);
+  const painSys = systemText(calls[0]!);
+  assert.ok(painSys.includes("One concrete idea from what_they_do and industry, as our offer"));
+  assert.ok(painSys.includes("Never say what their site, staff or customers do, lack or struggle with:\n  nothing in the payload shows it."));
+  assert.doesNotMatch(painSys, /evidence_quote|text from their own/);
+  assert.match(painSys, /- NEVER mention or describe the prospect's website URL or its condition\.\n/);
   assert.equal(pain.followup.builds_used, undefined);
   const show = await composeFollowupWithClaude(followupInput({ mode: "showcase", builds }));
   assert.ok(show.ok);
   assert.deepEqual(show.followup.builds_used, ["dealer-map"]);
   assert.match(systemText(calls[1]!), /"builds_used": string\[\]/);
-  assert.doesNotMatch(systemText(calls[1]!), /beyond what pain\.evidence_quote shows/);
+  assert.doesNotMatch(systemText(calls[1]!), /evidence_quote/);
+});
+
+test("follow-up composer: in every mode and step the payload has no pain, and what_they_do reaches it without the research step's guesses", async (t) => {
+  t.after(() => __test__.reset());
+  const calls: Call[] = [];
+  fakeClaude({ ...FOLLOWUP_REPLY, builds_used: ["dealer-map"] }, calls);
+  const builds = pickBuilds({ industry: "plastics manufacturer", lang: "en" });
+  const whatTheyDo = "Custom injection-molded parts in Calgary; likely a small team; website appears outdated Tech: WordPress";
+  for (const over of [{ mode: "pain" as const }, { mode: "showcase" as const, builds }, {}, { step: 3 as const }]) {
+    assert.ok((await composeFollowupWithClaude(followupInput({ ...over, whatTheyDo }))).ok);
+    const sent = calls.at(-1)!.messages[0]!.content;
+    const payload = JSON.parse(/```json\n([\s\S]*?)\n```/.exec(sent)![1]!) as { pain?: unknown; prospect: { what_they_do: unknown } };
+    assert.equal(payload.pain, undefined, JSON.stringify(over));
+    assert.equal(payload.prospect.what_they_do, "Custom injection-molded parts in Calgary", JSON.stringify(over));
+    assert.doesNotMatch(sent, /likely|appears outdated|evidence_quote/, JSON.stringify(over));
+    assert.doesNotMatch(systemText(calls.at(-1)!), /what_they_do, pain, evidence/);
+  }
+  // The showcase follow-up's reviewer is shown the same cleaned text.
+  const review: Call[] = [];
+  fakeClaude({ score: 0.9, issues: [], wanted_fact: null }, review);
+  const r = await reviewShowcaseFollowup(followupInput({ mode: "showcase", builds, whatTheyDo }), { subject: "Re: x", body: BODY, reasoning: "r", builds_used: ["dealer-map"] }, { email: "dana@prairieplastics.ca", full_name: "Dana Reyes", role_based: false }, 5_000);
+  assert.ok(r.ok);
+  assert.ok(review[0]!.messages[0]!.content.includes(`"what_they_do": "Custom injection-molded parts in Calgary"`));
+  assert.doesNotMatch(review[0]!.messages[0]!.content, /likely a small team/);
 });
 
 test("reviewShowcaseFollowup: unknown or missing builds never send; the reviewer must pass; no reviewer, no send", async (t) => {
@@ -684,7 +723,9 @@ test("follow-up rewrite: one try only, never without time, and never when the re
   assert.equal(clean.calls.length, 1);
 });
 
-test("follow-up composer: never quotes what other businesses say, apart from the showcase's AI question", async (t) => {
+// Was "…apart from the showcase's AI question". Since 2026-11-09 the showcase opener quotes no
+// owners (small teams and repetitive work), so no mode has an exception; and none repeats the first email's claims.
+test("follow-up composer: never quotes what other businesses say, in any mode; never repeats a claim the first email made", async (t) => {
   t.after(() => __test__.reset());
   const calls: Call[] = [];
   fakeClaude(FOLLOWUP_REPLY, calls);
@@ -693,10 +734,15 @@ test("follow-up composer: never quotes what other businesses say, apart from the
   }
   const [showcase, pain, standard] = calls.map(systemText);
   for (const p of [showcase, pain, standard]) assert.match(p!, /NEVER say what other businesses or owners tell us, say, ask for or struggle with/);
-  assert.match(showcase!, /The one exception is the opening AI question/);
-  assert.match(showcase!, /never what those owners say, struggle with or spend time on/);
+  assert.ok(!showcase!.includes("exception"), "no exception for the showcase opener any more");
+  assert.ok(showcase!.includes("small teams get a lot more done when the\n  repetitive work runs on its own, or the AI question put to them (never what other owners say,\n  struggle with or spend time on, and never a claim about them)"));
+  assert.doesNotMatch(showcase!, /owners like them want to use AI/);
   assert.match(pain!, /what the one gap this email is about tends to cost is fine/);
   assert.ok(!standard!.includes("exception") && !standard!.includes("tends to cost is fine"));
+  // Standard follow-up #1: a different idea, offered, never "a different pain angle".
+  assert.ok(standard!.includes("a different idea from what_they_do, offered\n  as what we could build for them"));
+  assert.doesNotMatch(standard!, /a different pain angle/);
+  for (const p of [showcase, pain, standard]) assert.ok(p!.includes("NEVER repeat a claim the earlier email (original_email_body) made about their business, site,\n  staff or customers."));
 });
 
 test("route: the showcase follow-up goes through the rewrite step, and the gate's context is read once", () => {

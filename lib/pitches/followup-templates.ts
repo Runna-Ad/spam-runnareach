@@ -99,13 +99,11 @@ export function buildFollowup1(ctx: FollowupContext): FollowupEmail {
 export function buildFollowup2(ctx: FollowupContext): FollowupEmail {
   const subject = reSubject(ctx.originalSubject);
   const es = ctx.lang === "es";
+  // Our offer only (proven facts, 2026-11-09): it used to say "when we looked at
+  // [company], we spotted a gap around [pain]", a look and a finding nothing showed.
   const intro = es
-    ? ctx.painLabel
-      ? `Cuando revisamos ${ctx.prospectName}, vimos un hueco en ${ctx.painLabel}, de esos que cuestan ventas cada mes sin que se note.`
-      : `Cuando revisamos ${ctx.prospectName}, encontramos un par de cosas que creo vale la pena ver.`
-    : ctx.painLabel
-      ? `When we looked at ${ctx.prospectName}, we spotted a gap around ${ctx.painLabel}, the kind that quietly costs revenue every month.`
-      : `When we looked at ${ctx.prospectName}, we found a couple of things I think are worth a look.`;
+    ? `Hacemos herramientas que le quitan el trabajo repetitivo a un equipo, para cuando ${ctx.prospectName} lo necesite.`
+    : `We build tools that take the repetitive work off a team's plate, whenever ${ctx.prospectName} wants that.`;
   const body = es
     ? `${greeting(ctx)},\n\nÚltimo correo, lo prometo.\n\n${intro}\n\n${ctaBlock(ctx, true)}\n\nDespués de esto no te escribo más.\n\n${ctx.signature}`
     : `${greeting(ctx)},\n\nLast note, I promise.\n\n${intro}\n\n${ctaBlock(ctx, true)}\n\nAfter this I'll leave you alone.\n\n${ctx.signature}`;

@@ -284,3 +284,160 @@ export function findClientNames(
   }
   return hits;
 }
+
+// ── Claims we can't prove (CrushCamp, 2026-11-09) ───────────────────────────
+// The writer is never given an absence (lib/pitches/proven-facts.ts), so any
+// "I didn't see…" is invented, and "we work with [studios]" claims clients we
+// may not have. Code holds both: two AI review passes let CrushCamp's through.
+
+// Spanish words end where no letter follows (\b only knows ASCII letters).
+const ES_END = String.raw`(?![\p{L}])`;
+
+// What a site or a listing has, so "there's no…" / "no hay…" claims they lack
+// it. A noun list, never "anything but…": "There's no rush / fee / contract",
+// "you have no setup to do", "no hay ningún compromiso", "no hay nada que
+// instalar" and "no tienen nada que perder" reassure, they claim nothing.
+const FEATURE_NOUNS_EN = String.raw`(?:(?:booking|way|option|button|form|link|page|place|cart|shop|store|chat|website|site|menu|schedule|calendar|contact)s?|online|price(?:s|ing)?|hours)`;
+const FEATURE_NOUNS_ES = String.raw`(?:reservas|reservaciones|citas|formas?|maneras?|opci(?:[óo]n|ones)|bot(?:[óo]n|ones)|formularios?|p[áa]ginas?|sitios?|tiendas?|carritos?|chat|precios|horarios?|calendarios?|contacto)`;
+// Up to two of these may sit in between: "there's no easy way", "no hay ningún botón", "no hay en línea una forma".
+const FEATURE_LEAD_EN = String.raw`(?:(?:a|an|any|easy|simple|quick|clear|obvious|direct|real|single|online|mobile)\s+){0,2}`;
+const FEATURE_LEAD_ES = String.raw`(?:(?:un|una|ning[úu]n|ninguna|alg[úu]n|alguna|otra|otro|sola|solo|en\s+l[íi]nea)\s+){0,2}`;
+
+type ClaimRule = {
+  re: RegExp;
+  /**
+   * A clause opened by "when / if / cuando / si…" says what tends to happen
+   * ("When customers can't book online after hours, most try somewhere
+   * else", "Si un negocio no cuenta con reservas en línea…"), so it is no
+   * claim, unless it names them ("Cuando entré a su sitio no hay forma…").
+   */
+  generalOk?: boolean;
+};
+
+const ABSENCE_CLAIMS: readonly ClaimRule[] = [
+  { re: /\bI (?:didn'?t|did not|couldn'?t|could not|wasn'?t able to|was not able to) (?:see|find|spot|notice)\b/i },
+  { re: new RegExp(String.raw`\b(?:there'?s|there is|there are) no\s+${FEATURE_LEAD_EN}${FEATURE_NOUNS_EN}\b`, "i"), generalOk: true },
+  { re: new RegExp(String.raw`\byou have no\s+${FEATURE_LEAD_EN}${FEATURE_NOUNS_EN}\b`, "i") },
+  { re: new RegExp(String.raw`\bthere (?:isn'?t|is not|aren'?t|are not)\s+${FEATURE_LEAD_EN}${FEATURE_NOUNS_EN}\b`, "i") },
+  { re: /\byou (?:don'?t|do not) (?:have|offer|show|list)\b(?! to\b)/i },
+  { re: /\byou'?re missing\b/i },
+  // Their customers ("your customers can't book"), never customers in general
+  // ("most customers can't wait"); the company name joins in findAbsenceClaims.
+  { re: /\b(?:your|tus|sus) (?:customers|clients|people|visitors) (?:can'?t|cannot) (?:book|buy|pay|order|reach)\b/i, generalOk: true },
+  // "Your Google listing doesn't show a website" too: discovery can miss a site for many reasons (website-v3).
+  { re: /\byour (?:site|website|page|home ?page|(?:google )?listing) (?:doesn'?t|does not|isn'?t|is not|lacks|has no)\b/i },
+  // No trailing \b: it only knows ASCII letters, so "encontré" never ended a word.
+  { re: /\bno (?:vi|veo|encontr[ée]|encuentro|logr[ée] (?:ver|encontrar))(?![a-záéíóúñü])/i },
+  { re: /\bno pude (?:ver|encontrar)(?![a-záéíóúñü])/i },
+  { re: /\bno se ven?(?![a-záéíóúñü])/i },
+  { re: /\bno cuenta[ns]? con(?![a-záéíóúñü])/i, generalOk: true },
+  { re: new RegExp(String.raw`\bno (?:tienes|tiene|tienen)\s+${FEATURE_LEAD_ES}${FEATURE_NOUNS_ES}${ES_END}`, "iu") },
+  { re: new RegExp(String.raw`\bles faltan?${ES_END}`, "iu") },
+  { re: new RegExp(String.raw`\bno pueden (?:agendar|reservar|comprar|pagar)${ES_END}`, "iu"), generalOk: true },
+  { re: new RegExp(String.raw`\bno hay\s+${FEATURE_LEAD_ES}${FEATURE_NOUNS_ES}${ES_END}`, "iu"), generalOk: true },
+  // "Su sitio no muestra precios"; never the conditional "si su sitio no carga…".
+  { re: /(?<!\bsi )\b(?:tu|su) (?:sitio|p[áa]gina|ficha)(?: web| de google)? no\b/i },
+  { re: /\bsin (?:forma|manera) de\b/i },
+];
+
+// "We / I work with…" is a track record only when a kind of business follows
+// within five words ("we work with independent fitness studios"), or "like
+// you/yours". "We work with what you already use", "we work with small teams
+// so nobody…" and "we work with the people on your team" are how we work, so
+// "teams" and "people" are no business nouns here ("people we talk to" still is).
+const BUSINESS_NOUNS_EN =
+  "businesses|companies|studios|clinics|firms|practices|shops|stores|brands|owners|restaurants|gyms|hotels|agencies|manufacturers|distributors|retailers|schools|contractors|dealers";
+const BUSINESS_NOUNS_ES =
+  "negocios|empresas|estudios|cl[ií]nicas|despachos|consultorios|tiendas|comercios|marcas|due[ñn]os|restaurantes|gimnasios|hoteles|agencias|fabricantes|distribuidor(?:es|as)|minoristas|escuelas|contratistas|concesionarias|personas";
+const UP_TO_4_WORDS = String.raw`(?:[\p{L}\p{N}'&.-]+\s+){0,4}?`;
+const NOT_A_LETTER = String.raw`(?![\p{L}])`;
+const WORK_WITH_EN = String.raw`\b(?:we|I)(?:'ve| have)? work(?:ed)? with (?!you\b|your\b)`;
+const WORK_WITH_ES = String.raw`\b(?:trabajamos|trabajo|hemos trabajado|he trabajado) con (?!usted\b|ustedes\b|ti\b|tu\b|su\b)`;
+// Who we "talk to": a claim of conversations we can't show ("most owners we talk to want AI").
+const TALKED_TO_NOUNS = `${BUSINESS_NOUNS_EN}|people|teams|clients|administrators|managers`;
+const LIKE_YOURS_ES = String.raw`como (?:t[uú]|usted(?:es)?|el tuyo|la tuya|el suyo|la suya|los suyos|las suyas)`;
+// "For [up to four words] clinics / like yours", inside one sentence: no word
+// here ends in a period, so "for you. Most businesses…" is two sentences.
+const SAME_SENTENCE_UP_TO_4 = String.raw`(?:[\p{L}\p{N}'&-]+\s+){0,4}?`;
+const FOR_BUSINESSES_EN = String.raw`for ${SAME_SENTENCE_UP_TO_4}(?:(?:${BUSINESS_NOUNS_EN})|like (?:you|yours))${NOT_A_LETTER}`;
+const FOR_BUSINESSES_ES = String.raw`(?:para|con) ${SAME_SENTENCE_UP_TO_4}(?:(?:${BUSINESS_NOUNS_ES})|${LIKE_YOURS_ES})${NOT_A_LETTER}`;
+
+const TRACK_RECORD_CLAIMS: readonly RegExp[] = [
+  new RegExp(`${WORK_WITH_EN}${UP_TO_4_WORDS}(?:${BUSINESS_NOUNS_EN})${NOT_A_LETTER}`, "iu"),
+  new RegExp(`${WORK_WITH_EN}${UP_TO_4_WORDS}like (?:you|yours)${NOT_A_LETTER}`, "iu"),
+  new RegExp(String.raw`\bwe partner(?:ed)? with ${UP_TO_4_WORDS}(?:${BUSINESS_NOUNS_EN})${NOT_A_LETTER}`, "iu"),
+  // "We help clinics like yours / like Boutique Sol".
+  new RegExp(String.raw`\bwe help(?:ed)? ${UP_TO_4_WORDS}(?:${BUSINESS_NOUNS_EN}) like\b`, "iu"),
+  // "We do this all the time for dentists like yours", "we do this kind of
+  // work for dental clinics"; never "we do this for one business at a time"
+  // or "we do that kind of work for you" (how we work, not who for).
+  new RegExp(String.raw`\bwe do (?:this|that|it) (?:(?:kind|sort|type) of (?:work|thing)s? )?(?:all the time |often |a lot |regularly |every day )?${FOR_BUSINESSES_EN}`, "iu"),
+  new RegExp(String.raw`\b(?:esto )?lo hacemos (?:(?:seguido|siempre|todo el tiempo|a menudo|mucho) )?${FOR_BUSINESSES_ES}`, "iu"),
+  /\bwe(?:'ve| have) helped\b/i,
+  /\bwe(?:'ve| have) built (?:this|that|these|it) for other\b/i,
+  /\bour (?:clients|customers) (?:include|like)\b/i,
+  new RegExp(String.raw`\b(?:${TALKED_TO_NOUNS}) (?:that |who )?(?:we|I)(?:'ve| have)? (?:talk(?:ed)?|speak|spoke(?:n)?|work(?:ed)?) (?:to|with)\b`, "iu"),
+  new RegExp(String.raw`\bother ${UP_TO_4_WORDS}owners (?:tell|told) us\b`, "iu"),
+  // "Examples from dental businesses we've built for".
+  new RegExp(String.raw`\b(?:${TALKED_TO_NOUNS}) (?:that |who )?(?:we|I)(?:'ve| have)? built for\b`, "iu"),
+  new RegExp(`${WORK_WITH_ES}${UP_TO_4_WORDS}(?:${BUSINESS_NOUNS_ES})${NOT_A_LETTER}`, "iu"),
+  new RegExp(`${WORK_WITH_ES}${UP_TO_4_WORDS}${LIKE_YOURS_ES}${NOT_A_LETTER}`, "iu"),
+  new RegExp(String.raw`\bayudamos a ${UP_TO_4_WORDS}(?:${BUSINESS_NOUNS_ES}) como${NOT_A_LETTER}`, "iu"),
+  new RegExp(String.raw`\bcolaboramos con ${UP_TO_4_WORDS}(?:${BUSINESS_NOUNS_ES})${NOT_A_LETTER}`, "iu"),
+  /\bcon (?:los|las) que (?:hablo|hablamos|trabajo|trabajamos)\b/i,
+  /\bcon quienes (?:hablo|hablamos|trabajo|trabajamos)\b/i,
+  /\bque hemos construido para\b/i,
+  /\bhemos ayudado a\b/i,
+  new RegExp(String.raw`\bhacemos (?:este|ese) (?:tipo de )?trabajo ${FOR_BUSINESSES_ES}`, "iu"),
+  new RegExp(String.raw`\bhacemos esto ${FOR_BUSINESSES_ES}`, "iu"),
+];
+
+const GENERAL_OPENER = /^(?:when|whenever|if|cuando|si|en cuanto)(?![\p{L}])/iu;
+const NAMES_THEM = /(?<![\p{L}])(?:you|your|tu|tus|su|sus|usted|ustedes)(?![\p{L}])/iu;
+
+/**
+ * The match sits in a clause that opens with "when / if / cuando / si…" and
+ * names neither them nor their business, the match included: "When your
+ * customers can't book online…" still says something about theirs.
+ */
+function inGeneralClause(text: string, at: number, matched: string, companyName?: string): boolean {
+  const before = text.slice(0, at);
+  const start = Math.max(...[".", "!", "?", ",", ";", ":", "\n", "¿", "¡"].map((c) => before.lastIndexOf(c))) + 1;
+  const clause = `${before.slice(start).trim()} ${matched}`;
+  if (!GENERAL_OPENER.test(clause) || NAMES_THEM.test(clause)) return false;
+  return !(companyName && fold(clause).includes(fold(companyName)));
+}
+
+function matchesOf(text: string, rules: readonly ClaimRule[], companyName?: string): string[] {
+  // Curly apostrophes ("didn’t", "We’ve") are the same word: the patterns know the straight one.
+  const plain = text.replace(/[\u2018\u2019]/g, "'");
+  return rules.flatMap(({ re, generalOk }) => {
+    const all = new RegExp(re.source, re.flags.includes("g") ? re.flags : `${re.flags}g`);
+    for (const m of plain.matchAll(all)) {
+      if (generalOk && inGeneralClause(plain, m.index ?? 0, m[0], companyName)) continue;
+      return [m[0].trim()];
+    }
+    return [];
+  });
+}
+
+/**
+ * Sentences that say what we did NOT see or what they lack. With the
+ * company name, "Sonrisa Dental's customers can't book" counts as theirs too.
+ */
+export function findAbsenceClaims(text: string, companyName?: string | null): string[] {
+  const name = companyName?.trim();
+  const rules: ClaimRule[] = [...ABSENCE_CLAIMS];
+  if (name) {
+    rules.push({
+      re: new RegExp(String.raw`(?<![\p{L}\p{N}])${escapeRegExp(name)}(?:'s)? (?:customers|clients|people|visitors) (?:can'?t|cannot) (?:book|buy|pay|order|reach)(?![\p{L}])`, "iu"),
+      generalOk: true,
+    });
+  }
+  return matchesOf(text, rules, name);
+}
+
+/** Sentences that claim we work, or have worked, with businesses like theirs, or quote who we talk to. */
+export function findTrackRecordClaims(text: string): string[] {
+  return matchesOf(text, TRACK_RECORD_CLAIMS.map((re) => ({ re })));
+}

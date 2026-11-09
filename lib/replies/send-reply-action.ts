@@ -31,6 +31,7 @@ import { getOutboundCompliance } from "@/lib/compliance/outbound";
 import { threadBlocksSend } from "@/lib/pitches/send-guards";
 import { reconcileSignOff, senderIdentity } from "@/lib/pitches/sender-identity";
 import { isEmailOnDncList, type DncClient } from "@/lib/discover/dnc-check";
+import { cleanWhatTheyDo } from "@/lib/pitches/proven-facts";
 import { createServiceRoleClient } from "@/lib/supabase/service-role";
 import {
   composeReplyDraftWithClaude,
@@ -329,18 +330,17 @@ export async function regenerateReplyDraft(
   }
 
   // Research context.
-  let whatTheyDo: string | null = null;
-  let painSummary: string | null = null;
   // prospect_research is the table every writer uses (the legacy "research"
   // table this used to read is never written — drafts ran without context).
+  // Proven facts (2026-11-09, CrushCamp): only what they do, without the
+  // research step's guesses; a research pain is never evidence, so none.
   const { data: research } = await supabase
     .from("prospect_research")
-    .select("what_they_do, pain_points")
+    .select("what_they_do")
     .eq("prospect_id", reply.prospect_id)
     .maybeSingle();
-  whatTheyDo = research?.what_they_do ?? null;
-  const pains = Array.isArray(research?.pain_points) ? research.pain_points : [];
-  painSummary = (pains[0] as { pain_label?: string } | undefined)?.pain_label ?? null;
+  const whatTheyDo = cleanWhatTheyDo(research?.what_they_do ?? null);
+  const painSummary: string | null = null;
 
   const draftInput: DraftComposerInput = {
     contactFirstName: null,

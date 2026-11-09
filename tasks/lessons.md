@@ -2,6 +2,34 @@
 
 > Sections older than phase 3 batch 8 (batch 7 back to April 2026) moved to `tasks/archive/lessons-2026-10.md` on 2026-10-27. Grep it; do not load it whole.
 
+## Merged from lessons-inbox, proven facts + web dive (2026-11-09)
+
+<!-- from web-dive -->
+[2026-11-09] A brief's allow-list can miss the reader that undoes the change
+WHAT HAPPENED: web-dive moved the first draft out of lib/discover/pipeline-stage.ts into the tick. The end-of-job pitching catch-up in app/api/discover/run/route.ts (not in the allow-list) selects every prospect scoring 70+ with no pitch row and calls generatePitchWith, so it would have drafted every `match` prospect minutes later, before either look. The same route counted the new `match` outcome as an error, which would have dropped the tick's pitch yield to its 0.05 floor. Separately, withHeartbeat("web-dive") needs the CRON_JOBS entry in lib/reports/heartbeat.ts; the brief named only health.ts.
+RULE: When a change stops path A from doing X, grep every other caller of X's function (here generatePitchWith) and every reader of A's outcome type before trusting the allow-list, and list them in the brief.
+TAGS: briefs, pipeline, discovery
+
+[2026-11-09] A "waiting since" timeout must count only time when the awaited job can run
+WHAT HAPPENED: the brief's plain 24 h look timeout would fire every weekend. The crawler and the dive run only in the weekday window 15-22 UTC, so a prospect entering `match` on Friday night or at a weekend tick would be drafted on Saturday or on Monday before 15:00 with neither look done. lib/research/web-dive/looks.ts counts the timeout as 24 h AND 32 scheduled dive runs (scheduledRuns from lib/reports/health.ts). On weekdays that is exactly 24 h (a test checks every 15-minute start Monday to Thursday).
+RULE: A timeout that releases work waiting on a scheduled job counts that job's scheduled runs (scheduledRuns), not wall-clock time alone.
+TAGS: autopilot, scheduling, timeouts
+
+[2026-11-09] A "same business" tie that trusts a URL slug ties the same name in another city
+WHAT HAPPENED: the brief's tie "the URL path has the domain label" accepts yelp.com/biz/crushcamp-austin for CrushCamp in Calgary, which is the brief's own "same-name business in another city" drop case. lib/research/web-dive/keep.ts requires the label as a WHOLE path segment (instagram.com/crushcamp) and never trusts the host (crushcamp.com may be someone else).
+RULE: Identity ties read from URLs compare whole path segments. Substring or token-run matches on directory slugs tie same-name businesses elsewhere.
+TAGS: research, web-dive, matching
+
+[2026-11-09] Scan order decides whether stuck rows starve new ones
+WHAT HAPPENED: a prospect whose first draft fails twice stays in `match` and nothing updates it again. An oldest-updated-first scan with a limit would fill up with those and never reach new prospects. lib/research/web-dive/ready.ts scans newest-updated first; a test with 210 stuck rows fails on the old order.
+RULE: A limited scan over a status rows can get stuck in orders the stuck rows to the end, and a test with more stuck rows than the limit proves it.
+TAGS: autopilot, queries
+
+[2026-11-09] An isolated worker can't write to the main checkout: hand back a file list
+WHAT HAPPENED: the web-dive worker ran in its own worktree. Asked in a follow-up to "work in main", it was refused by the harness on every write there, so it synced main's newer files into its worktree, fingerprinted the targets, made its edits and returned 18 paths to copy. The conductor diffed each file against main (only the worker's own changes), copied them, and re-ran every check (1847/1847).
+RULE: A follow-up to a worktree worker asks for edits in its worktree plus the exact file list; the conductor diffs each file against main before copying, never copies a whole worktree.
+TAGS: process, workers, worktrees
+
 ## Merged from lessons-inbox, batch 10 (2026-10-30)
 
 <!-- from site-facts-writer -->
@@ -491,6 +519,23 @@ TAGS: #pitches #showcase #reviewer #prompt-plus-deterministic-guard #followup
 WHAT HAPPENED: I told Pedro "it's 16:48 UTC, inside the send window, the right time to apply 0053". He logged in to Vercel about ten hours later; the merge record said 02:59 UTC. Applying 0053 then, outside the window and before any new-code health run, would have left Sentry on the old health-check schedule overnight (one false "missed" issue). Caught only because `gh pr view` printed mergedAt.
 RULE: Before any step whose safety depends on the hour (migrations that move cron jobs, send windows, deploy order), run `date -u` in the same turn. A time read earlier in the session is a fact about then, not now.
 TAGS: #lesson #time #ship #cron
+
+[2026-11-09] LESSON: a "not found" check that saw the thing, plus a research guess filed as evidence, sent a false claim to CrushCamp
+WHAT HAPPENED: CrushCamp (Calgary fitness studio) got "I didn't see the viewport setting… We'd build you a site that works on any screen" and replied a hard no: their Squarespace site is fully mobile-friendly. The crawler's own record held the tag (`initial-scale=1`) and still stored found: false, because detectViewport accepts only `width=device-width`; 16 of 26 such "absences" in prod are working sites. The pain it backed, "Poor mobile conversion", had as its evidence_quote a sentence our deep-research AI wrote, not text from their site. The writer also used a stock line, "We work with independent fitness studios on exactly this", which sits in 73 of 81 recent first emails. Two AI reviewer passes let all of it through (the October critic had flagged the stock line as blocking on the older draft).
+ROOT CAUSE: absences and research text were allowed to become claims about the prospect; the only defences were word rules for the writer and a small reviewer model, and no test ever ran the detector on a real Squarespace head.
+RULE: A claim about a prospect needs a source we hold (the page and its text). An absence is never said, an AI-written research sentence is never evidence, and a detector that returns "absent" while its evidence shows the thing is a bug to test against real pages of every major site builder.
+TAGS: #pitches #site-crawl #research #fabrication #claims
+
+[2026-11-09] LESSON: a quote that is really on a page is still not a fact we can put in an email
+WHAT HAPPENED: First real sample of the web dive (10 prospects, $1.94, 4 searches each). The keep check worked as designed (every kept quote was in a citation of a page the search returned), yet none of the 9 kept facts was fit to send: 3 were employee reviews on Indeed ("the owner micro managed. Favoritism ran high", "12-13hrs pd, pay is poor") labelled "problem"; 1 was an auto-written aggregator summary (wheree: "some reviews indicate issues with customer service"); the job post and a directory page behind 2 facts now return 404; a 2020 article's site no longer resolves; Birdeye's "4.2 stars from 16 reviews" is template FAQ text on a page that shows zero reviews. Only the Tracxn "founded 2015" checked out, and it hooks nothing.
+ROOT CAUSE: the check proved "this text was indexed on that page", not that the source is first-hand, current, still live, or fit to quote to the owner. The model's own "problem" label then routed an employee complaint into a problem-led email.
+RULE: A web fact needs four things before an email may use it: the quote on the page (done), a first-hand source type (never employee reviews or auto-generated profile/aggregator pages), a recent date, and a page that is still live when we draft. Measure a new fact source on a real sample and grade every kept fact by hand before wiring it to sends.
+TAGS: #pitches #web-dive #sources #verification #samples
+
+[2026-11-09] LESSON: a regex word boundary after an accented letter never matches
+WHAT HAPPENED: The new absence check `/\bno (?:vi|encontr[ée])\b/i` missed "No encontré sus horarios." In JavaScript `\b` only knows ASCII letters, so after "é" there is no word boundary; the test on real Spanish wording caught it.
+RULE: For Spanish (or any accented) wording, end a pattern with a negative lookahead on letters, `(?![a-záéíóúñü])`, never `\b`; test every pattern with a word that ends in an accent.
+TAGS: #regex #spanish #gate
 
 [2026-11-09] LESSON: a funnel hand-off nobody measured end to end lost every visitor for 30 days
 WHAT HAPPENED: Auditing runna-hunter, 159 emails in 30 days carried the free-check link and 0 of them could start the scan on their own: the Hunter auto-runs only when industry, size and timesink all arrive, and S.P.A.M. drops size whenever headcount is unknown (always, in practice). 22 clicks (15 from one email security scanner, 7 emails in all) produced 0 scans; hunter_scans has had no real row since 2026-06-25. The Hunter itself worked: a complete test link saved a row and showed results.

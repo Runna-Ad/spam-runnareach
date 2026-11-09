@@ -28,16 +28,17 @@ import { getCurrentUser } from "@/lib/auth";
 import { createClient } from "@/lib/supabase/server";
 import { runAllSourcesWith } from "@/lib/discover/run-all-stage";
 import {
+  enterMatchWith,
   getProspectIdsForRunsWith,
   getRawProspectIdsWith,
   processSingleProspectWith,
   pruneRunToTop30With,
+  usableContactsWith,
   type ProspectOutcome,
 } from "@/lib/discover/pipeline-stage";
 import { triggerNextSlice, type SliceAuth } from "@/lib/discover/job-trigger";
 import { isUnderDailyCap } from "@/lib/anthropic/cost-tracking";
 import { affordableProspects } from "@/lib/learning/scout";
-import { generatePitchWith } from "@/lib/pitches/pitch-stage";
 import { EMPTY_JOB_STATS, type DiscoveryJobStats } from "@/lib/discover/job-types";
 import { isPastPipeline } from "@/lib/prospects/status";
 
@@ -390,7 +391,9 @@ export async function POST(req: NextRequest) {
         );
 
         for (const { outcome, error } of outcomes) {
-          if (outcome === "pitched") stats.pitched += 1;
+          // match = pitch-ready, its first email drafted by the tick once both looks
+          // are done (web-dive): the tick's pitch yield reads this count.
+          if (outcome === "pitched" || outcome === "match") stats.pitched += 1;
           else if (outcome === "website_pitch") stats.website_pitch += 1;
           else if (outcome === "needs_review") stats.needs_review += 1;
           else if (outcome === "suppressed") stats.suppressed += 1;
@@ -466,13 +469,14 @@ export async function POST(req: NextRequest) {
       await suppressUnfinished(supabase, user.tenantId, ids);
 
       // Count the ICP's pitched leads (real + website pitches both carry status
-      // 'pitched') — the cumulative pool the target measures against.
+      // 'pitched', and 'match' ones wait for the looks before the tick drafts
+      // them) — the cumulative pool the target measures against.
       const { count: pitchedCount } = await supabase
         .from("prospects")
         .select("id", { count: "exact", head: true })
         .eq("tenant_id", user.tenantId)
         .eq("icp_id", icpId)
-        .eq("status", "pitched");
+        .in("status", ["pitched", "match"]);
       stats.pitched_pool = pitchedCount ?? 0;
 
       const processedSoFar = stats.processed ?? 0;
@@ -536,11 +540,13 @@ export async function POST(req: NextRequest) {
         ...(prune.ok ? { pruned_kept: prune.kept, pruned_deleted: prune.deleted } : {}),
       };
 
-      // Hand off to the PITCHING phase: high-scorers (>=70) that never got a pitch
-      // (their pipeline slice ran out of time before the in-slice pitch step). For
+      // Hand off to the PITCHING phase: high-scorers (>=70) that never reached
+      // `match` (their pipeline slice ran out of time before its last step). For
       // a discovery loop, catch ALL such ≥70 for the ICP so the pitched pool is
       // topped up toward the target; for other jobs, just this run's set. Reuse the
       // cursor machinery — the pitching phase is identical in shape to the pipeline.
+      // It never drafts: it moves them into `match`, and the tick drafts each one
+      // once its site was read (web-dive).
       const highScorersQuery = supabase
         .from("prospects")
         .select("id, status")
@@ -552,6 +558,8 @@ export async function POST(req: NextRequest) {
       const eligible = ((highScorers ?? []) as Array<{ id: string; status: string }>)
         // Forward only: a contacted or parked company is never pitched again here.
         .filter((p) => !isPastPipeline(p.status))
+        // Waiting for the site and web looks: the tick drafts it, never this catch-up.
+        .filter((p) => p.status !== "match")
         .map((p) => p.id);
 
       let pending: string[] = [];
@@ -585,6 +593,9 @@ export async function POST(req: NextRequest) {
     }
 
     // ── Phase: pitching (time-budgeted; catches high-scorers the pipeline cut) ─
+    // Each one goes through the pipeline's own last step: the usable-contact
+    // test, then `match` + pitch_gate_passed + the waiting_for_looks row
+    // (enterMatchWith). No usable contact: left as it is (no paid call here).
     if (job.phase === "pitching") {
       const ids = job.prospect_ids ?? [];
       const startedAt = Date.now();
@@ -602,10 +613,15 @@ export async function POST(req: NextRequest) {
         const results = await Promise.all(
           batch.map(async (id): Promise<boolean> => {
             try {
-              const r = await withDeadline(generatePitchWith(actor, id), budget, "pitch-timeout");
-              return !!(r && r.ok);
+              const toMatch = async (): Promise<boolean> => {
+                const contacts = await usableContactsWith(actor, id);
+                if (contacts.error !== null || contacts.usable === 0) return false;
+                const w = await enterMatchWith(actor, id, null, "catch_up");
+                return w.error === undefined && w.moved;
+              };
+              return await withDeadline(toMatch(), budget, "match-timeout");
             } catch {
-              return false; // timed out / failed (e.g. no usable contact) — skipped via advance
+              return false; // timed out / failed — skipped via advance
             } finally {
               void bumpHeartbeat(supabase, job.id);
             }

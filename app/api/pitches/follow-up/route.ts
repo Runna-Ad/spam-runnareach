@@ -37,12 +37,12 @@ import {
 } from "@/lib/pitches/followup-templates";
 import {
   composeFollowupWithClaude,
-  followupEvidenceQuote,
   followupMode,
   reviseShowcaseFollowup,
   type FollowupComposerInput,
 } from "@/lib/pitches/followup-composer";
 import { pickBuilds } from "@/lib/runna/builds";
+import { cleanWhatTheyDo } from "@/lib/pitches/proven-facts";
 import { buildHunterUrlForPitch } from "@/lib/pitches/hunter-mapping";
 import { followupHunterLink } from "@/lib/pitches/tracked-links";
 import {
@@ -157,7 +157,8 @@ type ContactRow = {
 };
 
 type ResearchRow = {
-  pain_points: Array<{ pain_code?: string; pain_label?: string; quote?: string; evidence_quote?: string }> | null;
+  // Only the label is read, for the free check's link; quotes never reach a follow-up (proven facts).
+  pain_points: Array<{ pain_label?: string }> | null;
   what_they_do: string | null;
   tech_stack: string[] | null;
 };
@@ -272,9 +273,10 @@ async function processFollowup(pitch: DuePitchRow, bounceBlocks: BounceBlocks, s
     return { pitch_id: pitch.id, prospect: prospect.company_name, step: nextStep, status: "skipped", reason: compliance.error };
   }
 
-  // ── 3. Load research for pain summary + AI personalisation context ────────
-  let painSummary: string | null = null;
-  let evidenceQuote: string | null = null;
+  // ── 3. Load research for the AI personalisation context ──────────────────
+  // Proven facts (Pedro, 2026-11-09, after CrushCamp's hard no): research pains
+  // and their evidence quotes are our own AI's words, never something seen on
+  // their business, so no follow-up is handed one. what_they_do loses its guesses.
   let whatTheyDo: string | null = null;
   let techStack: string[] = [];
 
@@ -293,13 +295,7 @@ async function processFollowup(pitch: DuePitchRow, bounceBlocks: BounceBlocks, s
   const showcaseArm = pitch.arms?.["writer.showcase"];
   let mode = followupMode(nextStep, typeof showcaseArm === "string" ? showcaseArm : null);
 
-  const quote = followupEvidenceQuote(research?.pain_points ?? null, mode, prospect.company_name);
-  if (quote) {
-    evidenceQuote = quote;
-    // Trim to a concise phrase — max 80 chars
-    painSummary = quote.slice(0, 80).replace(/\.$/, "");
-  }
-  whatTheyDo = research?.what_they_do ?? null;
+  whatTheyDo = cleanWhatTheyDo(research?.what_they_do ?? null);
   techStack = research?.tech_stack ?? [];
 
   // Load the original pitch body so the follow-up can avoid repeating it.
@@ -381,14 +377,10 @@ async function processFollowup(pitch: DuePitchRow, bounceBlocks: BounceBlocks, s
   }
 
   // ── 7. Build template ─────────────────────────────────────────────────────
-  // The fallback template only names the pain when the label is a short, clean
-  // English phrase: labels are English even for MX prospects (Spanglish) and
-  // some are junk ("(ranked by pitch urgency)").
+  // The fallback template names no pain (proven facts, 2026-11-09): its breakup
+  // said "we spotted a gap around [research pain]", a claim nothing showed.
+  // The research label still pre-fills the free check's link, as the first email's does.
   const rawLabel = research?.pain_points?.[0]?.pain_label?.trim() ?? "";
-  const painLabel =
-    lang === "en" && /^[A-Za-z][A-Za-z ,'-]{3,40}$/.test(rawLabel)
-      ? rawLabel.charAt(0).toLowerCase() + rawLabel.slice(1)
-      : null;
   const sender = senderIdentity(lang);
   // The free-check link: the root's tracked link (click recorded on the root),
   // same Hunter parameters as the first email. The follow-up row itself keeps
@@ -414,7 +406,7 @@ async function processFollowup(pitch: DuePitchRow, bounceBlocks: BounceBlocks, s
     prospectName: prospect.company_name,
     contactName: contactFirstName,
     originalSubject: pitch.subject,
-    painLabel,
+    painLabel: null,
     lang,
     signature: senderSignature(lang),
     hunterUrl,
@@ -465,8 +457,6 @@ async function processFollowup(pitch: DuePitchRow, bounceBlocks: BounceBlocks, s
         city: prospect.city,
         originalSubject: pitch.subject,
         originalBody,
-        painSummary,
-        evidenceQuote,
         whatTheyDo,
         techStack,
         hunterValue,

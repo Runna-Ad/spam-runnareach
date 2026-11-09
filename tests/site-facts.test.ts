@@ -267,10 +267,18 @@ test("study: every fact on every fixture has an http URL and a known id", () => 
 
 // ── The prospect's current site ──────────────────────────────────────────────
 
-test("viewport false: 'no phone-friendly viewport setting' (a viewport tag without width=device-width exists on some sites)", () => {
-  const f = one("mobile_viewport", { found: false, evidence: ev(HOME, "viewport: initial-scale=1") })!;
+test("viewport false with a fixed pixel width: 'no phone-friendly viewport setting'", () => {
+  const f = one("mobile_viewport", { found: false, evidence: ev(HOME, "viewport: width=1024") })!;
   assert.equal(f.fact, "The home page has no phone-friendly viewport setting (the setting that makes a page fit a phone screen)");
   assert.doesNotMatch(f.fact, /no (mobile )?viewport tag/);
+});
+
+// CrushCamp, 2026-11-09: rows crawled before the fix stored this tag as false.
+test("viewport: a stored false whose tag is `initial-scale=1` reads as seen (phone-ready), never an absence", () => {
+  const f = one("mobile_viewport", { found: false, evidence: ev(HOME, "viewport: initial-scale=1") })!;
+  assert.equal(f.kind, "seen");
+  const duda = one("mobile_viewport", { found: false, evidence: ev(HOME, "viewport: initial-scale=1, minimum-scale=1, maximum-scale=5, viewport-fit=cover") })!;
+  assert.equal(duda.kind, "seen");
 });
 
 test("current site: an ok crawl of another site gives no facts (a corrected website_url / domain)", () => {

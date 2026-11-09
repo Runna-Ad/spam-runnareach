@@ -1521,3 +1521,11 @@ marketing-context only if it bites.
 **Not checked:** whether real email visitors now reach an audit (needs a week of clicks).
 **Waiting on Pedro:** nothing required. Optional: Calgary postal code.
 **Next:** week of 2026-11-16 clicks vs `hunter_scans` rows with ref; Hunter step 2 (abuse guards), then honesty fixes, then catalog + industries from `lib/runna/capabilities.ts`.
+
+## 2026-11-09 Session — CrushCamp hard no → only say what we can prove (branch feat/proven-facts)
+**What we did:** Found why CrushCamp got a wrong email: the phone-setting check misread `initial-scale=1` (16 of 26 "missing" were working sites), research's own sentence was used as evidence, a stock "We work with [industry] businesses" line (73 of 81 recent first emails), and "Hi Sweat," from sweat@. Built: proven facts only for every writer (seen site facts + checked web facts, no absences, no research pains), capability email when nothing proven gives a reason to write, prompts v3.5 / showcase v2 / website v3, send-gate codes absence_claim + track_record_claim (EN/ES), one-word addresses greet the team, a web deep dive (migration 0055, route, `match` = waiting for checks, tick drafts after the looks) shipped behind WEB_DIVE_ENABLED (off).
+**Current state:** PR #76 (commit d5b9ca0, branch feat/proven-facts), GitHub checks 2/2 passing; verified locally (tsc, lint, 1852/1852 tests, build; two independent reviews). Not deployed.
+**Uncommitted work:** none. Worktree .claude/worktrees/agent-aab447bf3c8ff3037 is merged and can be removed.
+**Decisions made:** Pedro: option 1 + web deep dive first; Claude web search; cap $5 at ship; after the sample run (0 of 9 facts fit to send) "Ship it switched off".
+**Pick up next session:** "ship it" (deploy → 0055 → flag stays off). Later task: tighten the web search (todo "Before switching the web search on").
+**Environment changes:** new env var WEB_DIVE_ENABLED (unset = off), optional WEB_DIVE_MODEL; migration 0055 not applied.

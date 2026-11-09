@@ -18,7 +18,9 @@ import { hasUsableEmail, isRoleBasedEmail } from "../research/email-utils.ts";
 import { siteOwnership } from "../research/site-ownership.ts";
 import { isTrustedForAutoSend } from "../research/verify-recipient.ts";
 import {
+  findAbsenceClaims,
   findInternalNames,
+  findTrackRecordClaims,
   findBannedTerms,
   findClientNames,
   findUnsourcedNumbers,
@@ -60,7 +62,9 @@ export type GateCode =
   | "client_name"
   | "internal_name"
   | "banned_jargon"
-  | "em_dash";
+  | "em_dash"
+  | "absence_claim"
+  | "track_record_claim";
 
 export const GATE_SEVERITY: Record<GateCode, GateSeverity> = {
   unusable_email: "block",
@@ -73,6 +77,10 @@ export const GATE_SEVERITY: Record<GateCode, GateSeverity> = {
   unsourced_metric: "block",
   client_name: "block",
   internal_name: "block",
+  // Claims we can't prove (CrushCamp, 2026-11-09): an invented absence and an
+  // invented track record are as bad as an invented number.
+  absence_claim: "block",
+  track_record_claim: "block",
   unverified_recipient: "review",
   domain_ownership_unsure: "review",
   greeting_mismatch: "review",
@@ -423,6 +431,16 @@ export function evaluateSendGate(input: GateInput): GateResult {
   }
   if (/—/.test(both)) {
     fail("em_dash", "Contains an em dash (—). Use a comma or a period.");
+  }
+
+  // ── 11. Only what we can prove (CrushCamp, 2026-11-09) ───────────────────
+  const absences = findAbsenceClaims(both, input.companyName);
+  if (absences.length > 0) {
+    fail("absence_claim", `Says what we didn't see or what they lack ("${absences[0]}"). Say only what we saw, with where we saw it.`);
+  }
+  const record = findTrackRecordClaims(both);
+  if (record.length > 0) {
+    fail("track_record_claim", `Claims we work with businesses like theirs ("${record[0]}"). Say what we build instead.`);
   }
 
   return failures.length === 0 ? { pass: true } : { pass: false, failures };

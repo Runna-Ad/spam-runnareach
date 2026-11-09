@@ -272,6 +272,8 @@ function wire(extra: Record<string, (...a: unknown[]) => unknown> = {}) {
     learnFromOutcomes: async () => undefined,
     evolveSearchSpace: async () => null,
     weeklyReview: async () => null,
+    // The first-draft step (web-dive) is tested in tests/web-dive-ready.test.ts.
+    draftReadyProspects: async () => ({ drafted: 0, failed: 0, timedOut: 0, advanced: 0, waiting: null }),
     ...extra,
   });
 }
@@ -645,6 +647,17 @@ test("tick with errors writes exactly one autopilot.tick_errors row with the con
     metadata: { errors: ["breakers: placement unreadable"] },
   });
   assert.equal(tick.TICK_ERRORS_ACTION, "autopilot.tick_errors");
+});
+
+test("first drafts run once a tick, autopilot off (before the early return) or on (after scheduling), inside the rewrite floor", async () => {
+  for (const [label, db] of [["off", safetyDb([INBOX])], ["veto", vetoDb({}, false)]] as const) {
+    wire();
+    const report = await tick.runTick(actorFor(db));
+    const runs = calls.filter((c) => c.name === "draftReadyProspects");
+    assert.equal(runs.length, 1, label);
+    assert.equal((runs[0]!.args[0] as { minBudgetUsd: number }).minBudgetUsd, 0.25, label);
+    assert.deepEqual(report.firstDrafts, { drafted: 0, failed: 0, timedOut: 0, advanced: 0, waiting: null }, label);
+  }
 });
 
 test("a clean tick writes no tick_errors row", async () => {

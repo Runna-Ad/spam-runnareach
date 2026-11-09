@@ -642,7 +642,11 @@ test("a bounce read error leaves the opt-out repairs in place and reports it", a
 const u = (p: string) => new URL(p, import.meta.url).href;
 const ROUTE = u("../app/api/replies/poll/route.ts");
 const REAL: Record<string, Record<string, string>> = {
-  [ROUTE]: { "@/lib/replies/optout-repair": u("../lib/replies/optout-repair.ts") },
+  [ROUTE]: {
+    "@/lib/replies/optout-repair": u("../lib/replies/optout-repair.ts"),
+    // Pure (type-only imports): loads for real, like the module above.
+    "@/lib/pitches/proven-facts": u("../lib/pitches/proven-facts.ts"),
+  },
 };
 
 function importsOf(url: string): Record<string, string[]> {

@@ -25,6 +25,7 @@ import { senderIdentity } from "@/lib/pitches/sender-identity";
 import { isEmailOnDncList, type DncClient } from "@/lib/discover/dnc-check";
 import { createServiceRoleClient } from "@/lib/supabase/service-role";
 import { DO_NOT_SEND_STATUSES } from "@/lib/prospects/status";
+import { cleanWhatTheyDo } from "@/lib/pitches/proven-facts";
 import {
   effectiveSendsToday,
   releaseSendSlot,
@@ -150,18 +151,17 @@ export async function GET(req: NextRequest) {
       continue;
     }
 
-    let whatTheyDo: string | null = null;
-    let painSummary: string | null = null;
     // prospect_research is the table every writer uses (the legacy "research"
     // table this used to read is never written — the composer ran blind).
+    // Proven facts (2026-11-09, CrushCamp): only what they do, without the
+    // research step's guesses; a research pain is never evidence, so none.
     const { data: research } = await supabase
       .from("prospect_research")
-      .select("what_they_do, pain_points")
+      .select("what_they_do")
       .eq("prospect_id", prospectId)
       .maybeSingle();
-    whatTheyDo = (research?.what_they_do as string | null) ?? null;
-    const pains = Array.isArray(research?.pain_points) ? research!.pain_points : [];
-    painSummary = (pains[0] as { pain_label?: string } | undefined)?.pain_label ?? null;
+    const whatTheyDo = cleanWhatTheyDo((research?.what_they_do as string | null) ?? null);
+    const painSummary: string | null = null;
 
     const language: "en" | "es" = prospect.language === "es" ? "es" : "en";
     const attemptNumber = attempts + 1;

@@ -33,6 +33,9 @@
     "app/api/benchmarks/research/route.ts": {
       "maxDuration": 120
     },
+    "app/api/research/web-dive/route.ts": {
+      "maxDuration": 120
+    },
     "app/**": {
       "maxDuration": 60
     }

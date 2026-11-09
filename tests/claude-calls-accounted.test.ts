@@ -45,6 +45,8 @@ const REAL_ALIAS: Record<string, string> = {
   "@/lib/runna/capabilities": at("lib/runna/capabilities.ts"),
   "@/lib/prospects/status": at("lib/prospects/status.ts"),
   "@/lib/replies/draftable": at("lib/replies/draftable.ts"),
+  // Pure (type-only imports): the reply writers' what_they_do cleaner runs for real.
+  "@/lib/pitches/proven-facts": at("lib/pitches/proven-facts.ts"),
 };
 const REAL_FILES = new Set([
   at("lib/research/scoring/rubric.ts"),
@@ -482,6 +484,45 @@ test("nudge: a paid failure records once and the draft is held; no usage records
   reset(); nudgeStubs({ ...PAID_FAILURE, usage: null });
   await nudgeGet(req as never);
   assert.equal(costRows.length, 0);
+});
+
+// ── Proven facts: the reply writers get no research pain (2026-11-09) ────────
+// CrushCamp's hard no: the research step's pains and guesses read as things we
+// saw. The research row below carries both; neither may reach a reply writer.
+
+const RESEARCH = {
+  what_they_do: "Family dental clinic in Calgary; likely a small team; website appears outdated Tech: WordPress",
+  pain_points: [{ pain_label: "No online booking", evidence_quote: "Add online booking so patients can book after hours" }],
+};
+const assertProvenOnly = (input: Row | undefined) => {
+  assert.ok(input, "the writer was called");
+  assert.equal(input.painSummary, null);
+  assert.equal(input.whatTheyDo, "Family dental clinic in Calgary");
+  assert.doesNotMatch(JSON.stringify(input), /online booking|likely a small team|appears outdated/);
+};
+/** Swaps the research row into a stub client's tables. */
+const withResearch = (make: () => ReturnType<typeof fakeSupabase>) => () => {
+  const sb = make();
+  return { from: (t: string) => (t === "prospect_research" ? fakeSupabase({ prospect_research: [RESEARCH] }).from(t) : sb.from(t)) };
+};
+
+test("proven facts: a regenerated reply draft gets no research pain or quote, and what_they_do without the research step's guesses", async () => {
+  reset(); replyStubs(PAID_FAILURE);
+  const seen: Row[] = [];
+  stubs.composeReplyDraftWithClaude = async (i: Row) => { seen.push(i); return PAID_FAILURE; };
+  stubs.createServiceRoleClient = withResearch(stubs.createServiceRoleClient as () => ReturnType<typeof fakeSupabase>);
+  const r = await REPLY.regenerateReplyDraft({ reply_id: REPLY_ID });
+  assert.equal(r.ok, true);
+  assertProvenOnly(seen[0]);
+});
+
+test("proven facts: a nudge gets no research pain or quote, and what_they_do without the research step's guesses", async () => {
+  reset(); nudgeStubs(PAID_FAILURE);
+  const seen: Row[] = [];
+  stubs.composeNudgeWithClaude = async (i: Row) => { seen.push(i); return PAID_FAILURE; };
+  stubs.createServiceRoleClient = withResearch(stubs.createServiceRoleClient as () => ReturnType<typeof fakeSupabase>);
+  await nudgeGet({ headers: { get: () => "Bearer s" } } as never);
+  assertProvenOnly(seen[0]);
 });
 
 // ── Classifier and research: display text is clipped, never fatal ────────────

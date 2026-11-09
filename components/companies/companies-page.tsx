@@ -49,6 +49,8 @@ const STATUS_OPTIONS: string[] = [
   "raw",
   "researched",
   "scored",
+  // Passed every gate; its first email waits for the site (and web) checks (web-dive).
+  "match",
   "pitched",
   "replied",
   "booked",
@@ -61,13 +63,14 @@ const STATUS_OPTIONS: string[] = [
   "suppressed",
 ];
 
-const STATUS_LABEL: Record<string, string> = { b_list: "B-list" };
+const STATUS_LABEL: Record<string, string> = { b_list: "B-list", match: "Waiting for checks" };
 
 /** Human labels for the filter dropdown (raw enum values read poorly). */
 const STATUS_FILTER_LABEL: Record<string, string> = {
   raw: "Raw",
   researched: "Researched",
   scored: "Scored",
+  match: "Waiting for checks",
   pitched: "Pitched",
   replied: "Replied",
   booked: "Booked",
@@ -96,6 +99,7 @@ const STATUS_TONE: Record<string, "info" | "neutral" | "success" | "danger" | "w
   raw: "neutral",       // grey — untouched
   researched: "info",   // blue — analyzed
   b_list: "warning",    // amber — 50-69, time-boxed review pool
+  match: "info",        // blue — passed every gate, first email waits for the checks
   pitched: "accent",    // purple — outreach drafted/sent (distinct from researched)
   replied: "success",   // green — they responded
   booked: "success",    // green — meeting booked (key was wrongly "meeting_booked")

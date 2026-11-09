@@ -283,6 +283,8 @@ function wire(db: Db) {
     checkDeliverabilityHealth: async () => ({ blocklist: { listed_on: [] } }),
     analyzeSpamRate: () => ({ inboxRate: null }),
     holdSecret: () => "test-secret",
+    // web-dive: first drafts run with the autopilot off too (a draft never sends by itself).
+    draftReadyProspects: async () => ({ drafted: 0, failed: 0, timedOut: 0, advanced: 0, waiting: null }),
   });
 }
 
@@ -291,7 +293,7 @@ const emails = () =>
 const subjects = () => emails().map((e) => e.subject);
 const digestBody = () => emails().find((e) => !e.subject.startsWith("Autopilot paused"))?.body ?? "";
 
-test("route: a tenant with the kill switch off is ticked, and gets the pull-back, the digest and the breakers, nothing else", async () => {
+test("route: a tenant with the kill switch off is ticked, and gets the pull-back, the digest, the breakers and the first drafts, nothing else", async () => {
   const db = killSwitchDb();
   wire(db);
   const { GET } = (await import(ROUTE)) as { GET: (req: unknown) => Promise<{ body: { ok: boolean; reports: Array<Row> } }> };
@@ -320,6 +322,11 @@ test("route: a tenant with the kill switch off is ticked, and gets the pull-back
   assert.match(digestBody(), /Hello by-person/);
   assert.doesNotMatch(digestBody(), /Hello auto-1/, "the digest never lists an approval this tick held");
   assert.equal(subjects().filter((x) => x === "Autopilot paused sending: 2 hard bounces in the last 30 sends").length, 1, "the breaker's email");
+
+  // The first-draft step ran once (drafts for a person to review), inside the rewrite budget floor.
+  const firstDraft = calls.filter((c) => c.name === "draftReadyProspects");
+  assert.equal(firstDraft.length, 1);
+  assert.equal((firstDraft[0]!.args[0] as { minBudgetUsd: number }).minBudgetUsd, 0.25);
 
   // Nothing else ran: no pipeline stub called, no stage write.
   const allowed = new Set(Object.keys(answers));

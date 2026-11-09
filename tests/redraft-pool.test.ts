@@ -51,6 +51,7 @@ const REAL: Record<string, Record<string, string>> = {
   [GATE]: {
     "@/lib/research/email-utils": u("../lib/research/email-utils.ts"),
     "./send-gate": u("../lib/pitches/send-gate.ts"),
+    "./proven-facts": u("../lib/pitches/proven-facts.ts"),
   },
 };
 

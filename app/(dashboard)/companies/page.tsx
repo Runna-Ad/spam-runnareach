@@ -8,6 +8,8 @@ export const dynamic = "force-dynamic";
 const VALID_STATUSES = new Set([
   "raw",
   "researched",
+  // Waiting for checks: first email after the site (and web) looks (web-dive).
+  "match",
   "pitched",
   "replied",
   "booked",

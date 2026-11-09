@@ -5,8 +5,11 @@
  */
 import assert from "node:assert/strict";
 import test from "node:test";
+import { __test__ } from "../lib/anthropic/client.ts";
 import { isDraftableIntent, nudgeSkipsIntent } from "../lib/replies/draftable.ts";
 import {
+  composeNudgeWithClaude,
+  composeReplyDraftWithClaude,
   composeReplyDraftHeuristic,
   replyGreetingName,
   saysForwarded,
@@ -91,4 +94,30 @@ test("fallback thank-you: short, no pitch or call ask, never greets the company"
 test("fallback for other intents still greets the company when no name is known", () => {
   const d = composeReplyDraftHeuristic(input({ intent: "wants_info", replyBody: "Tell me more" }));
   assert.ok(d.body.startsWith("Hi Desloges Law Group Professional Corporation,"));
+});
+
+// Proven facts (2026-11-09): emails sent before the rule may carry claims we can't show
+// (CrushCamp's "I didn't see the viewport setting"); a reply or a nudge never says them again.
+test("reply drafts and nudges are told never to repeat a claim the earlier email made about the business", async (t) => {
+  t.after(() => __test__.reset());
+  process.env.ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY ?? "test-key";
+  const systems: string[] = [];
+  __test__.setClient({
+    messages: {
+      create: async (r: { system?: { text: string }[] | string }) => {
+        systems.push(typeof r.system === "string" ? r.system : (r.system ?? []).map((b) => b.text).join("\n"));
+        const text = JSON.stringify({ subject: "Re: hi", body: "Hi Adele,\n\nThanks for writing back, happy to show you a quick example.\n\nHenry\nRunna Advertising", reasoning: "x" });
+        return { content: [{ type: "text", text }], usage: { input_tokens: 10, output_tokens: 10 } };
+      },
+    },
+  } as never);
+  for (const language of ["en", "es"] as const) {
+    assert.ok((await composeReplyDraftWithClaude(input({ language, intent: "wants_info" }))).ok);
+    assert.ok((await composeNudgeWithClaude({
+      contactFirstName: null, companyName: "Desloges Law", language, threadSubject: "Hi", originalPitchBody: "I didn't see the viewport setting on your home page.",
+      lastInboundBody: "Tell me more", whatTheyDo: null, painSummary: null, attemptNumber: 2, senderFirstName: "Henry", agencyName: "Runna Advertising",
+    })).ok);
+  }
+  assert.equal(systems.length, 4);
+  for (const sys of systems) assert.ok(sys.includes("NEVER repeat a claim the earlier email made about their business, site, staff or customers."));
 });
