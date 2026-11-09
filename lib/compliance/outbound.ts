@@ -9,8 +9,11 @@
  * The sender's details are public business information (they're printed in
  * every email), so they live here as defaults; any of them can be overridden
  * with a Vercel env var without a deploy of new code:
- *   RUNNA_MAILING_ADDRESS   postal address
+ *   RUNNA_MAILING_ADDRESS   postal address (Spanish emails, and English ones
+ *                           until an English address is set)
+ *   RUNNA_MAILING_ADDRESS_EN  postal address on English (Canadian) emails
  *   RUNNA_SENDER_ENTITY     business name
+ *   RUNNA_LOCATIONS_EN / _ES  "Mexico · Canada" after the name
  *   RUNNA_WEBSITE_EN / _ES  website shown on English / Spanish emails
  *   RUNNA_CONTACT_EMAIL     contact email
  *   RUNNA_PRIVACY_URL       aviso de privacidad (Spanish emails)
@@ -25,10 +28,20 @@ import { signUnsubscribeToken, type UnsubscribePayload } from "./unsubscribe-tok
 
 export const UNSUBSCRIBE_PATH = "/api/unsubscribe";
 
-/** Provided by Pedro, 2026-10-16. */
+/**
+ * Provided by Pedro, 2026-10-16. Footer reworked 2026-11-09: name and
+ * locations as a sign-off line, and Canadian (English) emails carry the
+ * Calgary mailing address (Pedro, 2026-11-09). If `mailingAddressEn` is ever
+ * emptied, English emails fall back to the Mexico City one, so no email goes
+ * out without an address.
+ */
 export const SENDER_DEFAULTS = {
-  entity: "Rünna",
+  entity: "Runna Advertising",
+  locationsEn: "Mexico · Canada",
+  locationsEs: "México · Canadá",
   mailingAddress: "Tizapán San Ángel, Loreto y Campamento, Álvaro Obregón, 01090 Mexico City, Mexico",
+  /** Canadian mailing address for English emails. Empty = use `mailingAddress`. */
+  mailingAddressEn: "4550 112 Ave SE, Calgary, AB, Canada",
   websiteEn: "runnik.ca",
   websiteEs: "runna.com.mx",
   contactEmail: "hola@runna.mx",
@@ -67,7 +80,9 @@ function baseUrl(): string {
 export function getOutboundCompliance(
   recipient: UnsubscribePayload,
 ): { ok: true; value: OutboundCompliance } | { ok: false; error: string } {
-  const mailingAddress = env("RUNNA_MAILING_ADDRESS", SENDER_DEFAULTS.mailingAddress);
+  const baseAddress = env("RUNNA_MAILING_ADDRESS", SENDER_DEFAULTS.mailingAddress);
+  const mailingAddress =
+    recipient.lang === "en" ? env("RUNNA_MAILING_ADDRESS_EN", SENDER_DEFAULTS.mailingAddressEn) || baseAddress : baseAddress;
   if (!mailingAddress) {
     return {
       ok: false,
@@ -84,6 +99,10 @@ export function getOutboundCompliance(
   const footerInput: FooterInput = {
     lang: recipient.lang,
     senderEntity: env("RUNNA_SENDER_ENTITY", SENDER_DEFAULTS.entity),
+    locations:
+      recipient.lang === "es"
+        ? env("RUNNA_LOCATIONS_ES", SENDER_DEFAULTS.locationsEs)
+        : env("RUNNA_LOCATIONS_EN", SENDER_DEFAULTS.locationsEn),
     mailingAddress,
     website:
       recipient.lang === "es"

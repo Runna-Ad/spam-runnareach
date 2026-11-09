@@ -44,6 +44,7 @@ const REAL_ALIAS: Record<string, string> = {
   "@/lib/research/email-utils": at("lib/research/email-utils.ts"),
   "@/lib/runna/capabilities": at("lib/runna/capabilities.ts"),
   "@/lib/prospects/status": at("lib/prospects/status.ts"),
+  "@/lib/replies/draftable": at("lib/replies/draftable.ts"),
 };
 const REAL_FILES = new Set([
   at("lib/research/scoring/rubric.ts"),

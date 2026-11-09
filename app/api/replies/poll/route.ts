@@ -55,6 +55,7 @@ import { senderIdentity } from "@/lib/pitches/sender-identity";
 import {
   composeReplyDraftHeuristic,
   composeReplyDraftWithClaude,
+  replyGreetingName,
   type DraftComposerInput,
 } from "@/lib/replies/draft-composer";
 import type { ReplyIntent } from "@/lib/replies/queries";
@@ -65,6 +66,7 @@ import { isTestAddress } from "@/lib/compliance/test-addresses";
 import { protectedStatusFilter } from "@/lib/prospects/status";
 import { sendPendingLeadAlerts, supabaseLeadAlertStore } from "@/lib/replies/lead-alert";
 import { REPAIR_BUDGET_MS, repairMissedOptOuts } from "@/lib/replies/optout-repair";
+import { isDraftableIntent } from "@/lib/replies/draftable";
 
 /** An out-of-office pushes the next follow-up at least this far out. */
 const OOO_POSTPONE_DAYS = 7;
@@ -81,9 +83,6 @@ const POLL_BUDGET_MS = 100_000;
  * all as a backstop.
  */
 const RECENT_INBOUND_DAYS = 2;
-// Intents we draft a response for. Negatives (hard_no / wrong_person) and
-// auto_reply are left for Pedro's intent actions in /inbox — no draft.
-const DRAFTABLE: ReplyIntent[] = ["wants_meeting", "wants_info", "not_now", "unclassified"];
 // Prospect statuses that are terminal for the funnel — skip their threads.
 // Not "no_match": its threads still carry opt-outs that must reach do-not-contact.
 const DEAD_STATUSES = new Set(["booked", "suppressed", "archived_no_meeting", "won", "lost"]);
@@ -462,7 +461,8 @@ async function runPoll(req: NextRequest) {
         // like any other; the send action still enforces the cap, so a human
         // decides whether to book, reply or archive.
         // ── Draft a response for engageable intents ────────────────────────
-        if (DRAFTABLE.includes(classification.intent)) {
+        // wrong_person included: a forwarded email gets a thank-you draft.
+        if (isDraftableIntent(classification.intent)) {
           const draft = await draftResponse(
             supabase,
             thread,
@@ -624,8 +624,9 @@ async function draftResponse(
   const sender = senderIdentity(language);
   const senderFirstName = sender.firstName;
 
-  // Best-effort contact first name from the thread reply.
-  const contactFirstName = inbound.fromName?.trim().split(/\s+/)[0] ?? null;
+  // Best-effort contact first name from the thread reply, never a department
+  // ("Reception <reception@...>" is not "Hi Reception").
+  const contactFirstName = replyGreetingName(inbound.fromName);
 
   // Pull the original pitch we sent + research so the reply can actually speak to
   // what they're asking about instead of deflecting to "let's book a call".

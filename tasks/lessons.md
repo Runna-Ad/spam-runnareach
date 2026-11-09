@@ -491,3 +491,14 @@ TAGS: #pitches #showcase #reviewer #prompt-plus-deterministic-guard #followup
 WHAT HAPPENED: I told Pedro "it's 16:48 UTC, inside the send window, the right time to apply 0053". He logged in to Vercel about ten hours later; the merge record said 02:59 UTC. Applying 0053 then, outside the window and before any new-code health run, would have left Sentry on the old health-check schedule overnight (one false "missed" issue). Caught only because `gh pr view` printed mergedAt.
 RULE: Before any step whose safety depends on the hour (migrations that move cron jobs, send windows, deploy order), run `date -u` in the same turn. A time read earlier in the session is a fact about then, not now.
 TAGS: #lesson #time #ship #cron
+
+[2026-11-09] LESSON: a funnel hand-off nobody measured end to end lost every visitor for 30 days
+WHAT HAPPENED: Auditing runna-hunter, 159 emails in 30 days carried the free-check link and 0 of them could start the scan on their own: the Hunter auto-runs only when industry, size and timesink all arrive, and S.P.A.M. drops size whenever headcount is unknown (always, in practice). 22 clicks (15 from one email security scanner, 7 emails in all) produced 0 scans; hunter_scans has had no real row since 2026-06-25. The Hunter itself worked: a complete test link saved a row and showed results.
+ROOT CAUSE: each side was tested alone (hunter-mapping.test.ts checks the URL, the Hunter checks its form) but no check ever counted clicks → scans after shipping, and an optional parameter on one side was a required one on the other.
+RULE: After shipping any cross-repo hand-off, measure the step's conversion in production within a week (here: clicks → hunter_scans rows with ref). When one side treats a parameter as optional, the other side must not require it, or the contract test must fail.
+TAGS: #hunter #funnel #cross-repo #verification
+
+[2026-11-09] LESSON: CASL decides what the footer may drop, before the design does
+WHAT HAPPENED: Pedro asked to remove the full mailing address from every email because the Mexico City address looks off to Canadian prospects. CASL requires a mailing address in every commercial email to Canada, and the send path fails closed without one. Said so once with the rule and three options; Pedro chose a Canadian address on English emails, with a sign-off line ("Runna Advertising · Mexico · Canada · runnik.ca") leading the footer.
+RULE: For a footer or unsubscribe change, check it against CASL (name, mailing address, one contact method, unsubscribe) first, then offer layouts that keep all four. A legal requirement is stated once with an alternative, never silently dropped or silently kept.
+TAGS: #casl #footer #compliance #challenge-protocol

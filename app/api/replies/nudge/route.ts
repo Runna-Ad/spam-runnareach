@@ -38,6 +38,8 @@ import {
   nudgeLooksSafeToSend,
   type NudgeComposerInput,
 } from "@/lib/replies/draft-composer";
+import { nudgeSkipsIntent } from "@/lib/replies/draftable";
+import type { ReplyIntent } from "@/lib/replies/queries";
 
 export const maxDuration = 120;
 
@@ -68,7 +70,7 @@ export async function GET(req: NextRequest) {
   // recent sent reply per prospect.
   const { data: sentRows } = await supabase
     .from("replies")
-    .select("id, tenant_id, prospect_id, pitch_id, from_email, subject, body_text, gmail_rfc_message_id, draft_sent_at")
+    .select("id, tenant_id, prospect_id, pitch_id, from_email, subject, body_text, intent, gmail_rfc_message_id, draft_sent_at")
     .eq("draft_status", "sent")
     .lt("draft_sent_at", cutoff)
     .order("draft_sent_at", { ascending: false })
@@ -85,6 +87,8 @@ export async function GET(req: NextRequest) {
 
   for (const reply of latestByProspect.values()) {
     if (processed >= MAX_PER_RUN) break;
+    // Our last reply was a thank-you to the wrong person: nothing to chase.
+    if (nudgeSkipsIntent(reply.intent as ReplyIntent | null)) continue;
     const prospectId = reply.prospect_id as string;
     const tenantId = reply.tenant_id as string;
     const draftSentAt = reply.draft_sent_at as string;

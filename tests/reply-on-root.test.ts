@@ -18,7 +18,10 @@ import test from "node:test";
 const u = (p: string) => new URL(p, import.meta.url).href;
 const ROUTE = u("../app/api/replies/poll/route.ts");
 const REAL: Record<string, Record<string, string>> = {
-  [ROUTE]: { "@/lib/pitches/events": u("../lib/pitches/events.ts") },
+  [ROUTE]: {
+    "@/lib/pitches/events": u("../lib/pitches/events.ts"),
+    "@/lib/replies/draftable": u("../lib/replies/draftable.ts"),
+  },
 };
 
 function importsOf(url: string): Record<string, string[]> {
@@ -189,6 +192,8 @@ async function poll(pitches: Row[], inbound: Inbound[], opts: Parameters<typeof 
         return { firstName: "Nils" };
       case "composeReplyDraftHeuristic":
         return { body: "Gracias", subject: "Re: Hola" };
+      case "replyGreetingName":
+        return null;
       case "extractBouncedRecipient":
         return "dead@clinicasol.mx";
       case "addEmailToDnc":

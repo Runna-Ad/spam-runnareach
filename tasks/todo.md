@@ -5,6 +5,30 @@ Deck: `/Users/work/Downloads/SPAM_Partner_Deck.pdf`
 
 ---
 
+## Thank-you for wrong-person replies + sign-off footer (branch feat/forwarded-thank-you, 2026-11-09)
+
+Why (Pedro, 2026-11-09): Desloges reception forwarded our email to management and the reply only got a "Wrong person" flag; Pedro wants a quick thank-you. Footer: the full Mexico City address looked off on Canadian emails; CASL still needs an address, so Pedro chose a Canadian address on English emails and a sign-off line first.
+
+- [x] wrong_person replies get a thank-you draft (approved by a person, like every reply draft); nudge cron skips them; "Write a thank-you / Write a reply" button for replies with no draft; department names never greeted
+- [x] Footer: "Runna Advertising · Mexico · Canada · runnik.ca" (ES: México · Canadá · runna.com.mx), then the address, then unsubscribe; contact email only when no website
+- [x] Tests: npm test 1733/1733, tsc, eslint clean
+- [x] Calgary mailing address on English emails: `4550 112 Ave SE, Calgary, AB, Canada` (Pedro, 2026-11-09), in `SENDER_DEFAULTS.mailingAddressEn`
+- [ ] Pedro: postal code for the Calgary address, if he wants it on the footer
+- [ ] Not checked: a real AI thank-you sample (`scripts/thank-you-sample.ts`, needs the local env file; Pedro runs it)
+- [ ] Commit, PR, then ship on Pedro's "ship it"; after deploy, open the Desloges reply in /inbox and press "Write a thank-you"
+
+## runna-hunter audit (2026-11-09, no code changed)
+
+Funnel, last 30 days: 159 emails carried the link, 0 could auto-run (S.P.A.M. never sends `size`; the Hunter auto-runs only with industry + size + timesink); 22 clicks on 7 emails, 15 from one scanner; 0 real scans since 2026-06-25. A complete test link worked end to end (test row `182cf71e-04d1-4784-aeb9-a9efa8cc04eb` in hunter_scans, delete on Pedro's OK). 55 of 159 links say `industry=other` (logistics, outdoor retail, colleges, industrial, distributors; "panadería" and "asesoría fiscal" are mapping misses).
+
+- [ ] Email links start the audit without the size answer, and a scanner opening the link never counts as a scan (record the ref only after a real interaction)
+- [ ] Abuse guards: limit /api/generate and /api/recommend by their own calls, cap payload size, fail closed; contact form trap field + per-IP cap + save the lead before emailing; scan.js re-checks every redirect, ports 80/443 only
+- [ ] Contact form sends `ref`; scan row updated with the final findings shown
+- [ ] Honesty: Flash/table/analytics detection false positives; http fallback for http-only sites; benchmark stats from the approved library; La Comer proof MX only; Pedro decides whether the "no named clients" pitch rule covers the Hunter
+- [ ] Catalog rebuilt from `lib/runna/capabilities.ts` (Daily Briefings, paid media strategy, email/lifecycle, brand identity, video studio missing); new industries for logistics, manufacturing/industrial, distribution, education
+- [ ] Model id out of the code (env), current model, tested after the swap; Spanish leftovers on the CA page (tab title, logo label, first "Analizando" frame)
+- [ ] Pedro: runna-hunter is a PUBLIC repo (survey 2026-10-29) and its catalog names clients
+
 ## AI showcase email (branch feat/showcase-email, 2026-10-29)
 
 Why (Pedro, 2026-10-29, from a TCN "AI with compliance built in" email): an email that opens on "want to use AI but not sure where it helps?" and shows real builds, picked for the prospect's industry, with how the AI learns from their own data. Test: "as first email and in the other half as a follow up email."
