@@ -1510,3 +1510,14 @@ marketing-context only if it bites.
 **Checks run:** typecheck, lint, 1726 tests, build (audit); live crawl of 33 study sites; prod: 1 of 821 researched rows lack evidence_urls.
 **Not checked:** PageSpeed with a real key; the crawler in prod (0054 not applied yet); v3.4 pass rate.
 **Waiting on Pedro:** "ship it" for the batch 10 PR; PageSpeed key; closing-line wording; OK to sync the conductor skill's new network row to ~/.claude.
+
+## 2026-11-09 17:45 UTC: wrong-person thank-you, sign-off footer, runna-hunter audit + email-link fix
+**Shipped (Pedro "ship it" for each):**
+- S.P.A.M. `c97eb49` (PR #74, no migration): wrong-person replies get a thank-you draft (approved by a person; nudge skips them; "Write a thank-you" button for old replies); footer = "Runna Advertising · Mexico · Canada · runnik.ca" / ES "México · Canadá · runna.com.mx", then address, then unsubscribe; English emails carry 4550 112 Ave SE, Calgary (CASL keeps an address in every email; Pedro chose a Canadian one over removing it).
+- runna-hunter `f13ab88` (PR #1): email links without size open straight to results at 2–10 with a size switch; a scan saves only after a real interaction.
+**Prod actions (Pedro yes):** Desloges thank-you drafted by the AI and sent 17:04 UTC (reply 1/3). Two test rows deleted from hunter_scans (6 June rows left).
+**Audit findings (runna-hunter):** 159 linked emails in 30 days, 0 could auto-run; 22 clicks on 7 emails, 15 from one scanner; 0 real scans since 2026-06-25. Open: AI endpoints have no real spend limit, contact form has no spam guard (sends via pedro@runnareach.com per a code comment), scan.js follows redirects without re-checking, false "Flash"/"analytics" detections, unsourced stats, catalog missing Daily Briefings / paid media / email / brand identity / video studio, no logistics/manufacturing/distribution/education industries. All in tasks/todo.md (not in the public hunter repo).
+**Checks run:** npm test 1733/1733, tsc, eslint; prod footer read back from the first sent email; hunter: 6 local scenarios against a fake database, then live (untouched visit 0 rows, one tap 1 row).
+**Not checked:** whether real email visitors now reach an audit (needs a week of clicks).
+**Waiting on Pedro:** nothing required. Optional: Calgary postal code.
+**Next:** week of 2026-11-16 clicks vs `hunter_scans` rows with ref; Hunter step 2 (abuse guards), then honesty fixes, then catalog + industries from `lib/runna/capabilities.ts`.

@@ -13,17 +13,18 @@ Why (Pedro, 2026-11-09): Desloges reception forwarded our email to management an
 - [x] Footer: "Runna Advertising · Mexico · Canada · runnik.ca" (ES: México · Canadá · runna.com.mx), then the address, then unsubscribe; contact email only when no website
 - [x] Tests: npm test 1733/1733, tsc, eslint clean
 - [x] Calgary mailing address on English emails: `4550 112 Ave SE, Calgary, AB, Canada` (Pedro, 2026-11-09), in `SENDER_DEFAULTS.mailingAddressEn`
-- [ ] Pedro: postal code for the Calgary address, if he wants it on the footer
-- [ ] Not checked: a real AI thank-you sample (`scripts/thank-you-sample.ts`, needs the local env file; Pedro runs it)
-- [ ] Commit, PR, then ship on Pedro's "ship it"; after deploy, open the Desloges reply in /inbox and press "Write a thank-you"
+- [ ] Optional: postal code for the Calgary address
+- [x] Shipped 2026-11-09 (PR #74, c97eb49); real AI thank-you checked in prod (greeted Adele by her signed name, no pitch) and sent 17:04 UTC
+- [ ] Inbox: the reply panel is hidden below ~1000px window width (pre-existing); show it as a drawer or stack it under the list
 
-## runna-hunter audit (2026-11-09, no code changed)
+## runna-hunter audit (2026-11-09)
 
-Funnel, last 30 days: 159 emails carried the link, 0 could auto-run (S.P.A.M. never sends `size`; the Hunter auto-runs only with industry + size + timesink); 22 clicks on 7 emails, 15 from one scanner; 0 real scans since 2026-06-25. A complete test link worked end to end (test row `182cf71e-04d1-4784-aeb9-a9efa8cc04eb` in hunter_scans, delete on Pedro's OK). 55 of 159 links say `industry=other` (logistics, outdoor retail, colleges, industrial, distributors; "panadería" and "asesoría fiscal" are mapping misses).
+Funnel, last 30 days: 159 emails carried the link, 0 could auto-run (S.P.A.M. never sends `size`; the Hunter auto-runs only with industry + size + timesink); 22 clicks on 7 emails, 15 from one scanner; 0 real scans since 2026-06-25. A complete test link worked end to end (both test rows deleted on Pedro's OK, 2026-11-09). 55 of 159 links say `industry=other` (logistics, outdoor retail, colleges, industrial, distributors; "panadería" and "asesoría fiscal" are mapping misses).
 
-- [ ] Email links start the audit without the size answer, and a scanner opening the link never counts as a scan (record the ref only after a real interaction)
+- [x] Email links start the audit without the size answer (2–10 + size switch); a scan saves only after a real interaction (runna-hunter PR #1, f13ab88, verified live 2026-11-09)
+- [ ] Week of 2026-11-16: compare tracked clicks with `hunter_scans` rows carrying `ref` (is anyone getting through now?)
 - [ ] Abuse guards: limit /api/generate and /api/recommend by their own calls, cap payload size, fail closed; contact form trap field + per-IP cap + save the lead before emailing; scan.js re-checks every redirect, ports 80/443 only
-- [ ] Contact form sends `ref`; scan row updated with the final findings shown
+- [ ] Contact form sends `ref` (the saved scan now holds the final findings, done in PR #1)
 - [ ] Honesty: Flash/table/analytics detection false positives; http fallback for http-only sites; benchmark stats from the approved library; La Comer proof MX only; Pedro decides whether the "no named clients" pitch rule covers the Hunter
 - [ ] Catalog rebuilt from `lib/runna/capabilities.ts` (Daily Briefings, paid media strategy, email/lifecycle, brand identity, video studio missing); new industries for logistics, manufacturing/industrial, distribution, education
 - [ ] Model id out of the code (env), current model, tested after the swap; Spanish leftovers on the CA page (tab title, logo label, first "Analizando" frame)
