@@ -567,3 +567,8 @@ TAGS: #testing #hunter #verification #win
 WHAT HAPPENED: Screenshots at the mobile preset looked washed out on both the live Hunter and the new build. The page itself was fine: every element on top had opacity 1, no filter, no overlay (checked with elementFromPoint and computed styles); full-width screenshots of the same page were bright.
 RULE: Before reporting a "dim" or "faded" look at phone width, check computed opacity and the top element at a few points. Do not file it as a page bug from a mobile-emulation screenshot alone.
 TAGS: #browser #tooling #mobile
+
+[2026-11-09] LESSON: in S.P.A.M., migrations go through the connector, not `db push`
+WHAT HAPPENED: Shipping 0055, `supabase migration list --linked` showed 0048/0049 as local-only and three dated rows as remote-only. They are 0032, 0048 and 0049, applied through the connector and never renamed. Because a dated version sorts after "0055", `db push` would have needed `--include-all` and would have replayed 0048 (it resets the reply-poll schedule). The global rule says CLI `db push`; this repo's `tasks/conductor-config.md` says "apply through the Supabase connector, then normalise the row", which is how 0050-0054 went in. The hook also blocked even `db push --dry-run`, because the "ship it" was over 30 minutes old after the merge approval wait.
+RULE: Here, apply with the connector's apply_migration, then `update supabase_migrations.schema_migrations set version='NNNN', name='<name>' where name='<name>' and version ~ '^[0-9]{14}$'`, and check by name. Never `db push --include-all` on this project while those dated rows exist. Plan the migration step right after the merge, so it lands inside the 30-minute "ship it" window.
+TAGS: #supabase #migrations #deploy #hooks
