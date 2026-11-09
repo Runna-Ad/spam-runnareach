@@ -83,20 +83,24 @@ test("outbound compliance: an English (Canadian) address is used on English emai
   try {
     for (const k of keys) delete process.env[k];
     process.env.TOKEN_ENCRYPTION_KEY = "k";
-    // Not set yet: English emails keep the Mexico City address (never no address).
-    const before = getOutboundCompliance({ ...PAYLOAD, lang: "en" });
-    assert.ok(before.ok && before.value.footer.text.includes("\nTizapán San Ángel"));
-
-    process.env.RUNNA_MAILING_ADDRESS_EN = "100 Example Ave SW, Calgary, AB T2P 0A1, Canada";
-    const en = getOutboundCompliance({ ...PAYLOAD, lang: "en" });
-    assert.ok(en.ok);
-    if (en.ok) {
-      assert.ok(en.value.footer.text.startsWith("Runna Advertising · Mexico · Canada · runnik.ca\n100 Example Ave SW, Calgary"));
-      assert.doesNotMatch(en.value.footer.text, /Tizapán/);
+    // Default: English emails carry the Calgary address (Pedro, 2026-11-09).
+    const def = getOutboundCompliance({ ...PAYLOAD, lang: "en" });
+    assert.ok(def.ok);
+    if (def.ok) {
+      assert.ok(
+        def.value.footer.text.startsWith("Runna Advertising · Mexico · Canada · runnik.ca\n4550 112 Ave SE, Calgary, AB, Canada\n"),
+        def.value.footer.text,
+      );
+      assert.doesNotMatch(def.value.footer.text, /Tizapán/);
     }
     const es = getOutboundCompliance(PAYLOAD);
     assert.ok(es.ok && es.value.footer.text.includes("\nTizapán San Ángel"), "Spanish emails keep the Mexico City address");
     assert.ok(es.ok && !es.value.footer.text.includes("Calgary"));
+
+    // The Vercel env var overrides the English address without a code change.
+    process.env.RUNNA_MAILING_ADDRESS_EN = "100 Example Ave SW, Calgary, AB T2P 0A1, Canada";
+    const en = getOutboundCompliance({ ...PAYLOAD, lang: "en" });
+    assert.ok(en.ok && en.value.footer.text.includes("\n100 Example Ave SW, Calgary"));
   } finally {
     for (const k of keys) {
       if (saved[k] === undefined) delete process.env[k];

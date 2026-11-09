@@ -12,7 +12,8 @@ Why (Pedro, 2026-11-09): Desloges reception forwarded our email to management an
 - [x] wrong_person replies get a thank-you draft (approved by a person, like every reply draft); nudge cron skips them; "Write a thank-you / Write a reply" button for replies with no draft; department names never greeted
 - [x] Footer: "Runna Advertising · Mexico · Canada · runnik.ca" (ES: México · Canadá · runna.com.mx), then the address, then unsubscribe; contact email only when no website
 - [x] Tests: npm test 1733/1733, tsc, eslint clean
-- [ ] Pedro: the Calgary mailing address for English emails (goes in `SENDER_DEFAULTS.mailingAddressEn` or Vercel `RUNNA_MAILING_ADDRESS_EN`); until then English emails keep the Mexico City address
+- [x] Calgary mailing address on English emails: `4550 112 Ave SE, Calgary, AB, Canada` (Pedro, 2026-11-09), in `SENDER_DEFAULTS.mailingAddressEn`
+- [ ] Pedro: postal code for the Calgary address, if he wants it on the footer
 - [ ] Not checked: a real AI thank-you sample (`scripts/thank-you-sample.ts`, needs the local env file; Pedro runs it)
 - [ ] Commit, PR, then ship on Pedro's "ship it"; after deploy, open the Desloges reply in /inbox and press "Write a thank-you"
 

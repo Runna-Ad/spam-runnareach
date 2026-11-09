@@ -30,9 +30,10 @@ export const UNSUBSCRIBE_PATH = "/api/unsubscribe";
 
 /**
  * Provided by Pedro, 2026-10-16. Footer reworked 2026-11-09: name and
- * locations as a sign-off line, and Canadian (English) emails get a Canadian
- * mailing address once `mailingAddressEn` is filled in. Until then they keep
- * the Mexico City one, so no email ever goes out without an address.
+ * locations as a sign-off line, and Canadian (English) emails carry the
+ * Calgary mailing address (Pedro, 2026-11-09). If `mailingAddressEn` is ever
+ * emptied, English emails fall back to the Mexico City one, so no email goes
+ * out without an address.
  */
 export const SENDER_DEFAULTS = {
   entity: "Runna Advertising",
@@ -40,7 +41,7 @@ export const SENDER_DEFAULTS = {
   locationsEs: "México · Canadá",
   mailingAddress: "Tizapán San Ángel, Loreto y Campamento, Álvaro Obregón, 01090 Mexico City, Mexico",
   /** Canadian mailing address for English emails. Empty = use `mailingAddress`. */
-  mailingAddressEn: "",
+  mailingAddressEn: "4550 112 Ave SE, Calgary, AB, Canada",
   websiteEn: "runnik.ca",
   websiteEs: "runna.com.mx",
   contactEmail: "hola@runna.mx",
