@@ -567,3 +567,30 @@ TAGS: #testing #hunter #verification #win
 WHAT HAPPENED: Screenshots at the mobile preset looked washed out on both the live Hunter and the new build. The page itself was fine: every element on top had opacity 1, no filter, no overlay (checked with elementFromPoint and computed styles); full-width screenshots of the same page were bright.
 RULE: Before reporting a "dim" or "faded" look at phone width, check computed opacity and the top element at a few points. Do not file it as a page bug from a mobile-emulation screenshot alone.
 TAGS: #browser #tooling #mobile
+
+## Web search tightening (2026-11-10, branch feat/web-dive-tighten, PR #77)
+
+[2026-11-10] LESSON: before switching on a paid step, count how many outputs it changes, not only whether its outputs are right
+WHAT HAPPENED: The web dive's second sample kept 1 fact in 10 prospects and it was true, so the rules worked. But it was a context fact, and with no problem or opening the capability email goes out, which uses no web facts: 0 of 10 emails would change, for $0.22 a prospect (about $2 a day). The first sample had only asked "is each kept fact fit to send?".
+RULE: For any step that costs money per item, the sample report says how many final outputs differ because of it. If the answer is zero, the decision is "keep it off", however correct the step is.
+TAGS: #cost #samples #web-dive #win
+
+[2026-11-10] LESSON: "the URL has their name in it" is not "it is their page"
+WHAT HAPPENED: The first profile tie in lib/research/web-dive/match.ts accepted any URL path segment equal to the domain label. The Opus reviewer showed youtube.com/hashtag/crushcamp, x.com/hashtag/crushcamp, reddit.com/search/crushcamp and instagram.com/explore/tags/crushcamp all passed, so anyone's job post would have reached the email as CrushCamp's opening. The property test used the same "segment equals label" idea, so it could not catch it. Fixed with isOwnProfile: a social site whose path STARTS with the label.
+RULE: When a check decides "whose page is this", list the pages that carry the name but belong to nobody (tags, search, explore, directories, lists) and test those first. The independent check in a property test must not reuse the rule it checks.
+TAGS: #web-dive #matching #review
+
+[2026-11-10] LESSON: a stricter name check must be tested on the forms real sentences use
+WHAT HAPPENED: Requiring the name in the quote, the fold turned "CrushCamp's" into "crushcamps" and dropped true quotes; the second sample also showed "Cook Roberts LLP" never matching "Cook Roberts" (LLP was not a legal ending) and "&amp;" in names and quotes. Each was found by a test or the sample, not by reading the code.
+RULE: When a rule tightens from "somewhere on the page" to "in this sentence", test it both ways on possessives, legal endings (LLP, LP, PC, S.A.P.I. de C.V.), HTML entities, accents and the name inside a longer word before trusting it. A stricter rule that silently drops true cases is a quiet loss.
+TAGS: #web-dive #matching #tests
+
+[2026-11-10] LESSON: "N days old" means calendar days
+WHAT HAPPENED: recentEnough first compared milliseconds, so a page dated exactly 180 days ago failed at 18:00 UTC and passed at 06:00. A fixed-clock test caught it.
+RULE: An age limit in days compares whole calendar days (both sides cut to a day), never a timestamp against a date at midnight.
+TAGS: #dates #tests
+
+[2026-11-10] LESSON: never hand Pedro a command with a placeholder in it
+WHAT HAPPENED: The sample command was given as `… scripts/web-dive-samples.ts <the 10 ids>` in a block with a Run button; zsh read `<` as a redirect and failed. It also pointed at `.env.local` in the worktree, which has none (only the main checkout does, and it had the old script).
+RULE: A command the person runs carries the real values, never a <placeholder>. Check which folder has what it needs (env file, the new code) with an existence check, and dry-run it without secrets (no ids → usage) before handing it over.
+TAGS: #handoff #commands #worktree
