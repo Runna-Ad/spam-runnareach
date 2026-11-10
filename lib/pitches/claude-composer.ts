@@ -374,8 +374,12 @@ export function heldBodyForRevision(body: string): string {
  * see"; the intro and proof lines claim what we build, never who we work
  * with. With no proven problem or opening the capability email goes out
  * instead (pitch-stage.ts showcaseForced).
+ *
+ * v3.6 (2026-11-09, web search tightened): a web fact reaches the writer and
+ * the critic as its quote, page and hook only (webFactsPayload), never the
+ * dive's own summary sentence; "say only what the quote says".
  */
-export const PITCH_PROMPT_VERSION = "pitch-v3.5-2026-11-09";
+export const PITCH_PROMPT_VERSION = "pitch-v3.6-2026-11-09";
 
 /** Everything that differs by language. The rules themselves do not. */
 type LanguagePack = {
@@ -522,7 +526,7 @@ Make them curious enough to run the free check or reply. Not to close a deal. On
 
 FACTS: EVERYTHING COMES FROM THE PAYLOAD
 1. About the prospect, say only what the payload proves: company_name, industry, city, what_they_do, tech_stack, site_facts and web_facts. Every claim about them must be one of those, said as it is written there and no more. Never guess their size, revenue, customers, location, tools, or anything they lack.
-   site_facts is what our crawler saw on their own site, each entry with its page (url). web_facts is what another web page says about them (a review, a news story, a job post, a directory listing), each with its page (url) and the exact text on that page (quote). Each entry has a hook: "problem" (something not working), "opening" (a change, like a new location or a hire), "context" (true, but no reason to write on its own).
+   site_facts is what our crawler saw on their own site, each entry with its page (url). web_facts is what another web page says about them (a review, a news story, a job post, a directory listing), each with its page (url) and the exact words on that page (quote). A web fact is its quote and nothing more: say only what the quote says, in plain words, and never more than it says. Each entry has a hook: "problem" (something not working), "opening" (a change, like a new location or a hire), "context" (true, but no reason to write on its own).
    Say where a web fact comes from in plain words when its url shows it ("a review on Google", "your job post on Indeed", "a story in the local paper"), and say it as the page says it.
    Never write what you did not see, did not find or think is missing, not even softly: no "I didn't see", "I couldn't find", "there's no", "you don't have", "your site doesn't", "without a way to". If it is not an entry, it is not in the email. A pain_candidate, when there is one, is the angle a person chose for this rewrite: it tells you what to offer, never something you saw.
    A number in a site fact or a web fact (a year, a score, a rating, a count) is not one FACTS 2 allows: describe it in words, never write the figure.
@@ -812,9 +816,14 @@ export function siteFactsPayload(input: Pick<GeneratorInputs, "site_facts">): Ar
   return (input.site_facts ?? []).map((f) => ({ id: f.id, kind: f.kind, fact: f.fact, url: f.url, strength: f.strength, hook: hooks.get(`${f.id}\n${f.fact}`) ?? "context" }));
 }
 
-/** web_facts as the writer and the critic are both shown them (same list, same fields). */
-export function webFactsPayload(input: Pick<GeneratorInputs, "web_facts">): Array<{ fact: string; quote: string; url: string; hook: string }> {
-  return provenFacts({ web_facts: input.web_facts }).map((f) => ({ fact: f.fact, quote: f.quote ?? "", url: f.url, hook: f.hook }));
+/**
+ * web_facts as the writer and the critic are both shown them (same list, same
+ * fields): the page's own words (quote), the page (url) and the hook. Never
+ * the dive's one-line summary (`fact`): our AI wrote that sentence, and only
+ * the quote was checked word for word against the page (pitch v3.6).
+ */
+export function webFactsPayload(input: Pick<GeneratorInputs, "web_facts">): Array<{ quote: string; url: string; hook: string }> {
+  return provenFacts({ web_facts: input.web_facts }).map((f) => ({ quote: f.quote ?? "", url: f.url, hook: f.hook }));
 }
 
 /** The greeting's first name: the rule lives in greeting-name.ts, shared with the exemplar scrubber. */

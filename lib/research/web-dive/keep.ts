@@ -2,7 +2,7 @@
  * The keep-check of the web dive: a web fact survives only when code can show
  * where it came from (the page URL and the exact words on it) and that it is
  * about THIS business. Pure, fail closed, one reason per drop (brief
- * tasks/briefs/web-dive.md, "The keep-check").
+ * tasks/briefs/web-dive.md, "The keep-check"; tightened 2026-11-09, see match.ts).
  *
  * Search result content comes back encrypted, so the only page text we can
  * read is what the model cites. A fact is kept when:
@@ -10,31 +10,33 @@
  *   2. a citation from that same URL contains the quote (20+ characters), both
  *      lowercased, accents kept, whitespace collapsed, curly quotes straightened;
  *   3. every number in the fact is in the quote (numbersCovered, plus the send
- *      gate's own rule, findUnsourcedNumbers: the writer may quote the fact);
- *   4. the page is not on the prospect's own domain (the crawler reads that);
- *   5. the quote or the result title names the business, AND the page is tied
- *      to it: a whole path segment of the URL is its domain label
- *      (instagram.com/crushcamp), or the quote/title names its city, or the
- *      quote names its domain. A one-common-word name needs the domain tie (a
- *      city is not enough: "Elevate" in Calgary is many places);
- *   6. its kind is one of the three.
+ *      gate's own rule, findUnsourcedNumbers);
+ *   4. the page is not on the prospect's own domain (the crawler reads that),
+ *      and not a source we never use: employee reviews (Indeed company pages,
+ *      Glassdoor) or auto-generated profiles (match.ts blockedSource);
+ *   5. the QUOTE names the business (the title alone only on its own social
+ *      profile) and the page is tied to it: its own profile, its domain in the
+ *      quote, or its city in the QUOTE; a one-common-word name needs the
+ *      profile or domain tie (match.ts tieToBusiness); and the quote is not
+ *      shaped like an absence ("X does not offer Y", match.ts isAbsenceShaped);
+ *   6. its kind is one of the three, and stays "problem"/"opening" only when
+ *      the quote shows one (else it is kept as "context": match.ts kindFromQuote);
+ *   7. a problem or an opening has a recent page date from the search result
+ *      (match.ts recentEnough): undated or old, it is dropped.
  * Its matching is its own (token runs over a folded copy), not the model's.
  */
 
 import { normalizeUrl, numbersCovered, type ResponseEvidence } from "../../benchmarks/research.ts";
 import { findUnsourcedNumbers } from "../../pitches/content-rules.ts";
-import { EN_WORDS } from "../../pitches/wordlists/en.ts";
-import { ES_WORDS } from "../../pitches/wordlists/es.ts";
 import { isWebFactKind, MAX_WEB_FACTS, MIN_QUOTE_CHARS, type WebFact } from "./facts.ts";
+import { blockedSource, decodeEntities, hostOf, isAbsenceShaped, isOwnSite, kindFromQuote, pageDateFrom, quoteFold, recentEnough, tieToBusiness, type MatchProspect, type TieReason } from "./match.ts";
+
+// The folds and the name/URL helpers live in match.ts (shared with the read before a draft).
+export { businessNameTokens, domainLabel, hasTokenRun, isCommonWord, nameTokens, quoteFold, urlPathSegments } from "./match.ts";
 
 export type WebFactCandidate = { fact: string; quote: string; url: string; kind: string };
 
-export type KeepProspect = {
-  company_name: string;
-  city: string | null;
-  domain: string | null;
-  website_url: string | null;
-};
+export type KeepProspect = MatchProspect;
 
 export type WebFactDropReason =
   | "malformed"
@@ -44,153 +46,21 @@ export type WebFactDropReason =
   | "number_not_in_quote"
   | "bad_url"
   | "own_site"
-  | "name_too_short"
-  | "name_not_found"
-  | "not_tied_to_business"
-  | "common_name_needs_domain"
+  | "employee_reviews"
+  | "auto_profile"
+  | TieReason
+  | "absence_claim"
   | "bad_kind"
+  | "stale_or_undated"
   | "duplicate"
   | "over_limit";
 
 export type KeepResult = { keep: true; fact: WebFact } | { keep: false; reason: WebFactDropReason };
 
-// ── Text folds (each rule's own) ─────────────────────────────────────────────
-
-/** Rule 2: lowercase, accents KEPT, whitespace collapsed, curly quotes straightened. */
-export function quoteFold(s: string): string {
-  return s
-    .replace(/[‘’‚‛′]/g, "'")
-    .replace(/[“”„‟″]/g, '"')
-    .replace(/\s+/g, " ")
-    .trim()
-    .toLowerCase();
-}
-
-/** Rule 5: lowercase, accents stripped, punctuation removed ("S.A." → "sa", "O'Neil" → "oneil"), tokens. */
-export function nameTokens(s: string): string[] {
-  return s
-    .normalize("NFKD")
-    .replace(/[̀-ͯ]/g, "")
-    .toLowerCase()
-    .replace(/[.'‘’`]/g, "")
-    .split(/[^a-z0-9]+/)
-    .filter(Boolean);
-}
-
-/** Legal suffixes, longest first; dropped from the END of the business name only, repeatedly. */
-const LEGAL_SUFFIXES: readonly string[][] = [
-  "s de rl de cv", "professional corporation", "sa de cv", "s de rl",
-  "corporation", "corp", "inc", "ltd", "ltee", "llc", "sc", "sa",
-].map((s) => s.split(" "));
-
-/** The business name as rule 5 compares it: folded tokens, legal suffixes dropped. */
-export function businessNameTokens(name: string): string[] {
-  const t = nameTokens(name);
-  for (let changed = true; changed; ) {
-    changed = false;
-    for (const suffix of LEGAL_SUFFIXES) {
-      if (t.length > suffix.length && suffix.every((w, i) => t[t.length - suffix.length + i] === w)) {
-        t.splice(t.length - suffix.length, suffix.length);
-        changed = true;
-        break;
-      }
-    }
-  }
-  return t;
-}
-
-/**
- * Does `needle` occur in `hay` as a run of whole tokens? Compared joined, so
- * "CrushCamp" and "Crush Camp" match each other, but never inside a longer
- * word ("crushcamp" is not in "crushcampaign").
- */
-export function hasTokenRun(hay: readonly string[], needle: readonly string[]): boolean {
-  const want = needle.join("");
-  if (!want) return false;
-  for (let i = 0; i < hay.length; i++) {
-    let acc = "";
-    for (let j = i; j < hay.length && acc.length < want.length; j++) {
-      acc += hay[j];
-      if (acc === want) return true;
-    }
-  }
-  return false;
-}
-
-let commonWords: ReadonlySet<string> | null = null;
-/** The 20,000 most frequent English and Spanish words (lib/pitches/wordlists, the exemplar check's strict tier). */
-export function isCommonWord(word: string): boolean {
-  if (!commonWords) {
-    const lines = (s: string) => s.split("\n").map((w) => w.trim()).filter(Boolean);
-    commonWords = new Set([...lines(EN_WORDS).slice(0, 20_000), ...lines(ES_WORDS).slice(0, 20_000)]);
-  }
-  return commonWords.has(word);
-}
-
-const bareHost = (h: string): string => h.trim().toLowerCase().replace(/^www\./, "").replace(/\.$/, "");
-
-function hostOf(url: string): string | null {
-  try {
-    const u = new URL(url.trim());
-    if (u.protocol !== "http:" && u.protocol !== "https:") return null;
-    return bareHost(u.hostname);
-  } catch {
-    return null;
-  }
-}
-
-/** The prospect's own hosts: its domain and its website's host. */
-function ownHosts(p: KeepProspect): string[] {
-  const out = new Set<string>();
-  if (p.domain && p.domain.trim()) out.add(bareHost(hostOf(`https://${p.domain.trim()}`) ?? p.domain));
-  if (p.website_url && p.website_url.trim()) {
-    const h = hostOf(p.website_url) ?? hostOf(`https://${p.website_url.trim()}`);
-    if (h) out.add(h);
-  }
-  return [...out].filter(Boolean);
-}
-
-/**
- * The page's path segments, each folded to letters and digits:
- * instagram.com/crushcamp/ → ["crushcamp"], tiktok.com/@crush_camp → ["crushcamp"],
- * yelp.com/biz/crushcamp-austin → ["biz", "crushcampaustin"]. The domain label
- * ties a page only as a WHOLE segment (a profile named after it): a directory
- * slug that adds another city is the same name somewhere else, and "camp" is
- * not tied to instagram.com/campingworld. The host never ties (crushcamp.com
- * is another domain, maybe another business).
- */
-export function urlPathSegments(url: string): string[] {
-  try {
-    const u = new URL(url.trim());
-    return u.pathname
-      .split("/")
-      .map((seg) => {
-        let s = seg;
-        try {
-          s = decodeURIComponent(seg);
-        } catch {
-          // A malformed escape: compare the raw segment.
-        }
-        return nameTokens(s).join("");
-      })
-      .filter(Boolean);
-  } catch {
-    return [];
-  }
-}
-
-/** "crushcamp" of crushcamp.ca: the first label of the bare domain. */
-export function domainLabel(p: KeepProspect): string | null {
-  const host = ownHosts(p)[0];
-  const label = host?.split(".")[0] ?? "";
-  const folded = nameTokens(label).join("");
-  return folded.length >= 4 ? folded : null;
-}
-
 // ── The check ────────────────────────────────────────────────────────────────
 
 /**
- * Rules 1-6 for one candidate. Every branch that cannot confirm returns
+ * Rules 1-7 for one candidate. Every branch that cannot confirm returns
  * keep: false with the first rule it failed. `kept` are the facts already kept
  * for this prospect (duplicates and the 6-fact limit).
  */
@@ -199,11 +69,15 @@ export function keepWebFact(
   evidence: Pick<ResponseEvidence, "results" | "citations">,
   prospect: KeepProspect,
   kept: readonly WebFact[] = [],
+  now: Date = new Date(),
 ): KeepResult {
-  const { fact, quote, url, kind } = candidate;
-  if (typeof fact !== "string" || typeof quote !== "string" || typeof url !== "string" || typeof kind !== "string") {
+  const { url, kind } = candidate;
+  if (typeof candidate.fact !== "string" || typeof candidate.quote !== "string" || typeof url !== "string" || typeof kind !== "string") {
     return { keep: false, reason: "malformed" };
   }
+  // HTML entities decoded once, first ("&amp;" is "&"; "&#39;" is no number): every rule reads, and we store, the plain text.
+  const fact = decodeEntities(candidate.fact);
+  const quote = decodeEntities(candidate.quote);
   if (!fact.trim() || !quote.trim() || !url.trim()) return { keep: false, reason: "malformed" };
 
   // 1. A URL the search returned.
@@ -222,28 +96,26 @@ export function keepWebFact(
     return { keep: false, reason: "number_not_in_quote" };
   }
 
-  // 4. Not their own site.
-  const host = hostOf(result.url);
-  if (!host) return { keep: false, reason: "bad_url" };
-  if (ownHosts(prospect).some((own) => host === own || host.endsWith(`.${own}`))) return { keep: false, reason: "own_site" };
+  // 4. Not their own site, not a source we never use.
+  if (!hostOf(result.url)) return { keep: false, reason: "bad_url" };
+  if (isOwnSite(result.url, prospect)) return { keep: false, reason: "own_site" };
+  const blocked = blockedSource(result.url);
+  if (blocked) return { keep: false, reason: blocked };
 
-  // 5. About this business.
-  const name = businessNameTokens(prospect.company_name);
-  if (name.join("").length < 4) return { keep: false, reason: "name_too_short" };
-  const quoteTokens = nameTokens(quote);
-  const titleTokens = nameTokens(result.title ?? "");
-  if (!hasTokenRun(quoteTokens, name) && !hasTokenRun(titleTokens, name)) return { keep: false, reason: "name_not_found" };
-  const label = domainLabel(prospect);
-  const bareDomain = ownHosts(prospect)[0] ?? null;
-  const domainTie = (label !== null && urlPathSegments(result.url).includes(label)) || (bareDomain !== null && q.includes(bareDomain));
-  const city = prospect.city ? nameTokens(prospect.city) : [];
-  const cityTie = city.length > 0 && (hasTokenRun(quoteTokens, city) || hasTokenRun(titleTokens, city));
-  const oneCommonWord = name.length === 1 && isCommonWord(name[0]!);
-  if (oneCommonWord && !domainTie) return { keep: false, reason: cityTie ? "common_name_needs_domain" : "not_tied_to_business" };
-  if (!domainTie && !cityTie) return { keep: false, reason: "not_tied_to_business" };
+  // 5. About this business: named in the quote, tied to it.
+  const title = result.title?.trim() ? decodeEntities(result.title.trim()) : null;
+  const tie = tieToBusiness({ quote, url: result.url, title }, prospect);
+  if (tie) return { keep: false, reason: tie };
+  // An absence is never said, whoever wrote it (profile and FAQ templates do).
+  if (isAbsenceShaped(quote)) return { keep: false, reason: "absence_claim" };
 
-  // 6. A kind the writers know.
+  // 6. A kind the writers know, and only as strong as the quote shows.
   if (!isWebFactKind(kind)) return { keep: false, reason: "bad_kind" };
+  const shownKind = kindFromQuote(kind, quote);
+
+  // 7. A problem or an opening from a recently dated page.
+  const page_date = pageDateFrom(result.page_age, now);
+  if (!recentEnough(shownKind, page_date, now)) return { keep: false, reason: "stale_or_undated" };
 
   if (kept.some((k) => normalizeUrl(k.url) === nurl && quoteFold(k.quote) === q)) return { keep: false, reason: "duplicate" };
   if (kept.length >= MAX_WEB_FACTS) return { keep: false, reason: "over_limit" };
@@ -253,11 +125,12 @@ export function keepWebFact(
     fact: {
       // Our sentence: banned dashes out (they read corporate and trip spam filters).
       fact: fact.replace(/\s*[—–]\s*/g, ", ").trim(),
-      // Their words, exactly as checked against the citation.
+      // Their words, exactly as checked against the citation (HTML entities decoded: "&amp;" is "&").
       quote: quote.trim(),
       url: result.url,
-      title: result.title?.trim() ? result.title.trim() : null,
-      kind,
+      title,
+      kind: shownKind,
+      page_date,
     },
   };
 }
@@ -269,11 +142,12 @@ export function keepWebFacts(
   candidates: readonly WebFactCandidate[],
   evidence: Pick<ResponseEvidence, "results" | "citations">,
   prospect: KeepProspect,
+  now: Date = new Date(),
 ): { kept: WebFact[]; dropped: DroppedCandidate[] } {
   const kept: WebFact[] = [];
   const dropped: DroppedCandidate[] = [];
   for (const c of candidates) {
-    const r = keepWebFact(c, evidence, prospect, kept);
+    const r = keepWebFact(c, evidence, prospect, kept, now);
     if (r.keep) kept.push(r.fact);
     else dropped.push({ candidate: c, reason: r.reason });
   }

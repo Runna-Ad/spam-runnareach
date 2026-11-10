@@ -180,6 +180,8 @@ async function stage(opts: {
   builds?: ShowcaseBuild[];
   /** fetchBenchmarksForPitch's answer (default none). */
   benchmarks?: unknown[];
+  /** webFactsFor's answer (default none); every call's prospect argument is recorded. */
+  webFacts?: unknown[];
 }) {
   const claude = fakeClaude();
   const tables: Record<string, Row[]> = {
@@ -194,6 +196,7 @@ async function stage(opts: {
     pitches: opts.rewrite ? [{ id: PITCH_ID, tenant_id: "t1", prospect_id: PROSPECT_ID, status: "draft", attribution_code: "code" }] : [],
   };
   const loaded: unknown[] = [];
+  const webFactCalls: Array<{ tenantId: unknown; prospect: Record<string, unknown> }> = [];
   (globalThis as Record<string, unknown>).__sfStubs = new Proxy({
     revalidatePath: () => undefined,
     claudeIsAvailable: () => true,
@@ -215,7 +218,10 @@ async function stage(opts: {
     provenFacts,
     hasProvenHook,
     proveInputs,
-    webFactsFor: async () => [],
+    webFactsFor: async (_db: unknown, tenantId: unknown, prospect: Record<string, unknown>) => {
+      webFactCalls.push({ tenantId, prospect });
+      return opts.webFacts ?? [];
+    },
     resolvePainCodes: async (_s: unknown, _t: string, ids: string[]) => ids.map((id) => ({ id, code: id })),
     recordWantedFacts: async () => undefined,
     chooseWriterArms: async () => ({ evidence: "benchmark", guidance: null, showcase: "followup" }),
@@ -252,7 +258,7 @@ async function stage(opts: {
   const result = opts.rewrite
     ? await mod.rewritePitchWithAngleWith({ supabase, user: USER }, { pitch_id: PITCH_ID, pain_id: "pain-1", pain_label: "No online booking", case_study_id: null, capability: null })
     : await mod.generatePitchWith({ supabase, user: USER }, PROSPECT_ID);
-  return { result, claude, loaded, tables };
+  return { result, claude, loaded, tables, webFactCalls };
 }
 
 /**
@@ -392,4 +398,35 @@ test("generatePitchWith: a PageSpeed score Google rates as poor (a seen problem)
   assert.deepEqual(decision.benchmarks_offered, []);
   assert.equal(Object.hasOwn(decision.arms ?? {}, "writer.evidence"), false);
   assert.equal(decision.prompt_version, PITCH_PROMPT_VERSION);
+});
+
+// ── Web facts: read for the prospect as it is now, shown as quote + page + hook ──
+
+test("both draft paths ask webFactsFor with the prospect as loaded (current name and domain), and its facts reach the writer and the critic as quote, url and hook only", async () => {
+  const fact = {
+    fact: "SUMMARY THE DIVE WROTE: they are hiring.",
+    quote: "Hidden Acres is hiring a second front desk host for the summer",
+    url: "https://jobs.example/hidden-acres",
+    title: "Front desk host",
+    kind: "opening",
+    page_date: "2026-11-01",
+  };
+  for (const rewrite of [false, true]) {
+    const label = rewrite ? "rewrite" : "first draft";
+    const { result, claude, webFactCalls } = await stage({ rewrite, webFacts: [fact], site: { website_url: "https://hiddenacres.test", domain: "hiddenacres.test" } });
+    assert.equal(result.ok, true, `${label}: ${result.error}`);
+    assert.equal(webFactCalls.length, 1, label);
+    assert.equal(webFactCalls[0]!.tenantId, "t1", label);
+    assert.equal(webFactCalls[0]!.prospect.id, PROSPECT_ID, label);
+    assert.equal(webFactCalls[0]!.prospect.company_name, "Hidden Acres", label);
+    assert.equal(webFactCalls[0]!.prospect.domain, "hiddenacres.test", label);
+    assert.equal(webFactCalls[0]!.prospect.website_url, "https://hiddenacres.test", label);
+    const writer = claude.find((c) => !isCritic(c))!;
+    const critic = claude.find(isCritic)!;
+    assert.ok(!isShowcaseWriter(writer), `${label}: an opening keeps the problem-led email`);
+    const shown = [{ quote: fact.quote, url: fact.url, hook: "opening" }];
+    assert.deepEqual(payloadOf(writer).web_facts, shown, label);
+    assert.deepEqual(payloadOf(critic).web_facts, shown, label);
+    assert.ok(!writer.messages[0]!.content.includes("SUMMARY THE DIVE WROTE"), `${label}: the dive's summary never reaches the writer`);
+  }
 });

@@ -24,6 +24,7 @@ import {
 } from "../../benchmarks/research.ts";
 import { MAX_WEB_FACTS, type WebFact } from "./facts.ts";
 import { keepWebFacts, type DroppedCandidate, type KeepProspect, type WebFactCandidate } from "./keep.ts";
+import { SEARCH_BLOCKED_DOMAINS } from "./match.ts";
 
 /** The server tool's uses per dive (the brief: 4 searches ≈ $0.20-0.22 with Sonnet). */
 export const WEB_DIVE_MAX_USES = 4;
@@ -52,11 +53,14 @@ export type DiveOutcome = {
   searchDisabled: boolean;
 };
 
+/** The cost_tracking entity_type every dive records, and the one the dive's own 24h ceiling reads (route.ts). */
+export const WEB_DIVE_COST_ENTITY = "web_research" as const;
+
 /** What a dive records in cost_tracking (entity_type is the web dive's own). */
 export type WebDiveCostInput = {
   tenantId: string;
   model: string;
-  entity_type: "web_research";
+  entity_type: typeof WEB_DIVE_COST_ENTITY;
   entity_id: string | null;
   usage: ReturnType<typeof researchCost>["usage"];
   metadata?: Record<string, unknown>;
@@ -66,6 +70,8 @@ export type DiveDeps = {
   create: CreateMessage;
   recordCost: (input: WebDiveCostInput) => Promise<void>;
   model: string;
+  /** The clock the page dates are judged against (tests). */
+  now?: () => Date;
 };
 
 // ── Prompt ───────────────────────────────────────────────────────────────────
@@ -77,11 +83,17 @@ TASK: use web search to find facts about THIS business from pages other than its
 ONLY THIS BUSINESS
 - A fact counts only if the page is clearly about this exact business: the same name AND the same city, or a link to its website.
 - A business with the same or a similar name in another city is a different business. Leave it out.
+- A page that lists many businesses (a "best of" list, a directory page) counts only for the words about this one.
 - Never guess, infer, combine or round. "No facts" is a good, useful answer.
+
+SOURCES WE NEVER USE
+- Employee reviews and pages about working there (Indeed company pages, Glassdoor, salary pages): they are about the job, not the business.
+- Pages written by a machine from scraped data: business-data profiles and directories that summarise a company (ZoomInfo, Tracxn, Birdeye, Wheree, Cylex, Canpages, Crunchbase and the like), and their FAQ or "about this company" text.
+- A problem or an opening must come from a page dated in the last year. An old article or an expired job post is not an opening.
 
 EACH FACT
 - url: the exact URL of the search result it comes from.
-- quote: words copied exactly from that page, 20 to 150 characters, that show the fact. No ellipsis, no edits.
+- quote: words copied exactly from that page, 20 to 150 characters, that show the fact AND name the business. No ellipsis, no edits. The email may say only what the quote says.
 - fact: one plain sentence saying what the quote shows. Use no number the quote does not contain.
 - kind: "problem" (something the business or its customers say is not working, e.g. a review saying nobody answers the phone, a post about a booking outage), "opening" (a change that makes them likely to need help: a new location, hiring front-desk or marketing staff, a launch, an award) or "context" (anything else true and useful: what they offer, where, since when).
 
@@ -182,7 +194,8 @@ export async function runDive(
       max_tokens: MAX_TOKENS,
       system: WEB_DIVE_SYSTEM,
       messages: [{ role: "user", content: webDiveUserPrompt(prospect) }],
-      tools: [{ type: "web_search_20250305", name: "web_search", max_uses: WEB_DIVE_MAX_USES }],
+      // blocked_domains only saves searches; keep.ts drops those sources whatever the search returns.
+      tools: [{ type: "web_search_20250305", name: "web_search", max_uses: WEB_DIVE_MAX_USES, blocked_domains: [...SEARCH_BLOCKED_DOMAINS] }],
     });
   } catch (err) {
     const message = redact(err instanceof Error ? err.message : String(err));
@@ -205,7 +218,7 @@ export async function runDive(
     await deps.recordCost({
       tenantId: prospect.tenant_id,
       model: deps.model,
-      entity_type: "web_research",
+      entity_type: WEB_DIVE_COST_ENTITY,
       entity_id: opts.researchId ?? null,
       usage,
       metadata: { prospect_id: prospect.id, web_search_requests: webSearchRequests, stop_reason: stop || null },
@@ -232,7 +245,7 @@ export async function runDive(
     if (c.ok) candidates.push(c.value);
     else dropped.push(malformed(c.raw));
   }
-  const checked = keepWebFacts(candidates, evidence, prospect);
+  const checked = keepWebFacts(candidates, evidence, prospect, deps.now?.() ?? new Date());
   dropped.push(...checked.dropped);
   return { ...base, status: checked.kept.length > 0 ? "ok" : "empty", facts: checked.kept, dropped, error: null };
 }

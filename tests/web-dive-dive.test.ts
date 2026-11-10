@@ -18,6 +18,8 @@ import {
   HEARTBEAT_MS,
   MAX_DIVES_PER_24H,
   MIN_CAP_LEFT_USD,
+  DIVE_BUDGET_24H_USD,
+  DIVE_COST_ALLOWANCE_USD,
   MIN_REMAINING_TO_START_MS,
   ROUTE_MAX_DURATION_S,
   RUN_DEADLINE_MS,
@@ -26,6 +28,7 @@ import {
   type RunDeps,
 } from "../lib/research/web-dive/run.ts";
 import type { DueDive } from "../lib/research/web-dive/store.ts";
+import { SEARCH_BLOCKED_DOMAINS } from "../lib/research/web-dive/match.ts";
 
 const PROSPECT: DiveProspect = {
   id: "p1",
@@ -39,9 +42,10 @@ const PROSPECT: DiveProspect = {
   industry: "fitness studio",
 };
 const YELP = "https://www.yelp.ca/biz/crushcamp-calgary";
-const RESULTS = [{ url: YELP, title: "CrushCamp - Calgary, AB - Yelp" }];
-const CITATIONS = [{ url: YELP, cited_text: "Love the coaches, but I called three times and nobody ever answered the phone." }];
-const GOOD = { fact: "A Yelp reviewer says nobody ever answered the phone.", quote: "nobody ever answered the phone", url: YELP, kind: "problem" };
+// page_age as the search gives it: relative to the real clock the dive reads.
+const RESULTS: Array<{ url: string; title: string; page_age?: string }> = [{ url: YELP, title: "CrushCamp - Calgary, AB - Yelp", page_age: "2 weeks ago" }];
+const CITATIONS = [{ url: YELP, cited_text: "Love the coaches at CrushCamp in Calgary, but I called three times and nobody ever answered the phone." }];
+const GOOD = { fact: "A Yelp reviewer says nobody ever answered the phone.", quote: "CrushCamp in Calgary, but I called three times and nobody ever answered the phone", url: YELP, kind: "problem" };
 const BAD = { fact: "CrushCamp has 900 members.", quote: "CrushCamp has 900 members in Calgary", url: YELP, kind: "context" };
 const USAGE = { input_tokens: 50_000, output_tokens: 1_500, server_tool_use: { web_search_requests: 4 } };
 // Built at run time: a key-shaped string in the source trips the secret scanners.
@@ -60,7 +64,7 @@ function response(o: { text?: string; results?: typeof RESULTS; citations?: type
         tool_use_id: "s1",
         content: o.searchError
           ? { type: "web_search_tool_result_error", error_code: o.searchError }
-          : (o.results ?? RESULTS).map((r) => ({ type: "web_search_result", url: r.url, title: r.title, encrypted_content: "x" })),
+          : (o.results ?? RESULTS).map((r) => ({ type: "web_search_result", url: r.url, title: r.title, page_age: r.page_age ?? null, encrypted_content: "x" })),
       },
       {
         type: "text",
@@ -108,7 +112,9 @@ test("ok: one kept, one dropped with its reason; cost recorded once, as web_rese
   assert.ok(o.costUsd !== null && o.costUsd > 0.04 && o.costUsd < 0.5, String(o.costUsd));
   assert.equal(costs[0]!.usage.cost_usd, o.costUsd);
   const req = requests[0]!;
-  assert.deepEqual(req.tools, [{ type: "web_search_20250305", name: "web_search", max_uses: WEB_DIVE_MAX_USES }]);
+  assert.deepEqual(req.tools, [{ type: "web_search_20250305", name: "web_search", max_uses: WEB_DIVE_MAX_USES, blocked_domains: [...SEARCH_BLOCKED_DOMAINS] }]);
+  // Plain hostnames only (the API takes paths on web_search, but a malformed entry would fail every dive; paths are keep.ts's job).
+  for (const d of SEARCH_BLOCKED_DOMAINS) assert.match(d, /^[a-z0-9-]+(\.[a-z0-9-]+)+$/, d);
   assert.equal(WEB_DIVE_MAX_USES, 4);
   assert.equal(req.model, "claude-sonnet-4-5-20250929");
 });
@@ -214,7 +220,7 @@ function harness(o: { queue?: DueDive[]; cap?: CapState; started?: { count: numb
       log.push(d ? `claim ${d.research_id}` : "claim none");
       return d ? [d] : [];
     },
-    capState: async () => o.cap ?? { spentUsd: 1, capUsd: 5 },
+    capState: async () => o.cap ?? { spentUsd: 1, capUsd: 5, diveSpentUsd: 0.4 },
     startedLast24h: async (_tenant, exclude) => {
       log.push(`count excl ${exclude}`);
       return o.started ?? { count: 3 };
@@ -248,8 +254,8 @@ test("run: two dives a run at most, each claimed, counted, dived and saved", asy
   assert.equal(r.costUsd, 0.42);
 });
 
-test("budget: less than $0.50 left under the cap gives the claim back and stops the run", async () => {
-  for (const cap of [{ spentUsd: 4.51, capUsd: 5 }, { spentUsd: 5.2, capUsd: 5 }, { spentUsd: Number.NaN, capUsd: 5 }]) {
+test("budget: less than $1 left under the cap gives the claim back and stops the run", async () => {
+  for (const cap of [{ spentUsd: 4.01, capUsd: 5, diveSpentUsd: 0 }, { spentUsd: 5.2, capUsd: 5, diveSpentUsd: 0 }, { spentUsd: Number.NaN, capUsd: 5, diveSpentUsd: 0 }]) {
     const h = harness({ cap });
     const r = await h.run();
     assert.equal(r.stopped, "cap", JSON.stringify(cap));
@@ -258,9 +264,28 @@ test("budget: less than $0.50 left under the cap gives the claim back and stops 
     assert.deepEqual(h.log, ["claim r1", "count excl r1", "release r1"]);
     assert.match(r.stopDetail ?? "", /AI budget/);
   }
-  // Exactly $0.50 left is enough.
-  assert.equal(budgetStop({ spentUsd: 4.5, capUsd: 5 }, { count: 0 }), null);
-  assert.equal(MIN_CAP_LEFT_USD, 0.5);
+  // Exactly $1 left is enough.
+  assert.equal(budgetStop({ spentUsd: 4, capUsd: 5, diveSpentUsd: 0 }, { count: 0 }), null);
+  assert.equal(MIN_CAP_LEFT_USD, 1);
+});
+
+test("budget: the web dive's own ~$2 ceiling: $1.70 spent by dives in 24h still dives, more stops the run", async () => {
+  assert.equal(DIVE_BUDGET_24H_USD, 2);
+  assert.equal(DIVE_COST_ALLOWANCE_USD, 0.3);
+  // Plenty of the whole AI cap left; only the dive's own spend decides.
+  assert.equal(budgetStop({ spentUsd: 1.7, capUsd: 5, diveSpentUsd: 1.7 }, { count: 0 }), null);
+  for (const diveSpentUsd of [1.71, 2, 3.5, Number.NaN]) {
+    const h = harness({ cap: { spentUsd: 2, capUsd: 5, diveSpentUsd } });
+    const r = await h.run();
+    assert.equal(r.stopped, "dive_budget", String(diveSpentUsd));
+    assert.equal(r.dived, 0);
+    assert.equal(r.released, 1);
+    assert.match(r.stopDetail ?? "", /web search budget/);
+  }
+  // The whole cap is checked first: with both short, the stop says AI budget.
+  assert.equal(budgetStop({ spentUsd: 4.5, capUsd: 5, diveSpentUsd: 1.9 }, { count: 0 })?.reason, "cap");
+  // 25 dives a day at the measured ~$0.21 would be ~$5: the ceiling binds long before the count does.
+  assert.ok(MAX_DIVES_PER_24H * 0.19 > DIVE_BUDGET_24H_USD);
 });
 
 test("budget: a cap read error is 'do not dive' (never fail-open)", async () => {
@@ -298,7 +323,7 @@ test("time: claimed, but the budget reads ran past the start line: the claim goe
   const h = harness();
   h.deps.capState = async () => {
     t = 51_000;
-    return { spentUsd: 0, capUsd: 5 };
+    return { spentUsd: 0, capUsd: 5, diveSpentUsd: 0 };
   };
   h.deps.now = () => t;
   const r = await h.run();
