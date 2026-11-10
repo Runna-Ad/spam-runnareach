@@ -8,8 +8,9 @@
 // Each run dives at most 2 prospects (status match, gate passed, no pitch yet),
 // one Claude call with the web_search tool each, and saves one web_research row
 // per dive: ok (facts kept), empty (searched, nothing kept) or failed. Before
-// each dive: $0.50 of the rolling-24h AI cap left (a cap read error = no dive)
-// and fewer than 25 dives started in 24h. The time budget is in
+// each dive: $1 of the rolling-24h AI cap left (a cap read error = no dive),
+// the dive's own ~$2 a day ceiling (DIVE_BUDGET_24H_USD) and fewer than 25
+// dives started in 24h. The time budget is in
 // lib/research/web-dive/run.ts; vercel.json gives the route 120 s.
 //
 // Model: WEB_DIVE_MODEL, else the default Sonnet.
@@ -28,7 +29,7 @@ import { isUnderDailyCap, recordClaudeCall } from "@/lib/anthropic/cost-tracking
 import { defaultCreate } from "@/lib/benchmarks/research";
 import { isSchedulerAuthorized } from "@/lib/cron-auth";
 import { withHeartbeat } from "@/lib/reports/heartbeat";
-import { runDive, type WebDiveCostInput } from "@/lib/research/web-dive/dive";
+import { runDive, WEB_DIVE_COST_ENTITY, type WebDiveCostInput } from "@/lib/research/web-dive/dive";
 import { webDiveEnabled } from "@/lib/research/web-dive/flag";
 import { DB_TIMEOUT_MS, runWebDives, type CapState } from "@/lib/research/web-dive/run";
 import {
@@ -55,18 +56,21 @@ async function handle(req: NextRequest) {
 async function capState(db: WebDiveDb, tenantId: string): Promise<CapState> {
   let timer: ReturnType<typeof setTimeout> | undefined;
   try {
-    const [cap, spent] = await Promise.all([
+    const now = new Date();
+    const [cap, spent, diveSpent] = await Promise.all([
       Promise.race([
         isUnderDailyCap(tenantId),
         new Promise<null>((resolve) => {
           timer = setTimeout(() => resolve(null), DB_TIMEOUT_MS);
         }),
       ]),
-      spentLast24h(db, tenantId, new Date(), DB_TIMEOUT_MS),
+      spentLast24h(db, tenantId, now, DB_TIMEOUT_MS),
+      spentLast24h(db, tenantId, now, DB_TIMEOUT_MS, WEB_DIVE_COST_ENTITY),
     ]);
     if (!cap) return { error: "cap read timed out" };
     if ("error" in spent) return { error: spent.error };
-    return { spentUsd: spent.usd, capUsd: cap.cap_usd };
+    if ("error" in diveSpent) return { error: diveSpent.error };
+    return { spentUsd: spent.usd, capUsd: cap.cap_usd, diveSpentUsd: diveSpent.usd };
   } finally {
     clearTimeout(timer);
   }

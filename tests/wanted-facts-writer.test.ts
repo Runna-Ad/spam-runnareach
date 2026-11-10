@@ -286,7 +286,7 @@ test("schema: any wanted_fact shape (number, object, empty, absent) parses; the 
   }
 });
 
-test("prompts: the writer is told when to name a wanted fact and how; the critic too; version v3.5", async () => {
+test("prompts: the writer is told when to name a wanted fact and how; the critic too; version v3.6", async () => {
   const seen: Req[] = [];
   __test__.setClient({
     messages: {
@@ -305,7 +305,7 @@ test("prompts: the writer is told when to name a wanted fact and how; the critic
   assert.match(critic, /WANTED FACT:/);
   assert.match(critic, /"wanted_fact": string \| null/);
   assert.match(critic, /never changes the score or the issues/);
-  assert.equal(PITCH_PROMPT_VERSION, "pitch-v3.5-2026-11-09");
+  assert.equal(PITCH_PROMPT_VERSION, "pitch-v3.6-2026-11-09");
 });
 
 test("rewrite directive: no blanket number ban; the angle's pain_id pairs with the benchmark tagged for it; the angle is always our offer, never 'Lead with this pain'", async () => {

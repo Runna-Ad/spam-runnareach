@@ -10,6 +10,8 @@
 import type { DiveOutcome, DiveProspect } from "./dive.ts";
 import { WEB_FACTS_MAX_AGE_DAYS, webFactsFromJson, type WebFact } from "./facts.ts";
 import type { DroppedCandidate } from "./keep.ts";
+import type { MatchProspect } from "./match.ts";
+import { usableWebFacts, type CheckPage } from "./usable.ts";
 
 const DAY_MS = 86_400_000;
 /** A pending row older than this was killed at maxDuration (the claim sweeps it to 'abandoned'). */
@@ -55,12 +57,13 @@ const cutoff = (now: Date, days: number) => new Date(now.getTime() - days * DAY_
 // ── Readers ──────────────────────────────────────────────────────────────────
 
 /**
- * The web facts for the email writers: the newest FINISHED dive (ok or empty)
- * younger than 60 days. ok → its facts re-validated to the WebFact shape (bad
- * entries dropped); empty, failed or nothing → []. Never throws: an error
- * returns [] (the email then makes no web claim at all).
+ * The stored web facts: the newest FINISHED dive (ok or empty) younger than
+ * 60 days. ok → its facts re-validated to the WebFact shape (bad entries
+ * dropped); empty, failed or nothing → []. Never throws: an error returns []
+ * (the email then makes no web claim at all). Drafts read webFactsFor, which
+ * adds the checks against the prospect as it is now.
  */
-export async function webFactsFor(db: WebResearchDb, tenantId: string, prospectId: string, now: Date = new Date()): Promise<WebFact[]> {
+export async function storedWebFacts(db: WebResearchDb, tenantId: string, prospectId: string, now: Date = new Date()): Promise<WebFact[]> {
   try {
     const { data, error } = await db
       .from("web_research")
@@ -82,6 +85,33 @@ export async function webFactsFor(db: WebResearchDb, tenantId: string, prospectI
     return webFactsFromJson(row.facts);
   } catch (e) {
     console.warn("[web-dive] facts read failed:", e instanceof Error ? e.message : String(e));
+    return [];
+  }
+}
+
+/**
+ * The web facts a draft may use: the stored ones (storedWebFacts) that still
+ * hold for the prospect as it is NOW (usable.ts: re-matched to its current
+ * name, city and domain; problem/opening still recent; the page still loads).
+ * Never throws: any error is [] (no web claim at all).
+ */
+export async function webFactsFor(
+  db: WebResearchDb,
+  tenantId: string,
+  prospect: MatchProspect & { id: string },
+  opts: { now?: Date; checkPage?: CheckPage } = {},
+): Promise<WebFact[]> {
+  const now = opts.now ?? new Date();
+  const stored = await storedWebFacts(db, tenantId, prospect.id, now);
+  if (stored.length === 0) return [];
+  try {
+    const r = await usableWebFacts(stored, prospect, { now, checkPage: opts.checkPage });
+    if (r.dropped.length > 0) {
+      console.info(`[web-dive] ${r.dropped.length} of ${stored.length} stored facts not used:`, r.dropped.map((d) => `${d.reason}${d.detail ? ` (${d.detail})` : ""}`).join(", "));
+    }
+    return r.usable;
+  } catch (e) {
+    console.warn("[web-dive] facts check failed:", e instanceof Error ? e.message : String(e));
     return [];
   }
 }
@@ -284,7 +314,14 @@ export async function divesStartedSince(
  * anthropic, incurred_at in 24h, paged) but answers "under" on a read error;
  * a dive costs ~$0.21, so here an error means "do not dive".
  */
-export async function spentLast24h(db: WebDiveDb, tenantId: string, now: Date, timeoutMs: number): Promise<{ usd: number } | { error: string }> {
+export async function spentLast24h(
+  db: WebDiveDb,
+  tenantId: string,
+  now: Date,
+  timeoutMs: number,
+  /** Only this cost entity (the dive's own ceiling reads "web_research"); omitted, all Claude spend. */
+  entityType?: string,
+): Promise<{ usd: number } | { error: string }> {
   const PAGE = 1000;
   const since = new Date(now.getTime() - DAY_MS).toISOString();
   // One deadline for every page: the whole read is bounded by timeoutMs.
@@ -292,11 +329,9 @@ export async function spentLast24h(db: WebDiveDb, tenantId: string, now: Date, t
   let usd = 0;
   try {
     for (let from = 0; from < 20 * PAGE; from += PAGE) {
-      const { data, error } = await db
-        .from("cost_tracking")
-        .select("cost_usd")
-        .eq("tenant_id", tenantId)
-        .eq("category", "anthropic")
+      let q = db.from("cost_tracking").select("cost_usd").eq("tenant_id", tenantId).eq("category", "anthropic");
+      if (entityType) q = q.eq("entity_type", entityType);
+      const { data, error } = await q
         .gte("incurred_at", since)
         .order("incurred_at", { ascending: true })
         .range(from, from + PAGE - 1)

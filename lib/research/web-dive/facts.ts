@@ -17,7 +17,12 @@
  */
 export type WebFactKind = "problem" | "opening" | "context";
 
-export type WebFact = { fact: string; quote: string; url: string; title: string | null; kind: WebFactKind };
+/**
+ * page_date: the search result's page_age as a day (YYYY-MM-DD), read when the
+ * dive ran (match.ts pageDateFrom); null when the search gave none. A problem
+ * or an opening needs a recent one, re-checked before every draft.
+ */
+export type WebFact = { fact: string; quote: string; url: string; title: string | null; kind: WebFactKind; page_date: string | null };
 
 /** A dive older than this is not read (and the prospect may be dived again). */
 export const WEB_FACTS_MAX_AGE_DAYS = 60;
@@ -48,7 +53,9 @@ export function asWebFact(raw: unknown): WebFact | null {
   if (!/^https?:\/\//i.test(r.url.trim())) return null;
   const title = r.title === null || r.title === undefined ? null : typeof r.title === "string" ? r.title : undefined;
   if (title === undefined) return null;
-  return { fact: r.fact, quote: r.quote, url: r.url, title, kind: r.kind };
+  // Rows written before page_date existed read as undated (no problem or opening from them).
+  const page_date = typeof r.page_date === "string" && /^\d{4}-\d{2}-\d{2}$/.test(r.page_date) ? r.page_date : null;
+  return { fact: r.fact, quote: r.quote, url: r.url, title, kind: r.kind, page_date };
 }
 
 /** A stored facts column (jsonb) as WebFacts: bad entries dropped, at most MAX_WEB_FACTS. */

@@ -19,7 +19,7 @@ import {
   releaseWebResearch,
   saveWebResearch,
   spentLast24h,
-  webFactsFor,
+  storedWebFacts,
   webLookState,
   webLookStates,
   webResearchRow,
@@ -148,28 +148,28 @@ function fakeDb(tables: Record<string, Row[]>, o: { fail?: Record<string, { mess
   return db;
 }
 
-const FACT = { fact: "A reviewer says nobody answered.", quote: "nobody ever answered the phone", url: "https://www.yelp.ca/biz/x", title: "X - Yelp", kind: "problem" };
+const FACT = { fact: "A reviewer says nobody answered.", quote: "nobody ever answered the phone", url: "https://www.yelp.ca/biz/x", title: "X - Yelp", kind: "problem", page_date: "2026-10-01" };
 const row = (over: Row): Row => ({
   id: `w-${Math.random()}`, tenant_id: "t1", prospect_id: "p1", status: "ok", facts: [], searches: 4, cost_usd: 0.21,
   model: "m", error: null, dropped: [], started_at: daysAgo(1), finished_at: daysAgo(1), ...over,
 });
 const readDb = (rows: Row[], o: Parameters<typeof fakeDb>[1] = {}) => fakeDb({ web_research: rows }, o) as unknown as WebResearchDb;
 
-// ── webFactsFor ──────────────────────────────────────────────────────────────
+// ── storedWebFacts ──────────────────────────────────────────────────────────────
 
-test("webFactsFor: the newest ok row's facts, re-validated; bad entries dropped", async () => {
-  const facts = await webFactsFor(readDb([row({ facts: [FACT, { fact: "x", kind: "news" }, null, { ...FACT, quote: "short" }] })]), "t1", "p1", NOW);
+test("storedWebFacts: the newest ok row's facts, re-validated; bad entries dropped", async () => {
+  const facts = await storedWebFacts(readDb([row({ facts: [FACT, { fact: "x", kind: "news" }, null, { ...FACT, quote: "short" }] })]), "t1", "p1", NOW);
   assert.deepEqual(facts, [FACT]);
 });
 
-test("webFactsFor: older than 60 days is not read; a newer empty row wins over an older ok one", async () => {
-  assert.deepEqual(await webFactsFor(readDb([row({ facts: [FACT], started_at: daysAgo(61) })]), "t1", "p1", NOW), []);
-  assert.deepEqual(await webFactsFor(readDb([row({ facts: [FACT], started_at: daysAgo(59) })]), "t1", "p1", NOW), [FACT]);
+test("storedWebFacts: older than 60 days is not read; a newer empty row wins over an older ok one", async () => {
+  assert.deepEqual(await storedWebFacts(readDb([row({ facts: [FACT], started_at: daysAgo(61) })]), "t1", "p1", NOW), []);
+  assert.deepEqual(await storedWebFacts(readDb([row({ facts: [FACT], started_at: daysAgo(59) })]), "t1", "p1", NOW), [FACT]);
   const rows = [row({ facts: [FACT], started_at: daysAgo(10) }), row({ status: "empty", facts: [], started_at: daysAgo(2) })];
-  assert.deepEqual(await webFactsFor(readDb(rows), "t1", "p1", NOW), []);
+  assert.deepEqual(await storedWebFacts(readDb(rows), "t1", "p1", NOW), []);
 });
 
-test("webFactsFor: failed, abandoned and pending rows are ignored, another tenant's or prospect's never read", async () => {
+test("storedWebFacts: failed, abandoned and pending rows are ignored, another tenant's or prospect's never read", async () => {
   const rows = [
     row({ facts: [FACT], started_at: daysAgo(10) }),
     row({ status: "failed", facts: [{ ...FACT, fact: "failed row" }], started_at: daysAgo(1) }),
@@ -178,13 +178,13 @@ test("webFactsFor: failed, abandoned and pending rows are ignored, another tenan
     row({ tenant_id: "t2", facts: [{ ...FACT, fact: "other tenant" }], started_at: minsAgo(5) }),
     row({ prospect_id: "p2", facts: [{ ...FACT, fact: "other prospect" }], started_at: minsAgo(5) }),
   ];
-  assert.deepEqual(await webFactsFor(readDb(rows), "t1", "p1", NOW), [FACT]);
+  assert.deepEqual(await storedWebFacts(readDb(rows), "t1", "p1", NOW), [FACT]);
 });
 
-test("webFactsFor never throws: an empty-message error or a throw is []", async () => {
-  assert.deepEqual(await webFactsFor(readDb([row({ facts: [FACT] })], { fail: { web_research: { message: "" } } }), "t1", "p1", NOW), []);
-  assert.deepEqual(await webFactsFor(readDb([row({ facts: [FACT] })], { throwOn: "web_research" }), "t1", "p1", NOW), []);
-  assert.deepEqual(await webFactsFor(readDb([]), "t1", "p1", NOW), []);
+test("storedWebFacts never throws: an empty-message error or a throw is []", async () => {
+  assert.deepEqual(await storedWebFacts(readDb([row({ facts: [FACT] })], { fail: { web_research: { message: "" } } }), "t1", "p1", NOW), []);
+  assert.deepEqual(await storedWebFacts(readDb([row({ facts: [FACT] })], { throwOn: "web_research" }), "t1", "p1", NOW), []);
+  assert.deepEqual(await storedWebFacts(readDb([]), "t1", "p1", NOW), []);
 });
 
 // ── webLookState ─────────────────────────────────────────────────────────────
@@ -245,7 +245,7 @@ test("save: only a row still pending; the columns are the table's; facts only on
   const r = await saveWebResearch(fakeDb({ web_research: swept }) as unknown as WebDiveDb, "w2", OUT, NOW, 5_000);
   assert.equal(r.ok, false);
   assert.equal(swept[0]!.status, "abandoned");
-  const many = Array.from({ length: 30 }, () => ({ candidate: { fact: "f".repeat(900), quote: "q", url: "u", kind: "context" }, reason: "name_not_found" as const }));
+  const many = Array.from({ length: 30 }, () => ({ candidate: { fact: "f".repeat(900), quote: "q", url: "u", kind: "context" }, reason: "name_not_in_quote" as const }));
   const failedRow = webResearchRow({ ...OUT, status: "failed", error: "x", dropped: many }, NOW);
   assert.deepEqual(failedRow.facts, []);
   assert.equal((failedRow.dropped as unknown[]).length, 20);
@@ -274,6 +274,15 @@ test("release deletes only our own pending row; the 24h count excludes the claim
   assert.ok("error" in err);
   const thrown = await spentLast24h(fakeDb({ cost_tracking: costs }, { throwOn: "cost_tracking" }) as unknown as WebDiveDb, "t1", NOW, 5_000);
   assert.ok("error" in thrown);
+
+  // The dive's own ceiling reads only its own rows (dive.ts records entity_type "web_research").
+  const mixed = [...costs, cost(0.21, minsAgo(20), { entity_type: "web_research" }), cost(0.19, minsAgo(200), { entity_type: "web_research" }), cost(0.4, daysAgo(2), { entity_type: "web_research" }), cost(0.2, minsAgo(5), { entity_type: "web_research", tenant_id: "t2" })];
+  const dives = await spentLast24h(fakeDb({ cost_tracking: mixed }) as unknown as WebDiveDb, "t1", NOW, 5_000, "web_research");
+  assert.ok("usd" in dives && Math.abs(dives.usd - 0.4) < 1e-9, JSON.stringify(dives));
+  const all = await spentLast24h(fakeDb({ cost_tracking: mixed }) as unknown as WebDiveDb, "t1", NOW, 5_000);
+  assert.ok("usd" in all && Math.abs(all.usd - 1.9) < 1e-9, JSON.stringify(all));
+  const diveErr = await spentLast24h(fakeDb({ cost_tracking: mixed }, { fail: { cost_tracking: { message: "" } } }) as unknown as WebDiveDb, "t1", NOW, 5_000, "web_research");
+  assert.ok("error" in diveErr, "a failed read is an error, never $0");
 });
 
 // ── Migration 0055 ───────────────────────────────────────────────────────────

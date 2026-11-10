@@ -75,8 +75,8 @@ const FWD_EN = "If you're not the right person for this, I'd really appreciate i
 
 // ── 1. Writer prompt ──────────────────────────────────────────────────────────
 
-test("writer prompt v3.5: the honesty rules are in every language and register", async () => {
-  assert.equal(PITCH_PROMPT_VERSION, "pitch-v3.5-2026-11-09");
+test("writer prompt v3.6: the honesty rules are in every language and register", async () => {
+  assert.equal(PITCH_PROMPT_VERSION, "pitch-v3.6-2026-11-09");
   for (const [lang, size] of [["en", 10], ["es", 10], ["es", 200]] as const) {
     const calls = install(() => answer());
     const r = await composePitchWithClaude(inputs({}, lang, size));

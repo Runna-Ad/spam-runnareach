@@ -53,7 +53,8 @@ const MAX_TOKENS = 4_000;
 const NOTE_MAX = 1_500;
 
 // ── Response shape (the SDK in package.json predates the web_search tool) ────
-type SearchResultItem = { url: string; title: string };
+/** page_age: the search engine's date for the page ("April 30, 2025"), when it gives one (the web dive reads it). */
+type SearchResultItem = { url: string; title: string; page_age?: string | null };
 type CitationLite = { url: string; cited_text: string };
 export type SearchUsage = {
   input_tokens: number;
@@ -90,7 +91,7 @@ export function readEvidence(content: unknown): ResponseEvidence {
       // A list on success, an object on error (HTTP 200 either way).
       if (Array.isArray(c)) {
         for (const r of c) {
-          if (isObj(r) && r.type === "web_search_result" && str(r.url)) results.push({ url: str(r.url), title: str(r.title) });
+          if (isObj(r) && r.type === "web_search_result" && str(r.url)) results.push({ url: str(r.url), title: str(r.title), page_age: str(r.page_age) || null });
         }
       } else if (isObj(c)) {
         searchErrors.push(str(c.error_code) || str(c.type) || "unknown search error");

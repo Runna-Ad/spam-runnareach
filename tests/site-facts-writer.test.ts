@@ -94,13 +94,15 @@ const CASES = [["en", 10], ["es", 10], ["es", 200]] as const;
 
 // ── The writer ───────────────────────────────────────────────────────────────
 
-test("writer v3.5: site_facts and web_facts are the only source for a claim about them; no absence is ever said, not even as 'I didn't see'", async () => {
-  assert.equal(PITCH_PROMPT_VERSION, "pitch-v3.5-2026-11-09");
+test("writer v3.6: site_facts and web_facts are the only source for a claim about them; no absence is ever said, not even as 'I didn't see'", async () => {
+  assert.equal(PITCH_PROMPT_VERSION, "pitch-v3.6-2026-11-09");
   for (const [lang, size] of CASES) {
     const sys = sysText(await writerCall(inputs({ site_facts: [BOOKING_ENGINE] }, lang, size)));
     const label = `${lang}/${size}`;
     assert.ok(sys.includes("About the prospect, say only what the payload proves: company_name, industry, city, what_they_do, tech_stack, site_facts and web_facts. Every claim about them must be one of those, said as it is written there and no more."), label);
     assert.ok(sys.includes("site_facts is what our crawler saw on their own site, each entry with its page (url). web_facts is what another web page says about them"), label);
+    // v3.6: a web fact is only its quote (the dive's summary sentence never reaches the writer).
+    assert.ok(sys.includes("A web fact is its quote and nothing more: say only what the quote says, in plain words, and never more than it says."), label);
     assert.ok(sys.includes(`Each entry has a hook: "problem" (something not working), "opening" (a change, like a new location or a hire), "context" (true, but no reason to write on its own).`), label);
     assert.ok(sys.includes(`Never write what you did not see, did not find or think is missing, not even softly: no "I didn't see", "I couldn't find", "there's no", "you don't have", "your site doesn't", "without a way to". If it is not an entry, it is not in the email.`), label);
     assert.ok(sys.includes(`3. Hook: one proven fact about THIS business, a site_facts or web_facts entry whose hook is "problem" or "opening"`), label);
@@ -146,11 +148,14 @@ test("writer: the new CTA in EN and ES; the old 'where [the pain] is costing you
   }
 });
 
-test("writer payload: proven site_facts (id, kind, fact, url, strength, hook) and web_facts (fact, quote, url, hook); an absence never reaches it; the system prompt is the same with or without them (cached)", async () => {
+test("writer payload: proven site_facts (id, kind, fact, url, strength, hook) and web_facts (quote, url, hook: never the dive's own summary); an absence never reaches it; the system prompt is the same with or without them (cached)", async () => {
   // The stage's one door (proveInputs): the absence is dropped, the seen fact and the web fact stay.
   const withFacts = await writerCall(proveInputs(inputs({ site_facts: [BOOKING_ENGINE, NO_FORM] }), [JOB_POST]));
   assert.deepEqual(payloadOf(withFacts).site_facts, [shown(BOOKING_ENGINE)]);
-  assert.deepEqual(payloadOf(withFacts).web_facts, [{ fact: JOB_POST.fact, quote: JOB_POST.quote, url: JOB_POST.url, hook: "opening" }]);
+  assert.deepEqual(payloadOf(withFacts).web_facts, [{ quote: JOB_POST.quote, url: JOB_POST.url, hook: "opening" }]);
+  // The summary sentence our AI wrote is not in the writer's payload at all (only the quote was checked against the page).
+  assert.notEqual(JOB_POST.fact, JOB_POST.quote);
+  assert.ok(!userText(withFacts).includes(JOB_POST.fact), "the dive's summary never reaches the writer");
   assert.ok(!userText(withFacts).includes(NO_FORM.fact), "the absence never reaches the writer");
   assert.ok(!userText(withFacts).includes("no easy way to book a cabin"), "nor the research pain's evidence");
   assert.deepEqual(payloadOf(withFacts).pain_candidates, []);
@@ -175,6 +180,7 @@ test("critic payload: the same proven site_facts and web_facts the writer had; t
   const { critic, writer } = await criticCall(input);
   assert.deepEqual(payloadOf(critic).site_facts, payloadOf(writer).site_facts);
   assert.deepEqual(payloadOf(critic).web_facts, payloadOf(writer).web_facts);
+  assert.ok(!userText(critic).includes(JOB_POST.fact), "nor the critic's: it judges against the quote");
   assert.deepEqual(payloadOf(critic).site_facts, [shown(BOOKING_ENGINE)]);
   assert.deepEqual(payloadOf(critic).pain_evidence, []);
   assert.ok(!userText(critic).includes(NO_FORM.fact) && !userText(critic).includes("no easy way to book a cabin"));
@@ -188,7 +194,8 @@ test("critic rule 1 (v3.5): shown is site_facts and web_facts; an unsupported cl
     const sys = sysText((await criticCall(inputs({ site_facts: [BOOKING_ENGINE] }, lang))).critic);
     assert.ok(sys.includes("Shown means: prospect (what_they_do, tech_stack, industry, city), a site_facts entry or a web_facts entry, said in plain words."), lang);
     assert.ok(sys.includes(`"checked your site") that no site_facts entry or prospect field shows is blocking.`), lang);
-    assert.ok(sys.includes("A sentence about them from anywhere else (reviews, news, hiring, a new location) that no web_facts entry shows is blocking."), lang);
+    assert.ok(sys.includes("A sentence about them from anywhere else (reviews, news, hiring, a new location) that no web_facts quote says is blocking."), lang);
+    assert.ok(sys.includes("payload.web_facts what another page says about them: each entry is that page's exact words (quote) and nothing more."), lang);
     assert.ok(sys.includes(`ANY absence or lack is blocking, however softly said: "I didn't see", "I couldn't find", "no way to book online", "you don't have", "customers can't", "there's only", "without a way to".`), lang);
     assert.ok(sys.includes("Saying more than an entry says is blocking. A sentence that contradicts an entry is blocking."), lang);
     assert.ok(sys.includes("With site_facts and web_facts empty, any claim about them beyond prospect is blocking."), lang);

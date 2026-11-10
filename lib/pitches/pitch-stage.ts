@@ -154,7 +154,7 @@ export async function generatePitchWith(
     tech_stack: string[];
   };
 
-  const [{ data: prospect, error: prospectErr }, { data: research }, observation, storedWebFacts] = await Promise.all([
+  const [{ data: prospect, error: prospectErr }, { data: research }, observation] = await Promise.all([
     supabase
       .from("prospects")
       .select("id, company_name, industry, language, employee_size_estimate, city, market, domain, website_url")
@@ -170,13 +170,15 @@ export async function generatePitchWith(
     // What our crawler saw on their site (newest finished crawl, ≤ 60 days).
     // Never fails the draft: an error or no row is null (no site claim at all).
     loadSiteObservation(supabase as unknown as SiteObservationsDb, user.tenantId, parsed.data.prospect_id),
-    // What other web pages say about them (lib/research/web-dive, checked
-    // against the page before it was stored). Never throws: an error is [].
-    webFactsFor(supabase as unknown as WebResearchDb, user.tenantId, parsed.data.prospect_id),
   ]);
 
   if (prospectErr) return { ok: false, error: `Lookup failed: ${prospectErr.message}` };
   if (!prospect) return { ok: false, error: "Prospect not found." };
+  // What other web pages say about them (lib/research/web-dive): checked
+  // against the page when stored, and now against the prospect as it is
+  // (current name, city, domain), still recent, the page still loading.
+  // Started here, awaited where it is used. Never throws: an error is [].
+  const webFactsCheck = webFactsFor(supabase as unknown as WebResearchDb, user.tenantId, prospect);
   // Only an ok crawl of the prospect's CURRENT site (website_url / domain may have been corrected since).
   const siteFacts = siteFactsFor(observation, prospect);
 
@@ -412,7 +414,7 @@ export async function generatePitchWith(
   // Only say what we can prove (Pedro, 2026-11-09, CrushCamp): with no proven
   // problem or opening, the capability (showcase) email goes out, whatever
   // the writer.showcase test would pick.
-  const webFacts: WebFactInput[] = storedWebFacts;
+  const webFacts: WebFactInput[] = await webFactsCheck;
   const showcaseForced = !hasProvenHook(provenFacts({ site_facts: siteFacts, web_facts: webFacts }));
   const dailyCapCheck = claudeIsAvailable() ? isUnderDailyCap(user.tenantId) : Promise.resolve(null);
   const armsCheck = chooseWriterArms(supabase, user.tenantId);
@@ -834,6 +836,7 @@ export async function rewritePitchWithAngleWith(
   actor: Actor,
   input: z.input<typeof rewriteAngleSchema>,
 ): Promise<RewritePitchResult> {
+  const rewriteStartedAt = Date.now();
   const { user } = actor;
   if (user.role === "viewer") return { ok: false, error: "Viewers cannot rewrite pitches." };
 
@@ -874,7 +877,7 @@ export async function rewritePitchWithAngleWith(
   };
   type ResearchRow = { pain_points: unknown; what_they_do: string | null; tech_stack: string[] };
 
-  const [{ data: prospect }, { data: research }, { data: contactRows }, observation, rewriteWebFacts] = await Promise.all([
+  const [{ data: prospect }, { data: research }, { data: contactRows }, observation] = await Promise.all([
     supabase
       .from("prospects")
       .select("id, company_name, industry, language, employee_size_estimate, city, market, domain, website_url")
@@ -893,9 +896,10 @@ export async function rewritePitchWithAngleWith(
       .returns<{ id: string; full_name: string | null; email: string | null; email_is_role_based: boolean; role_title: string | null }[]>(),
     // The same site facts as first generation (the critic judges against them too).
     loadSiteObservation(supabase as unknown as SiteObservationsDb, user.tenantId, pitch.prospect_id),
-    webFactsFor(supabase as unknown as WebResearchDb, user.tenantId, pitch.prospect_id),
   ]);
   if (!prospect) return { ok: false, error: "Prospect not found." };
+  // The same web facts check as first generation, against the prospect as it is now.
+  const rewriteWebFactsCheck = webFactsFor(supabase as unknown as WebResearchDb, user.tenantId, prospect);
   const siteFacts = siteFactsFor(observation, prospect);
   // The rewrite greets the pitch's own recipient: when its contact is usable
   // and not already the first usable of the top five (a contact chosen past a
@@ -982,10 +986,11 @@ export async function rewritePitchWithAngleWith(
       case_study_id: chosenCases.length > 0 ? parsed.data.case_study_id : null,
       capability: parsed.data.capability,
     },
-  }, rewriteWebFacts);
+  }, await rewriteWebFactsCheck);
 
   // Same write → review → revise loop as first generation.
-  const result = await composeWithReview(generatorInputs, { deadline: Date.now() + 45_000 });
+  // From the action's start, so the page checks above never eat into the 60 s server action.
+  const result = await composeWithReview(generatorInputs, { deadline: rewriteStartedAt + 45_000 });
   if (!result.ok) {
     for (const c of result.calls) {
       await recordClaudeCall({

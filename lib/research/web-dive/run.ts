@@ -5,8 +5,16 @@
  * (tests/web-dive-run.test.ts).
  *
  * Budget, before each dive (else the claim is given back and the run stops):
- *   - Claude spend: cap − spent in the rolling 24h ≥ $0.50; a read error is "do
- *     not dive" (isUnderDailyCap fails open, so spent is re-read failing closed);
+ *   - Claude spend: cap − spent in the rolling 24h ≥ $1 (MIN_CAP_LEFT_USD), so
+ *     the dive never eats the last of the day's budget for drafts and replies;
+ *     a read error is "do not dive" (isUnderDailyCap fails open, so spent is
+ *     re-read failing closed);
+ *   - the dive's own ceiling: dives spent ≤ $1.70 in the rolling 24h
+ *     (DIVE_BUDGET_24H_USD − DIVE_COST_ALLOWANCE_USD), so with one more dive
+ *     (~$0.19-0.22 measured, 2026-11-09) they stay under about $2 a day. It
+ *     is "about": a dive with a long search context (~$0.40), or a hand call
+ *     with the cron secret running beside the scheduled one, can end a few
+ *     cents over $2;
  *   - fewer than 25 dives started for the tenant in the last 24h.
  * Time (vercel.json gives the route 120 s), worst case from the handler's start:
  *   dive 1   claim 5 s + budget reads 5 s (cap, spend and count in parallel,
@@ -23,14 +31,19 @@ import type { DiveOutcome, DiveStatus } from "./dive.ts";
 import type { DueDive } from "./store.ts";
 
 export const DIVES_PER_RUN = 2;
-export const MIN_CAP_LEFT_USD = 0.5;
+export const MIN_CAP_LEFT_USD = 1;
+/** The web dive's own rolling-24h ceiling (Pedro's brief, 2026-11-09: "about $2"). */
+export const DIVE_BUDGET_24H_USD = 2;
+/** What one more dive may cost: a dive starts only while this much is left under the ceiling. */
+export const DIVE_COST_ALLOWANCE_USD = 0.3;
 export const MAX_DIVES_PER_24H = 25;
 export const DB_TIMEOUT_MS = 5_000;
 export const HEARTBEAT_MS = 3_000;
 export const ROUTE_MAX_DURATION_S = 120;
 export { CALL_TIMEOUT_MS, MIN_REMAINING_TO_START_MS, RUN_DEADLINE_MS };
 
-export type CapState = { spentUsd: number; capUsd: number } | { error: string };
+/** spentUsd: all Claude spend in 24h; diveSpentUsd: the web dive's part of it (cost entity web_research). */
+export type CapState = { spentUsd: number; capUsd: number; diveSpentUsd: number } | { error: string };
 
 export type RunDeps = {
   /** Claims at most one due prospect (sweeping stale claims first). Throws on a database error. */
@@ -45,7 +58,7 @@ export type RunDeps = {
   now?: () => number;
 };
 
-export type StopReason = "none_due" | "deadline" | "cap" | "cap_read" | "daily_limit" | "count_read" | "search_disabled";
+export type StopReason = "none_due" | "deadline" | "cap" | "dive_budget" | "cap_read" | "daily_limit" | "count_read" | "search_disabled";
 
 export type RunReport = {
   claimed: number;
@@ -66,6 +79,12 @@ export function budgetStop(cap: CapState, started: { count: number } | { error: 
   const left = cap.capUsd - cap.spentUsd;
   if (!(left >= MIN_CAP_LEFT_USD)) {
     return { reason: "cap", detail: `AI budget: $${cap.spentUsd.toFixed(2)} of $${cap.capUsd.toFixed(2)} used in 24h (a dive needs $${MIN_CAP_LEFT_USD.toFixed(2)} left)` };
+  }
+  if (!(DIVE_BUDGET_24H_USD - cap.diveSpentUsd >= DIVE_COST_ALLOWANCE_USD)) {
+    return {
+      reason: "dive_budget",
+      detail: `web search budget: $${cap.diveSpentUsd.toFixed(2)} of $${DIVE_BUDGET_24H_USD.toFixed(2)} used in 24h (a dive needs $${DIVE_COST_ALLOWANCE_USD.toFixed(2)} left)`,
+    };
   }
   if ("error" in started) return { reason: "count_read", detail: started.error };
   if (started.count >= MAX_DIVES_PER_24H) return { reason: "daily_limit", detail: `${started.count} dives started in the last 24h (max ${MAX_DIVES_PER_24H})` };

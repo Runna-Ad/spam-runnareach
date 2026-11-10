@@ -503,5 +503,5 @@ test("writer and critic payloads carry for_pains; FACTS and rule 2 say how to us
   assert.match(writer.messages[0]?.content ?? "", /Use one only if one of its for_pains has the pain_id you lead with \(see FACTS\); if none does, the email has no statistic\./);
   assert.match(sysText(critic), /2\. A statistic that is not one of payload\.benchmarks, is about a different problem \(its for_pains does not include the pain the email is about\)/);
   // v3.5 (proven facts, 2026-11-09) changed FACTS 1, not how benchmarks pair with a pain.
-  assert.equal(PITCH_PROMPT_VERSION, "pitch-v3.5-2026-11-09");
+  assert.equal(PITCH_PROMPT_VERSION, "pitch-v3.6-2026-11-09");
 });
