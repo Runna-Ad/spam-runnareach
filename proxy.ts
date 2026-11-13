@@ -1,12 +1,15 @@
 import { createServerClient, type CookieOptions } from "@supabase/ssr";
 import { NextResponse, type NextRequest } from "next/server";
+import { allowedOnLinkHost, isLinkOnlyHost } from "@/lib/compliance/link-host";
 
 type CookieToSet = { name: string; value: string; options?: CookieOptions };
 
 /**
  * Session refresh + auth gate.
  *
- * Runs on every matched route. Does two things:
+ * Runs on every matched route. First, on the email-link address
+ * (runna-check.vercel.app) it answers 404 to anything but the email links.
+ * Then it does two things:
  *   1. Refreshes the Supabase auth session cookie so the server always sees
  *      the latest token. Without this, sessions expire mid-navigation.
  *   2. Gates /dashboard/** and /settings/** — unauthenticated users are
@@ -16,6 +19,15 @@ type CookieToSet = { name: string; value: string; options?: CookieOptions };
  * `middleware.ts` filename still works. Matcher config at bottom.
  */
 export async function proxy(request: NextRequest) {
+  // The email-link address serves email links only (lib/compliance/link-host.ts):
+  // no sign-in page there, so it can't read as phishing.
+  if (isLinkOnlyHost(request.headers.get("host")) && !allowedOnLinkHost(request.nextUrl.pathname)) {
+    return new NextResponse("Not found", {
+      status: 404,
+      headers: { "Content-Type": "text/plain; charset=utf-8", "X-Robots-Tag": "noindex" },
+    });
+  }
+
   let supabaseResponse = NextResponse.next({ request });
 
   const supabase = createServerClient(
