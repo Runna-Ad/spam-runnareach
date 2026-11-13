@@ -585,3 +585,8 @@ TAGS: #bounces #deliverability #safe-browsing #hunter #breaker
 WHAT HAPPENED: Filling Search Console's "Request review" form, form_input set the text box while it was still disabled (it unlocks only after the "All issues were fixed" box is ticked), a later click toggled the box back off, and typing landed in the middle of the first text: the box held the description twice. The screenshot looked plausible. Reading the textarea and checkbox with a short script caught it; Cancel, reopen, tick once, type once, re-read (609 chars, box true, Submit enabled), then submit.
 RULE: Before submitting any outward form, read back the real field values and checkbox state (javascript_tool or read_page), not a screenshot. If a field is garbled, cancel and start from an empty form instead of editing in place.
 TAGS: #browser #forms #verification
+
+[2026-11-13] LESSON: convert to Calgary time with the system clock, not a remembered offset
+WHAT HAPPENED: I told Pedro the inbox paused at "8:30 AM Calgary" (15:30 UTC) and the daily alert came at "9:25 AM" (16:25 UTC), assuming UTC-7 for November. `TZ=America/Edmonton date` shows CST, -0600, so both were an hour early (9:30 and 10:25 AM). Caught only when a scheduled task for "08:00-07:00" displayed as 9:00 AM.
+RULE: Before writing any Calgary time, run `TZ=America/Edmonton date "+%z"` and use that offset. Never assume MST/MDT from the calendar.
+TAGS: #time #timezone #reporting
