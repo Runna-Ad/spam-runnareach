@@ -5,6 +5,16 @@ Deck: `/Users/work/Downloads/SPAM_Partner_Deck.pdf`
 
 ---
 
+## Sending paused: Safe Browsing flag on runna-check.vercel.app (2026-11-13, PR #79, branch fix/link-host-lock)
+pedro@runnareach.com paused since 2026-11-11 15:30 UTC. Google blocked all 4 first emails because the link address is flagged as phishing (its main page opened the sign-in page). Diagnosis in lessons.md 2026-11-13.
+- [x] Ship PR #79 (Pedro's "ship it" 2026-11-13): merged 16:47 UTC as 67e3844, dpl_Far14nErJZ1dptWbYa66ZwVMGBti Ready; live: runna-check `/`, `/sign-in`, `/dashboard` → 404, `/r/<code>` → 302, `/api/unsubscribe` → its page, ownership file → 200; spam-runnareach unchanged
+- [x] Search Console (Runna Advertising account): property https://runna-check.vercel.app/ verified (HTML file, keep `public/googlef5439ad9e6d54e3a.html`); issue "Deceptive pages", samples `/` and `/sign-in?next=/dashboard`; review requested 2026-11-13 ~17:00 UTC ("Request submitted successfully")
+- [ ] Wait for Google's review result (Search Console email/message); then check transparencyreport.google.com/safe-browsing/search?url=runna-check.vercel.app shows clean
+- [ ] Resume the inbox only after that report shows runna-check clean (Settings → Sending)
+- [x] 4 do-not-contact rows from 2026-11-11 removed (Pedro's OK, 2026-11-13 ~18:00 UTC); the 4 companies back to `pitched` (no cooldown), follow-ups still paused, their bounce events flagged `sender_block`; audit `prospect.status_changed` under Pedro's user id
+- [x] PR #80 shipped (Pedro's "ship it" 2026-11-13): merged 17:29 UTC as b4cc3bd, dpl_GwZetMdnWY6JfKxn3zorAbvvES6y Ready; first reply poll on it 17:35 UTC ok, no error, 4 restored addresses still off do-not-contact. Gmail refusing to send our email (`isSenderSideBlock`) now pauses follow-ups only; breaker still counts it and its reason names it. 5.7.520 forwarding refusals stay hard bounces (the mail will keep failing). Not checked live: the new breaker wording (shows only on a new trip)
+- [ ] Optional, Pedro decides: re-pitch the 4 companies once runna-check is clean (none of them ever received the first email)
+
 ## Only say what we can prove (CrushCamp hard no, 2026-11-09) — BUILT on feat/proven-facts, not committed
 
 Why (Pedro, 2026-11-09): CrushCamp replied "Squarespace is already fully mobile optimized… remove us". Pedro: "whatever we claim we are 100% sure its correct and if not default to offering services in general", then "option 1 but with a deeper search than just checking their website… do a deep dive on the web and if we cant find anything other than the website fine but look 1st".
