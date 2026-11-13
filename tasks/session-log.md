@@ -1529,3 +1529,15 @@ marketing-context only if it bites.
 **Decisions made:** Pedro: option 1 + web deep dive first; Claude web search; after the sample run (0 of 9 facts fit to send) "Ship it switched off". The "$5 cap at ship" decision is moot with the search off: the cap stays $3.
 **Pick up next session:** Tue after 15:00 UTC: read the first v3.5 drafts (how many forced capability emails, any gate blocks for absence_claim / track_record_claim, old approved pitches sent back to drafts). Later task: tighten the web search (todo "Before switching the web search on"); its session can start now that #76 is merged.
 **Environment changes:** new env var WEB_DIVE_ENABLED (unset = off), optional WEB_DIVE_MODEL; migration 0055 applied (table web_research, function claim_web_research, cron spam-web-dive).
+
+## 2026-11-13 17:45 UTC: daily "Sending paused" alert → Safe Browsing flag on runna-check; false bounces
+**Cause:** pedro@runnareach.com paused since 2026-11-11 15:30 UTC; the daily email was the health check's 24h reminder of that one pause. Google Safe Browsing listed runna-check.vercel.app (the email-link host, an alias of the whole app) as "Deceptive pages" on 2026-11-10; Search Console's samples were `/` and `/sign-in?next=/dashboard`, i.e. the S.P.A.M. sign-in page. Gmail then refused to send all 4 first emails on 11-11 ("Message rejected", no remote server), the breaker paused the inbox, and the poll put the 4 good addresses on do-not-contact and suppressed their companies for a year.
+**Shipped (Pedro "ship it" for each):**
+- PR #79 `67e3844`, dpl_Far14nErJZ1dptWbYa66ZwVMGBti: on runna-check only `/r/<code>`, `/api/unsubscribe` and the Search Console file answer; everything else 404. spam-runnareach unchanged.
+- PR #80 `b4cc3bd`, dpl_GwZetMdnWY6JfKxn3zorAbvvES6y: `isSenderSideBlock` → a Gmail block pauses follow-ups only (no do-not-contact, no suppression); breaker still counts it and its reason names it; repair sweep skips it.
+**Prod actions (Pedro yes):** Search Console property https://runna-check.vercel.app/ verified (Runna Advertising account), review requested ~17:00 UTC ("Request submitted successfully"). 4 do-not-contact rows removed, 4 companies back to `pitched`, their bounce events flagged `sender_block`, audit under Pedro's user id.
+**Checks run:** npm test 1886 then 1893, tsc, eslint, CI; local dev server with the runna-check Host header; live curl of every path after each deploy; the detector over all 12 real bounces since 10-19 (matches the 4 from 11-11 only); first reply poll on #80 ok at 17:35 UTC; restored addresses still off the list after it.
+**Measured:** 12 bounces / 242 sends since 10-19: 6 dead mailboxes, 1 dead mail server (fixed #67), 1 forwarding refusal, 4 Gmail blocks.
+**Not checked:** Google's review result; the new breaker wording live (shows only on a new trip).
+**Waiting on Pedro:** resume the inbox (Settings → Sending) only after the Transparency Report shows runna-check clean; whether to re-pitch the 4 companies.
+**Next:** check transparencyreport.google.com/safe-browsing/search?url=runna-check.vercel.app; then resume and watch the first sends.
