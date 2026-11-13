@@ -379,7 +379,13 @@ async function runBreakers(db: Db, tenantId: string, now: Date, errors: string[]
     const stats = await inboxBounceStats(db, tenantId, inbox.id);
     const gmail = await gmailFailuresToday(db, tenantId, inbox.id, now, stats.resumedAt);
     if (gmail.error) errors.push(`breakers: ${gmail.error}`);
-    inboxStats.push({ id: inbox.id, recentSends: stats.recentSends, recentHardBounces: stats.recentHardBounces, apiErrorsToday: gmail.count });
+    inboxStats.push({
+      id: inbox.id,
+      recentSends: stats.recentSends,
+      recentHardBounces: stats.recentHardBounces,
+      recentSenderBlocks: stats.recentSenderBlocks,
+      apiErrorsToday: gmail.count,
+    });
   }
 
   const weekAgo = new Date(now.getTime() - 7 * DAY).toISOString();

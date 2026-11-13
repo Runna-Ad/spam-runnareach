@@ -14,6 +14,8 @@
 //      deterministically). Then, by intent:
 //        - temporary delivery delay → recorded, nothing else
 //        - bounced   → address on DNC, prospect suppressed, sequence paused
+//        - bounced, but Gmail blocked our own email (isSenderSideBlock) →
+//          sequence paused only; the breaker still counts it
 //        - hard_no   → opt-out: address on DNC, prospect suppressed, sequences stopped
 //        - auto_reply (out of office) → follow-ups pushed back, not stopped
 //        - anything a human wrote → sequence paused, prospect 'replied'
@@ -61,7 +63,7 @@ import {
 } from "@/lib/replies/draft-composer";
 import type { ReplyIntent } from "@/lib/replies/queries";
 import { addEmailToDnc, type DncInsertClient } from "@/lib/discover/dnc-check";
-import { extractBouncedRecipient } from "@/lib/replies/bounce-parse";
+import { extractBouncedRecipient, isSenderSideBlock } from "@/lib/replies/bounce-parse";
 import { recordPitchEvent } from "@/lib/pitches/events";
 import { isTestAddress } from "@/lib/compliance/test-addresses";
 import { protectedStatusFilter } from "@/lib/prospects/status";
@@ -353,6 +355,10 @@ async function runPoll(req: NextRequest) {
           },
         });
 
+        // Gmail refused to send it (our link or wording is flagged): still a
+        // delivery failure the bounce breaker counts, but not the address's fault.
+        const senderBlock = classification.intent === "bounced" && isSenderSideBlock(inbound.bodyText);
+
         // The conversation's timeline, on the ROOT pitch whatever message the
         // reply answers: a bounce is not a reply; a delay is neither.
         if (!delay) {
@@ -368,11 +374,33 @@ async function runPoll(req: NextRequest) {
               sentiment: classification.sentiment,
               // Pedro's own test sends must never count as a real reply.
               test: isTestAddress(inbound.fromEmail),
+              // Read by the bounce breaker's reason (lib/autopilot/bounce-breaker.ts).
+              ...(senderBlock ? { sender_block: true } : {}),
             },
           });
         }
 
         if (delay) continue;
+
+        // ── Gmail blocked our email before it left ─────────────────────────
+        // The address was never tried, so it stays off do-not-contact and the
+        // company is not suppressed (2026-11-11: four good addresses were blocked
+        // for a year because our link host was on Google's phishing list). The
+        // follow-ups stop: the person never got the first email. The breaker
+        // still counts it, so sending pauses while Gmail blocks us.
+        if (senderBlock) {
+          await pauseSequence(supabase, thread.tenant_id, thread.prospect_id);
+          await supabase.from("audit_log").insert({
+            tenant_id: thread.tenant_id,
+            actor_id: null,
+            action: "reply.sender_block",
+            entity_type: "prospect",
+            entity_id: thread.prospect_id,
+            metadata: { reply_id: insertedReply.id, pitch_id: thread.pitch_id, source: "gmail_poll" },
+          });
+          terminal = true;
+          continue;
+        }
 
         // ── Bounce (NDR) → auto-suppress immediately ───────────────────────
         // A daemon NDR means the address is dead. Waiting for a human to click

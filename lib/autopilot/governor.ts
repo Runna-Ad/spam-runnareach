@@ -231,6 +231,8 @@ export type BreakerMetrics = {
     recentSends: number;
     /** Hard bounces among those sends, recorded after the inbox's latest resume (lib/autopilot/bounce-breaker.ts). */
     recentHardBounces: number;
+    /** How many of those Gmail refused to send (payload.sender_block): named in the reason. */
+    recentSenderBlocks?: number;
     /** Gmail API 4xx/5xx or token failures today. */
     apiErrorsToday: number;
   }>;
@@ -286,13 +288,22 @@ export function isQualityBreaker(code: unknown): boolean {
  * the run on it (lib/autopilot/bounce-breaker.ts inboxBounceBlock), so a drip
  * stops at the first fresh bounce instead of waiting for the next tick.
  */
-export function inboxBouncesTrip(inbox: { id: string; recentSends: number; recentHardBounces: number }): BreakerTrip | null {
+export function inboxBouncesTrip(inbox: {
+  id: string;
+  recentSends: number;
+  recentHardBounces: number;
+  recentSenderBlocks?: number;
+}): BreakerTrip | null {
   if (inbox.recentSends >= 20 && inbox.recentHardBounces >= 2 && inbox.recentHardBounces / inbox.recentSends >= 0.04) {
+    const blocked = Math.min(inbox.recentSenderBlocks ?? 0, inbox.recentHardBounces);
+    // 2026-11-11 the alert said "hard bounces" for four emails Gmail itself refused
+    // to send; the cause was our link, not the addresses. Say so when it is.
+    const why = blocked > 0 ? `, ${blocked} of them blocked by Gmail before sending (a link or wording in our email is flagged, not the address)` : "";
     return {
       scope: "inbox",
       inboxId: inbox.id,
       code: "inbox_bounces",
-      reason: `${inbox.recentHardBounces} hard bounces in the last ${inbox.recentSends} sends`,
+      reason: `${inbox.recentHardBounces} hard bounces in the last ${inbox.recentSends} sends${why}`,
     };
   }
   return null;

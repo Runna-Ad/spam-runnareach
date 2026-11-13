@@ -2,6 +2,28 @@
 // be unit-tested without pulling in next/server.
 
 /**
+ * Did Gmail refuse to SEND our message, rather than the recipient's server
+ * refusing the address? Then the address is not the problem: our email is (a
+ * flagged link or wording), and the recipient must not be blocked for it.
+ *
+ * On 2026-11-11 all 4 first emails came back as
+ *   "** Message blocked ** Your message to X has been blocked. ...
+ *    The response was: Message rejected. For more information, go to
+ *    https://support.google.com/mail/answer/69585"
+ * to Cisco, Microsoft and self-hosted servers alike: Gmail stopped them because
+ * the link host was on Google's phishing list. A recipient server's refusal
+ * names it ("The response from the remote server was: 550 5.4.1 Recipient
+ * address rejected", a dead mailbox on Microsoft 365, 2026-11-06), so any
+ * mention of a remote server keeps the NDR an ordinary hard bounce.
+ */
+export function isSenderSideBlock(bodyText: string | null | undefined): boolean {
+  if (!bodyText) return false;
+  const top = bodyText.slice(0, 2000); // the diagnosis sits above the original message
+  if (/response from the remote server/i.test(top)) return false;
+  return /message blocked|has been blocked/i.test(top) && /the response was:\s*message rejected\b/i.test(top);
+}
+
+/**
  * Pull the failed recipient out of a non-delivery report.
  *
  * Tries the RFC 3464 machine-readable field first (`Final-Recipient: rfc822;
