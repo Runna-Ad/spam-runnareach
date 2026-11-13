@@ -35,6 +35,8 @@ export const BOUNCE_BREAKER = "Bounce breaker";
 export type InboxBounceStats = {
   recentSends: number;
   recentHardBounces: number;
+  /** How many of those bounces were Gmail refusing to send our email (payload.sender_block). */
+  recentSenderBlocks: number;
   /** The latest resume of this inbox (audit_log created_at), or null. */
   resumedAt: string | null;
   /** A read failed: the counts are what could be read (0 if nothing). */
@@ -71,27 +73,31 @@ export async function inboxBounceStats(db: Db, tenantId: string, inboxId: string
   let error: string | null = sentError ? `recent sends: ${detail(sentError)}` : null;
 
   let bounces = 0;
+  let senderBlocks = 0;
   if (ids.length) {
     // A bounce is recorded on the conversation's ROOT pitch, with the follow-up it
     // answered in payload.answered_pitch_id (app/api/replies/poll). The root can be
     // outside this inbox's last sends while its follow-up is inside: match either
     // column and count each event once. Older events have no answered_pitch_id.
-    const seen = new Set<string>();
+    const seen = new Map<string, boolean>();
     for (const col of ["pitch_id", "payload->>answered_pitch_id"]) {
       let q = db
         .from("pitch_events")
-        .select("id")
+        .select("id, payload")
         .eq("tenant_id", tenantId)
         .eq("event_type", "bounce")
         .in(col, ids);
       if (resumedAt) q = q.gt("event_at", resumedAt);
       const { data, error: bounceError } = await q;
       if (bounceError) error ??= `bounces: ${detail(bounceError)}`;
-      for (const r of (data ?? []) as Array<{ id: string }>) seen.add(r.id);
+      for (const r of (data ?? []) as Array<{ id: string; payload?: { sender_block?: unknown } | null }>) {
+        seen.set(r.id, r.payload?.sender_block === true);
+      }
     }
     bounces = seen.size;
+    senderBlocks = [...seen.values()].filter(Boolean).length;
   }
-  return { recentSends: ids.length, recentHardBounces: bounces, resumedAt, error };
+  return { recentSends: ids.length, recentHardBounces: bounces, recentSenderBlocks: senderBlocks, resumedAt, error };
 }
 
 /** The bounces_today number: from the UTC day start, or the latest resume of any inbox if that is later. */
@@ -120,6 +126,11 @@ export type InboxBounceBlock = { blocked: false } | { blocked: true; reason: str
 export async function inboxBounceBlock(db: Db, tenantId: string, inboxId: string): Promise<InboxBounceBlock> {
   const stats = await inboxBounceStats(db, tenantId, inboxId);
   if (stats.error) return { blocked: true, reason: `${BOUNCE_BREAKER}: bounce history unreadable (${stats.error}), not sending from this inbox this run` };
-  const trip = inboxBouncesTrip({ id: inboxId, recentSends: stats.recentSends, recentHardBounces: stats.recentHardBounces });
+  const trip = inboxBouncesTrip({
+    id: inboxId,
+    recentSends: stats.recentSends,
+    recentHardBounces: stats.recentHardBounces,
+    recentSenderBlocks: stats.recentSenderBlocks,
+  });
   return trip ? { blocked: true, reason: `${BOUNCE_BREAKER}: ${trip.reason}` } : { blocked: false };
 }

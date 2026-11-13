@@ -320,7 +320,7 @@ test("an inbox never resumed counts exactly as before: every bounce on its last 
   addBounce(db, sends[49]!, pg("10:00", "2026-10-12"));
   addBounce(db, sends[55]!, pg("10:00", "2026-10-12")); // outside the last 50: not counted
   const s = await inboxBounceStats(db, TENANT, INBOX);
-  assert.deepEqual(s, { recentSends: RECENT_SENDS, recentHardBounces: 2, resumedAt: null, error: null });
+  assert.deepEqual(s, { recentSends: RECENT_SENDS, recentHardBounces: 2, recentSenderBlocks: 0, resumedAt: null, error: null });
 });
 
 test("a resume of another inbox, or in another tenant, does not reset this inbox's count", async () => {
@@ -994,4 +994,23 @@ test("relabel: unreadable recipient sources throw (approve nothing this tick)", 
   const db = fakeDb({ pitches: [] }, { fail: { "prospect_contacts.select": "" }, forbidWrites: ["pitches"] });
   await assert.rejects(relabelFinderDrafts(db, TENANT, [{ id: "p", contact_id: "c" }]), /recipient sources: no detail/);
   assert.equal((await relabelFinderDrafts(fakeDb({}, { forbidWrites: ["pitches"] }), TENANT, [{ id: "p", contact_id: null }])).size, 0);
+});
+
+// ── Gmail refusing to send our email still counts, and the reason says so ───
+
+test("a bounce Gmail itself blocked (payload.sender_block) counts toward the breaker and is named in its reason", async () => {
+  const db = fakeDb({ pitches: [], pitch_events: [], audit_log: [] });
+  const sends = addSends(db, 25);
+  addBounce(db, sends[3]!, pg("15:05"));
+  (db.tables.pitch_events ??= []).push({
+    id: "ev-block", tenant_id: TENANT, pitch_id: sends[4]!, event_type: "bounce", event_at: pg("15:05"),
+    payload: { reply_id: "r9", answered_pitch_id: sends[4]!, sender_block: true },
+  });
+  const s = await inboxBounceStats(db, TENANT, INBOX);
+  assert.equal(s.recentHardBounces, 2);
+  assert.equal(s.recentSenderBlocks, 1);
+  assert.deepEqual(await inboxBounceBlock(db, TENANT, INBOX), {
+    blocked: true,
+    reason: `${BOUNCE_BREAKER}: 2 hard bounces in the last 25 sends, 1 of them blocked by Gmail before sending (a link or wording in our email is flagged, not the address)`,
+  });
 });

@@ -738,3 +738,19 @@ test("route source: DEAD_STATUSES keeps no_match out, with the reason; postponeS
   assert.match(route, /Not "no_match": its threads still carry opt-outs/);
   assert.match(route, /\.lt\("next_followup_at", until\);/);
 });
+
+test("bounces: Gmail refusing to send our email is never repaired onto the list (2026-11-11)", async () => {
+  const blocked =
+    "** Message blocked ** Your message to info@example-hospital.ca has been blocked. See technical details below for more information. Learn more here: https://support.google.com/mail/answer/69585 The response was: Message rejected. For more information, go to https://support.google.com/mail/answer/69585";
+  const t = world({
+    replies: [
+      bounce("blocked", "info@example-hospital.ca", { body_text: blocked }),
+      bounce("dead", "dead@clinica.mx"),
+    ],
+  });
+  const r = await repairMissedOptOuts(fakeDb(t), deps(spy()));
+  assert.deepEqual(r.bounces, { repaired: 1, failed: 0, pending: 0 });
+  assert.equal(dncFor(t, "info@example-hospital.ca").length, 0);
+  assert.equal(dncFor(t, "dead@clinica.mx").length, 1);
+});
+

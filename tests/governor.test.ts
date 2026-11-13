@@ -258,3 +258,16 @@ test("vetoedByPerson / countVetoes: a pull-back by the autopilot (stage drop, ki
     { id: "c", status: "sent", autopilot_reasons: [] },
   ]), 1);
 });
+
+test("inbox_bounces names Gmail's own blocks in its reason; the trip rule itself is unchanged", () => {
+  assert.equal(
+    inboxBouncesTrip({ id: "i1", recentSends: 50, recentHardBounces: 2, recentSenderBlocks: 2 })?.reason,
+    "2 hard bounces in the last 50 sends, 2 of them blocked by Gmail before sending (a link or wording in our email is flagged, not the address)",
+  );
+  assert.equal(
+    inboxBouncesTrip({ id: "i1", recentSends: 50, recentHardBounces: 3, recentSenderBlocks: 0 })?.reason,
+    "3 hard bounces in the last 50 sends",
+  );
+  assert.match(String(inboxBouncesTrip({ id: "i1", recentSends: 50, recentHardBounces: 2, recentSenderBlocks: 9 })?.reason), /, 2 of them blocked/, "never more blocks than bounces");
+  assert.equal(inboxBouncesTrip({ id: "i1", recentSends: 50, recentHardBounces: 1, recentSenderBlocks: 1 }), null, "a block alone still needs the usual 2 bounces");
+});

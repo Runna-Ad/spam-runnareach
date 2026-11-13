@@ -24,7 +24,9 @@
 //              address goes on the list as "bounced". Only bounces STORED in the
 //              last BOUNCE_REPAIR_WINDOW_MS (26h: the longest gap between polls
 //              plus a margin), so a bounced row a person removes in /compliance
-//              (a hard delete) after that does not come back.
+//              (a hard delete) after that does not come back. A bounce where
+//              Gmail blocked our own email (isSenderSideBlock) is skipped: the
+//              poll never lists that address, so the sweep must not either.
 //
 // "On the list" is the send gate's own predicate (lib/discover/dnc-check.ts):
 // the lowercased address or its lowercased domain, exact match. A legacy
@@ -38,7 +40,7 @@
 
 import { recordOptOut as realRecordOptOut } from "../compliance/opt-out.ts";
 import { DO_NOT_SEND_STATUSES } from "../prospects/status.ts";
-import { extractBouncedRecipient } from "./bounce-parse.ts";
+import { extractBouncedRecipient, isSenderSideBlock } from "./bounce-parse.ts";
 import { isTemporaryDeliveryDelay } from "./classify.ts";
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -218,12 +220,14 @@ async function bounceCandidates(db: AnySupabase, now: number): Promise<Found> {
     .order("classified_at", { ascending: false })
     .limit(REPAIR_SCAN_LIMIT);
   if (error) return { error: `bounced replies read failed: ${errText(error)}` };
-  // A stored "will retry" notice from before the delay check existed is not a bounce.
+  // A stored "will retry" notice from before the delay check existed is not a bounce,
+  // and Gmail blocking our own email says nothing about the address.
   const rows = ((data ?? []) as BounceRow[]).filter(
     (r) =>
       settled(r, now) &&
       r.pitch_id &&
-      !isTemporaryDeliveryDelay({ subject: r.subject, body_text: r.body_text, from_email: r.from_email }),
+      !isTemporaryDeliveryDelay({ subject: r.subject, body_text: r.body_text, from_email: r.from_email }) &&
+      !isSenderSideBlock(r.body_text),
   );
   if (rows.length === 0) return { missing: [] };
 

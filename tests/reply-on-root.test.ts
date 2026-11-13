@@ -135,11 +135,12 @@ function fakeDb(pitches: Row[], opts: { replyInsertError?: { code: string; messa
   return { db: { from }, writes, events };
 }
 
-type Inbound = { id: string; from: string; body: string; intent: string; delay?: boolean };
+type Inbound = { id: string; from: string; body: string; intent: string; delay?: boolean; senderBlock?: boolean };
 const human = (id: string): Inbound => ({ id, from: "dra.ruiz@clinicasol.mx", body: "Sí, mándeme la info.", intent: "wants_info" });
 const bounce = (id: string): Inbound => ({ id, from: "mailer-daemon@googlemail.com", body: "Address not found", intent: "bounced" });
 const ooo = (id: string): Inbound => ({ id, from: "dra.ruiz@clinicasol.mx", body: "Fuera de la oficina", intent: "auto_reply" });
 const delay = (id: string): Inbound => ({ ...bounce(id), body: "Delivery delayed, will retry", delay: true });
+const gmailBlock = (id: string): Inbound => ({ ...bounce(id), body: "Message blocked. The response was: Message rejected", senderBlock: true });
 
 async function poll(pitches: Row[], inbound: Inbound[], opts: Parameters<typeof fakeDb>[1] = {}) {
   const fake = fakeDb(pitches, opts);
@@ -179,6 +180,8 @@ async function poll(pitches: Row[], inbound: Inbound[], opts: Parameters<typeof 
             internalDate: Date.parse("2026-10-22T18:00:00Z") + n * 1000,
           })),
         });
+      case "isSenderSideBlock":
+        return byBody.get(args[0] as string)?.senderBlock === true;
       case "isTemporaryDeliveryDelay":
         return byBody.get((args[0] as { body_text: string }).body_text)?.delay === true;
       case "stripQuotedReply":
@@ -359,6 +362,23 @@ test("side effects on a follow-up thread are unchanged: sequence pause, suppress
   assert.equal(postpone.length, 1);
   assert.ok("next_followup_at" in postpone[0]!.values);
   assert.ok(postpone[0]!.filters.includes(`eq:"prospect_id","${PROSPECT}"`));
+});
+
+test("a bounce Gmail itself blocked: sequence paused, no do-not-contact, no suppression, event flagged for the breaker", async () => {
+  const r = await poll(FOLLOWED_UP, [gmailBlock("m1")]);
+  assert.deepEqual(r.res.errors, []);
+  assert.equal(r.calls.filter((c) => c.name === "addEmailToDnc").length, 0, "the address stays off do-not-contact");
+  assert.equal(r.writes.some((w) => w.table === "prospects" && w.op === "update"), false, "not suppressed, not 'replied'");
+  const pause = pitchUpdates(r.writes);
+  assert.equal(pause.length, 1);
+  assert.ok("sequence_paused_at" in pause[0]!.values, "follow-ups stop: the first email never arrived");
+  assert.equal(r.events.length, 1);
+  assert.equal(r.events[0]!.event_type, "bounce", "the breaker still counts it");
+  assert.equal((r.events[0]!.payload as Record<string, unknown>).sender_block, true);
+  assert.ok(r.writes.some((w) => w.table === "audit_log" && w.values.action === "reply.sender_block"));
+
+  const dead = await poll(FOLLOWED_UP, [bounce("m1")]);
+  assert.equal((dead.events[0]!.payload as Record<string, unknown>).sender_block, undefined, "an ordinary bounce carries no flag");
 });
 
 // Proven facts (2026-11-09, CrushCamp): the research step's pains and guesses read as things we saw.
