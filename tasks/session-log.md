@@ -1530,7 +1530,7 @@ marketing-context only if it bites.
 **Pick up next session:** Tue after 15:00 UTC: read the first v3.5 drafts (how many forced capability emails, any gate blocks for absence_claim / track_record_claim, old approved pitches sent back to drafts). Later task: tighten the web search (todo "Before switching the web search on"); its session can start now that #76 is merged.
 **Environment changes:** new env var WEB_DIVE_ENABLED (unset = off), optional WEB_DIVE_MODEL; migration 0055 applied (table web_research, function claim_web_research, cron spam-web-dive).
 
-## 2026-11-13 17:45 UTC: daily "Sending paused" alert → Safe Browsing flag on runna-check; false bounces
+## 2026-11-13 Session: daily "Sending paused" alert → Safe Browsing flag on runna-check; false bounces (17:45 UTC)
 **Cause:** pedro@runnareach.com paused since 2026-11-11 15:30 UTC; the daily email was the health check's 24h reminder of that one pause. Google Safe Browsing listed runna-check.vercel.app (the email-link host, an alias of the whole app) as "Deceptive pages" on 2026-11-10; Search Console's samples were `/` and `/sign-in?next=/dashboard`, i.e. the S.P.A.M. sign-in page. Gmail then refused to send all 4 first emails on 11-11 ("Message rejected", no remote server), the breaker paused the inbox, and the poll put the 4 good addresses on do-not-contact and suppressed their companies for a year.
 **Shipped (Pedro "ship it" for each):**
 - PR #79 `67e3844`, dpl_Far14nErJZ1dptWbYa66ZwVMGBti: on runna-check only `/r/<code>`, `/api/unsubscribe` and the Search Console file answer; everything else 404. spam-runnareach unchanged.
