@@ -590,3 +590,8 @@ TAGS: #browser #forms #verification
 WHAT HAPPENED: I told Pedro the inbox paused at "8:30 AM Calgary" (15:30 UTC) and the daily alert came at "9:25 AM" (16:25 UTC), assuming UTC-7 for November. `TZ=America/Edmonton date` shows CST, -0600, so both were an hour early (9:30 and 10:25 AM). Caught only when a scheduled task for "08:00-07:00" displayed as 9:00 AM.
 RULE: Before writing any Calgary time, run `TZ=America/Edmonton date "+%z"` and use that offset. Never assume MST/MDT from the calendar.
 TAGS: #time #timezone #reporting
+
+[2026-11-17] LESSON: a scheduled check whose answer needs Pedro's action must reach Pedro, not only the session
+WHAT HAPPENED: The one-time check on Sat 2026-11-14 15:22 UTC found runna-check cleared (Transparency Report clean, Search Console "No issues detected") and reported it to the Claude session only. Nobody resumed the inbox, so it stayed paused 3 more days and the "S.P.A.M. EMERGENCY: Sending paused" reminder kept arriving each morning until Pedro asked again on 11-17.
+RULE: When a scheduled check's result means "Pedro, do X now", its prompt must send him a push notification or email with the action, and the task's report must say whether that was sent.
+TAGS: #scheduled-tasks #notifications #process
