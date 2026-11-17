@@ -1541,3 +1541,9 @@ marketing-context only if it bites.
 **Not checked:** Google's review result; the new breaker wording live (shows only on a new trip).
 **Waiting on Pedro:** resume the inbox (Settings → Sending) only after the Transparency Report shows runna-check clean; whether to re-pitch the 4 companies.
 **Next:** check transparencyreport.google.com/safe-browsing/search?url=runna-check.vercel.app; then resume and watch the first sends.
+
+## 2026-11-17 Session: Google cleared runna-check, inbox still paused, resume pending
+**What:** Pedro's "S.P.A.M. EMERGENCY: Sending paused" email was the daily reminder for the 11-11 pause; no new sends or bounces since. Google cleared runna-check (Transparency Report "No unsafe content found", Search Console "No issues detected", both read 2026-11-17 16:30 UTC); the 11-14 scheduled check found this but only told the session, so nobody resumed. Lesson logged.
+**Queue on resume:** 7 approved first emails, 29 overdue follow-ups, daily cap 30, stage veto.
+**Waiting on Pedro:** resume at 10/day for two days (recommended) or straight to 30. Resume must write the `sender_inbox.resumed` audit row (Settings does it) or the breaker re-pauses on the old bounces.
+**Update 16:50 UTC:** Pedro chose "Resume at 10/day". Resumed 16:31 UTC (audit row first, cap 10). Sends 16:37 and 16:40 UTC carried the runna-check link; 16:45 reply poll found 0 bounces. Raising back to 30 on Thu 11-19 is manual: scheduling it (even read-only) was blocked by the permission check.
