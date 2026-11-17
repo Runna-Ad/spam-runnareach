@@ -595,3 +595,8 @@ TAGS: #time #timezone #reporting
 WHAT HAPPENED: The one-time check on Sat 2026-11-14 15:22 UTC found runna-check cleared (Transparency Report clean, Search Console "No issues detected") and reported it to the Claude session only. Nobody resumed the inbox, so it stayed paused 3 more days and the "S.P.A.M. EMERGENCY: Sending paused" reminder kept arriving each morning until Pedro asked again on 11-17.
 RULE: When a scheduled check's result means "Pedro, do X now", its prompt must send him a push notification or email with the action, and the task's report must say whether that was sent.
 TAGS: #scheduled-tasks #notifications #process
+
+[2026-11-17] LESSON: don't promise a scheduled follow-up before the scheduler accepts it
+WHAT HAPPENED: On 11-13 a read-only scheduled check was created without trouble. On 11-17 the permission check refused both a task that would raise the daily cap to 30 unattended and a read-only version that only checked and notified Pedro. Thursday's step became manual.
+RULE: Create the scheduled task first, then tell Pedro it is set. If it is refused, put the step in tasks/todo.md with its date and conditions, tell Pedro it is manual, and mention he can allow the scheduled-task tool in his settings.
+TAGS: #scheduled-tasks #permissions #process
