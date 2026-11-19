@@ -600,3 +600,9 @@ TAGS: #scheduled-tasks #notifications #process
 WHAT HAPPENED: On 11-13 a read-only scheduled check was created without trouble. On 11-17 the permission check refused both a task that would raise the daily cap to 30 unattended and a read-only version that only checked and notified Pedro. Thursday's step became manual.
 RULE: Create the scheduled task first, then tell Pedro it is set. If it is refused, put the step in tasks/todo.md with its date and conditions, tell Pedro it is manual, and mention he can allow the scheduled-task tool in his settings.
 TAGS: #scheduled-tasks #permissions #process
+
+[2026-11-19] LESSON: a website's own typo of info@ wins the contact picker over the real info@
+WHAT HAPPENED: The inbox paused again 2026-11-19 15:15 UTC on 2 hard bounces in 22 sends since the 11-17 restart: nfo@sundialhotel.com (Microsoft 550 5.4.1) and inf0@theheroacademy.ca (550 5.1.1 user doesn't exist). Both are typos on the businesses' own pages (Sundial's link text reads "nfo@", Hero Academy's mailto href is "inf0@"), as was inf@atwoodlaw.ca on 11-06 (their privacy page). Each page also lists the real info@. isRoleBasedEmail only knows exact role words, so the typo ranked as a person (priority 2) and beat info@ (priority 5).
+MEASURED: 1,653 saved addresses: 3 one-letter typos of a role word, all 3 with the real role address on the same site, all 3 picked and bounced. Lookalikes that are fine: info1@ (no twin) and recepcion@ (Spanish word, not in the role list). Real dead-address bounces since 10-19: 8 of 264 sends (3.0%); without the 3 typos 5 (1.9%). Queue on 11-19: 0 of 68 pending emails go to a typo.
+RULE: When a site yields a non-role address one edit away from a role word AND the exact role address at the same domain, keep the role address and drop the near-miss. Without the twin, keep it (no guessing).
+TAGS: #bounces #scraper #contacts #picker #deliverability
