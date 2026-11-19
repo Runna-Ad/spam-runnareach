@@ -1550,5 +1550,5 @@ marketing-context only if it bites.
 
 ## 2026-11-19 Session: sending paused again, site typos of info@
 **What:** pedro@runnareach.com paused 15:15 UTC on 2 hard bounces in 22 sends since the 11-17 restart: nfo@sundialhotel.com and inf0@theheroacademy.ca, typos on the businesses' own pages (inf@atwoodlaw.ca on 11-06 too). The picker ranked each typo as a person (2) above the real info@ (5) on the same site. 3 such typos among 1,653 addresses, all already bounced; 0 of 68 pending emails go to one. Google still lists runna-check clean.
-**Waiting on Pedro:** resume at 10/day now + build the typo fix, or fix first. Daily cap stays 10.
-**Next:** the typo fix (todo), then raise to 30 once a clean stretch is on record.
+**Done (Pedro: "Resume + fix", then "ship it"):** inbox resumed 16:35:39 UTC at daily_cap 10, first send 16:37, 0 bounces as of 16:45. PR #83 merged 16:50 UTC as e7d826b, dpl_AT4Ur7sqHMSHqEgbqQLrneqtcZvs Ready: the scraper drops an address one letter off a role word when the real role address is on the same site. 1896/1896 tests, 0 runtime errors after the deploy. Not checked live: the scraper path (next research batch).
+**Next:** raise daily_cap to 30 once a clean stretch at 10/day is on record (manual). Optional, Pedro decides: re-pitch Sundial Hotel, The Hero Academy, Atwood Law at their real info@.
