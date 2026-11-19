@@ -1,5 +1,6 @@
 import * as cheerio from "cheerio";
 import {
+  dropRoleTypos,
   hasUsableEmail,
   hasValidTld,
   isNeverPitchEmail,
@@ -161,6 +162,10 @@ export async function scrapeSite(rawUrl: string): Promise<ScrapeResult> {
       contactEmails = Array.from(new Set([...contactEmails, ...harvested.emails]));
       minedPages.push(...harvested.mined);
     }
+
+    // A site's own typo of info@ ("nfo@", "inf0@") next to the real info@ would
+    // rank as a person and get emailed; keep the real one (email-utils.ts).
+    contactEmails = dropRoleTypos(contactEmails);
 
     return {
       ok: true,
