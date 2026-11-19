@@ -1547,3 +1547,8 @@ marketing-context only if it bites.
 **Queue on resume:** 7 approved first emails, 29 overdue follow-ups, daily cap 30, stage veto.
 **Waiting on Pedro:** resume at 10/day for two days (recommended) or straight to 30. Resume must write the `sender_inbox.resumed` audit row (Settings does it) or the breaker re-pauses on the old bounces.
 **Update 16:50 UTC:** Pedro chose "Resume at 10/day". Resumed 16:31 UTC (audit row first, cap 10). Sends 16:37 and 16:40 UTC carried the runna-check link; 16:45 reply poll found 0 bounces. Raising back to 30 on Thu 11-19 is manual: scheduling it (even read-only) was blocked by the permission check.
+
+## 2026-11-19 Session: sending paused again, site typos of info@
+**What:** pedro@runnareach.com paused 15:15 UTC on 2 hard bounces in 22 sends since the 11-17 restart: nfo@sundialhotel.com and inf0@theheroacademy.ca, typos on the businesses' own pages (inf@atwoodlaw.ca on 11-06 too). The picker ranked each typo as a person (2) above the real info@ (5) on the same site. 3 such typos among 1,653 addresses, all already bounced; 0 of 68 pending emails go to one. Google still lists runna-check clean.
+**Waiting on Pedro:** resume at 10/day now + build the typo fix, or fix first. Daily cap stays 10.
+**Next:** the typo fix (todo), then raise to 30 once a clean stretch is on record.
