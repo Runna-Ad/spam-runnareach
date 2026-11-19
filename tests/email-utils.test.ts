@@ -17,6 +17,7 @@ import {
   repairGluedDomainPrefix,
   pickAddressContact,
   hasGluedLabelPrefix,
+  dropRoleTypos,
 } from "../lib/research/email-utils.ts";
 import { repairGluedTldDomain } from "../lib/research/scraper.ts";
 
@@ -166,4 +167,24 @@ test("label-prefix guard does not eat legitimate locals", () => {
   assert.equal(hasUsableEmail("mail@runna.agency"), true);
   assert.equal(hasUsableEmail("contact@runna.agency"), true);
   assert.equal(hasUsableEmail("telma@clinica.mx"), true);
+});
+
+// ── A site's own typo of info@ next to the real one (2026-11-06/17/19 bounces) ──
+
+test("dropRoleTypos: the real typos from the bounces go, the real info@ stays", () => {
+  assert.deepEqual(dropRoleTypos(["nfo@sundialhotel.com", "info@sundialhotel.com"]), ["info@sundialhotel.com"]);
+  assert.deepEqual(dropRoleTypos(["inf0@theheroacademy.ca", "info@theheroacademy.ca"]), ["info@theheroacademy.ca"]);
+  assert.deepEqual(dropRoleTypos(["info@atwoodlaw.ca", "inf@atwoodlaw.ca"]), ["info@atwoodlaw.ca"]);
+  assert.deepEqual(dropRoleTypos(["Contato@Clinica.mx", "contacto@clinica.mx"]), ["contacto@clinica.mx"], "case does not matter");
+});
+
+test("dropRoleTypos: never guesses, and leaves look-alikes that are real", () => {
+  assert.deepEqual(dropRoleTypos(["nfo@sundialhotel.com"]), ["nfo@sundialhotel.com"], "no real twin on the site: keep it");
+  assert.deepEqual(dropRoleTypos(["nfo@a.com", "info@b.com"]), ["nfo@a.com", "info@b.com"], "twin on another domain does not count");
+  assert.deepEqual(dropRoleTypos(["info1@torontocpr.com", "info@torontocpr.com"]), ["info1@torontocpr.com", "info@torontocpr.com"], "numbered inbox");
+  assert.deepEqual(dropRoleTypos(["recepcion@perezfonseca.com"]), ["recepcion@perezfonseca.com"]);
+  assert.deepEqual(dropRoleTypos(["maria@clinic.ca", "info@clinic.ca"]), ["maria@clinic.ca", "info@clinic.ca"], "a person stays");
+  assert.deepEqual(dropRoleTypos(["ho@x.com", "hi@x.com"]), ["ho@x.com", "hi@x.com"], "role words under 4 letters are skipped");
+  assert.deepEqual(dropRoleTypos(["info.calgary@x.com", "info@x.com"]), ["info.calgary@x.com", "info@x.com"], "role inboxes are never dropped");
+  assert.deepEqual(dropRoleTypos([]), []);
 });
