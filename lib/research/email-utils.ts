@@ -220,6 +220,44 @@ export function isRoleBasedEmail(email: string): boolean {
   return false;
 }
 
+/** Exactly one letter added, removed or changed. */
+function oneEditApart(a: string, b: string): boolean {
+  if (a === b || Math.abs(a.length - b.length) > 1) return false;
+  let i = 0;
+  while (i < a.length && i < b.length && a[i] === b[i]) i++;
+  if (a.length === b.length) return a.slice(i + 1) === b.slice(i + 1);
+  return a.length > b.length ? a.slice(i + 1) === b.slice(i) : a.slice(i) === b.slice(i + 1);
+}
+
+/**
+ * Drop a site's own typo of a role inbox when the real one is on the site too.
+ *
+ * Businesses misspell their own address: Sundial Hotel's link text reads
+ * "nfo@sundialhotel.com", The Hero Academy's mailto is "inf0@theheroacademy.ca",
+ * Atwood Law's privacy page lists "inf@atwoodlaw.ca", and each page also shows
+ * the real info@. isRoleBasedEmail doesn't know the typo, so it ranked as a
+ * person (2) above info@ (5) and was emailed: three hard bounces, two of them
+ * pausing the inbox (2026-11-06, 11-17, 11-19).
+ *
+ * Only with the exact role address at the same domain in the same list: a lone
+ * "nfo@" stays (we never guess an address). Numbered inboxes (info1@, ventas2@)
+ * are not typos, and role words under 4 letters (hi, pr, rh) are skipped.
+ */
+export function dropRoleTypos(emails: readonly string[]): string[] {
+  const present = new Set(emails.map((e) => e.trim().toLowerCase()));
+  return emails.filter((email) => {
+    const [local = "", domain = ""] = email.trim().toLowerCase().split("@");
+    if (!local || !domain || isRoleBasedEmail(email)) return true;
+    return !ROLE_LOCALPARTS.some(
+      (role) =>
+        role.length >= 4 &&
+        present.has(`${role}@${domain}`) &&
+        !new RegExp(`^${role}\\d+$`).test(local) &&
+        oneEditApart(local, role),
+    );
+  });
+}
+
 /**
  * Inboxes that are real and deliverable but must NEVER receive a cold pitch.
  *

@@ -128,3 +128,19 @@ test("scrapeSite: an address only on the privacy page records the privacy URL", 
     "office@weeksconstruction.ca": `${BASE}/privacy-policy`,
   });
 });
+
+// 2026-11-19: Sundial Hotel's footer link reads "nfo@sundialhotel.com" while its
+// mailto (and the rest of the page) says info@. The typo ranked as a person and
+// was emailed; it bounced and paused sending. HTML shape copied from the live page.
+test("scrapeSite: a site's own typo of info@ next to the real info@ is not kept", async () => {
+  const home = page(`
+    <a href="mailto:info@weeksconstruction.ca">info@weeksconstruction.ca</a>
+    <p><a href="mailto:mailto: &#8203;info@weeksconstruction.ca?" target="_blank"><span style="text-decoration:underline"><span class="sqsrte-text-color--white">nfo@weeksconstruction.ca</span></span></a></p>
+    <p><a href="mailto:inf0@weeksconstruction.ca"> info@weeksconstruction.ca</a></p>`);
+  const result = await withFakeSite({ "/": home }, () => scrapeSite(`${BASE}/`));
+  assert.ok(result.ok, "scrape succeeded");
+  if (!result.ok) return;
+  assert.ok(result.site.contact_emails.includes("info@weeksconstruction.ca"));
+  assert.equal(result.site.contact_emails.some((e) => /^(nfo|inf0)@/.test(e)), false, result.site.contact_emails.join(", "));
+  assert.equal(Object.keys(result.site.contact_email_sources).some((e) => /^(nfo|inf0)@/.test(e)), false);
+});
